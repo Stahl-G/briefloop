@@ -23,9 +23,17 @@ def png(color):
     buffer=BytesIO();Image.new('RGB',(20,10),color).save(buffer,format='PNG');return buffer.getvalue()
 
 
+class RecordingProcess:
+    def __init__(self):self.closed=False
+    def poll(self):return 0 if self.closed else None
+    def close_tree(self, timeout=8):self.closed=True
+
+
 class RecordingClient(OpencodeServerClient):
     """Keep production v1 prompt serialization; substitute only its HTTP request."""
-    def __init__(self):self.requests=[];self.creations=[]
+    def __init__(self):
+        self.requests=[];self.creations=[]
+        self.process=RecordingProcess();self._stderr=BytesIO()
     def paths(self,directory):return {'worktree':str(directory)}
     def create_session(self,title,**kwargs):
         self.creations.append(kwargs);return {'id':'native-review'}
@@ -52,7 +60,7 @@ class RecordedReviewHarness(OpencodeHarness):
         self.chat.update(sid,status='idle',turn_id=None)
 
 
-def test_current_packet_visuals_reach_selected_model_and_history_does_not_suppress_them(tmp_path):
+def test_current_packet_visuals_reach_selected_model_and_history_does_not_suppress_them(tmp_path,request):
     store=Store(tmp_path/'workspace')
     store.set_meta('settings',{**store.settings(),'agent_backend':'opencode','model':'example/current-vision-model','role_models':{}})
     text=store.add_source('Numbers','period,value\nA,10\nB,12\n')
@@ -76,6 +84,7 @@ def test_current_packet_visuals_reach_selected_model_and_history_does_not_suppre
     # This legacy task-pack figure must never leak into a restricted Review.
     (folder/'input.json').write_text(dump({'figures':[{'figure_id':'unrelated','absolute_image_path':str(store.root/unrelated['path'])}]}))
     client=RecordingClient();harness=RecordedReviewHarness(store,lambda _:client)
+    request.addfinalizer(harness.close)
     runtime=InteractiveRuntime(store,backends={'opencode':harness})
     reviewed=run_review(store,runtime,job,brief['id'],folder)
     assert reviewed['status']=='incomplete'  # Pixel delivery is not a pass.

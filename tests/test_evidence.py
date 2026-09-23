@@ -37,6 +37,29 @@ def test_exact_location_version_binding_and_format_change(tmp_path):
     assert inspect_bindings(store,brief['id'])['bindings'][0]['status']=='source_changed'
 
 
+def test_second_support_quote_error_points_to_statement_without_saving_claim(tmp_path):
+    from briefloop.chat_tools import workspace_action
+    store,source,run,brief=case(tmp_path)
+    spans=[create_span(store,{'source_id':source['id'],'locator':{'kind':'text','start_line':line,'end_line':line}})
+           for line in (1,2)]
+    claim={'statement':'Revenue was 12 million USD; other revenue was 120 million USD.','kind':'fact',
+        'supports':[{'span_id':spans[0]['id'],'supports_quote':'12 million USD'},
+                    {'span_id':spans[1]['id'],'supports_quote':spans[1]['data']['excerpt']}]}
+    original=deepcopy(claim)
+    with pytest.raises(ValueError) as error:
+        workspace_action(store,{'action':'claim_create','run_id':run['id'],'claim':claim})
+    assert 'supports[1].supports_quote' in str(error.value)
+    assert 'statement' in str(error.value) and '连续逐字' in str(error.value) and 'excerpt' in str(error.value)
+    assert not store.rows('SELECT id FROM claims') and claim==original
+    claim['supports'][1]['supports_quote']='other revenue was 120 million USD'
+    accepted=workspace_action(store,{'action':'claim_create','run_id':run['id'],'claim':claim})
+    assert len(store.rows('SELECT id FROM claims'))==1 and accepted['data']['review_status']=='unreviewed'
+    assert [s['supports_quote'] for s in accepted['data']['supports']]==[s['supports_quote'] for s in claim['supports']]
+    schema=workspace_action(store,{'action':'capabilities'})['schemas']['claim_create.claim']
+    description=schema['$defs']['Support']['properties']['supports_quote']['description']
+    assert 'statement' in description and '连续逐字' in description and 'excerpt' in description
+
+
 def test_workbook_cell_and_inference_are_traceable_not_automatically_verified(tmp_path):
     store,source,run,brief=case(tmp_path)
     book=Workbook();sheet=book.active;sheet.title='Operating';sheet['A1']='Revenue';sheet['B1']=12;sheet['B2']='=B1*10'

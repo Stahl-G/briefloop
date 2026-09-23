@@ -40,3 +40,26 @@ test('fact-check polling keeps content in flight and rejects a stale version res
  pending.shift()({html:'Stale version one'});await old;
  assert.equal(html,'Version two');
 });
+
+test('saved-version numeric occurrence hint stays bounded and does not imply fact approval',async()=>{
+ let html='';
+ const box={dataset:{},isConnected:true,get innerHTML(){return html},set innerHTML(v){html=v}};
+ const assessment={querySelector:()=>box};
+ const checks={broken_refs:[],numbers:{total:1,checked:1,matched:1,status:'checked_bindings',
+  unmatched:[],skipped:[],occurrence_review:{candidate_count:8,checked_occurrences:1,
+   review_candidate_count:7,samples:[{kind:'table_cell',table:1,row:2,column:2,text:'25%',context:'<bad> 25%'}],
+   sample_limit:12,truncated:false,scope:'仅是候选，不是事实正确率。'}},
+  export:{escaped_bold:false,figure_error:null,figure_markers:[]},layout:null};
+ const panel=createAssessmentPanel({api:async()=>checks,action:async fn=>fn(),notice(){},
+  $:()=>assessment,esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'),
+  parse:s=>JSON.parse(s||'{}'),getState:()=>({assessments:[],jobs:[],sources:[]}),
+  getCurrent:()=>({id:'v1'}),getEditor:()=>null,isDirty:()=>false,
+  bindSources(){},applyHighlightState(){},readerHighlights:()=>[],toEditor:x=>x,
+  beginPanel,updatePanel,reviewPending:()=>false});
+ await panel.renderDeliveryChecks();
+ assert.match(html,/带明确单位的数值出现 8 处；直接对应已核对绑定 1 处；待看 7 处/);
+ assert.match(html,/表 1 · 第 2 行 2 列/);
+ assert.match(html,/&lt;bad&gt; 25%/);
+ assert.doesNotMatch(html,/<bad>/);
+ assert.match(html,/不代表正文数字已全部核验/);
+});

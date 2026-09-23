@@ -78,7 +78,7 @@ def assemble(config, evidence, markdown, prior_citations=()):
     verify its fingerprint before invoking this function, then save atomically.
     """
     root = Path(config['packet_root']).resolve()
-    index = {s['source_id']: s for s in json.loads((root/'source-index.json').read_text())['sources']}
+    index = {s['source_id']: s for s in json.loads((root/'source-index.json').read_text(encoding='utf-8'))['sources']}
     cache, result = {}, {}
     for field in ('citations', 'number_bindings', 'temporal_claims'):
         if field not in evidence.model_fields_set:

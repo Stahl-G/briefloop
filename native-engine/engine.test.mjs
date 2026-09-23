@@ -8,12 +8,12 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BUNDLE = fileURLToPath(new URL("../src/briefloop/static/native-engine.mjs", import.meta.url));
+const BUNDLE = process.env.BRIEFLOOP_NATIVE_TEST_BUNDLE || fileURLToPath(new URL("../src/briefloop/static/native-engine.mjs", import.meta.url));
 const nodeBin = process.env.BRIEFLOOP_NODE || process.execPath;
 const MODEL = "fake/m1";
 const VISION_MODEL = "fake/m2";
@@ -22,12 +22,24 @@ const SYSTEM = "测试系统提示：BriefLoop Reviewer";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 // ---- scripted provider ------------------------------------------------------
-const provider = { script: [], requests: [], violations: [], stalled: new Set() };
+const provider = { script: [], requests: [], transports: [], violations: [], stalled: new Set() };
 const chunk = (res, delta, finish = null, usage) => res.write(`data: ${JSON.stringify({
   id: "c", object: "chat.completion.chunk", created: 0, model: "m1",
   choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`);
 const usage = { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 };
 const reply = {
+  anthropicText: (text) => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const emit = (event) => res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    emit({ type: "message_start", message: { id: "msg_fixture", type: "message", role: "assistant", model: "model",
+      content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0 } } });
+    emit({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    emit({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
+    emit({ type: "content_block_stop", index: 0 });
+    emit({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } });
+    emit({ type: "message_stop" });
+    res.end();
+  },
   text: (text) => (res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     chunk(res, { role: "assistant", content: text });
@@ -97,6 +109,8 @@ const server = http.createServer((req, res) => {
   req.on("end", () => {
     const parsed = JSON.parse(body || "{}");
     provider.requests.push(parsed);
+    provider.transports.push({ path: req.url, key: req.headers.authorization || req.headers['x-api-key'],
+      output: parsed.max_completion_tokens ?? parsed.max_tokens });
     const violation = sequenceViolation(parsed.messages || []);
     if (violation) {
       provider.violations.push(violation);
@@ -110,6 +124,7 @@ const server = http.createServer((req, res) => {
 function script(...steps) {
   provider.script = steps;
   provider.requests = [];
+  provider.transports = [];
   provider.violations = [];
 }
 
@@ -213,6 +228,7 @@ before(async () => {
     stdio: ["pipe", "pipe", "inherit"],
     env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, FAKE_PROVIDER_KEY: "k", NO_PROXY: "*" },
   });
+  proc.stdout.setEncoding("utf8"); // A transport chunk may split a Chinese character or emoji.
   proc.stdout.on("data", (d) => {
     buf += d;
     let i;
@@ -477,6 +493,24 @@ test("grep, json_path, claim_trace and calc answer inside the packet", async () 
   assert.match(await callError("tool_call", { session_id, name: "calc", args: { expression: "process.exit(1)" } }), /无法识别/);
 });
 
+test("packet regex stops backtracking and keeps the engine usable", async () => {
+  const file = join(packet, "sources", "grep-regression.txt");
+  writeFileSync(file, "a".repeat(40) + "!\n收入 Revenue (USD) [net]: 12\nRevenue USD: 19");
+  try {
+    const { session_id } = await reviewer();
+    const args = { path: "sources/grep-regression.txt" };
+    const tool = async (extra) => (await call("tool_call", { session_id, name: "packet_grep", args: { ...args, ...extra } })).content[0].text;
+    assert.match(await tool({ pattern: "revenue (usd) [net]" }), /grep-regression\.txt:2: 收入 Revenue \(USD\) \[net\]: 12/);
+    assert.match(await tool({ pattern: "Revenue\\s+USD", regex: true }), /grep-regression\.txt:3: Revenue USD: 19/);
+    const error = await callError("tool_call", { session_id, name: "packet_grep", args: { ...args, pattern: "(a+)+$", regex: true } });
+    assert.match(error, /正则搜索超时/);
+    assert.match(await tool({ pattern: "收入" }), /共 1 处命中/);
+    assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: { ...args, pattern: "[", regex: true } }), /正则 pattern 无效/);
+  } finally {
+    rmSync(file);
+  }
+});
+
 test("submit_review rejects schema and admission errors, then settles the run", async () => {
   let rejections = 0;
   admission = (review) => (review.version_id !== "v1" && ++rejections ? "Reviewer 输出未绑定本次正文与核查包" : undefined);
@@ -548,6 +582,90 @@ test("one grep call answers several patterns and one read call several pieces", 
   assert.match(read, /=== notes\.txt 第 2-2 行 ===\n\[第 2-2 行，共 6 行\]\nline2/);
   assert.match(read, /=== \.\.\/escape\.txt ===\n读取失败：/, "a bad piece fails alone and never escapes the packet");
   assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: {} }), /至少给一个/);
+});
+
+// Parse only model-visible content: details are not carried into the model's
+// tool result. Offsets exclude the batch label and optional line-range heading.
+function readPage(value) {
+  if (value.startsWith("=== ")) value = value.slice(value.indexOf("\n") + 1);
+  const marker = value.lastIndexOf("\n[字符分页：");
+  assert.ok(marker >= 0, "pagination status must be visible in content");
+  const state = /start_char=(\d+)；next_start_char=(\d+)；eof=(true|false)/.exec(value.slice(marker));
+  assert.ok(state);
+  let body = value.slice(0, marker);
+  if (body.startsWith("[第 ")) body = body.slice(body.indexOf("\n") + 1);
+  assert.ok(body.isWellFormed(), "a page must not split a surrogate pair");
+  return { body, from: Number(state[1]), next: Number(state[2]), eof: state[3] === "true" };
+}
+
+test("packet_read character cursors restore Chinese text, selected lines and JSON fields without a model call", async () => {
+  const { session_id } = await reviewer(), requests = provider.requests.length;
+  const raw = "量".repeat(120007) + "🙂🧪仅限已验证机型；未安装驱动时不得启用。尾部条件_END";
+  writeFileSync(join(packet, "pagination.txt"), raw);
+  writeFileSync(join(packet, "pagination-lines.txt"), `开始\n${raw}\n结束`);
+  writeFileSync(join(packet, "pagination.json"), JSON.stringify({ body: raw }));
+  const read = async args => {
+    const result = await call("tool_call", { session_id, name: "packet_read", args });
+    const value = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+    assert.ok(value.length <= 60000, "keep the existing UTF-16 per-read budget including status");
+    return value;
+  };
+  for (const [selection, expected] of [
+    [{ path: "pagination.txt" }, raw],
+    [{ path: "pagination-lines.txt", start_line: 2, end_line: 2 }, raw],
+    [{ path: "pagination.json", json_path: "body" }, JSON.stringify(raw, null, 1)],
+  ]) {
+    let offset = 0, rebuilt = "";
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const page = readPage(await read({ ...selection, ...(attempt ? { start_char: offset } : {}) }));
+      assert.equal(page.from, offset);
+      assert.equal(page.next, offset + Array.from(page.body).length);
+      rebuilt += page.body;
+      if (page.eof) break;
+      assert.ok(page.next > offset);
+      offset = page.next;
+    }
+    assert.equal(rebuilt, expected);
+  }
+  assert.equal(await read({ path: "pagination-lines.txt", start_line: 1, end_line: 1 }), "[第 1-1 行，共 3 行]\n开始");
+  const pastEnd = readPage(await read({ path: "pagination.txt", start_char: Number.MAX_SAFE_INTEGER }));
+  assert.equal(pastEnd.body, ""); assert.equal(pastEnd.eof, true);
+  assert.equal(pastEnd.next, Array.from(raw).length);
+  for (const start_char of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.match(await callError("tool_call", { session_id, name: "packet_read", args: { path: "pagination.txt", start_char } }), /非负安全整数/);
+  }
+  assert.equal(provider.requests.length, requests);
+});
+
+test("packet_read batch budgets preserve emoji and actual cursors while marking unread pieces", async () => {
+  const { session_id } = await reviewer(), requests = provider.requests.length;
+  const emoji = "🙂".repeat(40000), second = "字".repeat(59900) + "尾部条件";
+  writeFileSync(join(packet, "pagination-emoji.txt"), emoji);
+  writeFileSync(join(packet, "pagination-second.txt"), second);
+  writeFileSync(join(packet, "pagination-last.txt"), "必须另读的片段");
+  const result = await call("tool_call", { session_id, name: "packet_read", args: {
+    path: "pagination-emoji.txt", more: [{ path: "pagination-second.txt" }, { path: "pagination-last.txt" }],
+  } });
+  const contents = result.content.filter(c => c.type === "text").map(c => c.text);
+  assert.equal(contents.length, 3);
+  assert.ok(contents.reduce((n, value) => n + value.length, 0) <= 120000);
+  const pages = contents.slice(0, 2).map(readPage);
+  for (let index = 0; index < pages.length; index++) {
+    const page = pages[index], expected = [emoji, second][index];
+    assert.equal(page.eof, false);
+    assert.equal(page.next, Array.from(page.body).length);
+    const next = await call("tool_call", { session_id, name: "packet_read", args: {
+      path: ["pagination-emoji.txt", "pagination-second.txt"][index], start_char: page.next,
+    } });
+    const remainder = readPage(next.content[0].text);
+    assert.equal(remainder.eof, true);
+    assert.equal(page.body + remainder.body, expected);
+  }
+  assert.match(contents[2], /未读取.*单独读取/);
+  assert.doesNotMatch(contents[2], /eof=true|必须另读的片段/);
+  const last = await call("tool_call", { session_id, name: "packet_read", args: { path: "pagination-last.txt" } });
+  assert.equal(last.content[0].text, "必须另读的片段", "normal short default output stays unchanged");
+  assert.equal(provider.requests.length, requests);
 });
 
 test("a rejected submission is fixed by a patch of the failing fields", async () => {
@@ -753,6 +871,106 @@ test('locally saved provider credentials and custom models are usable without a 
   const result=await turn(s.session_id,'local-provider',{expect_json:false,require_submit:false});
   assert.equal(ends(result)[0].final_text,'Configured locally');
   assert.ok(!JSON.stringify(catalog).includes('fake-local-literal-key'));
+});
+
+test('provider edits freeze active turns and replace endpoint, protocol, key and cleared limits together', async () => {
+  const dir = join(root, 'home', '.config', 'briefloop', 'native-engine');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'providers.json');
+  const original = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const saved = JSON.parse(original || '{}');
+  const record = { provider: 'snapshot', model: 'model', name: 'Snapshot fixture', protocol: 'chat-completions',
+    base_url: `http://127.0.0.1:${server.address().port}/old/v1`, api_key: 'fixture-old-key',
+    context_limit: 65536, output_limit: 1024, supports_images: false };
+  const save = (changes = {}) => {
+    Object.assign(record, changes);
+    writeFileSync(path, JSON.stringify({ ...saved, 'snapshot/model': record }));
+  };
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  let started;
+  const toolStarted = new Promise(resolve => { started = resolve; });
+  const tools = [{ name: 'workspace_action', description: 'Fixture operation', parameters: { type: 'object' }, long_running: true }];
+  try {
+    save();
+    const initial = await reviewer({ role: 'chat', model: 'snapshot/model', runner_tools: tools });
+    script(reply.tool('workspace_action'), reply.text('old turn finished'));
+    runnerTool = () => { started(); return waiting; };
+    const active = turn(initial.session_id, 'provider-active', { expect_json: false, require_submit: false });
+    await toolStarted;
+    save({ protocol: 'anthropic-messages', base_url: `http://127.0.0.1:${server.address().port}/new`,
+      api_key: 'fixture-new-key', context_limit: 32768, output_limit: 256, supports_images: true });
+    const [catalog, metadata] = await Promise.all([call('list_models'), call('ping')]);
+    assert.ok(metadata.configuration_revision > initial.configuration_revision);
+    assert.equal(catalog.models.find(m => m.id === 'snapshot/model').output_limit, 256);
+    // The second request in the SAME turn is made after the catalog refreshed.
+    release({ ok: true, content: [{ type: 'text', text: 'operation complete' }] });
+    assert.equal(ends(await active)[0].status, 'completed');
+    assert.deepEqual(provider.transports, [
+      { path: '/old/v1/chat/completions', key: 'Bearer fixture-old-key', output: 1024 },
+      { path: '/old/v1/chat/completions', key: 'Bearer fixture-old-key', output: 1024 },
+    ]);
+
+    // NativeHarness performs this close/resume only at the next turn boundary.
+    await call('session_close', { session_id: initial.session_id });
+    const resumed = await reviewer({ role: 'chat', model: 'snapshot/model', runner_tools: tools, session_file: initial.session_file });
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.configuration_revision, metadata.configuration_revision);
+    assert.equal(resumed.runtime_policy.context_window, 32768);
+    assert.equal(resumed.image_input, true);
+    script(reply.anthropicText('new turn finished'));
+    assert.equal(ends(await turn(resumed.session_id, 'provider-resumed', { expect_json: false, require_submit: false }))[0].status, 'completed');
+    assert.deepEqual(provider.transports, [{ path: '/new/v1/messages?beta=true', key: 'fixture-new-key', output: 256 }]);
+    assert.match(JSON.stringify(provider.requests[0].messages), /old turn finished/, 'provider changes preserve the transcript');
+
+    save({ context_limit: null, output_limit: null, supports_images: null });
+    const cleared = (await call('list_models')).models.find(m => m.id === 'snapshot/model');
+    assert.equal(cleared.context_window, 1_000_000);
+    assert.equal(cleared.output_limit, 8192);
+    await call('session_close', { session_id: resumed.session_id });
+    const continued = await reviewer({ role: 'chat', model: 'snapshot/model', session_file: resumed.session_file });
+    const fresh = await reviewer({ role: 'chat', model: 'snapshot/model' });
+    for (const [label, session] of [['continued', continued], ['fresh', fresh]]) {
+      assert.equal(session.runtime_policy.context_window, 1_000_000);
+      assert.equal(session.runtime_policy.output_limit, 8192);
+      assert.equal(session.image_input, false);
+      script(reply.anthropicText(label));
+      assert.equal(ends(await turn(session.session_id, 'provider-cleared-' + label, { expect_json: false, require_submit: false }))[0].status, 'completed');
+      assert.deepEqual(provider.transports, [{ path: '/new/v1/messages?beta=true', key: 'fixture-new-key', output: 8192 }]);
+    }
+  } finally {
+    release({ ok: false, error: 'test finished' });
+    runnerTool = () => ({ ok: false, error: 'no runner tool configured' });
+    if (original === null) rmSync(path, { force: true });
+    else writeFileSync(path, original);
+  }
+});
+
+test('clearing local overrides restores shipped model capabilities rather than previous overrides', async () => {
+  const dir = join(root, 'home', '.config', 'briefloop', 'native-engine');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'providers.json');
+  const original = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const record = { provider: 'fake', model: 'm2', protocol: 'chat-completions',
+    base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-override-key',
+    context_limit: 20000, output_limit: 300, supports_images: false };
+  const save = () => writeFileSync(path, JSON.stringify({ ...JSON.parse(original || '{}'), 'fake/m2': record }));
+  try {
+    save();
+    const overridden = await reviewer({ model: VISION_MODEL });
+    assert.equal(overridden.runtime_policy.context_window, 20000);
+    assert.equal(overridden.runtime_policy.output_limit, 300);
+    assert.equal(overridden.image_input, false);
+    Object.assign(record, { context_limit: null, output_limit: null, supports_images: null });
+    save();
+    const restored = await reviewer({ model: VISION_MODEL });
+    assert.equal(restored.runtime_policy.context_window, 100000);
+    assert.equal(restored.runtime_policy.output_limit, 1000);
+    assert.equal(restored.image_input, true);
+  } finally {
+    if (original === null) rmSync(path, { force: true });
+    else writeFileSync(path, original);
+  }
 });
 
 test('aborting a pending child runner tool does not wait for its natural result', async () => {

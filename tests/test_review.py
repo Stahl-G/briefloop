@@ -21,6 +21,97 @@ def fixture(tmp_path):
     return store,src,brief,value
 
 
+@pytest.mark.parametrize('protocol', ['clauses_v1', 'legacy'])
+def test_status_and_prompt_use_the_reviews_frozen_requirement_protocol(tmp_path, protocol):
+    from briefloop.deliverable_spec import resolve, reader_contract_schema, clause_items
+    from briefloop.review import run_review, get_review, sha
+    from briefloop.store import dump
+    store = Store(tmp_path)
+    source = store.add_source('Input', 'Only the saved observation is available.')
+    run = store.create_run({'title': 'Report', 'objective': 'Explain coverage. Verify the source directly.'}, [source['id']])
+    spec = resolve(json.loads(run['requirements']))
+    requirement_id = spec['requirement_items'][0]['requirement_id']
+    contract = {'source_fingerprint': reader_contract_schema(spec)['properties']['source_fingerprint']['const'],
+        'clauses': [{'requirement_id': requirement_id, 'kind': kind, 'source_quote': text, 'instruction': text}
+                    for kind, text in [('reader_content', 'Explain coverage.'),
+                                       ('research_method', 'Verify the source directly.')]]}
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': 'Saved observation.', 'reader_contract': contract})
+    job = store.enqueue('assess', {'version_id': brief['id']})
+    folder = store.root/'jobs'/job['id']
+    if protocol == 'legacy':
+        # Restored legacy reviews keep their protocol even when their packet has clauses.
+        fingerprint, files = build_packet(store, brief['id'], folder)
+        with store.tx() as connection:
+            connection.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
+                ('legacy_saved', brief['id'], job['id'], fingerprint, 'queued',
+                 dump({'protocol': protocol, 'packet_path': str((folder/'packet').relative_to(store.root)),
+                       'files': files}), None, '2026', '2026'))
+        (folder/'review-id.json').write_text(dump({'review_id': 'legacy_saved'}), encoding='utf-8')
+    class Runtime:
+        calls = 0
+        def execute(self, stage, prompt, output_folder, **kwargs):
+            self.calls += 1
+            row = get_review(store, stage['review_id'])
+            target = json.loads((output_folder/'packet/target.json').read_text(encoding='utf-8'))
+            assert ('本次为条款级审阅' in prompt) == (protocol == 'clauses_v1')
+            assert ('且每个requirement_item都有requirement_checks' in prompt) == (protocol == 'legacy')
+            value = {'fingerprint': row['fingerprint'], 'version_id': brief['id'], 'status': 'complete',
+                'summary': 'Synthetic review', 'coverage_scan_complete': True,
+                'assessment': {'brief_hash': brief['hash'], 'status': 'complete', 'summary': 'Synthetic',
+                    'overall': '建议修改', 'evidence': 3, 'coverage': 2, 'analysis': 3, 'expression': 3}}
+            if protocol == 'clauses_v1':
+                value['clause_checks'] = [{'clause_id': clause['clause_id'], 'status': status,
+                    'reason': 'Saved ' + status, 'basis': ['Saved source basis']}
+                    for clause, status in zip(clause_items(target['requirements']), ('missing', 'unverified'))]
+            else:
+                value['requirement_checks'] = for_version(store, brief['id'])
+            (output_folder/'review.json').write_text(dump(value), encoding='utf-8')
+    runtime = Runtime()
+    accepted = run_review(store, runtime, job, brief['id'], folder)
+    assert runtime.calls == 1 and accepted['status'] == 'complete'
+    row = review_status(store, brief['id'])['reviews'][0]
+    frozen = json.loads((folder/'packet/target.json').read_text(encoding='utf-8'))['requirements']
+    assert row['protocol'] == protocol
+    assert row['requirement_items'] == frozen['requirement_items']
+    assert row['clause_items'] == clause_items(frozen)
+    assert row['result'] == accepted['result'] and not row.get('requirement_index_error')
+    store.revise(brief['id'], 'Revised observation.')
+    changed = json.loads(run['requirements']); changed['objective'] = 'A later requirement.'
+    with store.tx() as connection:
+        connection.execute('UPDATE runs SET requirements=? WHERE id=?', (dump(changed), run['id']))
+    assert review_status(Store(tmp_path), brief['id'])['reviews'][0] == row
+    packet=folder/'packet';view_bytes=(packet/'requirements.json').read_bytes()
+    (packet/'requirements.json').write_text('{"requirements":{}}', encoding='utf-8')
+    unavailable = review_status(store, brief['id'])['reviews'][0]
+    assert unavailable['result'] == row['result'] and unavailable['protocol'] == protocol
+    assert unavailable['requirement_index_error'] and unavailable['requirement_items'] == []
+    assert unavailable['clause_items'] == []
+    data=get_review(store,accepted['id'])['data']
+    index=json.loads((packet/'index.json').read_text(encoding='utf-8'))
+    def rebind_index():
+        raw=dump(index).encode('utf-8');(packet/'index.json').write_bytes(raw)
+        data['files']['index.json']=sha(raw)
+        with store.tx() as connection:
+            connection.execute('UPDATE reviews SET data=?,fingerprint=? WHERE id=?',
+                               (dump(data),index['fingerprint'],accepted['id']))
+    # Even correctly hashed oversized display files are not read by the polling path.
+    large=json.loads(view_bytes);large['padding']='x'*(2*1024*1024)
+    raw=dump(large).encode('utf-8');(packet/'requirements.json').write_bytes(raw)
+    data['files']['requirements.json']=index['files']['requirements.json']=sha(raw)
+    rebind_index()
+    assert review_status(store,brief['id'])['reviews'][0]['requirement_index_error']
+    (packet/'requirements.json').write_bytes(view_bytes)
+    data['files']['requirements.json']=index['files']['requirements.json']=sha(view_bytes)
+    index['version_id']='other-version';rebind_index()
+    assert review_status(store,brief['id'])['reviews'][0]['requirement_index_error']
+    # Older packets without the split view can use their bounded, bound target.
+    index['version_id']=brief['id'];index['files'].pop('requirements.json');data['files'].pop('requirements.json')
+    target=json.loads((packet/'target.json').read_text(encoding='utf-8'))
+    index['fingerprint']=sha(dump({'target':target,'files':index['files']}).encode('utf-8'))
+    rebind_index()
+    assert review_status(store,brief['id'])['reviews'][0] == row
+
+
 def test_review_bound_to_exact_version_and_author_cannot_close(tmp_path):
     store,source,brief,value=fixture(tmp_path)
     with pytest.raises(ValueError,match='未绑定'):accept_review(store,'review_test',{**value,'fingerprint':'other'})
@@ -331,6 +422,132 @@ def test_finding_can_reference_frozen_clause_but_not_foreign_clause(tmp_path, fo
         accept_review(store,'review_clause',result)
         saved = review_status(store,brief['id'])['findings'][0]['data']
         assert saved['requirement_ids'] == [rid,cid]
+
+
+def mixed_clause_review(tmp_path):
+    from briefloop.deliverable_spec import clause_items, reader_contract_schema, resolve
+    store = Store(tmp_path)
+    source = store.add_source('Input', 'Shipment is planned.')
+    run = store.create_run({
+        'title': 'Report',
+        'objective': 'Explain delivery. Verify plan against actual.',
+        'key_questions': ['State shipment status.'],
+        'writing_preferences': ['Use concise prose.'],
+    }, [source['id']])
+    spec = resolve(json.loads(run['requirements']))
+    parents = {item['kind']: item['requirement_id'] for item in spec['requirement_items']}
+    contract = {'source_fingerprint': reader_contract_schema(spec)['properties']['source_fingerprint']['const'],
+                'clauses': [
+                    {'requirement_id': parents['objective'], 'source_quote': 'Explain delivery.',
+                     'kind': 'reader_content', 'instruction': 'Explain delivery.'},
+                    {'requirement_id': parents['objective'], 'source_quote': 'Verify plan against actual.',
+                     'kind': 'research_method', 'instruction': 'Verify plan against actual.'},
+                    {'requirement_id': parents['question'], 'source_quote': 'State shipment status.',
+                     'kind': 'reader_content', 'instruction': 'State shipment status.'},
+                    {'requirement_id': parents['writing'], 'source_quote': 'Use concise prose.',
+                     'kind': 'writing_preference', 'instruction': 'Use concise prose.'},
+                ]}
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': 'Shipment is planned.',
+                                       'reader_contract': contract})
+    job = store.enqueue('review', {'version_id': brief['id']})
+    folder = store.root/'jobs'/job['id']
+    fingerprint, files = build_packet(store, brief['id'], folder)
+    target = json.loads((folder/'packet/target.json').read_text())
+    clauses = {}
+    for item in clause_items(target['requirements']):
+        key = ('objective_content' if item['kind'] == 'reader_content' else 'objective_method') \
+            if item['requirement_id'] == parents['objective'] else item['kind']
+        clauses[key] = item['clause_id']
+    with store.tx() as c:
+        c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
+                  ('review_mixed', brief['id'], job['id'], fingerprint, 'running',
+                   json.dumps({'protocol': 'clauses_v1', 'packet_path': str((folder/'packet').relative_to(store.root)),
+                               'files': files}), None, '2026', '2026'))
+    result = {'fingerprint': fingerprint, 'version_id': brief['id'], 'status': 'complete',
+              'summary': 'Checked', 'coverage_scan_complete': True,
+              'clause_checks': [{'clause_id': item['clause_id'], 'status': 'covered',
+                                 'reason': 'Checked against source', 'basis': ['Input']}
+                                for item in clause_items(target['requirements'])],
+              'findings': []}
+    return store, brief, target, parents, clauses, result
+
+
+@pytest.mark.parametrize('kind', ['missing_requirement', 'execution_gap'])
+def test_major_compliance_finding_requires_clause_for_mixed_parent(tmp_path, kind):
+    from briefloop.release import decision
+    store, brief, target, parents, clauses, result = mixed_clause_review(tmp_path)
+    finding = {'kind': kind, 'severity': 'major', 'description': 'Method was not followed',
+               'evidence': 'No verification record', 'requirement_ids': [parents['objective']]}
+    result['findings'] = [finding]
+    with pytest.raises(ValueError, match='混合父 requirement_id') as error:
+        accept_review(store, 'review_mixed', result)
+    assert parents['objective'] in str(error.value)
+    assert clauses['objective_content'] in str(error.value)
+    assert clauses['objective_method'] in str(error.value)
+    assert not store.rows('SELECT * FROM review_findings')
+    finding['requirement_ids'] = [clauses['objective_method']]
+    accepted = accept_review(store, 'review_mixed', result)
+    gate = decision(target, accepted['result'], review_status(store, brief['id'])['findings'], protocol='clauses_v1')
+    assert gate['eligible']
+    assert any(item['code'] == 'finding_notice' for item in gate['notices'])
+
+
+@pytest.mark.parametrize('reference,kind,severity,notice', [
+    ('objective_content', 'execution_gap', 'major', False),
+    ('objective_method', 'execution_gap', 'major', True),
+    ('question', 'execution_gap', 'major', False),
+    ('writing', 'execution_gap', 'major', True),
+    ('objective', 'expression', 'major', True),
+    ('objective', 'execution_gap', 'minor', True),
+    ('objective', 'contradiction', 'major', False),
+])
+def test_clause_and_pure_parent_findings_keep_delivery_effect(tmp_path, reference, kind, severity, notice):
+    from briefloop.release import decision
+    store, brief, target, parents, clauses, result = mixed_clause_review(tmp_path)
+    identity = clauses[reference] if reference in clauses else parents[reference]
+    result['findings'] = [{'kind': kind, 'severity': severity, 'description': 'Unresolved issue',
+                           'evidence': 'Checked against source', 'requirement_ids': [identity]}]
+    accepted = accept_review(store, 'review_mixed', result)
+    assert accepted['result']['findings'][0]['requirement_ids'] == [identity]
+    gate = decision(target, accepted['result'], review_status(store, brief['id'])['findings'], protocol='clauses_v1')
+    assert gate['eligible'] is notice
+    issues = gate['notices'] if notice else gate['blockers']
+    assert any(item['code'] == ('finding_notice' if notice else 'finding_unresolved') for item in issues)
+
+
+def test_saved_mixed_parent_finding_can_be_replayed_and_resolved(tmp_path):
+    from briefloop.release import decision
+    store, brief, target, parents, clauses, result = mixed_clause_review(tmp_path)
+    historical = {'kind': 'execution_gap', 'severity': 'major', 'description': 'Historic method gap',
+                  'evidence': 'No verification record', 'requirement_ids': [parents['objective']]}
+    result['findings'] = [historical]
+    # This row represents a review accepted before mixed-parent admission was tightened.
+    with store.tx() as c:
+        c.execute('UPDATE reviews SET status=?,result=? WHERE id=?',
+                  ('complete', json.dumps(result), 'review_mixed'))
+        c.execute('INSERT INTO review_findings VALUES(?,?,?,?,?,?)',
+                  ('finding_historical', 'review_mixed', brief['id'], 'open', json.dumps(historical), '2026'))
+    assert accept_review(store, 'review_mixed', result)['status'] == 'complete'
+    old_gate = decision(target, result, review_status(store, brief['id'])['findings'], protocol='clauses_v1')
+    assert not old_gate['eligible']
+    assert any(item['code'] == 'finding_unresolved' for item in old_gate['blockers'])
+
+    revised = store.revise(brief['id'], 'Shipment remains planned.')
+    response = respond(store, 'finding_historical', revised['id'], 'corrected', 'Verification added')
+    folder = store.root/'recheck-mixed'
+    fingerprint, files = build_packet(store, revised['id'], folder)
+    with store.tx() as c:
+        c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
+                  ('review_mixed_response', revised['id'], None, fingerprint, 'running',
+                   json.dumps({'protocol': 'clauses_v1', 'packet_path': str((folder/'packet').relative_to(store.root)),
+                               'files': files}), None, '2026', '2026'))
+    followup = {**result, 'fingerprint': fingerprint, 'version_id': revised['id'],
+                'findings': [{**historical, 'response_to': response['id'], 'resolution': 'resolved'}],
+                'response_checks': [{'response_id': response['id'], 'decision': 'resolved',
+                                     'reason': 'Verified the revision'}]}
+    accept_review(store, 'review_mixed_response', followup)
+    assert review_status(store, brief['id'])['findings'][0]['status'] == 'open'
+    assert review_status(store, revised['id'])['findings'][0]['status'] == 'resolved'
 
 
 def test_complete_needs_the_coverage_flag_and_every_requirement_checked(tmp_path):

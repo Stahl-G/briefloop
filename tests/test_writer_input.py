@@ -212,6 +212,165 @@ def test_evidence_tools_have_flat_typed_inputs_and_save_records(tmp_path):
     assert value['number_bindings']==[] and value['citations'][0]['source_id']==source['id']
 
 
+def test_evidence_write_receipt_replays_only_the_latest_identical_request(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown':
+        f'收入同比增长20%。[@{source["id"]}]'})
+    source_text = store.source_text(source['id'])
+    batch = {'base_revision': first['revision'], 'citations': [
+        {'source_id': source['id'], 'excerpt': source_text}]}
+    saved = writer.assemble_evidence(store, config, batch)
+    current = drafts._root(store, config) / 'current.json'
+    before = current.read_bytes()
+    replay = writer.assemble_evidence(store, config, dict(reversed(list(batch.items()))))
+    assert replay == {**saved, 'replayed': True}
+    assert current.read_bytes() == before
+    assert saved['record_keys']['citations']
+
+    update = writer.operations()['update_number_bindings'][1]
+    request = {'base_revision': saved['revision'], 'records': [{
+        'label': '收入同比', 'value': 20, 'unit': '%', 'source_id': source['id'],
+        'source_excerpt': source_text, 'report_quote': '收入同比增长20%', 'number_text': '20%'}]}
+    next_saved = update(store, config, request)
+    before = current.read_bytes()
+    assert update(store, config, request) == {**next_saved, 'replayed': True}
+    assert current.read_bytes() == before
+    assert next_saved['record_keys']
+    with pytest.raises(ValueError, match='最新稿件版本'):
+        update(store, config, {**request, 'records': [{**request['records'][0], 'label': '收入同比修正'}]})
+
+    newer = writer.update_draft_details(store, config, {
+        'base_revision': next_saved['revision'], 'gaps': ['来源范围待补充']})
+    assert newer['revision'] != next_saved['revision']
+    with pytest.raises(ValueError, match='已被后续修订覆盖'):
+        update(store, config, request)
+    with pytest.raises(ValueError, match='已被后续修订覆盖'):
+        writer.assemble_evidence(store, config, batch)
+
+
+@pytest.mark.parametrize('field', ['citations', 'temporal_claims'])
+def test_each_flat_evidence_tool_replays_add_and_remove(tmp_path, field):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown':
+        f'2025年收入增长20%。[@{source["id"]}]'})
+    text = store.source_text(source['id'])
+    record = ({'source_id': source['id'], 'locator': 'line 1', 'excerpt': text}
+              if field == 'citations' else
+              {'statement': '2025年收入增长', 'event_date': '2025', 'source_id': source['id'],
+               'locator': 'line 1'})
+    update = writer.operations()['update_' + field][1]
+    add = {'base_revision': first['revision'], 'records': [record]}
+    saved = update(store, config, add)
+    assert update(store, config, add) == {**saved, 'replayed': True}
+    remove = {'base_revision': saved['revision'], 'remove_keys': saved['record_keys']}
+    removed = update(store, config, remove)
+    assert update(store, config, remove) == {**removed, 'replayed': True}
+    assert drafts._candidate(store, config, {'revision': removed['revision']})['draft'][field] == []
+
+
+def test_text_block_and_details_retries_do_not_reapply_edits(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown':
+        f'**收入**增长20%。[@{source["id"]}]\n\n下一步观察。'})
+    patch = {'base_revision': first['revision'], 'replacements': [
+        {'old_text': '下一步观察。', 'new_text': '下一步观察毛利。'}]}
+    patched = writer.patch_report_text(store, config, patch)
+    assert writer.patch_report_text(store, config, patch) == {**patched, 'replayed': True}
+    with pytest.raises(ValueError, match='最新稿件版本'):
+        writer.patch_report_text(store, config, {**patch, 'replacements': [
+            {'old_text': '下一步观察。', 'new_text': '下一步观察收入。'}]})
+
+    read = drafts.read_saved(store, config, {'field': 'body'})
+    blocks = {'base_revision': patched['revision'], 'block_keys': [read['block_keys'][1]],
+              'markdown': '后续观察毛利。'}
+    replaced = writer.replace_report_blocks(store, config, blocks)
+    assert writer.replace_report_blocks(store, config, blocks) == {**replaced, 'replayed': True}
+    details = {'base_revision': replaced['revision'], 'gaps': ['尚未证实因果']}
+    saved = writer.update_draft_details(store, config, details)
+    assert writer.update_draft_details(store, config, details) == {**saved, 'replayed': True}
+    with pytest.raises(ValueError, match='已被后续修订覆盖'):
+        writer.replace_report_blocks(store, config, blocks)
+
+
+def test_first_and_subsequent_section_assembly_replay_respects_section_snapshot(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    section = writer.write_sections(store, config, {'sections': [
+        {'section_id': 'one', 'markdown': f'收入增长20%。[@{source["id"]}]'}]})
+    initial = {'title': '报告', 'section_ids': ['one']}
+    first = writer.assemble_report(store, config, initial)
+    assert writer.assemble_report(store, config, initial) == {**first, 'replayed': True}
+    with pytest.raises(writer.WritingError, match='base_revision'):
+        writer.assemble_report(store, config, {**initial, 'title': '另一份报告'})
+    writer.write_sections(store, config, {'sections': [
+        {'section_id': 'one', 'markdown': '收入增长21%。',
+         'expected_hash': section['sections'][0]['hash']}]})
+    with pytest.raises(ValueError, match='章节已修改'):
+        writer.assemble_report(store, config, initial)
+    subsequent = {**initial, 'base_revision': first['revision']}
+    second = writer.assemble_report(store, config, subsequent)
+    assert second['revision'] != first['revision']
+    assert writer.assemble_report(store, config, subsequent) == {**second, 'replayed': True}
+    newer = writer.update_draft_details(store, config, {'base_revision': second['revision'], 'gaps': ['待核实']})
+    assert newer['revision'] != second['revision']
+    with pytest.raises(ValueError, match='已被后续修订覆盖'):
+        writer.assemble_report(store, config, subsequent)
+
+
+def test_replay_revalidates_attempt_packet_and_source_identity(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown':
+        f'收入增长20%。[@{source["id"]}]'})
+    request = {'base_revision': first['revision'], 'gaps': ['待确认口径']}
+    saved = writer.update_draft_details(store, config, request)
+    with pytest.raises(ValueError, match='最新稿件版本|执行身份'):
+        writer.update_draft_details(store, {**config, 'attempt_id': 'another-attempt'}, request)
+    task = __import__('pathlib').Path(config['packet_root']) / 'input.json'
+    original = task.read_bytes()
+    try:
+        task.write_bytes(original + b' ')
+        with pytest.raises(ValueError, match='写作材料被修改|写作包已改变'):
+            writer.update_draft_details(store, config, request)
+    finally:
+        task.write_bytes(original)
+    source_file = store.root / source['path']
+    original_source = source_file.read_bytes()
+    try:
+        source_file.write_text('来源被修改', encoding='utf-8')
+        with pytest.raises(ValueError):
+            writer.update_draft_details(store, config, request)
+    finally:
+        source_file.write_bytes(original_source)
+    assert writer.update_draft_details(store, config, request) == {**saved, 'replayed': True}
+
+
+def test_accepted_write_does_not_run_again_after_content_hash_cycle(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    original = writer.write_report(store, config, {'title': '报告', 'markdown': '原稿'})
+    request = {'base_revision': original['revision'], 'gaps': ['待核实']}
+    changed = writer.update_draft_details(store, config, request)
+    restored = writer.update_draft_details(store, config, {
+        'base_revision': changed['revision'], 'gaps': []})
+    assert restored['revision'] == original['revision']  # A -> B -> A
+    current = drafts._root(store, config) / 'current.json'
+    before = current.read_bytes()
+    with pytest.raises(ValueError, match='已被后续修订覆盖'):
+        writer.update_draft_details(store, config, request)
+    assert current.read_bytes() == before
+
+
+def test_direct_save_preserves_accepted_write_history(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    original = writer.write_report(store, config, {'title': '报告', 'markdown': '原稿'})
+    request = {'base_revision': original['revision'], 'gaps': ['待核实']}
+    changed = writer.update_draft_details(store, config, request)
+    restored = drafts.save(store, config, {'base_revision': changed['revision'], 'gaps': []})
+    assert restored['revision'] == original['revision']
+    current = drafts._read(drafts._root(store, config) / 'current.json')
+    assert current['writer_input_history'] and 'writer_input_receipt' not in current
+    with pytest.raises(ValueError, match='已被后续修订覆盖'):
+        writer.update_draft_details(store, config, request)
+
+
 
 def test_markdown_prompt_preserves_content_rules_and_frozen_protocol(tmp_path):
     from briefloop import analyst

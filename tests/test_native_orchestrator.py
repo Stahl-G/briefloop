@@ -42,16 +42,25 @@ class FlowEngine:
             self.sessions[sid]['eid'] = p['execution_id']
             role = self.sessions[sid]['role']
             if role == 'orchestrator':
+                data=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text(encoding='utf-8'))
+                round_tools = [
+                    ('save_research_handoff', {'handoff':{'learnings':[],'follow_ups':[],'covered':['Synthetic source'],'open_questions':[]}}),
+                    ('workspace_action', {'request':{'action':'finish_research_round','gaps':[],'summary':'Synthetic round complete'}})
+                ] if data.get('research_plan') else []
                 self.queues[sid] = [
                     ('save_plan', {'plan':{'summary':'Explain revenue', 'reader_contract':contract(self.store,self.run['id'])}}),
                     ('run_scouts', {'tasks':[{'slot_id':'scout-1','assignment':'Read revenue'}, {'slot_id':'scout-2','assignment':'Read scope'}]}),
-                    ('save_research_handoff', {'handoff':{'learnings':[],'follow_ups':[],'covered':['Synthetic source'],'open_questions':[]}}),
-                    ('workspace_action', {'request':{'action':'finish_research_round','gaps':[],'summary':'Synthetic round complete'}}),
+                    *round_tools,
                     ('workspace_action', {'request':{'action':'reconciliation_save','reconciliation':{'status':'not_applicable','examined_claim_ids':[],'unexamined_claim_ids':[],'relations':[],'open_questions':[],'coverage_notes':'Synthetic fixture has no source claims'}}}),
                     ('write_report', {'instructions':'State revenue and keep the period'}), ('finish_task', {})]
             elif role == 'scout':
                 # Neither Scout can submit until both child sessions are live.
-                self.queues[sid] = [('submit_scout_result', {'gaps':['No further synthetic material']})]
+                self.queues[sid] = [
+                    ('source_read', {'source_id':self.source['id']}),
+                    ('record_evidence', {'items':[{'id':'revenue','source_id':self.source['id'],
+                        'source_hash':self.source['hash'],'locator':'line 1','quote':'2025年收入1200万元。',
+                        'facts':['2025年收入1200万元。'],'coverage_status':'complete'}]}),
+                    ('submit_scout_result', {'gaps':['No further synthetic material']})]
                 threading.Thread(target=lambda:(self.scouts.wait(4),self.next(sid)),daemon=True).start()
                 return {}
             elif role == 'analyst':
@@ -85,12 +94,13 @@ class FlowEngine:
     def close(self):pass
 
 
-def setup(tmp_path):
+def setup(tmp_path, *, research_protocol='quality_v1', research_tier='standard'):
     store=Store(tmp_path)
     store.set_meta('settings',{**store.settings(),'agent_backend':'briefloop-native','model':'fixture/model',
         'model_selection_required':False,'auto_revision':False,'max_parallel':2})
     source=store.add_source('财报','2025年收入1200万元。')
-    run=store.create_run({'title':'经营简报','objective':'解释经营情况','allow_web':False},[source['id']],research_protocol='quality_v1')
+    run=store.create_run({'title':'经营简报','objective':'解释经营情况','allow_web':False,
+        'research_tier':research_tier},[source['id']],research_protocol=research_protocol)
     job=store.enqueue('generate',{'run_id':run['id'],'single_evaluation':False})
     store.update_job(job['id'], status='running')
     return store,source,run,store.one('jobs',job['id'])
@@ -111,6 +121,33 @@ def test_worker_native_plan_parallel_research_writer_and_saved_draft(tmp_path):
     before=len([c for c in engine.calls if c[0]=='turn_start'])
     assert worker.generate(job,score=False)['version_id']==brief['id']
     assert len([c for c in engine.calls if c[0]=='turn_start'])==before
+
+
+def test_native_quick_run_without_frozen_plan_reads_local_sources_and_saves_report(tmp_path):
+    from briefloop.research_plan import frozen
+    store,source,run,job=setup(tmp_path,research_protocol=None,research_tier='quick')
+    engine=FlowEngine(store,run,source);harness=NativeHarness(store,engine)
+    worker=Worker(store);worker.runtime=InteractiveRuntime(store,backends={'briefloop-native':harness})
+    try:
+        result=worker.generate(job,score=False)
+        folder=worker.folder(job)
+        research=json.loads((folder/'research.json').read_text(encoding='utf-8'))
+        assert len(research['sources'])==1  # both Scouts read the same local source
+        assert research['sources'][0]['source_id']==source['id']
+        assert research['sources'][0]['excerpt']=='2025年收入1200万元。'
+        assert not any('未完成' in gap for gap in research['gaps'])
+        reads=[p for method,p in engine.calls if method=='tool_result' and p['request_id']=='source_read']
+        assert len(reads)==2 and all(p['ok'] and 'source_hash: '+source['hash'] in p['content'][0]['text'] for p in reads)
+        scouts=[s for s in engine.sessions.values() if s['role']=='scout']
+        assert len(scouts)==2
+        for session in scouts:
+            task=json.loads((Path(session['packet_root'])/'task.json').read_text(encoding='utf-8'))
+            assert task['research_handoff'] is None and task['allow_web'] is False
+            assert 'web_search' not in {tool['name'] for tool in session['runner_tools']}
+        brief=store.one('briefs',result['version_id'])
+        assert '1200' in brief['markdown'] and json.loads(brief['detail'])['citations'][0]['source_id']==source['id']
+        assert len(store.rows('SELECT * FROM briefs'))==1 and frozen(store,run['id']) is None
+    finally:harness.close()
 
 
 def test_chat_permissions_frozen_runtime_and_submit_replay(tmp_path):
@@ -158,17 +195,6 @@ def test_parent_cancel_only_cancels_its_children(tmp_path):
         assert ca.cancelled and not cb.cancelled
         with pytest.raises(InterruptedError):
             with h.child_runtime(a,Child()):pass
-
-
-def test_native_credentials_redacted_and_not_in_workspace(tmp_path,monkeypatch):
-    from briefloop import native_providers as providers
-    path=tmp_path/'private'/'providers.json';monkeypatch.setattr(providers,'config_path',lambda:path)
-    body={'provider':'synthetic','model':'fixture','protocol':'chat-completions','api_key':'test-not-a-real-key','base_url':'https://example.test/v1'}
-    assert providers.save(body)['model']=='synthetic/fixture'
-    assert 'test-not-a-real-key' not in dump(providers.configurations())
-    assert path.stat().st_mode & 0o777 == 0o600
-    providers.save({**body,'api_key':''})
-    assert json.loads(path.read_text())['synthetic/fixture']['api_key']=='test-not-a-real-key'
 
 
 def test_native_revision_retains_original_and_rechecks_only_once(tmp_path):

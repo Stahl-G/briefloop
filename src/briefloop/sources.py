@@ -22,6 +22,11 @@ import xml.etree.ElementTree as ET
 TITLE_MAX_CHARS=200
 # Interstitial/anti-bot/error titles are not source labels.
 _GENERIC_TITLE_RE=re.compile(r'^(?:just a moment|attention required|access denied|access to this page has been denied|are you a robot|verify you are human|checking your browser|enable javascript|403 forbidden|404 not found|429 too many requests|too many requests|service unavailable|bad gateway)\b',re.I)
+# Rejecting a source needs an entire interstitial title, not an article prefix.
+# Permit terminal punctuation and the known Cloudflare brand, not arbitrary text.
+_ACCESS_TITLE_RE=re.compile(_GENERIC_TITLE_RE.pattern+r'[.!?…]*(?:\s*[|–—-]\s*Cloudflare)?',re.I)
+_LOGIN_TITLE_RE=re.compile(r'(?:sign in|log in|login|登录)[.!?…]*',re.I)
+
 
 
 class TextHTML(HTMLParser):
@@ -58,6 +63,35 @@ def html_title(data, content_type='', encoding=''):
     return title[:TITLE_MAX_CHARS]
 
 
+def _html_block_reason(data, content_type='', encoding=''):
+    """Return a reason only for a high-confidence HTML access interstitial.
+
+    A generic title is intentionally not enough: short public notices and
+    articles describing challenges are valid sources.  We require independent
+    page evidence (challenge markup/text, or an actual password form) before
+    marking the retained HTTP response as an extraction failure.
+    """
+    try:page=data.decode(encoding or 'utf-8','ignore')
+    except (LookupError,UnicodeDecodeError):page=data.decode('utf-8','ignore')
+    # A missing or incorrect Content-Type must not turn an otherwise readable
+    # HTML interstitial into report text.  Keep this sniff deliberately narrow.
+    if 'html' not in (content_type or '').lower() and not re.match(r'^\s*(?:<!doctype\s+html|<html\b|<head\b|<title\b)',page,re.I):return None
+    title_match=re.search(r'<title[^>]*>(.*?)</title>',page,re.I|re.S)
+    title=re.sub(r'\s+',' ',unescape(title_match.group(1))).strip() if title_match else ''
+    # Evidence must come from outside <title>/<head>: otherwise a normal
+    # article title such as “Checking your browser performance” self-confirms.
+    body=re.sub(r'<head\b[^>]*>.*?</head\s*>|<title\b[^>]*>.*?</title\s*>','',page,flags=re.I|re.S).lower()
+    challenge_markers=('checking your browser','verify you are human','enable javascript and cookies',
+                       'cf-chl-','challenge-platform','captcha')
+    if _ACCESS_TITLE_RE.fullmatch(title) and any(marker in body for marker in challenge_markers):
+        return '网页返回访问拦截页，未保存为可用正文'
+    has_password=bool(re.search(r'<input\b[^>]*\btype\s*=\s*["\']?password\b',body,re.I))
+    has_form='<form' in body
+    if _LOGIN_TITLE_RE.fullmatch(title) and has_form and has_password:
+        return '网页返回登录页，未保存为可用正文'
+    return None
+
+
 def extract(name, data, *, with_extractor=False):
     extractor="text decode utf-8-sig/gb18030"
     ext=Path(name).suffix.lower()
@@ -86,12 +120,13 @@ def extract(name, data, *, with_extractor=False):
             raise ValueError('XLSX 无法读取工作簿，文件可能已损坏') from exc
         extractor='XLSX cells and saved formula values (no recalculation)'
     elif ext == '.docx':
-        extractor='DOCX word/document.xml paragraph text'
+        extractor='DOCX body text and table cell coordinates'
         try:
             from .media import office_archive
+            from .docx_text import document_text
             with office_archive(data) as z:
                 doc=ET.fromstring(z.read('word/document.xml'))
-                text='\n'.join(''.join(n.itertext()) for n in doc.iter() if n.tag.endswith('}p'))
+                text=document_text(doc)
         except (KeyError,zipfile.BadZipFile,ET.ParseError) as exc:
             raise ValueError('DOCX 无法读取正文，文件可能已损坏') from exc
     elif ext in ('.html','.htm'):
@@ -324,6 +359,8 @@ def _fetch(store, url, *, allow_private=False):
                 'media_type':detect_media_type(raw_name,data,content_type),'needs_visual':False,'pages':None}
     text='';error=None;extractor='source extraction'
     try:
+        blocked=_html_block_reason(data,content_type,encoding)
+        if blocked:raise ValueError(blocked)
         text,extractor,details=_source_content(store,raw_name,data,content_type=content_type,encoding=encoding)
         provenance.update(details)
         if not text.strip():raise ValueError('网页没有可读取正文')
@@ -363,19 +400,121 @@ def existing_for_run(store,run_id,url):
     return None
 
 
+class PendingSources:
+    """Acquire raw files now; admit source rows and run bindings together later.
+
+    Fetch/extraction uses the normal Store interface, but add_source only stages
+    the decoded text. No network or extraction runs under the admission lock.
+    """
+    def __init__(self,store):
+        self.store=store
+        self.records=[]
+
+    def __getattr__(self,name):
+        return getattr(self.store,name)
+
+    def add_source(self,name,text,*,url=None,error=None,source_id=None):
+        from .store import uid,now,content_hash
+        sid=source_id or uid('src')
+        row={'id':sid,'name':name,'path':'sources/'+sid+'.txt','url':url,
+             'status':'failed' if error else 'ready','error':error,'hash':content_hash(text),'created':now()}
+        self.records.append((row,text))
+        return row
+
+    def admit(self,run_id,reservation,*,status='completed',claim_owner=None,claimed_urls=None):
+        from .research_plan import admit_response
+        from . import research_budget as budget
+        claimed_urls=list(claimed_urls or [])
+        if claim_owner and not claimed_urls:raise ValueError('来源认领缺少 URL')
+        with self.store.tx() as connection:
+            if claim_owner and not budget.owns_claims(connection,run_id,claim_owner,claimed_urls):
+                budget.reject_claim_request(connection,run_id,reservation,response_status=status)
+                budget.finish_claims(connection,run_id,claim_owner,claimed_urls,outcome='response_rejected')
+                return False
+            if not admit_response(connection,run_id,reservation,'pages',status=status):
+                if claim_owner:
+                    budget.finish_claims(connection,run_id,claim_owner,claimed_urls,outcome='response_rejected')
+                return False
+            for row,text in self.records:
+                saved=self.store.add_source(row['name'],text,url=row['url'],error=row['error'],
+                                             source_id=row['id'],connection=connection)
+                connection.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,row['id']))
+                row.update(saved)
+            if claim_owner:
+                ids={budget.canonical_url(row['url']):row['id'] for row,_ in self.records if row.get('url')}
+                budget.finish_claims(connection,run_id,claim_owner,claimed_urls,
+                                     outcome=status,source_ids=ids)
+        return True
+
+
 def fetch_for_run(store,run_id,url):
     import json
     run=store.one('runs',run_id)
     if not json.loads(run['requirements']).get('allow_web'):raise ValueError('本轮仅允许本地来源')
-    previous=existing_for_run(store,run_id,url)
     from . import research_budget as budget
-    if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
-    try:reservation=budget.reserve_pages(store,run_id,[url])
-    except budget.BudgetExhausted as exc:return {**exc.result,'url':url}
-    source=fetch(store,url)
-    store.attach_source(run_id,source['id'])
-    if reservation.get('round_id'):
-        from .research_plan import settle_request
-        settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
+    request_url=url.strip()
+    url=budget.canonical_url(request_url)
+    while True:
+        claim=budget.claim_pages(store,run_id,[url])
+        previous=claim['cached'].get(url)
+        if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
+        if claim['budget_exhausted']:return {**claim['budget_exhausted'],'url':request_url}
+        if url in claim['waiting']:
+            result=budget.wait_for_claim(store,run_id,url,claim['waiting'][url])
+            if result['source_id']:
+                previous=store.one('sources',result['source_id'])
+                if previous['status']=='failed':
+                    provenance=store.root/'sources'/(previous['id']+'.provenance.json')
+                    try:provider=json.loads(provenance.read_text(encoding='utf-8')).get('extractor')=='tavily.extract'
+                    except (OSError,ValueError):provider=False
+                    if provider:continue
+                return {**previous,'reused':True,'shared':True,
+                        'budget':budget.snapshot(store,run_id)}
+            if result['outcome'] in ('stale','response_rejected','failed'):continue
+            raise ValueError(result.get('error') or '同一来源读取未完成，请重试')
+        reservation=claim['reservation']
+        break
+    pending=PendingSources(store)
+    try:
+        with budget.keep_claims_alive(store,run_id,claim['owner'],[url]):
+            source=fetch(pending,request_url)
+            status='completed' if source.get('status')=='ready' else 'failed'
+            accepted=pending.admit(run_id,reservation,status=status,
+                                   claim_owner=claim['owner'],claimed_urls=[url])
+    except Exception as exc:
+        budget.abort_claims(store,run_id,claim['owner'],[url],error=str(exc))
+        failure={'local_request_id':reservation['request_id'],'run_id':run_id,
+                 'round_id':reservation.get('round_id'),'stage':reservation.get('stage'),
+                 'operation':'direct_fetch','url':request_url,'canonical_url':url,'outcome':'failed',
+                 'source_id':None,'error':str(exc),'admitted':False}
+        path=budget.save_request_record(store,run_id,reservation['request_id'],failure)
+        if reservation.get('round_id'):
+            from .research_plan import settle_request
+            settle_request(store,run_id,reservation['request_id'],'failed',record_path=path)
+        raise
+    provenance=store.root/'sources'/(source['id']+'.provenance.json')
+    envelope={'local_request_id':reservation['request_id'],'run_id':run_id,'round_id':reservation.get('round_id'),
+              'stage':reservation.get('stage'),'operation':'direct_fetch','url':request_url,
+              'canonical_url':url,
+              'outcome':status if accepted else 'response_rejected','source_id':source['id'],
+              'error':source.get('error'),'admitted':accepted,
+              'provenance_path':str(provenance.relative_to(store.root)) if provenance.exists() else None}
+    if not accepted:
+        if reservation.get('round_id'):
+            from .research_plan import pending_requests
+            envelope['rejection_reason']=(pending_requests(store,run_id).get(reservation['request_id']) or {}).get('rejection_reason')
+        else:
+            envelope['rejection_reason']='page_claim_lost'
+    path=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
+    from .research_plan import settle_request,AdmissionError
+    settle_request(store,run_id,reservation['request_id'],status,record_path=path)
+    if not accepted:
+        lost=envelope.get('rejection_reason') in ('page_claim_lost','page_claim_expired')
+        message=('同一来源读取租约已被接管；迟到网页响应已保留，未登记为报告来源' if lost
+                 else '请求所属阶段已结束或更换；迟到网页响应已保留，未登记为报告来源')
+        error=AdmissionError(message,code='response_rejected')
+        error.request_record_path=path
+        raise error
     return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
-            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
+            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id'),
+            'request_record_path':path}

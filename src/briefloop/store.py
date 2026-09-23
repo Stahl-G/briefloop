@@ -57,6 +57,10 @@ class Conflict(ValueError):
     pass
 
 
+class SourceTooLarge(ValueError):
+    pass
+
+
 class OfflineFactCheck(ValueError):
     """Offline runs cannot enable web fact checks; code reaches API callers."""
     code = 'fact_check_requires_web'
@@ -72,6 +76,15 @@ CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, name TEXT NOT NULL, path
 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, requirements TEXT NOT NULL,
  source_ids TEXT NOT NULL, skill_id TEXT, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS run_sources(run_id TEXT NOT NULL REFERENCES runs(id), source_id TEXT NOT NULL REFERENCES sources(id), PRIMARY KEY(run_id,source_id));
+CREATE TABLE IF NOT EXISTS page_claims(run_id TEXT NOT NULL REFERENCES runs(id), url TEXT NOT NULL,
+ owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,url));
+CREATE TABLE IF NOT EXISTS page_claim_results(owner TEXT NOT NULL, url TEXT NOT NULL,
+ outcome TEXT NOT NULL, source_id TEXT, error TEXT, completed_at REAL NOT NULL, PRIMARY KEY(owner,url));
+CREATE TABLE IF NOT EXISTS search_claims(run_id TEXT NOT NULL REFERENCES runs(id), claim_key TEXT NOT NULL,
+ owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,claim_key));
+CREATE TABLE IF NOT EXISTS search_claim_results(owner TEXT PRIMARY KEY, outcome TEXT NOT NULL,
+ result_path TEXT, error TEXT, failure_kind TEXT, http_status INTEGER, request_record_path TEXT,
+ completed_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS briefs(id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
  parent_id TEXT REFERENCES briefs(id), author TEXT NOT NULL, markdown TEXT NOT NULL,
  hash TEXT NOT NULL, detail TEXT NOT NULL, editor_document TEXT, created TEXT NOT NULL);
@@ -163,8 +176,9 @@ class Store:
         with self.tx() as c:
             c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (key, dump(value)))
 
-    def settings(self):
-        result=Settings.model_validate(self.meta("settings")).model_dump()
+    def settings(self, *, connection=None):
+        value=self.meta('settings') if connection is None else json.loads(connection.execute("SELECT value FROM meta WHERE key='settings'").fetchone()['value'])
+        result=Settings.model_validate(value).model_dump()
         if result.get('model_provider') is None:
             result.pop('model_provider',None)
         backend=result.get('agent_backend','codex')
@@ -177,6 +191,26 @@ class Store:
                 # so the UI can show them, and fail loudly only when enqueued.
                 shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
         result['role_models']=shaped
+        return result
+
+    def update_settings(self, changes, *, connection=None):
+        """Apply a patch (or compute one) against the latest settings atomically.
+
+        Hold the SQLite write transaction through merge and validation, so an
+        unrelated save cannot restore a concurrently revoked learning consent.
+        Transforms are for read-dependent changes such as appending a target.
+        A supplied write transaction remains owned by the caller.
+        """
+        from .learning_budget import apply_settings_change
+        with (self.tx() if connection is None else nullcontext(connection)) as c:
+            current=self.settings(connection=c)
+            body=changes(current) if callable(changes) else changes
+            merged=apply_settings_change(current,body)
+            # Saving a model is the explicit choice the pending flag waits for.
+            if 'model_selection_required' not in body and str(body.get('model') or '').strip():
+                merged['model_selection_required']=False
+            result=Settings.model_validate(merged).model_dump()
+            c.execute("INSERT OR REPLACE INTO meta VALUES('settings',?)",(dump(result),))
         return result
 
     def add_source(self, name, text, *, url=None, error=None, source_id=None, connection=None):
@@ -197,19 +231,28 @@ class Store:
             source = dict(c.execute('SELECT * FROM sources WHERE id=?', (sid,)).fetchone())
         return source
 
-    def source_text(self, sid):
+    def source_text(self, sid, *, max_bytes=None):
         r = self.one("sources", sid)
         path = (self.root/r["path"]).resolve()
         if not path.is_relative_to(self.root):
             raise ValueError("Invalid source path")
-        text = path.read_bytes().decode("utf-8")
+        if max_bytes is None:
+            raw = path.read_bytes()
+        else:
+            if type(max_bytes) is not int or max_bytes < 1:
+                raise ValueError('Invalid source read limit')
+            with path.open('rb') as stream:
+                raw = stream.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise SourceTooLarge('正文超过本次搜索的单份读取上限')
+        text = raw.decode("utf-8")
         if content_hash(text) != r["hash"]:
             raise Conflict("Source changed outside the application")
         return text
 
     def _create_learning_run(self, origin_id, source_ids, *, skill_id=None):
         origin=self.one('runs',origin_id)
-        requirements={**json.loads(origin['requirements']),'allow_web':False}
+        requirements={**json.loads(origin['requirements']),'allow_web':False,'fact_check':False}
         return self.create_run(requirements,source_ids,mode='trial',skill_id=skill_id,
                                _learning_clone=(_LEARNING_CLONE,origin_id))
 
@@ -218,7 +261,7 @@ class Store:
         if clone is not None:
             if not isinstance(clone,tuple) or len(clone)!=2 or clone[0] is not _LEARNING_CLONE:
                 raise ValueError('Invalid internal learning clone')
-            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
+            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False,'fact_check':False}
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
@@ -365,7 +408,7 @@ class Store:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None, *, author='user', allow_markdown_conversion=False):
+    def revise(self, base_version, markdown='', editor_document=None, *, citations=None, author='user', allow_markdown_conversion=False):
         if author not in ('user','agent'):raise ValueError('无效修订作者')
         if type(allow_markdown_conversion) is not bool:raise ValueError('明确转换标记必须是布尔值')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
@@ -381,24 +424,40 @@ class Store:
             latest = c.execute("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (base["run_id"],)).fetchone()
             if latest["id"] != base_version:
                 raise Conflict("稿件已有更新，请先保留本地编辑并重新加载最新版本")
+            detail=json.loads(base['detail'])
+            if citations is not None:
+                from .models import Citation
+                if not isinstance(citations,list):raise ValueError('citations 必须是完整引用列表')
+                citations=[Citation.model_validate(ref).model_dump() for ref in citations]
+                allowed=set(self.source_ids(base['run_id']))
+                references=set(json.loads(self.one('runs',base['run_id'])['requirements']).get('reference_source_ids',[]))
+                for sid in {ref['source_id'] for ref in citations}:
+                    if sid in references:raise ValueError('风格参考不能作为报告事实引用')
+                    if sid not in allowed:raise ValueError('引用来源未登记到本轮报告：'+sid)
+                    self.source_text(sid)  # Reject changed source bytes; locator text is not verified evidence.
             converted=False
             if base['editor_document'] is not None and editor_document is None:
                 if markdown==base['markdown']:
-                    return dict(base)  # A projection-only no-op must keep its rich original.
-                if not allow_markdown_conversion:
+                    if citations is None:return dict(base)  # Keep the rich original for projection-only saves.
+                    editor_document=normalize_document(json.loads(base['editor_document']))
+                elif not allow_markdown_conversion:
                     raise ValueError('当前稿件是富文档；请提交完整 editor_document，或明确转换 Markdown（allow_markdown_conversion=true）。原版本保留。')
-                from .document_model import markdown_document
-                editor_document=normalize_document(markdown_document(markdown))
-                markdown=document_markdown(editor_document)
-                converted=True
+                else:
+                    from .document_model import markdown_document
+                    editor_document=normalize_document(markdown_document(markdown))
+                    markdown=document_markdown(editor_document)
+                    converted=True
             same_document=(editor_document is None and base['editor_document'] is None or
                            editor_document is not None and base['editor_document'] is not None and
                            normalize_document(json.loads(base['editor_document']))==editor_document)
-            if markdown == base["markdown"] and same_document:
+            if markdown == base["markdown"] and same_document and (citations is None or citations==detail.get('citations',[])):
                 return dict(base)
-            detail=json.loads(base['detail'])
             if converted:detail['content_conversion']={'input_format':'markdown','base_version':base_version,'explicit':True}
-            else:detail.pop('content_conversion',None)
+            elif markdown!=base['markdown'] or not same_document:detail.pop('content_conversion',None)
+            if citations is not None:
+                # Unchanged automatic refs must still disappear with their body/figure.
+                detail['content_citations']=[ref for ref in detail.get('content_citations',[]) if ref in citations]
+                detail['citations']=citations
             if editor_document is not None:
                 detail['document_schema']=1
             else:detail.pop('document_schema',None)
@@ -511,17 +570,16 @@ class Store:
         show a selected model while still refusing to start a report because the
         pending-selection flag was never cleared.
         """
-        settings=self.settings()
-        if not settings.get('model_selection_required'):return settings
-        backend=backend or settings.get('agent_backend','codex')
-        fields=runtime_fields(runtime or {},backend)
-        if not str(fields.get('model') or '').strip():return settings
-        if backend not in ('codex','opencode','briefloop-native'):
-            fields['runtime_efforts']={**settings.get('runtime_efforts',{}),backend:fields.pop('reasoning_effort',None)}
-            fields.update(model_provider=None,model_variant=None)
-        updated=Settings.model_validate({**settings,**fields,'agent_backend':backend,'model_selection_required':False})
-        self.set_meta('settings',updated.model_dump())
-        return updated.model_dump()
+        def change(settings):
+            if not settings.get('model_selection_required'):return {}
+            chosen=backend or settings.get('agent_backend','codex')
+            fields=runtime_fields(runtime or {},chosen)
+            if not str(fields.get('model') or '').strip():return {}
+            if chosen not in ('codex','opencode','briefloop-native'):
+                fields['runtime_efforts']={**settings.get('runtime_efforts',{}),chosen:fields.pop('reasoning_effort',None)}
+                fields.update(model_provider=None,model_variant=None)
+            return {**fields,'agent_backend':chosen,'model_selection_required':False}
+        return self.update_settings(change)
 
     def role_model_config(self, runtime=None, backend=None):
         base=runtime or self.runtime_config()

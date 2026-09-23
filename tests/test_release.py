@@ -518,7 +518,7 @@ def test_review_packet_refuses_to_drop_a_saved_contract(tmp_path, monkeypatch):
     original = review._snapshot(store, brief['id'])
     assert original['requirements']['reader_contract'] == original['detail']['reader_contract']
     dropped = {**original, 'requirements': {**original['requirements'], 'reader_contract': None}}
-    monkeypatch.setattr(review, '_snapshot', lambda store, version_id: dropped)
+    monkeypatch.setattr(review, '_snapshot', lambda store, version_id, snapshot_version=7: dropped)
     with pytest.raises(ValueError, match='读者约定'):
         build_packet(store, brief['id'], store.root / 'packet-drop')
 

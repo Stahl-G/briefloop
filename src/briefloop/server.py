@@ -6,9 +6,11 @@ import base64
 import json
 import secrets
 import os
+import select
 import signal
 import sys
 import threading
+import time
 from .platform_support import WorkspaceLock
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
@@ -23,6 +25,14 @@ MAX_REQUEST_BYTES=25*1024*1024
 MAX_UPLOAD_BYTES=18*1024*1024
 # Raw source uploads skip Base64/JSON copies, so PDFs (annual reports, scans) may be larger.
 MAX_PDF_UPLOAD_BYTES=100*1024*1024
+# Bound stalled sockets, not the total duration of a progressing large upload.
+REQUEST_IDLE_TIMEOUT=30
+
+
+class _RequestBodyError(ValueError):
+    def __init__(self,status,code,message):
+        super().__init__(message)
+        self.status=status;self.code=code
 
 def _upload_data(body):
     data=base64.b64decode(body['data'],validate=True)
@@ -66,6 +76,10 @@ def _begin_service_shutdown(server, *, cancel):
         server.draining=True
         server.worker.opened_paused=True
         server.worker.stopping.set()
+        # Incomplete bodies have not entered a write operation. Cancel their
+        # receive loops without interrupting saves that already have a body.
+        for handler in server._reading_posts:
+            handler._body_interrupted=True
     def drain():
         with server._admission:
             while server._active_posts > server._active_connector_posts:
@@ -112,7 +126,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     try:
         store=Store(workspace)
         if backend is not None:
-            store.set_meta('settings',Settings.model_validate({**store.settings(),'agent_backend':backend}).model_dump())
+            store.update_settings({'agent_backend':backend})
     except BaseException:
         lock.close();raise
     harness=HarnessManager(store)
@@ -161,6 +175,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     icon_names={p.name for p in assets.iterdir() if p.name.startswith('runtime-') and p.name.endswith(('.svg','.png'))}
     asset_bytes.update({name:assets.joinpath(name).read_bytes() for name in icon_names})
     class Handler(BaseHTTPRequestHandler):
+        timeout=REQUEST_IDLE_TIMEOUT
         def log_message(self,format,*args): pass
         def parse_request(self):
             if not super().parse_request():return False
@@ -216,6 +231,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,store.brief_view(q['id'][0]))
                 elif u.path=='/api/report-search':
                     self.send(200,{'run_ids':store.search_briefs(q.get('q',[''])[0])})
+                elif u.path=='/api/source-search':
+                    from .source_library_search import search
+                    self.send(200,search(store,q.get('q',[''])[0],run_id=q.get('run_id',[''])[0],
+                        source_type=q.get('type',[''])[0],channel=q.get('channel',[''])[0],
+                        status=q.get('status',[''])[0],cursor=q.get('cursor',[''])[0],limit=int(q.get('limit',['20'])[0])))
                 elif u.path=='/api/software-version':
                     self.send(200,software_identity)
                 elif u.path=='/api/workspaces':
@@ -430,7 +450,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                             report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
                             period=req.get('period',''),report_data=report_data,figures=export_figures(store,b),
                             document=json.loads(b['editor_document']) if b.get('editor_document') else None,
-                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])}),
+                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])},citations=detail.get('citations',[])),
                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
@@ -441,6 +461,42 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
+        def _read_body(self,n,*,upload=False):
+            self._body_interrupted=False
+            with self.server._admission:
+                if self.server.draining and not self._control_post:
+                    raise _RequestBodyError(503,'service_draining','服务正在退出，请重新打开工作区后重试')
+                self.server._reading_posts.add(self)
+            timeout=self.connection.gettimeout()
+            try:
+                # Drain the HTTP parser's buffered bytes before waiting on the
+                # socket. Nonblocking read1 avoids poisoning BufferedReader on
+                # a timeout, and polling also works on Windows where shutdown
+                # from another thread need not wake a timed socket read.
+                self.connection.setblocking(False)
+                chunks=[];remaining=n;deadline=time.monotonic()+self.timeout
+                while remaining:
+                    if self._body_interrupted:
+                        raise _RequestBodyError(503,'service_draining','服务正在退出，未完成的请求已取消')
+                    chunk=self.rfile.read1(min(remaining,65536))
+                    if not chunk:
+                        idle=deadline-time.monotonic()
+                        if idle<=0:raise _RequestBodyError(408,'request_timeout','接收请求超时，请重试')
+                        if not select.select([self.connection],[],[],min(.25,idle))[0]:continue
+                        chunk=self.rfile.read1(min(remaining,65536))
+                        if not chunk:break
+                    chunks.append(chunk);remaining-=len(chunk)
+                    deadline=time.monotonic()+self.timeout
+            finally:
+                self.connection.settimeout(timeout)
+                with self.server._admission:
+                    self.server._reading_posts.discard(self)
+            if self._body_interrupted:
+                raise _RequestBodyError(503,'service_draining','服务正在退出，未完成的请求已取消')
+            if remaining:
+                raise _RequestBodyError(400,'invalid_upload' if upload else 'incomplete_request','请求未接收完整，请重试')
+            return b''.join(chunks)
+
         def _upload_file(self):
             # One source file as the raw request body; the name travels in the query.
             name=os.path.basename(parse_qs(urlsplit(self.path).query).get('name',[''])[0].replace('\\','/'))
@@ -452,13 +508,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 self.send(413 if name and n>limit else 400,{'error':(f'{name} 超过单文件 {limit//1048576} MiB 限制，请压缩或拆分后重试' if name and n>limit
                                                                      else '上传请求缺少文件名或文件为空'),'code':'request_too_large' if name and n>limit else 'invalid_upload'})
                 return
-            data=self.rfile.read(n)
-            if len(data)!=n:
-                self.close_connection=True;self.send(400,{'error':'上传未完成，请重试','code':'invalid_upload'});return
+            data=self._read_body(n,upload=True)
             self.send(200,sources.upload(store,name,data))
         def do_POST(self):
             path=urlsplit(self.path).path
             control=path in ('/api/service-stop','/api/stop','/api/harness/cancel','/api/connectors/task-revoke')
+            self._control_post=control
             with self.server._admission:
                 if self.server.draining and not control:
                     self.send(503,{'error':'服务正在退出，不能接受新操作。','code':'service_draining'});return
@@ -480,7 +535,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     if not 0<n<1024*1024:raise ValueError('请求为空或过大')
                     authorization=self.headers.get('Authorization','')
                     access=authorization[7:] if authorization.startswith('Bearer ') else ''
-                    self.send(200,self.server.connector_tasks.dispatch(access,json.loads(self.rfile.read(n))))
+                    self.send(200,self.server.connector_tasks.dispatch(access,json.loads(self._read_body(n))))
                     return
                 origin=self.headers.get('Origin')
                 expected=f'http://127.0.0.1:{self.server.server_port}'
@@ -492,7 +547,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 if not 0<n<MAX_REQUEST_BYTES:
                     self.close_connection=True
                     self.send(413,{'error':'请求为空或超过 25 MiB（含 Base64 与 JSON）；单文件上限 18 MiB，请压缩、拆分文件后重试','code':'request_too_large'});return
-                body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
+                body=json.loads(self._read_body(n));path=urlsplit(self.path).path
                 if path=='/api/software-update-check':
                     from .software_version import check_update
                     result=check_update(software_identity)
@@ -604,7 +659,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/fact-check-grant':
                     # 用户明确追加核查预算：并入阶段计量限额；阶段以预算耗尽收束后追加重开并继续核查。
                     from .fact_check import grant as grant_fact_check
-                    result=grant_fact_check(store,body['version_id'],body.get('limits'))
+                    result=grant_fact_check(store,body['version_id'],body.get('limits'),request_id=body.get('request_id'))
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
@@ -639,12 +694,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .native_providers import catalog
                     result=catalog(body)
                 elif path=='/api/settings':
-                    from .learning_budget import apply_settings_change
-                    merged=apply_settings_change(store.settings(),body)
-                    # Saving a model is the explicit choice the pending flag waits for.
-                    if 'model_selection_required' not in body and str(body.get('model') or '').strip():merged['model_selection_required']=False
-                    settings=Settings.model_validate(merged)
-                    store.set_meta('settings',settings.model_dump());result=settings.model_dump()
+                    result=store.update_settings(body)
                     if 'auto_learn' in body:worker.opened_paused=False
                 elif path=='/api/release':
                     from .release import enqueue_release
@@ -655,7 +705,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/source-refresh':
                     brief=store.one('briefs',body['version_id'])
                     if body['source_id'] not in store.source_ids(brief['run_id']):raise ValueError('来源不属于本轮报告')
-                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff'],'requested_by':'user'})
+                    source=store.one('sources',body['source_id'])
+                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':source['id'],
+                                                          'source_url':source['url'],'information_cutoff':body['information_cutoff'],'requested_by':'user'})
                 elif path=='/api/revise-findings':
                     store.one('briefs',body['version_id']);result=store.enqueue('revise',{'version_id':body['version_id']})
                 elif path=='/api/review':
@@ -683,6 +735,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/render':result={'html':MarkdownIt('commonmark',{'html':False}).enable('table').render(body['markdown'])}
                 else:self.send(404,{'error':'未知操作'});return
                 self.send(200,result)
+            except _RequestBodyError as exc:
+                self.close_connection=True
+                self.send(exc.status,{'error':str(exc),'code':exc.code})
             except (ValueError,KeyError,OSError,ValidationError) as exc:self.error(exc)
             except Exception as exc:
                 self.send(500,{'error':str(exc)})
@@ -693,6 +748,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     server._admission=threading.Condition(threading.RLock())
     server._active_posts=0
     server._active_connector_posts=0
+    server._reading_posts=set()
     server.draining=False
     server.shutdown_errors=[]
     from .connectors import ConnectorService

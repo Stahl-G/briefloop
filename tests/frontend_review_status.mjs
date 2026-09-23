@@ -1,6 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import {reviewPending,withoutSupersededRetries,factCheckHTML,locatorText} from '../frontend/review-status.js';
+
+const source=readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
+const start=source.indexOf('function reviewResultHTML('),end=source.indexOf('\n}',start)+2;
+assert.ok(start>=0&&end>start);
+const renderer=vm.createContext({esc:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))});
+vm.runInContext(source.slice(start,end),renderer);
+
+test('review results render frozen new and legacy checks, not current run requirements',()=>{
+ const review={status:'complete',protocol:'clauses_v1',requirement_items:[{requirement_id:'r1',kind:'objective',text:'Frozen <objective>'}],
+  clause_items:[{clause_id:'c1',kind:'reader_content',source_quote:'Frozen <content>',instruction:'Explain it'},
+                {clause_id:'c2',kind:'research_method',source_quote:'Frozen method',instruction:'Check source'}],
+  result:{summary:'Saved summary',coverage_scan_complete:true,clause_checks:[
+   {clause_id:'c1',status:'missing',reason:'Missing <reason>',basis:['<script>basis</script>']},
+   {clause_id:'c2',status:'unverified',reason:'No execution record',basis:['Unavailable record']}],
+   requirement_checks:[{requirement_id:'r1',status:'partial',reason:'Legacy saved reason'}]}};
+ const html=renderer.reviewResultHTML(review,{complete:'已返回审阅结果'},{requirement_items:[{requirement_id:'r1',text:'Wrong current mapping'}]});
+ for(const text of ['Frozen &lt;content&gt;','Frozen method','Frozen &lt;objective&gt;','读者内容','研究方法',
+                    '未完成','未核验','部分完成','Missing &lt;reason&gt;','&lt;script&gt;basis&lt;/script&gt;','Legacy saved reason'])assert.ok(html.includes(text),text);
+ assert.ok(!html.includes('<script>')&&!html.includes('Wrong current mapping')&&!html.includes('尚无逐项要求核查结果'));
+ assert.ok(html.includes('已返回审阅结果')&&!html.includes('全部要求已完成'));
+ const legacy=renderer.reviewResultHTML({...review,protocol:'legacy',result:{requirement_checks:review.result.requirement_checks}},{});
+ assert.ok(legacy.includes('Frozen &lt;objective&gt;')&&legacy.includes('Legacy saved reason'));
+});
+
+test('missing frozen indexes preserve checks with explicit unknown IDs; only empty checks show empty state',()=>{
+ const result={clause_checks:[{clause_id:'<unknown-clause>',status:'unverified',reason:'Saved reason',basis:['Saved basis']}],
+  requirement_checks:[{requirement_id:'<unknown-requirement>',status:'missing',reason:'Saved legacy reason'}]};
+ const html=renderer.reviewResultHTML({status:'complete',requirement_index_error:'Frozen index <unavailable>',result},{});
+ for(const text of ['未知条款 ID','&lt;unknown-clause&gt;','未知要求 ID','&lt;unknown-requirement&gt;',
+                    'Saved reason','Saved basis','Saved legacy reason','Frozen index &lt;unavailable&gt;'])assert.ok(html.includes(text),text);
+ assert.ok(!html.includes('尚无逐项要求核查结果'));
+ assert.ok(renderer.reviewResultHTML({status:'queued',result:{}},{}).includes('尚无逐项要求核查结果'));
+});
 test('editing a scored report never inherits a running parent job',()=>{
  const jobs=[{kind:'generate',status:'running',payload:JSON.stringify({run_id:'run'})},{kind:'review',status:'complete',payload:{version_id:'old'}}];
  assert.equal(reviewPending({id:'edited',run_id:'run'},jobs),false);

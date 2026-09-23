@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdtempSync,writeFileSync,readFileSync} from 'node:fs';
 import {rm} from 'node:fs/promises';
 import os from 'node:os';
@@ -226,6 +227,50 @@ test('ZCode refuses a model choice it cannot apply and reports the configured on
  const end=await b.wait(x=>x.params?.kind==='end');
  assert.equal(end.params.status,'failed');
  assert.match(end.params.error,/不接受模型参数/);
+});
+
+test('ZCode Windows checks the full quoted owner command and accepts intact input after rejection',{skip:process.platform!=='win32'},async t=>{
+ const b=bridge(t),f=fixture(t,zcodeFake(`
+ const digest=require('node:crypto').createHash('sha256').update(flag('--prompt')).digest('hex');
+ require('node:fs').appendFileSync(require('node:path').join(__dirname,'started.txt'),digest+'\\n');
+ ev('turn.completed',{response:JSON.stringify({digest,cwd:flag('--cwd'),resume:flag('--resume'),attach:flag('--attach')}),resultType:'success'});`),'中文 ZCode');
+ const image=path.join(f.cwd,'中文 图片.png');writeFileSync(image,'fixture');
+ const request={...f,runtime_id:'zcode',permission:'runtime-native',allow_web:null};
+ // These arguments have no embedded quotes/backslashes before quotes. Their
+ // Windows serialization only wraps the paths containing spaces. Fill the
+ // host command to 32,766 units (including NUL), leaving no room for its owner.
+ const nativeArgs=[f.path,'--prompt','x','--cwd',f.cwd,'--output-format','stream-json','--no-color','--mode','build'];
+ const nativeLength=nativeArgs.map(value=>/[ \t]/.test(value)?'"'+value+'"':value).join(' ').length+1;
+ const failures=[
+  {prompt:'x'.repeat(40000)},
+  // 18,000 input characters expand past the limit after backslash/quote escaping.
+  {prompt:'\\"'.repeat(9000)},
+  // Astral characters take two UTF-16 units; counting code points underestimates.
+  {prompt:'🧪'.repeat(17000)},
+  {prompt:'x'.repeat(32000),session_id:'saved-'.repeat(180),images:[image]},
+  // This prompt and ZCode's own arguments fit; the Python owner pushes it over.
+  {prompt:'x'.repeat(32767-nativeLength)},
+ ];
+ for(const [i,params] of failures.entries()){
+  const execution_id='zcode-too-long-'+i;
+  b.send(i+1,'start',{...request,...params,execution_id});
+  const end=(await b.wait(x=>x.params?.execution_id===execution_id&&x.params.kind==='end')).params;
+  assert.equal(end.status,'failed');assert.match(end.error,/命令行长度限制/);assert.match(end.error,/缩短提示词/);
+  assert.doesNotMatch(end.error,/spawn|ENAMETOOLONG|Traceback/);
+ }
+ assert.throws(()=>readFileSync(path.join(f.cwd,'started.txt')),/ENOENT/,'oversize input must not start the host');
+ // Exercise real Windows processes, including the Python owner and npm shim.
+ // Chinese UTF-8 bytes exceed 32K, while the Windows UTF-16 command still fits.
+ const accepted=['x'.repeat(32000),'中'.repeat(12000)+' 🧪 引号" 空格\t换行\n尾部\\'];
+ for(const [i,prompt] of accepted.entries()){
+  const execution_id='zcode-after-rejection-'+i,session_id='sess_中文 "原样"';
+  b.send(20+i,'start',{...request,execution_id,prompt,session_id,images:[image]});
+  const end=(await b.wait(x=>x.params?.execution_id===execution_id&&x.params.kind==='end')).params;
+  assert.equal(end.status,'completed',end.error);
+  const output=JSON.parse(b.frames.filter(x=>x.params?.execution_id===execution_id&&x.params.kind==='text').map(x=>x.params.text).join(''));
+  assert.deepEqual(output,{digest:createHash('sha256').update(prompt).digest('hex'),cwd:f.cwd,resume:session_id,attach:image});
+ }
+ assert.equal(readFileSync(path.join(f.cwd,'started.txt'),'utf8').trim().split('\n').length,accepted.length);
 });
 
 test('ACP reasoning is read from the selected model and set before prompting; default sends no override',async t=>{

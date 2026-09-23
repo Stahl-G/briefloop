@@ -133,7 +133,7 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
     })
     if writer_protocol == 'writer_input_v1':
         from .writer_input import tool_specs, GUIDE
-        guide = json.loads((root / 'document-guide.json').read_text())
+        guide = json.loads((root / 'document-guide.json').read_text(encoding='utf-8'))
         save('document-guide.json', {'protocol': writer_protocol, 'writing': GUIDE,
             'number_bindings': guide['number_bindings'], 'checks': guide['checks'],
             'table_example': '| 项目 | 采用条件 |\n|---|---|\n| 项目A | 在指定条件下采用。[@src_ID] |'})
@@ -163,7 +163,7 @@ def validate_draft(store, config, value):
     from .document_model import source_ids
     from .figure_support import validate_figures
     root = Path(config['packet_root'])
-    task = json.loads((root / 'input.json').read_text())
+    task = json.loads((root / 'input.json').read_text(encoding='utf-8'))
     if task['run_id'] != config['run_id']:
         raise ValueError('写作任务与所属报告不匹配')
     if not isinstance(value, dict) or value.get('editor_document') is None:
@@ -182,7 +182,7 @@ def validate_draft(store, config, value):
         if read(store, config['run_id'], reconciliation).get('stale'):
             raise ValueError('来源陈述已变化，请更新写前对照后创建新写作任务')
     draft = BriefDraft.model_validate(value)
-    index = json.loads((root / 'source-index.json').read_text())['sources']
+    index = json.loads((root / 'source-index.json').read_text(encoding='utf-8'))['sources']
     allowed = {s['source_id'] for s in index if not s['reference_only']}
     cited = {r.source_id for r in draft.citations} | set(source_ids(draft.editor_document))
     if not cited <= allowed:
@@ -275,7 +275,7 @@ def _assemble_sections(store, config, value):
     if not isinstance(ids, list) or not ids or any(not isinstance(s, str) for s in ids) or len(ids) != len(set(ids)):
         raise ValueError('section_ids 必须按正文顺序列出，不得重复或为空')
     path = _sections_file(store, config)
-    ledger = json.loads(path.read_text()) if path.exists() else {}
+    ledger = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     missing = [sid for sid in ids if sid not in ledger]
     if missing:
         raise ValueError('本轮尚未保存的章节：' + ', '.join(missing))
@@ -364,7 +364,7 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
     folder = Path(folder).resolve()
     override = json.loads(job['payload']).get('skill_override', _DEFAULT_SKILL)
     frozen_input = folder / 'packet' / 'input.json'
-    writer_protocol = (json.loads(frozen_input.read_text()).get('writer_input_protocol', 'rich_json_v1')
+    writer_protocol = (json.loads(frozen_input.read_text(encoding='utf-8')).get('writer_input_protocol', 'rich_json_v1')
                        if frozen_input.exists() else json.loads(job['payload']).get('writer_input_protocol', 'rich_json_v1'))
     identity = {'plan': plan, 'research': research, 'support': support, 'base_version': base_version, 'feedback': feedback,
                 'sources': {sid: store.one('sources', sid)['hash'] for sid in sorted(source_ids if source_ids is not None else set(store.source_ids(run_id)) | set(json.loads(store.one('runs', run_id)['requirements']).get('reference_source_ids') or []))},
@@ -373,13 +373,13 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
     if writer_protocol != 'rich_json_v1': identity['writer_input_protocol'] = writer_protocol
     record = folder / 'writing-request.json'
     folder.mkdir(parents=True, exist_ok=True)
-    if record.exists() and json.loads(record.read_text()) != identity:
+    if record.exists() and json.loads(record.read_text(encoding='utf-8')) != identity:
         raise ValueError('已保存写作包的材料、方法或分工已变化，请创建新任务；原稿与包保留')
     from .native_roles import _atomic
     _atomic(record, dump(identity))
     manifest = folder / 'writing-packet.json'
     if manifest.exists():
-        frozen = {**json.loads(manifest.read_text()), 'root': folder / 'packet'}
+        frozen = {**json.loads(manifest.read_text(encoding='utf-8')), 'root': folder / 'packet'}
         for name, sha in frozen['files'].items():
             path = frozen['root'] / name
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != sha:
@@ -410,15 +410,19 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
         prompt = writing_guide + f'\n任务包目录：{frozen["root"]}。'
         if backend != 'briefloop-native':
             command = tool_command(store.root, backend=backend)
-            prompt += f'\n只在 {folder} 内写文件。先将正文写入 article.md，然后调用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation write_report --title "报告标题" --file {folder / "article.md"}`。'
+            writer_command = f'{command} writer --run {run_id} --draft-file {folder / "draft.json"}'
+            prompt += f'\n只在 {folder} 内写文件。先将正文写入 article.md，然后调用 `{writer_command} --operation write_report --title "报告标题" --file {folder / "article.md"}`；write_report 的 --file 是 Markdown，不传 --revision。'
             prompt += '\n可附 --evidence-file evidence.json 同次装配引用、数字和时间；只传三类证据数组，原文行号由程序定位。已有正文则用 assemble_evidence 和一次 base_revision 批量装配，不要自行编写生成富文档或查行号的脚本。'
-            prompt += f'\n其他操作共用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation 操作名 --file 操作参数.json`；参数格式见 draft.schema.json。check_draft/submit_draft只传 --revision REVISION、不传 --file；read_draft可不传文件，或以JSON选择field。所有输入文件必须在本任务目录内。不要直接覆盖 draft.json。'
+            prompt += f'\n写入/更新：write_sections、assemble_report、assemble_evidence、update_citations、update_number_bindings、update_temporal_claims、update_draft_details、patch_report_text、replace_report_blocks 使用 `{writer_command} --operation OPERATION --file INPUT_JSON`；--file 是操作参数 JSON，这些操作不传 --revision。'
+            prompt += '\n需要并发版本的更新/组装操作，将最新 revision 写入操作参数 JSON 的 base_revision 字段；不加 JSON revision 字段，也不用 --revision 代替。具体字段见 draft.schema.json；write_sections 覆盖已有章节使用 expected_hash。每次写入后等返回新 revision，再用它构造下一次更新。'
+            prompt += f'\n检查：`{writer_command} --operation check_draft --revision REVISION`；提交：`{writer_command} --operation submit_draft --revision REVISION`。二者只传 --revision，不传 --file；提交必须使用已检查的最新 revision。'
+            prompt += f'\n读取：`{writer_command} --operation read_draft`；需要选择 field 时才附 --file READ_JSON，不传 --revision。所有输入文件必须在本任务目录内。不要直接覆盖 draft.json。'
     runtime.execute(staged, prompt, folder)
     from .analyst_drafts import submitted
     value = submitted(store, {**config, 'packet_root': str(frozen['root'])})
     from .draft_checks import inspect_draft
-    task = json.loads((frozen['root'] / 'input.json').read_text())
-    index = json.loads((frozen['root'] / 'source-index.json').read_text())['sources']
+    task = json.loads((frozen['root'] / 'input.json').read_text(encoding='utf-8'))
+    index = json.loads((frozen['root'] / 'source-index.json').read_text(encoding='utf-8'))['sources']
     diagnostics = inspect_draft(value, task['requirements'], store=store,
         allowed_sources={s['source_id'] for s in index if not s['reference_only']})
     if not publish:

@@ -138,7 +138,7 @@ def _research_handoff(store, run_id, plan):
     silently inheriting unverified learnings.
     """
     from .scout_tools import check_handoff, HandoffError
-    if int((plan.get('structure') or {}).get('depth') or 1) < 2:
+    if plan is None or int((plan.get('structure') or {}).get('depth') or 1) < 2:
         return None
     closed = [info for info in (plan.get('rounds') or {}).values() if info.get('status') == 'closed']
     for info in sorted(closed, key=lambda item: int(item.get('index') or 0), reverse=True):
@@ -177,6 +177,9 @@ def generation_prompt(store, run, folder, backend='codex'):
     sources=[source for source in sources if source['id'] not in reference_ids]
     report_profile=profile_context(req)
     from .deliverable_spec import resolve,instructions,reader_contract_schema
+    from .evidence import EvidenceInput
+    from .reconciliation import OPEN_QUESTIONS_GUIDE
+    evidence_categories='|'.join(EvidenceInput.model_json_schema()['properties']['category']['enum'])
     deliverable=resolve(req)
     (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
     (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note,encoding='utf-8')
@@ -333,10 +336,11 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
     Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
     动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：
+    需要确认字段时，请求 {{"action": "capabilities"}} 获取当前运行时的证据/主张 schema 与对照字段说明，不猜字段或通过读取仓库推定接口。
     1. reconciliation_candidates(run_id={run['id']}) 读取本轮冻结候选（已登记来源 + 已登记来源陈述）；未提取候选的来源也应保留在覆盖清单中。
-    2. 对与重要问题相关的来源陈述，先用 evidence_span 登记真实片段，再用 claim_create 以 claim_role="source_statement"（可带 attribution）登记；来源不明的记忆只能记为待查问题，不能伪造来源。
+    2. 对与重要问题相关的来源陈述，先用 evidence_span 登记真实片段，再用 claim_create 以 claim_role="source_statement"（可带 attribution）登记；evidence.category={evidence_categories}，只使用其中一个值。来源不明的记忆只能记为待查问题，不能伪造来源。
     3. 回查足以判断关系的原文，按可比较条件（主体/指标/对象范围/单位与分母/期间/条件/归属/actual|plan|forecast|opinion）判断关系，取 compatible/different_scope/temporal_sequence/correction/supersession/republication/attributed_difference/contradiction/unknown；一条关系至少两个不同来源陈述，有方向的显式给方向，不做传递推断。
-    4. reconciliation_save(run_id={run['id']}, reconciliation={{status, examined_claim_ids, unexamined_claim_ids, relations:[{{member_claim_ids, relation, scope, basis_span_ids, reason, proposed_treatment, affected_requirement_ids}}], open_questions, coverage_notes}})：examined 与 unexamined 必须明确划分候选清单全部来源陈述；只有确实需要处理的分歧才用 conflict_create 登记（带 participants 的 claim_id/span_ids、scope、importance，可选 reconciliation_id）。对照只记录关系与依据，不代替正文主张的支持范围核查。
+    4. reconciliation_save(run_id={run['id']}, reconciliation={{status, examined_claim_ids, unexamined_claim_ids, relations:[{{member_claim_ids, relation, scope, basis_span_ids, reason, proposed_treatment, affected_requirement_ids}}], open_questions, coverage_notes}})：examined 与 unexamined 必须明确划分候选清单全部来源陈述；只有确实需要处理的分歧才用 conflict_create 登记（带 participants 的 claim_id/span_ids、scope、importance，可选 reconciliation_id）。对照只记录关系与依据，不代替正文主张的支持范围核查。{OPEN_QUESTIONS_GUIDE}
     5. 把返回的 reconciliation_id 写进 draft.json.reconciliation_id；正文按对照结论组织并执行必要限定，不把来源陈述直接当作报告事实，也不平均或投票选赢家。
    Analyst 直接写可读 Brief：按对读者的重要性取舍，解释变化与有证据支持的意义，区分事实与推断，保留关键条件。
    按本轮产物约定决定分析深度和行动建议，避免逐篇复述材料或用泛泛背景凑篇幅。
@@ -585,6 +589,9 @@ class Worker:
                 if row is None:raise ValueError('任务不存在')
                 job=dict(row)
                 if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
+                # Stop commits before execution unwinds; keep its slot until final settlement.
+                if jid in self._generation_jobs or jid in self._review_jobs or jid==self.current or jid==self.file_current:
+                    raise ValueError('原任务仍在停止，请稍后恢复')
                 payload=json.loads(job['payload'])
                 if payload.get('inline_owner_job_id'):
                     raise ValueError('这是学习任务内部的试写，请恢复对应的学习任务，它会接着跑这一步')
@@ -771,7 +778,9 @@ class Worker:
             elif job['kind']=='source_refresh':
                 from .source_updates import refresh
                 args=json.loads(job['payload'])
-                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual',allow_private=args.get('requested_by')=='user')
+                user_refresh=args.get('requested_by')=='user'
+                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],
+                               trigger='manual',allow_private=user_refresh,user_job_id=job['id'] if user_refresh else None)
             elif job['kind']=='generate':result=self.generate(job)
             elif job['kind']=='assess':result=self.assess(job)
             elif job['kind']=='revise':
@@ -788,7 +797,22 @@ class Worker:
         except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
         except Exception as exc:
             if job['kind']=='prepare_template':
-                with self.store.tx() as c:c.execute("UPDATE templates SET status='failed',error=? WHERE id=?",(str(exc),json.loads(job['payload'])['template_id']))
+                template_id=json.loads(job['payload'])['template_id']
+                saved,observed=self._saved_template_result(template_id)
+                if saved:
+                    self._settle_job(job['id'],'complete',result=saved,runtime=self.runtime)
+                    return
+                if observed:
+                    # Do not overwrite a ready snapshot admitted by another turn
+                    # after this failure inspected the template row.
+                    with self.store.tx() as c:
+                        changed=c.execute("UPDATE templates SET status='failed',error=? WHERE id=? AND status=? AND spec=?",
+                                          (str(exc),template_id,observed['status'],observed['spec'])).rowcount
+                    if not changed:
+                        saved,_=self._saved_template_result(template_id)
+                        if saved:
+                            self._settle_job(job['id'],'complete',result=saved,runtime=self.runtime)
+                            return
             self._settle_job(job['id'],'failed',error=str(exc))
         finally:
             with self._claim_lock:
@@ -796,6 +820,31 @@ class Worker:
                 if self.current==job["id"]:self.current=None
             if hasattr(self._execution_local,"runtime"):del self._execution_local.runtime
             self.wake()
+
+    def _saved_template_result(self,template_id):
+        """Accept an already persisted template after its native host fails late."""
+        from hashlib import sha256
+        from io import BytesIO
+        from docx import Document
+        from .media import office_archive
+        from .templates import _path
+
+        rows=self.store.rows('SELECT id,revision,status,spec FROM templates WHERE id=?',(template_id,))
+        if not rows:return None,None
+        row=rows[0]
+        if row['status']!='ready':return None,row
+        try:
+            spec=json.loads(row['spec'])
+            digest=spec.get('prepared_hash') if isinstance(spec,dict) else None
+            if not isinstance(digest,str):return None,row
+            data=_path(self.store,row,'prepared.docx').read_bytes()
+            if sha256(data).hexdigest()!=digest:return None,row
+            office_archive(data).close()
+            if len(Document(BytesIO(data)).sections)!=1:return None,row
+        except Exception:
+            return None,row
+        return {'template_id':row['id'],'revision':row['revision'],'status':'ready'},row
+
     def file_loop(self):
         """Produce requested files even while generation or Review is running."""
         for jobs in self._queued(2,"SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):

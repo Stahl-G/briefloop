@@ -421,12 +421,36 @@ class HarnessManager:
         for message in self.snapshot(sid)['messages']:
             if message['turn_id']==turn_id and message['status'] in ('delivered','streaming'):
                 self.chat.patch_message(message['id'],status=status)
+    def _register_child(self,thread_id,sid):
+        # Both notification orders must preserve ownership; a receiver is never
+        # allowed to replace another session's child or any main thread.
+        if not isinstance(thread_id,str) or not thread_id or thread_id in self._threads:return False
+        if self._children.get(thread_id,sid)!=sid:return False
+        self._children[thread_id]=sid
+        return True
+
     def handle_notification(self,notification):
         method=notification.get('method','');params=notification.get('params',{})
         # Reasoning is kept for the local chat view only; audit/report/progress
         # exports build from execution records, never from chat reasoning.
         with self._lock:
             thread_id=params.get('threadId')
+            parent_id=None
+            if method=='thread/started':
+                thread=params.get('thread')
+                if not isinstance(thread,dict):return
+                thread_id=thread.get('id')
+                if not isinstance(thread_id,str) or not thread_id:return
+                source=thread.get('source')
+                subagent=source.get('subAgent') if isinstance(source,dict) else None
+                spawn=subagent.get('thread_spawn') if isinstance(subagent,dict) else None
+                spawn=spawn if isinstance(spawn,dict) else {}
+                parent_id=spawn.get('parent_thread_id')
+                parent_sid=(self._threads.get(parent_id) or self._children.get(parent_id)) if isinstance(parent_id,str) else None
+                owner=self._threads.get(thread_id) or self._children.get(thread_id)
+                if owner and parent_sid and parent_sid!=owner:return
+                if not owner and (not parent_sid or not self._register_child(thread_id,parent_sid)):return
+                if not parent_sid:parent_id=None
             sid=self._threads.get(thread_id)
             child=False
             if not sid:
@@ -434,6 +458,14 @@ class HarnessManager:
             if not sid:return
             if sid in self._starting_turns:
                 self._starting_turns[sid].append(notification);return
+            if method=='thread/started':
+                role=thread.get('agentRole')
+                data={'threadId':thread_id,'agentRole':role if isinstance(role,str) else None}
+                if parent_id and parent_id!=thread_id:data['parentThreadId']=parent_id
+                # Never persist the thread object: preview, turns and source
+                # paths can contain private task content. Identity is not liveness.
+                self.chat.event(sid,('child/' if child else '')+method,data)
+                return
             if not child and 'reasoning' in method.lower():
                 if 'delta' not in method.lower():return
                 turn_id=params.get('turnId') or self.chat.session(sid)['turn_id']
@@ -489,18 +521,29 @@ class HarnessManager:
                     else:
                         created=self.chat.message(sid,item.get('text',''),role='assistant',status='completed' if method.endswith('completed') else 'streaming',item_id=item['id'],turn_id=turn_id)['id'];self._items[key]=created;self._reasoning_target[(sid,turn_id)]=created
                         if accumulated:self.chat.patch_message(created,reasoning=accumulated)
+                elif kind=='subAgentActivity':
+                    if not isinstance(item.get('id'),str) or item.get('kind') not in ('started','interacted','interrupted','completed'):return
+                    if not self._register_child(item.get('agentThreadId'),sid):return
+                    # Activity identifies an owned target, not its direct parent,
+                    # role or turn liveness. Never retain agentPath or raw input.
+                    public={key:item[key] for key in ('id','type','agentThreadId','kind')}
+                    self.chat.event(sid,('child/' if child else '')+method,{'item':public,'turnId':turn_id,'threadId':thread_id})
                 elif kind in ('commandExecution','fileChange','mcpToolCall','webSearch','collabAgentToolCall','imageView','dynamicToolCall'):
                     fields=('id','type','status','command','cwd','tool','server','receiverThreadIds','senderThreadId','agentsStates','query','model','reasoningEffort')
                     public={k:item[k] for k in fields if k in item}
                     if kind=='collabAgentToolCall':
                         states=item.get('agentsStates') or {}
+                        receivers=[]
                         for receiver in item.get('receiverThreadIds',[]):
-                            self._children[receiver]=sid
+                            if not self._register_child(receiver,sid):continue
+                            receivers.append(receiver)
                             state=(states.get(receiver) or {}).get('status')
                             if state in ('completed','errored','interrupted','shutdown','notFound'):
                                 self._active_children.discard(receiver)
                             elif state in ('running','pendingInit') or item.get('tool') in ('spawnAgent','resumeAgent'):
                                 self._active_children.add(receiver)
+                        public['receiverThreadIds']=receivers
+                        public['agentsStates']={key:value for key,value in states.items() if key in receivers}
                     self.chat.event(sid,('child/' if child else '')+method,{'item':public,'turnId':turn_id,'threadId':thread_id})
             elif method=='turn/completed':
                 turn=params.get('turn',{});turn_id=turn.get('id',turn_id)
@@ -512,7 +555,7 @@ class HarnessManager:
                 if status=='completed':self._schedule(sid)
             elif method in ('turn/started','thread/tokenUsage/updated','error'):
                 if method=='error':data={'message':params.get('error',{}).get('message','Codex 请求错误')}
-                elif method=='thread/tokenUsage/updated':data={'tokenUsage':params.get('tokenUsage',{})}
+                elif method=='thread/tokenUsage/updated':data={'threadId':thread_id,'turnId':params.get('turnId'),'tokenUsage':params.get('tokenUsage',{})}
                 else:data={'turnId':params.get('turn',{}).get('id')}
                 self.chat.event(sid,('child/' if child else '')+method,data)
     def close(self):

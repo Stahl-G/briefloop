@@ -1,6 +1,7 @@
 // Delivery checks, issue list, fact-check panel, and score card for one open brief.
 import {beginPanel as beginPanelDefault,updatePanel as updatePanelDefault} from './report-panels.js';
 import {reviewPending as reviewPendingDefault,factCheckHTML as factCheckHTMLDefault} from './review-status.js';
+import {createFactCheckGrants} from './fact-check-grants.js';
 
 const RELATION_LABELS={compatible:'可合并',different_scope:'口径不同',temporal_sequence:'时间演进',correction:'明确更正',supersession:'替代',republication:'转载',attributed_difference:'归属分歧',contradiction:'实质矛盾',unknown:'无法判断'};
 
@@ -12,6 +13,7 @@ export function createAssessmentPanel(deps){
  const updatePanel=deps.updatePanel||updatePanelDefault;
  const reviewPending=deps.reviewPending||reviewPendingDefault;
  const factCheckHTML=deps.factCheckHTML||factCheckHTMLDefault;
+ const factGrants=deps.factGrants||createFactCheckGrants({api});
  let showSuggestionMarks=false;
 
  async function renderDeliveryChecks(){
@@ -31,6 +33,14 @@ export function createAssessmentPanel(deps){
   parts.push(`<span class="tag">${n.status==='not_checked'?'未做数值核对':n.status==='partial'?'部分绑定已检查':'已检查提交的绑定'}：提交 ${n.total} 项，已检查 ${n.checked} 项，匹配 ${n.matched} 项</span>`);
   if(n.unmatched.length)parts.push(`<span class="tag error">绑定数值不一致 ${n.unmatched.length} 项：${n.unmatched.map(r=>esc(r.label||r.expected)).join('、')}</span>`);
   if(n.skipped.length)parts.push(`<span class="tag">未检查 ${n.skipped.length} 项：${n.skipped.map(r=>esc((r.label||'未命名')+'：'+r.reason)).join('；')}</span>`);
+  const occurrences=n.occurrence_review;
+  if(occurrences?.candidate_count){
+   parts.push(`<span class="tag">带明确单位的数值出现 ${occurrences.candidate_count} 处；直接对应已核对绑定 ${occurrences.checked_occurrences} 处；待看 ${occurrences.review_candidate_count} 处</span>`);
+   if(occurrences.review_candidate_count){
+    const where=s=>s.kind==='table_cell'?`表 ${s.table} · 第 ${s.row} 行 ${s.column} 列`:`正文第 ${s.paragraph} 段`;
+    parts.push(`<details class="help"><summary>查看待看数值位置</summary><ul>${occurrences.samples.map(s=>`<li>${esc(where(s))}：${esc(s.text)} · ${esc(s.context)}</li>`).join('')}</ul>${occurrences.truncated?`<p>仅显示前 ${occurrences.sample_limit} 处。</p>`:''}<p>${esc(occurrences.scope)}</p></details>`);
+   }
+  }
   if(c.export.escaped_bold)parts.push('<span class="tag error">存在转义加粗，请检查排版</span>');
   if(c.export.figure_error)parts.push('<span class="tag error">图表资源不可用：'+esc(c.export.figure_error)+'</span>');
   else if(c.export.figure_markers.length)parts.push('<span class="tag">含图表：独立交付请下载 Word 或含图片的 Markdown 包</span>');
@@ -86,6 +96,30 @@ export function createAssessmentPanel(deps){
    : '<p class="help">暂未发现需要处理的问题；独立审阅完成后会更新。</p>');
  }
 
+ let factCheckView=null;
+ function paintFactChecks(){
+  if(!factCheckView)return;
+  const {box,vid,data}=factCheckView;
+  if(getCurrent()?.id!==vid||!box.isConnected)return;
+  let pending;try{pending=factGrants.pending(vid)}catch{} // submit reports storage errors before sending
+  updatePanel(box,factCheckHTML({...data,grant_request:pending,grant_request_busy:factGrants.busy(vid)}));if(box.innerHTML)bindSources();
+  box.querySelectorAll('[data-fact-grant]').forEach(b=>{
+   const version=b.dataset.factGrant;
+   // Identical HTML may be retained, including a button disabled by its click.
+   b.disabled=factGrants.busy(version);
+   b.onclick=()=>action(async()=>{
+    b.disabled=true;
+    try{
+     const result=await factGrants.submit(version);
+     if(getCurrent()?.id===version)notice(result.replayed?'已确认上次追加的核查预算，没有重复追加':'已追加核查预算，将在核查阶段计量中生效');
+    }finally{
+     // Refresh the current DOM from local flight/receipt state before any GET.
+     // A poll may have replaced the clicked button while the POST was pending.
+     paintFactChecks();await renderFactChecks();
+    }
+   });
+  });
+ }
  async function renderFactChecks(){
   // Observation-mode fact-check panel: per-claim candidates with original-text
   // links, execution status on its own line; never part of the report body.
@@ -95,12 +129,7 @@ export function createAssessmentPanel(deps){
   const vid=current.id;beginPanel(box,vid);
   let data;try{data=await api('fact-checks?version='+encodeURIComponent(vid))}catch(e){return}
   if(!getCurrent()||getCurrent().id!==vid||ticket!==renderFactChecks.ticket||!box.isConnected)return;
-  updatePanel(box,factCheckHTML(data));if(box.innerHTML)bindSources();
-  box.querySelectorAll('[data-fact-grant]').forEach(b=>b.onclick=()=>action(async()=>{
-   await api('fact-check-grant',{version_id:b.dataset.factGrant,limits:{search_requests:6,candidate_urls:30,source_pages:12}});
-   notice('已追加核查预算，将在核查阶段计量中生效');
-   await renderFactChecks();
-  }));
+  factCheckView={box,vid,data};paintFactChecks();
  }
 
  function assessment(){

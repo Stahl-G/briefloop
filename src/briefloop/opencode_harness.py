@@ -11,6 +11,7 @@ non-interactive mode), so ``answer()`` is unsupported by design.
 import json
 import functools
 import inspect
+import logging
 from pathlib import Path
 import re
 import threading
@@ -28,6 +29,7 @@ DEFAULT_RUNTIME = {'model': 'opencode/big-pickle', 'variant': None,
 ATTACH_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 _TASK_CHILD = re.compile(r'<task id="(ses_[^"]+)"')
+_logger = logging.getLogger(__name__)
 
 
 def _public_native_error(error):
@@ -360,9 +362,21 @@ class OpencodeHarness:
                         time.monotonic() - self._client_used_at < self.CLIENT_IDLE_SECONDS):
                     self._arm_idle_locked()
                     return
-                client, self.client = self.client, None
-                self._idle_timer = None
-            client.close()
+                client = self.client
+            try:
+                client.close()
+            except Exception:
+                # Keep the owned process reachable: a later request or timer
+                # must retry its cleanup before starting another serve.
+                _logger.exception('Opencode idle cleanup failed; will retry')
+                with self._lock:
+                    if not self._closed and self.client is client:
+                        self._arm_idle_locked()
+                return
+            with self._lock:
+                if self.client is client:
+                    self.client = None
+                    self._idle_timer = None
 
     def send(self, session_id, text, mode='queue', source_ids=None, runtime=None,
              message_id=None, display_text=None, allow_web=False):
@@ -1091,15 +1105,19 @@ class OpencodeHarness:
         return self.snapshot(session_id)
 
     def close(self):
-        with self._lock:
-            self._closed=True
-            self._idle_epoch += 1
-            if self._idle_timer is not None:
-                self._idle_timer.cancel()
-                self._idle_timer = None
-            client, self.client = self.client, None
-        if client is not None:
-            client.close()
+        with self._client_lock:
+            with self._lock:
+                self._closed=True
+                self._idle_epoch += 1
+                if self._idle_timer is not None:
+                    self._idle_timer.cancel()
+                    self._idle_timer = None
+                client = self.client
+            if client is not None:
+                client.close()
+                with self._lock:
+                    if self.client is client:
+                        self.client = None
 
 
 def _task_children(part):

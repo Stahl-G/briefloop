@@ -111,6 +111,12 @@ def _validated(store, config, title, document):
     return validate_draft(store, config, {'title': title, 'editor_document': document})
 
 
+def _canonical(request):
+    # Explicitly supplied fields matter for partial updates; omitted evidence
+    # must not replay a prior request that deliberately cleared that field.
+    return request.model_dump(mode='json', exclude_unset=True)
+
+
 def write_report(store, config, args):
     from .length import count_brief
     from .analyst import validate_draft
@@ -151,15 +157,20 @@ def assemble_evidence(store, config, args):
     """One evidence batch, one version check and one atomic candidate save."""
     with drafts.guard(store, config):
         request = AssembleEvidence.model_validate(args)
-        prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
         if request.model_fields_set == {'base_revision'}:
             raise WritingError('empty_change', '请提供至少一类证据字段')
+        request_args = _canonical(request)
+        replay = drafts._replay_writer_input_locked(store, config, 'assemble_evidence', request_args)
+        if replay is not None:
+            return replay
+        prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
         _archive(store, config, 'assemble_evidence', args)
         changes = assemble_evidence_records(config, request, prior['markdown'], prior.get('citations', []))
-        saved = drafts._save_locked(store, config, {'base_revision': request.base_revision, **changes})
-        return {**saved, 'evidence_counts': {k: len(v) for k, v in changes.items()},
+        return drafts._save_locked(store, config, {'base_revision': request.base_revision, **changes},
+            writer_request=('assemble_evidence', request_args), response_fields={
+                'evidence_counts': {k: len(v) for k, v in changes.items()},
                 'record_keys': {k: [evidence_key(r) for r in v] for k, v in changes.items()},
-                'evidence_status': 'exact_locations_resolved_not_semantically_reviewed'}
+                'evidence_status': 'exact_locations_resolved_not_semantically_reviewed'})
 
 
 def write_sections(store, config, args):
@@ -191,10 +202,15 @@ def write_sections(store, config, args):
 def assemble_report(store, config, args):
     with drafts.guard(store, config):
         request = AssembleReport.model_validate(args)
+        request_args = _canonical(request)
+        replay = drafts._replay_writer_input_locked(store, config, 'assemble_report', request_args)
+        if replay is not None:
+            return replay
         current = drafts._root(store, config) / 'current.json'
         if current.exists() and request.base_revision is None:
             raise WritingError('revision_required', '重新组装必须带当前 base_revision', field='base_revision')
-        return drafts._save_locked(store, config, request.model_dump(exclude_none=True))
+        return drafts._save_locked(store, config, request.model_dump(exclude_none=True),
+                                   writer_request=('assemble_report', request_args))
 
 
 class EvidenceChange(Input):
@@ -213,11 +229,15 @@ def evidence_key(value):
     return drafts._hash(value)
 
 
-def update_draft_evidence(store, config, args):
+def update_draft_evidence(store, config, args, *, operation='update_draft_evidence', replay_args=None):
     from .models import Citation, NumberBinding, TemporalClaim
     types = {'citations': Citation, 'number_bindings': NumberBinding, 'temporal_claims': TemporalClaim}
     with drafts.guard(store, config):
         request = UpdateEvidence.model_validate(args)
+        request_args = replay_args if replay_args is not None else _canonical(request)
+        replay = drafts._replay_writer_input_locked(store, config, operation, request_args)
+        if replay is not None:
+            return replay
         prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
         records = list(prior.get(request.field) or [])
         keys = [evidence_key(r) for r in records]
@@ -240,8 +260,9 @@ def update_draft_evidence(store, config, args):
                     records.pop(index); keys.pop(index)
                 else:
                     records[index] = value; keys[index] = evidence_key(value)
-        saved = drafts._save_locked(store, config, {'base_revision': request.base_revision, request.field: records})
-        return {**saved, 'field': request.field, 'record_keys': [evidence_key(r) for r in records]}
+        return drafts._save_locked(store, config, {'base_revision': request.base_revision, request.field: records},
+            writer_request=(operation, request_args), response_fields={
+                'field': request.field, 'record_keys': [evidence_key(r) for r in records]})
 
 
 class TextReplacement(Input):
@@ -257,11 +278,15 @@ class PatchText(Input):
 def patch_report_text(store, config, args):
     with drafts.guard(store, config):
         request = PatchText.model_validate(args)
+        request_args = _canonical(request)
+        replay = drafts._replay_writer_input_locked(store, config, 'patch_report_text', request_args)
+        if replay is not None:
+            return replay
         prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
         section = {k: prior[k] for k in ('editor_document', 'citations')}
         patched = drafts.replace_section_text(section, [r.model_dump() for r in request.replacements], drafts._hash(section))
         return drafts._save_locked(store, config, {'base_revision': request.base_revision,
-                                                  'editor_document': patched['editor_document']})
+            'editor_document': patched['editor_document']}, writer_request=('patch_report_text', request_args))
 
 
 def block_keys(content):
@@ -279,6 +304,10 @@ def replace_report_blocks(store, config, args):
     with drafts.guard(store, config):
         _archive(store, config, 'replace_report_blocks', args)
         request = ReplaceBlocks.model_validate(args)
+        request_args = _canonical(request)
+        replay = drafts._replay_writer_input_locked(store, config, 'replace_report_blocks', request_args)
+        if replay is not None:
+            return replay
         prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
         doc = deepcopy(prior['editor_document']); content = doc['content']; keys = block_keys(content)
         if len(set(request.block_keys)) != len(request.block_keys) or any(k not in keys for k in request.block_keys):
@@ -295,12 +324,13 @@ def replace_report_blocks(store, config, args):
             raise WritingError('rich_format_preserved', '所选范围包含图片或高级排版，请精确改字或在富文本编辑器修改', field='block_keys')
         replacement = compile_markdown(request.markdown)['content']
         doc['content'][positions[0]:positions[-1]+1] = replacement
-        return drafts._save_locked(store, config, {'base_revision': request.base_revision, 'editor_document': doc})
+        return drafts._save_locked(store, config, {'base_revision': request.base_revision, 'editor_document': doc},
+                                   writer_request=('replace_report_blocks', request_args))
 
 
 def protocol(config):
     path = Path(config['packet_root']) / 'input.json'
-    return json.loads(path.read_text()).get('writer_input_protocol', 'rich_json_v1')
+    return json.loads(path.read_text(encoding='utf-8')).get('writer_input_protocol', 'rich_json_v1')
 
 
 def operations():
@@ -329,7 +359,8 @@ def operations():
                        for r in parsed.records]
             changes.extend({'record_key': key, 'value': None} for key in parsed.remove_keys)
             return update_draft_evidence(store, config, {'base_revision': parsed.base_revision,
-                                                        'field': field, 'changes': changes})
+                    'field': field, 'changes': changes}, operation='update_' + field,
+                    replay_args=_canonical(parsed))
         result['update_' + field] = (request, update,
             f'独立更新 {field}。records中直接写记录字段，不包装value对象；数字记录的value就是数值。修改时在该记录加read_draft返回的record_key，新记录省略键。删除仅传remove_keys。不要重交正文。')
     return result
@@ -357,6 +388,7 @@ def tool_specs():
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
 先独立保存正文：短稿 write_report(title, markdown)，长稿 write_sections 后 assemble_report。取得revision后，再一次 assemble_evidence 登记三类证据。兼容同次附证据；如果回执evidence_status=not_saved，正文已保存但证据未保存，按返回revision修正证据，不重交正文。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
 同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
+若 assemble_evidence、assemble_report、update_*、patch_report_text 或 replace_report_blocks 的回执丢失，原样重试同一操作及完整参数；仅当它仍是当前修订时返回 replayed=true。若已被后续修改覆盖，先 read_draft 读取新 revision，不改旧 base_revision 盲目重发。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
 
@@ -377,21 +409,25 @@ class DraftDetails(Input):
 def update_draft_details(store, config, args):
     with drafts.guard(store, config):
         request = DraftDetails.model_validate(args)
-        changes = request.model_dump(mode='json', exclude_unset=True)
+        changes = _canonical(request)
         if len(changes) < 2: raise WritingError('empty_change', '请提供要修改的字段')
         if any(v is None for k,v in changes.items() if k not in ('report_data',)):
             raise WritingError('null_field', '清空列表请传 []，不要传 null')
-        return drafts._save_locked(store, config, changes)
+        replay = drafts._replay_writer_input_locked(store, config, 'update_draft_details', changes)
+        if replay is not None:
+            return replay
+        return drafts._save_locked(store, config, changes,
+                                   writer_request=('update_draft_details', changes))
 
 
 def ensure_revision_base(store, config):
     """Initialize a revision attempt from the frozen rich original, never retype it."""
-    task = json.loads((Path(config['packet_root'])/'input.json').read_text())
+    task = json.loads((Path(config['packet_root'])/'input.json').read_text(encoding='utf-8'))
     if task.get('mode') != 'revision': return
     with drafts.guard(store, config):
         if (drafts._root(store, config)/'current.json').exists(): return
         drafts._packet_hash(config)
-        original = json.loads((Path(config['packet_root'])/'original.json').read_text())
+        original = json.loads((Path(config['packet_root'])/'original.json').read_text(encoding='utf-8'))
         if original['id'] != task['base_version'] or original['hash'] != task['base_hash']:
             raise WritingError('base_identity', '冻结原稿身份不一致')
         doc = original['editor_document']

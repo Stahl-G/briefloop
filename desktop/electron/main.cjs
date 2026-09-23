@@ -11,6 +11,7 @@ let window, service, switching = false, quitting = false, closePending = false, 
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null, environment;
 let updates, nativeInstall = null, nativeQuitPending = false;
+const nativeQuitTransactions = [];
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
 if (process.platform === 'win32') app.setAppUserModelId('ai.briefloop.desktop');
 const payloadPath = app.isPackaged ? path.join(process.resourcesPath, 'backend') : path.join(__dirname, 'backend');
@@ -56,9 +57,19 @@ async function exportReportPdf(event, request) {
     await fs.writeFile(filePath, data);
     return {status: 'saved', name: path.basename(filePath)};
   } finally {
-    if (printer && !printer.isDestroyed()) printer.destroy();
-    if (folder) await fs.rm(folder, {recursive: true, force: true});
-    pdfExporting = false;
+    try {
+      try {
+        if (printer && !printer.isDestroyed()) printer.destroy();
+      } finally {
+        // Windows can retain the rendered file briefly after the window closes.
+        if (folder) await fs.rm(folder, {recursive: true, force: true, maxRetries: 2, retryDelay: 100});
+      }
+    } catch (error) {
+      // Cleanup must not change a successful result or replace a render/save error.
+      console.warn('PDF export temporary cleanup failed:', error.code || 'unknown');
+    } finally {
+      pdfExporting = false;
+    }
   }
 }
 function environmentOperation(callback) {
@@ -168,7 +179,8 @@ async function openWorkspace(request) {
     }
     if (!service?.info && (!previousInfo || navigating)) {
       workspaceOrigin = null;
-      await window.loadURL(welcomeURL);
+      // Keep the welcome renderer that is waiting to display this IPC error.
+      if (window.webContents.getURL() !== welcomeURL) await window.loadURL(welcomeURL);
     }
     throw error;
   } finally { switching = false; resumeEditing(); }
@@ -203,8 +215,9 @@ function beforeAppQuit(event) {
   // electron-updater BaseUpdater emits this native event immediately before its
   // queued app.quit(). A failed installer must not turn that quit into a user quit.
   if (nativeQuitPending) {
+    const transaction = nativeQuitPending;
     nativeQuitPending = false;
-    if (nativeInstall?.failed) { event.preventDefault(); return; }
+    if (transaction.failed) { event.preventDefault(); return; }
   }
   if (!quitting) { event.preventDefault(); requestQuit(); }
 }
@@ -247,6 +260,10 @@ async function installAppUpdate() {
     quitting = true;
     if (update.installMode === 'native') nativeInstall = transaction = {service, previous, failed: false, recovery: null};
     const result = await updates.installReady();
+    // BaseUpdater queues one quit only after a successful synchronous request.
+    // Keep each transaction until that event, even if a failed instance is
+    // replaced and another install starts before its queued quit is delivered.
+    if (transaction && result.requested) nativeQuitTransactions.push(transaction);
     if (transaction?.failed) {
       await transaction.recovery;
       throw Error(updates.status().error?.message || '原生更新安装未完成，请重试。');
@@ -267,7 +284,7 @@ async function installAppUpdate() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
-  electronAutoUpdater.on('before-quit-for-update', () => { nativeQuitPending = true; });
+  electronAutoUpdater.on('before-quit-for-update', () => { nativeQuitPending = nativeQuitTransactions.shift() || {failed: true}; });
   app.on('before-quit', beforeAppQuit);
   app.whenReady().then(async () => {
     // Refresh this running app's Dock icon after same-path reinstalls.

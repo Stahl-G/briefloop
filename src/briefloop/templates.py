@@ -47,7 +47,7 @@ def import_template(store,name,data,parent_id=None,*,prepare_job=True,origin='up
                           'image_paths':[images[x.get(qn('r:embed'))] for x in element.xpath('.//a:blip') if x.get(qn('r:embed')) in images],
                           'paragraph_properties':element.pPr.xml if element.tag==qn('w:p') and element.pPr is not None else ''})
     (folder/'inventory.json').write_text(dump({'blocks':inventory,'headers':[[p.text for p in s.header.paragraphs] for s in doc.sections],
-                                            'footers':[[p.text for p in s.footer.paragraphs] for s in doc.sections]}))
+                                            'footers':[[p.text for p in s.footer.paragraphs] for s in doc.sections]}),encoding='utf-8')
     with store.tx() as c:
         c.execute('INSERT INTO templates VALUES(?,?,?,?,?,?,?,?,?,?)',(tid,Path(name).stem,(parent['revision']+1) if parent else 1,parent_id,
                   hashlib.sha256(data).hexdigest(),'preparing',dump({}),now(),None,origin))
@@ -332,7 +332,7 @@ def prepare(store,template_id,spec):
     return template(store,template_id)
 
 
-def export_template(store,brief,document,figures,template_id=None):
+def export_template(store,brief,document,figures,template_id=None,source_records=None):
     from .document_export import render_document,without_duplicate_cover_heading
     req=json.loads(store.one('runs',brief['run_id'])['requirements'])
     selected_id=template_id or req.get('template_id')
@@ -381,8 +381,10 @@ def export_template(store,brief,document,figures,template_id=None):
                 samples=defaults.get(key,[])
                 if samples:profile.setdefault('paragraph_style',samples[min(index,len(samples)-1)].get('paragraph_style'))
         styles={**defaults,**styles}
+    if source_records is None:
+        source_records={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])}
     render_document(doc,document,figures=figures,styles=styles,
-                    sources={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])})
+                    sources=source_records,citations=detail.get('citations',[]))
     if ' TOC ' in doc.element.xml:
         from .industry_export import enable_update_fields
         enable_update_fields(doc)

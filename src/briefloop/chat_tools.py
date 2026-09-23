@@ -32,11 +32,16 @@ def workspace_action(store, request):
     if action=='capabilities':
         from .source_updates import SourceTimes,ChangeInput
         from .evidence import EvidenceInput,ClaimInput
+        from .reconciliation import OPEN_QUESTIONS_GUIDE
+        from .models import Citation
         return {'actions':list(WORKSPACE_ACTIONS),'schemas':{
             'source_snapshot.timing':SourceTimes.model_json_schema(),
             'source_change.change':ChangeInput.model_json_schema(),
             'evidence_span.evidence':EvidenceInput.model_json_schema(),
-            'claim_create.claim':ClaimInput.model_json_schema()},
+            'claim_create.claim':ClaimInput.model_json_schema(),
+            'revise_document.citations':{'type':'array','items':Citation.model_json_schema(),
+                'description':'可选；完整替换引用说明列表，省略则保留；正文/图表必需的来源引用仍会自动补齐。source_id 必须为本报告已登记的事实来源；locator/excerpt 是引用描述，不代表已通过独立定位核验。'}},
+            'reconciliation_save.open_questions':OPEN_QUESTIONS_GUIDE,
             'export_word.template_id':'可选；就绪模板ID（内置或自备）。缺省沿用报告设置。同稿换版式：正文与版本不变，仅按所选模板重排生成 Word。',
             'authority':'当前执行此命令的运行时接口；不从其他源码目录推定已安装能力。'}
     if action=='source_impacts':
@@ -86,13 +91,14 @@ def workspace_action(store, request):
         return inspect_bindings(store,request['version_id'])
     if action=='read_report':
         from .document_model import brief_document
-        brief=store.one('briefs',request['version_id'])
+        brief=store.brief_view(request['version_id'])
         return {**brief,'editor_document':brief_document(brief),'detail':json.loads(brief['detail'])}
     if action=='revise_document':
         from pathlib import Path
         path=Path(request['document_file']).resolve()
         if not path.is_relative_to(store.root):raise ValueError('修订内容文件必须位于当前工作区')
-        return store.revise(request['base_version'],editor_document=json.loads(path.read_text()),author='agent')
+        saved=store.revise(request['base_version'],editor_document=json.loads(path.read_text(encoding='utf-8')),citations=request.get('citations'),author='agent')
+        return store.brief_view(saved['id'])
     if action=='workflows':
         from .document_workflows import list_workflows
         return {'workflows':list_workflows()}
@@ -120,7 +126,7 @@ def workspace_action(store, request):
     if action=='company_config':
         enabled=request.get('enabled')
         if type(enabled) is not bool:raise ValueError('请选择是否启用企业背景知识库')
-        store.set_meta('settings',{**store.settings(),'company_context_enabled':enabled})
+        store.update_settings({'company_context_enabled':enabled})
         return {'enabled':enabled}
     if action=='company_update':
         from .company_context import propose
@@ -298,7 +304,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"reconciliation_read","run_id":"真实run ID","reconciliation_id":"真实对照ID"}}：读取对照快照；输入变化时返回 stale 标记。
 - {{"action":"export_word","version_id":"真实稿件ID","template_id":"可选；就绪模板ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。传 template_id 即同稿换版式导出——正文与版本不变，仅按所选模板重排；不传沿用报告设置。
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
-- {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
+- {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON、引用和已存正文的 length_stats；revise_document 回执也给出保存后的确定性计数。按 count/rule 核对原始要求、读者约定及当前反馈，不估算字数；over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。可选 citations 完整替换引用列表（source_id/locator/excerpt，schema 见 capabilities），省略则保留；只修改引用也保存新版本，定位描述不表示已独立核验。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。

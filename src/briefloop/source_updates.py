@@ -262,7 +262,7 @@ def for_version(store, version_id):
     return result
 
 
-def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', allow_private=False):
+def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', allow_private=False, user_job_id=None):
     """Actually acquire a new snapshot, within the same run's existing budget.
 
     Deliberately bypass existing_for_run: its cached response cannot demonstrate
@@ -270,6 +270,8 @@ def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', a
     allow_private comes only from a user's own request (the queued UI job), never
     from agent-supplied fields such as trigger: a registered URL may since have
     started redirecting or resolving elsewhere.
+    user_job_id is passed only by the queue worker, not by workspace-action; the
+    running job is revalidated on reservation and again before source admission.
     """
     _interval(information_cutoff)
     if trigger not in ('manual', 'next_run', 'research_refresh'):
@@ -288,27 +290,46 @@ def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', a
     else:
         from . import research_budget, sources
         try:
-            data['budget'] = research_budget.reserve_pages(store, run_id, [source['url']])
+            data['budget'] = research_budget.reserve_pages(store, run_id, [source['url']],
+                                                           refresh_job_id=user_job_id, source_id=source_id)
         except research_budget.BudgetExhausted as exc:
             outcome = 'budget_exhausted'
             data['budget'] = exc.result['budget']
         else:
-            new_source = sources.fetch(store, source['url'], allow_private=allow_private)
-            store.attach_source(run_id, new_source['id'])
-            data['new_snapshot'] = _snapshot(store, new_source['id'])
-            if new_source['status'] != 'ready':
-                outcome = 'fetch_failed'
-                data['error'] = new_source.get('error')
+            pending = sources.PendingSources(store)
+            acquired = sources.fetch(pending, source['url'], allow_private=allow_private)
+            response_status = 'completed' if acquired['status'] == 'ready' else 'failed'
+            reservation = data['budget']
+            accepted = pending.admit(run_id, reservation, status=response_status)
+            provenance = store.root / 'sources' / (acquired['id'] + '.provenance.json')
+            response = {'local_request_id': reservation['request_id'], 'run_id': run_id,
+                        'round_id': reservation.get('round_id'), 'stage': reservation.get('stage'),
+                        'operation': 'source_refresh', 'url': source['url'], 'source_id': acquired['id'],
+                        'outcome': response_status if accepted else 'response_rejected',
+                        'admitted': accepted, 'error': acquired.get('error'),
+                        'provenance_path': str(provenance.relative_to(store.root)) if provenance.exists() else None}
+            data['request_record_path'] = research_budget.save_request_record(store, run_id, reservation['request_id'], response)
+            from .research_plan import settle_request
+            settle_request(store, run_id, reservation['request_id'], response_status, record_path=data['request_record_path'])
+            if not accepted:
+                outcome = 'response_rejected'
+                data['rejected_response'] = response
             else:
-                old = data['old_snapshot']; new = data['new_snapshot']
-                # Raw response changes can matter even when extraction is equal.
-                outcome = 'unchanged_snapshot' if (old['text_hash'], old['raw_hash']) == (new['text_hash'], new['raw_hash']) else 'changed_needs_review'
-                if outcome == 'changed_needs_review':
-                    from .conflicts import create
-                    conflict = create(store, source_ids=[source_id, new_source['id']],
-                                      description='重新取得的来源快照与旧快照不同，需核对变化范围及对已引用结论的影响。',
-                                      kind='unknown', importance='core')
-                    data['conflict_id'] = conflict['id']
+                new_source = acquired
+                data['new_snapshot'] = _snapshot(store, new_source['id'])
+                if new_source['status'] != 'ready':
+                    outcome = 'fetch_failed'
+                    data['error'] = new_source.get('error')
+                else:
+                    old = data['old_snapshot']; new = data['new_snapshot']
+                    # Raw response changes can matter even when extraction is equal.
+                    outcome = 'unchanged_snapshot' if (old['text_hash'], old['raw_hash']) == (new['text_hash'], new['raw_hash']) else 'changed_needs_review'
+                    if outcome == 'changed_needs_review':
+                        from .conflicts import create
+                        conflict = create(store, source_ids=[source_id, new_source['id']],
+                                          description='重新取得的来源快照与旧快照不同，需核对变化范围及对已引用结论的影响。',
+                                          kind='unknown', importance='core')
+                        data['conflict_id'] = conflict['id']
     data['completed_at'] = now()
     data['note'] = '仅比较实际取得快照；差异需主 Agent 分类并登记 source_change 交 Reviewer，不自动推定新值正确。'
     identity = uid('source_refresh')

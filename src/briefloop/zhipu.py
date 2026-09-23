@@ -2,11 +2,11 @@
 from . import __version__,websearch
 import json
 import os
-import tempfile
 import urllib.request
 import urllib.error
 from pathlib import Path
 from .store import dump
+from .search_credentials import write_key
 
 NAME='zhipu'
 LABEL='智谱搜索'
@@ -39,7 +39,7 @@ def _key_path(key_file=None):
 def _read_key(key_file=None):
     key=os.environ.get('ZHIPU_SEARCH_API_KEY','').strip()
     if key:return key,'environment'
-    try:key=_key_path(key_file).read_text().strip()
+    try:key=_key_path(key_file).read_text(encoding='utf-8').strip()
     except FileNotFoundError:return '',None
     except OSError:raise ZhipuError('无法读取本机 Zhipu 凭据文件') from None
     return (key,'file') if key else ('',None)
@@ -53,13 +53,7 @@ def key_status(*,key_file=None):
 def save_key(api_key,*,key_file=None):
     if not isinstance(api_key,str) or not api_key.strip() or any(c.isspace() for c in api_key.strip()):
         raise ZhipuError('请输入有效的 Zhipu API Key')
-    path=_key_path(key_file);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-    descriptor,temporary=tempfile.mkstemp(prefix='.zhipu-',dir=path.parent)
-    try:
-        with os.fdopen(descriptor,'w') as file:file.write(api_key.strip())
-        os.chmod(temporary,0o600);os.replace(temporary,path)
-    finally:
-        if os.path.exists(temporary):os.unlink(temporary)
+    write_key(_key_path(key_file),api_key.strip())
     return key_status(key_file=key_file)
 
 

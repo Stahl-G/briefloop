@@ -188,12 +188,13 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path):
     assert admitted['status'] == 'admitted'
     plan = research_plan.frozen(store, run['id'])
     assert plan['fact_check']['budget_source'] == {'kind': 'user_grant',
-                                                  'limits': {'search_requests': 1, 'candidate_urls': 5, 'source_pages': 1}}
+                                                  'limits': {'search_requests': 3, 'candidate_urls': 15, 'source_pages': 3}}
+    assert research_plan.pending_fact_check_grant(store, run['id']) is None
     active = research_plan.add_fact_check_grant(store, run['id'], SHARE)  # top up a running stage
     assert active['status'] == 'active'
     plan = research_plan.frozen(store, run['id'])
     assert [grant['limits'] for grant in plan['fact_check']['grants']] == [dict(SHARE)]
-    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 1 + 2
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 2 + 1 + 2
     exhausted = plan['fact_check']['stage_id']
     research_plan.finish_fact_check(store, run['id'], status='budget_exhausted', summary='额度用完')
     reopened = research_plan.add_fact_check_grant(store, run['id'], SHARE)
@@ -206,6 +207,173 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as info:  # completed stages never reopen via money
         research_plan.add_fact_check_grant(store, run['id'], SHARE)
     assert info.value.code == 'fact_check_closed'
+
+
+def test_reopened_grant_retains_consumed_credit_without_carrying_unused_budget(tmp_path):
+    base = {'search_requests': 2, 'candidate_urls': 4, 'source_pages': 2}
+    grant = {'search_requests': 2, 'candidate_urls': 3, 'source_pages': 2}
+    store, run, _ = _world(tmp_path, budget=base)
+    original_requirements = store.one('runs', run['id'])['requirements']
+    urls = lambda prefix, count: [f'https://example.test/{prefix}/{index}' for index in range(count)]
+    for _ in range(2):reserved = budget.reserve_search(store, run['id'], 1)
+    budget.record_candidates(store, run['id'], urls('research', 4), reservation=reserved)
+    budget.reserve_pages(store, run['id'], urls('research', 2))
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    for _ in range(2):reserved = budget.reserve_search(store, run['id'], 1)
+    budget.record_candidates(store, run['id'], urls('first-check', 1), reservation=reserved)
+    budget.reserve_pages(store, run['id'], urls('first-check', 1))
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    used = budget.spent(store, run['id'])
+    assert used == {'search_requests': 4, 'candidate_urls': 5, 'source_pages': 3}
+
+    # Closing the check does not donate its unused 2 candidates / 1 page to
+    # later research. Original requirements and cumulative charges stay fixed.
+    research_plan.begin_round(store, run['id'])
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(research_plan.AdmissionError):budget.record_candidates(store, run['id'], urls('later-research', 1))
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], urls('later-research', 1))
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    view = budget.snapshot(store, run['id'])
+    assert view['limits'] == {key: used[key] + grant[key] for key in base}
+    assert budget.spent(store, run['id']) == used
+    for _ in range(2):reserved = budget.reserve_search(store, run['id'], 1)
+    candidates = budget.record_candidates(store, run['id'], urls('second-check', 4), reservation=reserved)
+    assert len(candidates['allowed_urls']) == 3 and len(candidates['unadmitted_urls']) == 1
+    budget.reserve_pages(store, run['id'], urls('second-check', 2))
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], urls('second-check-extra', 1))
+    assert budget.spent(store, run['id']) == {key: used[key] + grant[key] for key in base}
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    assert budget.snapshot(store, run['id'])['limits'] == {key: used[key] + 2 * grant[key] for key in base}
+    assert store.one('runs', run['id'])['requirements'] == original_requirements
+    plan = research_plan.frozen(store, run['id'])
+    assert len(plan['fact_check_history']) == 2 and plan['budget'] == base
+
+
+def test_parallel_grants_survive_stale_admission_and_replayed_consumption(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, run, _ = _world(tmp_path)
+    research_plan.add_fact_check_grant(store, run['id'], SHARE)
+    stale = research_plan.pending_fact_check_grant(store, run['id'])
+    # A persisted pre-ledger pending grant must also survive the upgrade.
+    store.set_meta('fact_check_grant:' + run['id'], {'limits': stale['limits'], 'created': stale['created']})
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = list(pool.map(lambda _: research_plan.add_fact_check_grant(store, run['id'], SHARE), range(4)))
+    assert all(item['status'] == 'pending' for item in pending)
+    assert research_plan.pending_fact_check_grant(store, run['id'])['limits'] == {key: 5 * value for key, value in SHARE.items()}
+    research_plan.finish_round(store, run['id'])
+    barrier = threading.Barrier(2)
+
+    def admit():
+        barrier.wait()
+        return research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': stale['limits']})
+
+    def add():
+        barrier.wait()
+        return research_plan.add_fact_check_grant(store, run['id'], SHARE)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        admitted, addition = pool.submit(admit), pool.submit(add)
+        stage_id = admitted.result()['stage_id']
+        assert addition.result()['stage_id'] == stage_id
+    assert research_plan.pending_fact_check_grant(store, run['id']) is None
+    # The internal retry is idempotent; the low-level ledger has no request_id,
+    # so each call above intentionally contributes another authorized amount.
+    before_retry = research_plan.frozen(store, run['id'])
+    assert research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': stale['limits']})['idempotent']
+    assert research_plan.consume_pending_fact_check_grant(store, run['id'], stage_id)
+    assert research_plan.consume_pending_fact_check_grant(store, run['id'], stage_id)
+    assert research_plan.frozen(store, run['id']) == before_retry
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        active = list(pool.map(lambda _: research_plan.add_fact_check_grant(store, run['id'], SHARE), range(4)))
+    assert all(item['status'] == 'active' for item in active)
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    records = stage['initial_grants'] + stage.get('grants', [])
+    assert len(records) == 10
+    assert len({item['id'] for item in records if 'id' in item}) == 9  # one legacy record
+    assert budget.snapshot(store, run['id'])['limits'] == {key: BUDGET[key] + 10 * SHARE[key] for key in SHARE}
+    assert budget.spent(store, run['id']) == {key: 0 for key in SHARE}
+
+
+def test_legacy_research_usage_does_not_consume_new_explicit_grants(tmp_path):
+    store, run, _ = _world(tmp_path, with_budget=False)
+    _legacy_without_budget(store, run)
+    for _ in range(3):budget.reserve_search(store, run['id'], 1)
+    research_plan.finish_round(store, run['id'])
+    for _ in range(2):
+        previously_spent = budget.spent(store, run['id'])['search_requests']
+        research_plan.add_fact_check_grant(store, run['id'], SHARE)
+        assert budget.snapshot(store, run['id'])['limits']['search_requests'] == previously_spent + SHARE['search_requests']
+        for _ in range(2):budget.reserve_search(store, run['id'], 1)
+        with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+        research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    assert budget.spent(store, run['id'])['search_requests'] == 7
+    assert 'research_budget' not in json.loads(store.one('runs', run['id'])['requirements'])
+
+
+def test_upgrade_restores_unspent_old_active_grant_before_another_addition(tmp_path):
+    unit = {key: 1 for key in SHARE}
+    store, run, _ = _world(tmp_path, budget=unit)
+    original_requirements = store.one('runs', run['id'])['requirements']
+
+    def spend(label):
+        reserved = budget.reserve_search(store, run['id'], 1)
+        budget.record_candidates(store, run['id'], [f'https://example.test/{label}'], reservation=reserved)
+        budget.reserve_pages(store, run['id'], [f'https://example.test/{label}'])
+        return reserved
+
+    spend('research')
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], unit)
+    spend('first-check')
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    research_plan.add_fact_check_grant(store, run['id'], unit)
+    plan = research_plan.frozen(store, run['id'])
+    for stage in plan['fact_check_history'] + [plan['fact_check']]:
+        stage.pop('budget_offset', None)
+        stage.pop('initial_grants', None)
+    store.set_meta('research_plan:' + run['id'], plan)  # persisted pre-upgrade stage
+    assert budget.snapshot(store, run['id'])['limits'] == {key: 3 for key in unit}
+    assert research_plan.frozen(store, run['id']) == plan  # reads never migrate SQLite
+    research_plan.add_fact_check_grant(store, run['id'], unit)
+    assert budget.snapshot(store, run['id'])['limits'] == {key: 4 for key in unit}
+    assert budget.spent(store, run['id']) == {key: 2 for key in unit}
+    spend('after-upgrade-1')
+    reserved = spend('after-upgrade-2')
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    assert budget.record_candidates(store, run['id'], ['https://example.test/extra'], reservation=reserved)['allowed_urls'] == []
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], ['https://example.test/extra'])
+    assert budget.snapshot(store, run['id'])['limits'] == {key: 4 for key in unit}
+    assert store.one('runs', run['id'])['requirements'] == original_requirements
+
+
+def test_upgrade_excludes_current_stage_spending_and_freezes_recovered_offset(tmp_path):
+    store, run, _ = _world(tmp_path, budget={'search_requests': 1, 'candidate_urls': 20, 'source_pages': 10})
+    grant = {'search_requests': 3, 'candidate_urls': 0, 'source_pages': 0}
+    budget.reserve_search(store, run['id'], 1)
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    budget.reserve_search(store, run['id'], 1)  # only 1 of the old grant's 3 was used
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    for _ in range(2):budget.reserve_search(store, run['id'], 1)  # valid under the old ceiling of 4
+    plan = research_plan.frozen(store, run['id'])
+    for stage in plan['fact_check_history'] + [plan['fact_check']]:
+        stage.pop('budget_offset', None)
+    store.set_meta('research_plan:' + run['id'], plan)
+    # Counting current used-base as historical credit would grant 3 instead of 1.
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == 5
+    budget.reserve_search(store, run['id'], 1)  # the first writer freezes the recovered 1
+    research_plan.add_fact_check_grant(store, run['id'], {**grant, 'search_requests': 1})
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == 6
+    budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    assert budget.spent(store, run['id'])['search_requests'] == 6
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == 6
 
 
 def test_grant_entry_reopens_exhausted_stage_and_reschedules_the_check(tmp_path):
@@ -221,6 +389,138 @@ def test_grant_entry_reopens_exhausted_stage_and_reschedules_the_check(tmp_path)
     assert payload['run_id'] == run['id'] and payload['version_id'] == brief['id']
     assert payload['runtime']['model']  # the continued check runs on a frozen model config
     assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'active'
+
+
+@pytest.mark.parametrize('request_id', [None, 'retry-after-insert-failure'])
+def test_failed_grant_dispatch_rolls_back_then_the_same_call_can_retry(tmp_path, monkeypatch, request_id):
+    store, run, _ = _world(tmp_path)
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    before = research_plan.frozen(store, run['id'])
+    used = budget.spent(store, run['id'])
+    wakeups = []
+    store._job_wakeup = lambda: wakeups.append((len(store.rows('SELECT id FROM jobs')),
+                                              research_plan.frozen(store, run['id'])['fact_check']['status']))
+    enqueue = Store.enqueue
+
+    def fail_after_insert(self, *args, **kwargs):
+        enqueue(self, *args, **kwargs)
+        assert len(self.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+        raise OSError('synthetic admission failure after INSERT')
+
+    with monkeypatch.context() as failed:
+        failed.setattr(Store, 'enqueue', fail_after_insert)
+        with pytest.raises(OSError, match='synthetic admission'):
+            fact_check.grant(store, brief['id'], SHARE, request_id=request_id)
+    assert research_plan.frozen(store, run['id']) == before
+    assert budget.spent(store, run['id']) == used
+    assert store.rows('SELECT id FROM jobs') == [] and wakeups == []
+    assert store.rows('SELECT * FROM fact_check_grant_requests') == []
+
+    outcome = fact_check.grant(store, brief['id'], SHARE, request_id=request_id)
+    assert outcome['status'] == 'reopened'
+    assert store.rows('SELECT id FROM jobs') == [{'id': outcome['job_id']}]
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert stage['budget_source']['limits'] == SHARE and len(stage['initial_grants']) == 1
+    assert not stage.get('grants')
+    assert json.loads(store.one('jobs', outcome['job_id'])['payload'])['stage_id'] == stage['stage_id']
+    assert wakeups == [(1, 'active')]  # never wakes a worker before the transaction commits
+    if request_id:
+        receipt = store.rows('SELECT result FROM fact_check_grant_requests')[0]
+        assert json.loads(receipt['result']) == outcome
+
+
+def test_grant_receipt_replays_one_authorization_and_preserves_new_operations(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from briefloop.store import Conflict
+
+    store, run, _ = _world(tmp_path)
+    # Opening an existing pre-receipt workspace creates the table centrally.
+    with store.tx() as connection:connection.execute('DROP TABLE fact_check_grant_requests')
+    store = Store(store.root)
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        outcomes = list(pool.map(lambda _: fact_check.grant(store, brief['id'], SHARE, request_id='same-click'), range(4)))
+    first = next(outcome for outcome in outcomes if not outcome['replayed'])
+    assert sum(not outcome['replayed'] for outcome in outcomes) == 1
+    assert all(outcome == {**first, 'replayed': outcome['replayed']} for outcome in outcomes)
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert len(stage['initial_grants']) == 1 and not stage.get('grants')
+    assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == [{'id': first['job_id']}]
+    assert len(store.rows('SELECT * FROM fact_check_grant_requests')) == 1
+
+    for version, limits in [(brief['id'], {**SHARE, 'search_requests': 3}), ('different-version', SHARE)]:
+        with pytest.raises(Conflict, match='不同内容'):
+            fact_check.grant(store, version, limits, request_id='same-click')
+    # Fresh explicit actions remain separate grants, including old clients.
+    fact_check.grant(store, brief['id'], SHARE, request_id='new-click')
+    legacy = [fact_check.grant(store, brief['id'], SHARE) for _ in range(2)]
+    assert all('request_id' not in value and 'replayed' not in value for value in legacy)
+    assert len(research_plan.frozen(store, run['id'])['fact_check']['grants']) == 3
+    assert len(store.rows('SELECT * FROM fact_check_grant_requests')) == 2
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+
+    # Replayed success must not consult the now-closed stage or current model.
+    research_plan.finish_fact_check(store, run['id'], status='completed')
+    store.set_meta('settings', {**store.settings(), 'model_selection_required': True})
+    before = research_plan.frozen(store, run['id'])
+    used = budget.spent(store, run['id'])
+    assert fact_check.grant(store, brief['id'], dict(reversed(list(SHARE.items()))), request_id='same-click') == {**first, 'replayed': True}
+    assert research_plan.frozen(store, run['id']) == before and budget.spent(store, run['id']) == used
+
+
+def test_pending_grant_receipt_does_not_add_again_after_the_stage_consumes_it(tmp_path):
+    store, run, _ = _world(tmp_path)
+    brief, _, _ = _claim_version(store, run)
+    request = {'request_id': 'pending-click'}
+    first = fact_check.grant(store, brief['id'], SHARE, **request)
+    assert first['status'] == 'pending' and 'job_id' not in first
+    research_plan.finish_round(store, run['id'])
+    research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': SHARE})
+    before = research_plan.frozen(store, run['id'])
+    assert fact_check.grant(store, brief['id'], SHARE, **request) == {**first, 'replayed': True}
+    assert research_plan.frozen(store, run['id']) == before
+    assert len(before['fact_check']['initial_grants']) == 1
+    assert research_plan.pending_fact_check_grant(store, run['id']) is None
+    assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == []
+
+
+def test_old_active_stage_without_dispatch_recovers_one_job_for_parallel_topups(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, run, _ = _world(tmp_path)
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    reopened = research_plan.add_fact_check_grant(store, run['id'], SHARE)  # old split admission stranded here
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: fact_check.grant(store, brief['id'], SHARE), range(2)))
+    assert outcomes[0]['job_id'] == outcomes[1]['job_id']
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert stage['stage_id'] == reopened['stage_id'] and len(stage['grants']) == 2
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 3 * SHARE['search_requests']
+    # Explicit additions are not interchangeable request ids. Keep both amounts,
+    # but do not create another attempt if the existing job later needs resume.
+    store.update_job(outcomes[0]['job_id'], 'failed', error='synthetic transport failure')
+    added = fact_check.grant(store, brief['id'], SHARE)
+    assert added['job_id'] == outcomes[0]['job_id']
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+    assert store.one('jobs', added['job_id'])['status'] == 'failed'
+
+
+def test_active_generating_parent_keeps_ownership_of_first_fact_check_dispatch(tmp_path):
+    store, run, _ = _world(tmp_path)
+    parent = store.enqueue('generate', {'run_id': run['id']})
+    store.update_job(parent['id'], 'running')
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    outcome = fact_check.grant(store, brief['id'], SHARE)
+    assert outcome['status'] == 'active' and 'job_id' not in outcome
+    assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == []
 
 
 def test_worker_prefers_a_pending_user_grant_when_admitting(tmp_path):
@@ -247,7 +547,7 @@ def test_worker_prefers_a_pending_user_grant_when_admitting(tmp_path):
     assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 2
 
 
-def test_grant_is_reachable_through_the_product_http_api(tmp_path):
+def test_grant_is_reachable_through_the_product_http_api(tmp_path, monkeypatch):
     import http.client
     from briefloop.server import make_server
     server = make_server(tmp_path / 'ws', port=0, paused=True)
@@ -284,13 +584,43 @@ def test_grant_is_reachable_through_the_product_http_api(tmp_path):
         view = fact_check.view(store, brief['id'])
         assert view['enabled'] is True and view['stage']['status'] == 'active'
         assert view['stage']['budget_source']['kind'] == 'user_grant'
+        # Simulate a connection lost after the transaction commits but before
+        # the HTTP response is delivered. The user retries the saved click ID.
+        dropped = []
+        original_send = server.RequestHandlerClass.send
+
+        def lose_receipt(handler, status, data, *args, **kwargs):
+            if status == 200 and isinstance(data, dict) and data.get('request_id') == 'lost-success' and not dropped:
+                dropped.append(data)
+                handler.close_connection = True
+                return
+            return original_send(handler, status, data, *args, **kwargs)
+
+        request = {'version_id': brief['id'], 'limits': SHARE, 'request_id': 'lost-success'}
+        with monkeypatch.context() as fault:
+            fault.setattr(server.RequestHandlerClass, 'send', lose_receipt)
+            with pytest.raises(http.client.RemoteDisconnected):post('/api/fact-check-grant', request)
+        assert len(research_plan.frozen(store, run['id'])['fact_check']['grants']) == 1
+        research_plan.finish_fact_check(store, run['id'], status='completed')
+        connection.close()
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
+        status, replay = post('/api/fact-check-grant', request)
+        assert status == 200 and replay == {**dropped[0], 'replayed': True}
+        assert len(research_plan.frozen(store, run['id'])['fact_check']['grants']) == 1
+        assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+        status, refused = post('/api/fact-check-grant', {**request, 'limits': {**SHARE, 'source_pages': 3}})
+        assert status == 409 and '不同内容' in refused['error']
+        for invalid_id in ['', ['invalid'], 'x' * 129]:
+            status, refused = post('/api/fact-check-grant', {**request, 'request_id': invalid_id})
+            assert status == 400 and 'request_id' in refused['error']
         # Malformed limits are a structured refusal, not a crash.
         status, refused = post('/api/fact-check-grant', {'version_id': brief['id'], 'limits': {'search_requests': -1}})
         assert status == 400 and refused.get('code') == 'fact_check_budget_source'
         connection.close()
     finally:
         server.shutdown(); thread.join()
-        server.harness.close(); server.opencode_harness.close()
+        server.harness.close(); server.opencode_harness.close(); server.native_harness.close()
+        server.runtime_bridge.close(); server.native_engine.close()
         server.server_close(); server.workspace_lock.close()
 
 @pytest.mark.parametrize('check_fails', [False, True])
