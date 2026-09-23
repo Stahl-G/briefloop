@@ -231,6 +231,7 @@ def evidence_key(value):
 
 def update_draft_evidence(store, config, args, *, operation='update_draft_evidence', replay_args=None):
     from .models import Citation, NumberBinding, TemporalClaim
+    from .writer_assembly import MAX_ASSEMBLY_ERRORS, resolve_record, source_locator
     types = {'citations': Citation, 'number_bindings': NumberBinding, 'temporal_claims': TemporalClaim}
     with drafts.guard(store, config):
         request = UpdateEvidence.model_validate(args)
@@ -239,10 +240,41 @@ def update_draft_evidence(store, config, args, *, operation='update_draft_eviden
         if replay is not None:
             return replay
         prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
+        locate = source_locator(config)
+        normalized, supporting, errors = [], list(prior.get('citations') or []), []
+        for i, change in enumerate(request.changes):
+            try:
+                value = change.value
+                if value is not None:
+                    value = dict(value)
+                    excerpt = value.get('excerpt' if request.field == 'citations' else 'source_excerpt', '')
+                    if not isinstance(excerpt, str):
+                        raise ValueError('原文摘录必须是文本')
+                    if request.field == 'temporal_claims':
+                        value.pop('source_excerpt', None)
+                    value = types[request.field].model_validate(value).model_dump(mode='json')
+                    if excerpt:
+                        if request.field == 'temporal_claims':
+                            value['source_excerpt'] = excerpt
+                        value = resolve_record(request.field, value, prior['markdown'], locate,
+                                               require_number_quote=False)
+                        if request.field != 'citations':
+                            citation = {'source_id': value['source_id'], 'locator': value['locator'], 'excerpt': excerpt}
+                            if citation not in supporting:
+                                supporting.append(citation)
+                    # Legacy locator-only records remain compatible and
+                    # retain their unchecked status in the diagnostics.
+                normalized.append(value)
+            except (ValueError, OSError) as exc:
+                errors.append(f'records[{i}]: {str(exc)[:600]}')
+                if len(errors) >= MAX_ASSEMBLY_ERRORS:
+                    break
+        if errors:
+            raise ValueError('\n'.join(errors) + '\n本批未保存；只修对应记录，正文保持原状。')
         records = list(prior.get(request.field) or [])
         keys = [evidence_key(r) for r in records]
         touched = set()
-        for change in request.changes:
+        for change, value in zip(request.changes, normalized):
             key = change.record_key
             if key is not None:
                 if key in touched or keys.count(key) != 1:
@@ -250,7 +282,6 @@ def update_draft_evidence(store, config, args, *, operation='update_draft_eviden
                 touched.add(key)
             elif change.value is None:
                 raise WritingError('empty_change', '新增须提供 value；删除须提供 record_key', field=request.field)
-            value = types[request.field].model_validate(change.value).model_dump(mode='json') if change.value is not None else None
             if key is None:
                 if evidence_key(value) not in keys:
                     records.append(value); keys.append(evidence_key(value))
@@ -260,7 +291,10 @@ def update_draft_evidence(store, config, args, *, operation='update_draft_eviden
                     records.pop(index); keys.pop(index)
                 else:
                     records[index] = value; keys[index] = evidence_key(value)
-        return drafts._save_locked(store, config, {'base_revision': request.base_revision, request.field: records},
+        changes = {'base_revision': request.base_revision, request.field: records}
+        if request.field != 'citations' and supporting != prior.get('citations', []):
+            changes['citations'] = supporting
+        return drafts._save_locked(store, config, changes,
             writer_request=(operation, request_args), response_fields={
                 'field': request.field, 'record_keys': [evidence_key(r) for r in records]})
 
@@ -348,7 +382,9 @@ def operations():
     # schemas. Each model sees the exact record type it needs to populate.
     from .models import Citation, NumberBinding, TemporalClaim
     from pydantic import create_model
-    for field, record in [('citations', Citation), ('number_bindings', NumberBinding), ('temporal_claims', TemporalClaim)]:
+    temporal_input = create_model('temporal_claim_input', __base__=TemporalClaim,
+                                  source_excerpt=(str, Field(default='', description='逐字原文；提供后程序定位，旧记录仅locator仍兼容。')))
+    for field, record in [('citations', Citation), ('number_bindings', NumberBinding), ('temporal_claims', temporal_input)]:
         item = create_model(field + '_record', __base__=record, record_key=(str | None, None))
         request = create_model(field + '_update', __base__=Input, base_revision=(Text, ...),
                                records=(list[item], Field(default_factory=list, max_length=30)),
@@ -362,7 +398,7 @@ def operations():
                     'field': field, 'changes': changes}, operation='update_' + field,
                     replay_args=_canonical(parsed))
         result['update_' + field] = (request, update,
-            f'独立更新 {field}。records中直接写记录字段，不包装value对象；数字记录的value就是数值。修改时在该记录加read_draft返回的record_key，新记录省略键。删除仅传remove_keys。不要重交正文。')
+            f'独立更新 {field}。与assemble_evidence使用相同摘录字段：引用给excerpt，数字和日期给source_excerpt；程序定位，重复摘录需line范围。records中直接写字段，不包装value对象；数字value就是数值。修改附read_draft返回的record_key，新记录省略键。删除仅传remove_keys。不重交正文。')
     return result
 
 
@@ -388,8 +424,10 @@ def tool_specs():
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
 先独立保存正文：短稿 write_report(title, markdown)，长稿 write_sections 后 assemble_report。取得revision后，再一次 assemble_evidence 登记三类证据。兼容同次附证据；如果回执evidence_status=not_saved，正文已保存但证据未保存，按返回revision修正证据，不重交正文。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
 同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
+局部证据更新与批量装配使用同一套摘录字段；update_temporal_claims同样接受source_excerpt，程序生成locator。修改某条记录只交该条与record_key，不重传整类数组。
 若 assemble_evidence、assemble_report、update_*、patch_report_text 或 replace_report_blocks 的回执丢失，原样重试同一操作及完整参数；仅当它仍是当前修订时返回 replayed=true。若已被后续修改覆盖，先 read_draft 读取新 revision，不改旧 base_revision 盲目重发。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
+check_draft返回writer_action：repair_then_check只修列出的确定性问题；submit_draft表示可提交当前工作稿，未核验项仍交独立审阅。needs_attention不等于禁止提交。不要为了工具不支持的单位、非强制目标字数或数值检查覆盖率反复补写、改数值或删除限定词；不把未核验写成已通过。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
 
 

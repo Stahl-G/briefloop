@@ -115,3 +115,42 @@ def test_many_invalid_records_return_bounded_diagnostics_without_saving(tmp_path
     assert 'citations[7]' in message and 'citations[8]' not in message
     assert '本批未保存' in message
     assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == saved['revision']
+
+
+def test_local_updates_resolve_same_excerpts_and_preserve_other_records(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown': f'收入增长20%。[@{source["id"]}]'})
+    time_record = {'source_id': source['id'], 'source_excerpt': store.source_text(source['id']),
+                   'statement': '2025年收入增长', 'event_date': '2025'}
+    batch = writer.assemble_evidence(store, config, {'base_revision': first['revision'],
+        'temporal_claims': [time_record]})
+    prior = drafts._candidate(store, config, {'revision': batch['revision']})['draft']
+    update = writer.operations()['update_temporal_claims'][1]
+    args = {'base_revision': batch['revision'], 'records': [
+        {**time_record, 'statement': '2025年收入增长20%', 'record_key': batch['record_keys']['temporal_claims'][0]}]}
+    saved = update(store, config, args)
+    assert update(store, config, args) == {**saved, 'replayed': True}
+    value = drafts._candidate(store, config, {'revision': saved['revision']})['draft']
+    assert value['temporal_claims'][0]['locator'] == prior['temporal_claims'][0]['locator'] == 'line 1'
+    assert 'source_excerpt' not in value['temporal_claims'][0]
+    assert value['citations'] == prior['citations']
+    assert value['editor_document'] == prior['editor_document']
+    with pytest.raises(ValueError, match='最新稿件版本'):
+        update(store, config, {**args, 'records': [{**time_record, 'statement': '旧版不得更新'}]})
+    before = drafts._read(drafts._root(store, config)/'current.json')
+    with pytest.raises(ValueError, match=r'records\[1\]'):
+        update(store, config, {'base_revision': saved['revision'], 'records': [
+            {**time_record, 'statement': '本条有效也不得部分保存'},
+            {**time_record, 'source_excerpt': '原文没有'},
+            {**time_record, 'source_id': 'src_outside'}]})
+    assert drafts._read(drafts._root(store, config)/'current.json') == before
+    assert drafts._candidate(store, config, {'revision': saved['revision']})['draft'] == value
+
+
+def test_local_number_update_rejects_ambiguous_body_without_saving(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%，再次提到收入增长20%。'})
+    update = writer.operations()['update_number_bindings'][1]
+    with pytest.raises(ValueError, match='report_quote'):
+        update(store, config, {'base_revision': first['revision'], 'records': [number(source['id'])]})
+    assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == first['revision']

@@ -69,6 +69,10 @@ def test_evidence_patch_is_small_and_invalidates_check(tmp_path):
     read = drafts.read_saved(store, config, {'field': 'citations'})
     assert read['record_keys'] == updated['record_keys']
     value['locator'] = 'line 1-2'
+    unchanged = writer.update_draft_evidence(store, config, {'base_revision': updated['revision'],
+        'field': 'citations', 'changes': [{'record_key': read['record_keys'][0], 'value': value}]})
+    assert unchanged['revision'] == updated['revision']  # same excerpt resolves to the same location
+    value['excerpt'] = '收入1200万元，同比增长20%。'
     newer = writer.update_draft_evidence(store, config, {'base_revision': updated['revision'],
         'field': 'citations', 'changes': [{'record_key': read['record_keys'][0], 'value': value}]})
     with pytest.raises(ValueError): writer.update_draft_evidence(store, config, {'base_revision': updated['revision'],
@@ -132,7 +136,14 @@ def test_native_and_cli_use_same_frozen_protocol(tmp_path):
     replay = cli('write_report','--file',str(folder/'article.md'),'--title','报告',
                  '--evidence-file',str(folder/'evidence.json'))
     assert replay['revision'] == revision
-    assert cli('check_draft','--revision',revision)['revision'] == revision
+    (folder/'time.json').write_text(json.dumps({'base_revision':revision, 'records': [{
+        'statement':'2025年收入增长20%', 'event_date':'2025', 'source_id':source['id'],
+        'source_excerpt':'2025年收入1200万元，同比增长20%。'}]}))
+    revision = cli('update_temporal_claims','--file',str(folder/'time.json'))['revision']
+    checked = cli('check_draft','--revision',revision)
+    assert checked['revision'] == revision
+    assert checked['writer_action']['next_operation'] == 'submit_draft'
+    assert checked['writer_action']['review_status'] == 'not_reviewed'
     assert cli('submit_draft','--revision',revision)['revision'] == revision
     assert Path(config['result_file']).is_file()
     stored = json.loads(Path(config['result_file']).read_text())
@@ -193,6 +204,9 @@ def test_evidence_tools_have_flat_typed_inputs_and_save_records(tmp_path):
         schema=specs[name]['parameters']
         assert schema['type']=='object' and 'base_revision' in schema['properties']
         assert 'anyOf' not in schema and schema['properties']['records']['type']=='array'
+        if name == 'update_temporal_claims':
+            record_name = schema['properties']['records']['items']['$ref'].split('/')[-1]
+            assert 'source_excerpt' in schema['$defs'][record_name]['properties']
     saved=writer.write_report(store,config,{'title':'报告','markdown':f'收入同比增长20%。[@{source["id"]}]'})
     result=run_tool(store,config,'update_citations',{'base_revision':saved['revision'],
         'records':[{'source_id':source['id'],'locator':'line 1','excerpt':store.source_text(source['id'])}]})

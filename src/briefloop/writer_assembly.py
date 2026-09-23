@@ -73,15 +73,48 @@ def locate_excerpt(text, excerpt, locator=''):
     return f'line {start}' if start == end else f'line {start}-{end}'
 
 
-def assemble(config, evidence, markdown, prior_citations=()):
-    """Return only supplied evidence fields, with resolved canonical records.
-
-    Source text comes exclusively from the frozen packet. Callers guard and
-    verify its fingerprint before invoking this function, then save atomically.
-    """
+def source_locator(config):
+    """Resolve excerpts in this packet, sharing scope checks and the read cache."""
     root = Path(config['packet_root']).resolve()
     index = {s['source_id']: s for s in json.loads((root/'source-index.json').read_text(encoding='utf-8'))['sources']}
-    cache, result, errors = {}, {}, []
+    cache = {}
+
+    def locate(source_id, excerpt, locator=''):
+        source = index.get(source_id)
+        if source is None or source.get('reference_only'):
+            raise ValueError('来源不属于本轮事实材料')
+        if source_id not in cache:
+            path = (root/source['text_file']).resolve()
+            if not path.is_relative_to(root):
+                raise ValueError('来源路径超出冻结任务包')
+            cache[source_id] = path.read_text(encoding='utf-8-sig')
+        return locate_excerpt(cache[source_id], excerpt, locator)
+    return locate
+
+
+def resolve_record(field, value, markdown, locate, *, require_number_quote=True):
+    """Normalize one author-selected record; never infer its factual meaning."""
+    value = dict(value)
+    excerpt = value['excerpt'] if field == 'citations' else value['source_excerpt']
+    value['locator'] = locate(value['source_id'], excerpt, value.get('locator', ''))
+    if field == 'number_bindings':
+        quote, token = value.get('report_quote', ''), value.get('number_text', '')
+        # Legacy partial bindings remain readable/unchecked. Once a body span
+        # is supplied, both batch and local updates enforce the same uniqueness.
+        if require_number_quote or quote or token:
+            if not quote or markdown.count(quote) != 1:
+                raise ValueError('report_quote 必须在保存后的正文中逐字唯一，请用 read_draft(field=body) 读取准确片段')
+            if not token or quote.count(token) != 1:
+                raise ValueError('number_text 必须在 report_quote 中逐字唯一；缩小到对应数值的准确正文片段')
+    if field == 'temporal_claims':
+        value.pop('source_excerpt')
+    return value
+
+
+def assemble(config, evidence, markdown, prior_citations=()):
+    """Return supplied fields only; callers guard the packet and save atomically."""
+    locate = source_locator(config)
+    result, errors = {}, []
 
     def reject(message):
         # Report independent record errors together. Nothing is saved until
@@ -101,27 +134,7 @@ def assemble(config, evidence, markdown, prior_citations=()):
         records = []
         for i, item in enumerate(items):
             try:
-                source = index.get(item.source_id)
-                if source is None or source.get('reference_only'):
-                    raise ValueError('来源不属于本轮事实材料')
-                if item.source_id not in cache:
-                    path = (root/source['text_file']).resolve()
-                    if not path.is_relative_to(root):
-                        raise ValueError('来源路径超出冻结任务包')
-                    cache[item.source_id] = path.read_text(encoding='utf-8-sig')
-                excerpt = item.excerpt if field == 'citations' else item.source_excerpt
-                locator = locate_excerpt(cache[item.source_id], excerpt, item.locator)
-                value = item.model_dump(mode='json')
-                value['locator'] = locator
-                if field == 'number_bindings':
-                    if markdown.count(item.report_quote) != 1:
-                        raise ValueError('report_quote 必须在保存后的正文中逐字唯一，请扩大或修正正文片段')
-                    if item.report_quote.count(item.number_text) != 1:
-                        raise ValueError('number_text 必须在 report_quote 中逐字唯一')
-                if field == 'temporal_claims':
-                    # TemporalClaim has no excerpt field; retain the author's
-                    # selected excerpt as a normal citation as well.
-                    value.pop('source_excerpt')
+                value = resolve_record(field, item.model_dump(mode='json'), markdown, locate)
                 if value not in records:
                     records.append(value)
             except (ValueError, OSError) as exc:
@@ -135,7 +148,7 @@ def assemble(config, evidence, markdown, prior_citations=()):
     for field in ('number_bindings', 'temporal_claims'):
         for item in getattr(evidence, field) or []:
             citation = {'source_id': item.source_id,
-                        'locator': locate_excerpt(cache[item.source_id], item.source_excerpt, item.locator),
+                        'locator': locate(item.source_id, item.source_excerpt, item.locator),
                         'excerpt': item.source_excerpt}
             if citation not in supporting:
                 supporting.append(citation)

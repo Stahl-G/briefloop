@@ -7,6 +7,24 @@ from .length import count_brief, length_stats
 _TABLE_CITATION_SAMPLE_LIMIT = 12
 
 
+def writer_action(diagnostics):
+    """Advise the next operation without changing draft admission or review."""
+    repairs = [w['code'] for w in diagnostics.get('warnings', [])
+               if w.get('kind', 'repairable_error') == 'repairable_error']
+    results = diagnostics.get('numbers', {}).get('results', [])
+    records = [i for i, row in enumerate(results) if row.get('remediation') == 'repair_binding']
+    if records and 'number_binding_repair_needed' not in repairs:
+        repairs.append('number_binding_repair_needed')
+    unchecked = sum(not row.get('checked') for row in results)
+    return {'next_operation': 'repair_then_check' if repairs else 'submit_draft',
+            'repair_codes': repairs, 'number_binding_indexes': records[:12],
+            'number_binding_repair_count': len(records),
+            'unchecked_number_count': unchecked, 'review_status': 'not_reviewed',
+            'scope': '仅当前版本的工作稿下一步建议，不是事实核实或正式交付许可。',
+            'message': ('只修列出的错误或绑定位置，再检查新revision；不重写无关正文。' if repairs else
+                        '可提交当前已检查revision。保留未核验项交审阅；不为检查覆盖率、工具不支持的单位或非强制目标字数反复改稿。')}
+
+
 def _table_citation_notes(draft):
     """Describe absent cell-local markers, without inferring evidence support."""
     from .delivery_checks import quantities

@@ -11,6 +11,7 @@ from pathlib import Path
 from .store import dump
 
 CHECK_VERSION = 1
+DIAGNOSTIC_VERSION = 2
 
 
 def _hash(value):
@@ -216,20 +217,23 @@ def _candidate(store, config, args, *, allow_section_changes=False):
 
 
 def check(store, config, args):
-    from .draft_checks import inspect_draft
+    from .draft_checks import inspect_draft, writer_action
     with guard(store, config):
         candidate = _candidate(store, config, args)
         path = _root(store, config) / ('checked-' + args['revision'] + '.json')
-        if path.exists() and _read(path).get('check_version') == CHECK_VERSION:
-            return {**_read(path), 'cached': True}
+        cached = _read(path) if path.exists() else {}
+        if (cached.get('check_version') == CHECK_VERSION
+                and cached.get('diagnostic_version') == DIAGNOSTIC_VERSION):
+            return {**cached, 'cached': True, 'writer_action': writer_action(cached['diagnostics'])}
         task = _read(Path(config['packet_root']) / 'input.json')
         index = _read(Path(config['packet_root']) / 'source-index.json')['sources']
         result = {'revision': args['revision'], 'check_version': CHECK_VERSION,
+                  'diagnostic_version': DIAGNOSTIC_VERSION,
                   'status': 'checked', 'review_status': 'not_reviewed',
                   'diagnostics': inspect_draft(candidate['draft'], task['requirements'], store=store,
                       allowed_sources={s['source_id'] for s in index if not s['reference_only']})}
         _write(path, result)
-        return result
+        return {**result, 'writer_action': writer_action(result['diagnostics'])}
 
 
 def submit(store, config, args, *, file_value=None):

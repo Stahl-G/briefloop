@@ -151,7 +151,8 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
     for item in bindings or []:
         item = item if isinstance(item, dict) else {}
         row = {'label': item.get('label', ''), 'checked': False, 'found': False,
-               'expected': f"{item.get('value')} {item.get('unit', '')}", 'reason': ''}
+               'expected': f"{item.get('value')} {item.get('unit', '')}", 'reason': '',
+               'remediation': 'semantic_review'}
         results.append(row)
         expected = normalized(item.get('value'), item.get('unit', ''))
         if expected is None:
@@ -163,17 +164,22 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
         if expected[1] == 'scalar':
             row['dimensionless'] = True
             if not (item.get('label') and (item.get('entity') or item.get('period'))):
+                row['remediation'] = 'repair_binding'
                 row['reason'] = '裸数值绑定缺少 label 与 entity/period，特异性不足，未检查'
                 continue
         quote, token = item.get('report_quote', ''), item.get('number_text', '')
         if not quote or not token or markdown.count(quote) != 1 or quote.count(token) != 1:
+            row['remediation'] = 'repair_binding'
             row['reason'] = '正文定位缺失、重复或已改动，需重新绑定'
             continue
         if not item.get('source_id') or not item.get('locator') or not item.get('source_excerpt') or store is None:
+            if store is not None:
+                row['remediation'] = 'repair_binding'
             row['reason'] = '缺少可核对的来源定位与原文摘录'
             continue
         sid = item['source_id']
         if allowed_sources is not None and sid not in allowed_sources:
+            row['remediation'] = 'repair_binding'
             row['reason'] = '绑定来源不属于本轮事实材料'
             continue
         try:
@@ -184,6 +190,7 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
             _, location = _read_location(store, EvidenceInput(
                 source_id=sid, locator=_number_locator(item['locator']), excerpt=item['source_excerpt']))
         except (ValueError, OSError):
+            row['remediation'] = 'repair_binding'
             row['reason'] = '来源定位无法读取，或摘录不在指定位置，未检查'
             continue
         if location['location_status'] != 'located':
@@ -203,6 +210,7 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
             continue
         row['checked'] = True
         row['found'] = candidates[0] == expected
+        row['remediation'] = 'none' if row['found'] else 'repair_binding'
         if row['found'] and row.get('dimensionless'):
             row['reason'] = '裸数值匹配（无量纲，仅证数值存在），归属与含义仍待评价'
         else:

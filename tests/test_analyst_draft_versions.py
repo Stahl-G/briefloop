@@ -109,6 +109,28 @@ def test_below_target_is_advisory_but_actual_errors_remain_visible(tmp_path):
     assert result['warnings'][0]['code'] == 'over_limit'
 
 
+def test_writer_action_separates_unsupported_units_from_broken_bindings(tmp_path):
+    store, run, source, config = writer(tmp_path)
+    binding = {'label': '收入增速', 'value': 20, 'unit': '自定义口径',
+        'source_id': source['id'], 'locator': 'line 1', 'source_excerpt': store.source_text(source['id']),
+        'report_quote': '收入增长20%', 'number_text': '20%'}
+    first = saved_revision(store, config, {**draft(source['id']), 'number_bindings': [binding]})
+    checked = check(store, config, first)
+    assert checked['diagnostics']['status'] == 'needs_attention'
+    assert checked['writer_action']['next_operation'] == 'submit_draft'
+    assert checked['writer_action']['unchecked_number_count'] == 1
+    assert checked['writer_action']['review_status'] == 'not_reviewed'
+    assert check(store, config, first)['writer_action'] == checked['writer_action']
+    assert run_tool(store, config, 'submit_draft', {'revision': first})['ok']
+    second = saved_revision(store, config, {'base_revision': first,
+        'number_bindings': [{**binding, 'unit': '%', 'report_quote': '没有这句'}]})
+    checked = check(store, config, second)
+    assert checked['writer_action']['next_operation'] == 'repair_then_check'
+    assert checked['writer_action']['number_binding_indexes'] == [0]
+    # The diagnostic advice does not become a new gate on editable work drafts.
+    assert run_tool(store, config, 'submit_draft', {'revision': second})['ok']
+
+
 def test_saved_work_can_be_read_after_context_loss_without_new_permission(tmp_path):
     store, run, source, config = writer(tmp_path)
     def read(**args):
