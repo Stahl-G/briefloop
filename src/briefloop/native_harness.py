@@ -228,9 +228,10 @@ class NativeHarness:
             return existing
         previous = (existing or {}).get('session_file') or self.chat.session(sid).get('thread_id')
         from .agent_prompts import system_prompt
-        from .native_roles import role_of, runner_tool_specs
+        from .native_roles import role_of, runner_tool_specs, analyst_tool_loading
         role = role_of(config)
-        prompt = system_prompt(role, 'interactive' if role == 'chat' else 'background')
+        loading = analyst_tool_loading(role, config)
+        prompt = system_prompt(role, 'interactive' if role == 'chat' else 'background', tool_loading=bool(loading))
         params = {
             'system_prompt': prompt['text'],
             'session_id': sid,
@@ -241,6 +242,8 @@ class NativeHarness:
             'model': config['model'],
             'thinking': _thinking(config),
         }
+        if loading:
+            params['tool_loading'] = loading
         if config.get('review_id'):
             # Structure is checked by the same admission that saves the review.
             params['admission'] = 'runner'

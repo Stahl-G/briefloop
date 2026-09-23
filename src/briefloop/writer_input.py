@@ -29,6 +29,12 @@ class WriteReport(EvidenceInput):
     markdown: Text
 
 
+class WriteReportBody(Input):
+    """Small Native model surface; the shared API still accepts EvidenceInput."""
+    title: Text
+    markdown: Text
+
+
 class Section(Input):
     section_id: SectionID
     markdown: Text

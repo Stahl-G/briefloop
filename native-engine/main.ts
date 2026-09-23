@@ -24,11 +24,13 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { fixedLoader } from "./loader.js";
 import { AUTHOR_COMPACTION_ROLES, COMPACTION_POLICY_VERSION, continuityExtension } from "./compaction.js";
 import { IMAGE_MIME, inside, packetTools, toolGuide } from "./packet-tools.js";
 import { parseRunnerTools, RunnerResult, runnerTools } from "./runner-tools.js";
+import { LOAD_TOOLS, LOAD_TOOLS_GUIDE, TOOL_LOADING_ENTRY, ToolLoading, loadingTool } from "./tool-loading.js";
 
 // Respect pi 0.85.1's model-declared map: null disables a level; extended
 // levels need explicit model support. Catalog access never submits a prompt.
@@ -61,7 +63,20 @@ const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
 const RUNNER_TOOL_TIMEOUT_MS = 180_000;
 
 const REPAIR_PROMPT = "只回复这个 JSON 对象本身，不加 Markdown 代码块，前后不加说明。";
-const submitPrompt = (tool: string) => `你还没有通过 ${tool} 提交结果。请基于已完成的核查调用 ${tool} 提交完整结果对象；未通过时按返回的错误修正后再次提交。`;
+const submissionAction = (entry: Pick<SessionEntry, "submitTool" | "toolLoading">) => {
+  const tool = entry.submitTool;
+  if (entry.toolLoading && !entry.toolLoading.active.includes(tool)) {
+    const group = entry.toolLoading.config.groups.find(group => group.tools.includes(tool));
+    return group
+      ? `先单独调用 load_tools(${JSON.stringify({ groups: [group.name] })})，等待加载回执；下一轮按已加载工具的检查与保存规则，再单独调用 ${tool} 提交。`
+      : `当前没有可以启用 ${tool} 的能力组；请如实说明缺少提交能力，不要虚构已提交。`;
+  }
+  return `按工具回执完成尚未完成的修正，再单独调用 ${tool} 提交结果。`;
+};
+const submitPrompt = (entry: Pick<SessionEntry, "submitTool" | "toolLoading">) =>
+  entry.toolLoading
+    ? `你还没有通过 ${entry.submitTool} 提交结果。${submissionAction(entry)}未通过时按返回的错误修正，不重交已保存正文。`
+    : `你还没有通过 ${entry.submitTool} 提交结果。请基于已完成的核查调用 ${entry.submitTool} 提交完整结果对象；未通过时按返回的错误修正后再次提交。`;
 const STALL_PROMPT = "上一次模型请求卡住，已被运行器取消。上面的工具结果仍然有效，从中断处继续。";
 const SUBMIT_REPAIRS = 2;
 const ADMISSION_TIMEOUT_MS = 120_000;
@@ -77,10 +92,10 @@ const JSON_REPAIRS = 1;
 // about 70k characters. Stop that request and ask for smaller steps.
 const DEFAULT_MAX_REPLY_CHARS = 120_000;
 const OVERLONG_RETRIES = 1;
-const overlongPrompt = (entry: Pick<SessionEntry, "role" | "submitTool">) =>
+const overlongPrompt = (entry: Pick<SessionEntry, "role" | "submitTool" | "toolLoading">) =>
   `上一次回复过长，已被运行器中止。当前角色是 ${entry.role}，已成功的工具结果和已保存内容仍然有效，不要重复执行。把剩余工作拆成较小步骤，使用本次已提供的工具继续。` +
   (entry.submitTool
-    ? `按工具回执完成尚未完成的修正，再单独调用 ${entry.submitTool} 提交结果。`
+    ? submissionAction(entry)
     : "任务已完成时直接简洁回复，不需要额外的提交工具。");
 
 interface WireRequest { id?: string; method: string; params?: Record<string, unknown>; }
@@ -88,7 +103,9 @@ interface SessionEntry {
   session: AgentSession;
   role: string;
   cwd: string;
-  tools: ReturnType<typeof packetTools>;
+  tools: ToolDefinition<any, any>[];
+  toolLoading?: ToolLoading;
+  toolBatch: string[];
   sessionFile?: string;
   // The execution this session is serving; "" while idle. Session events are
   // forwarded only while it is set, and only turnStart clears it — after the
@@ -155,6 +172,13 @@ function extractJson(text: string): unknown | undefined {
 }
 
 const sessions = new Map<string, SessionEntry>();
+function activeToolSchemaHash(session: AgentSession): string {
+  const names = new Set(session.getActiveToolNames());
+  const definitions = session.getAllTools().filter(tool => names.has(tool.name))
+    .map(({ name, description, parameters }) => ({ name, description, parameters }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
+}
 // Product default chosen by the user; explicit provider limits still win.
 const DEFAULT_CONTEXT_WINDOW = 1_000_000;
 interface RuntimeSnapshot {
@@ -335,6 +359,10 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
       }
       case "message_end":
         if (e.message?.role === "assistant") {
+          // Only public call names are needed to reject loading mixed with
+          // other operations. Do not inspect or persist model thinking here.
+          entry.toolBatch = (Array.isArray(e.message.content) ? e.message.content : [])
+            .filter((part: any) => part.type === "toolCall").map((part: any) => part.name);
           emit(clientSid, execId, "performance", {phase: "model_message", sequence: requestSequence,
             duration_ms: requestStarted === null ? null : performance.now() - requestStarted,
             first_delta_ms: firstDelta === null || requestStarted === null ? null : firstDelta - requestStarted,
@@ -499,7 +527,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   const role = String(p.role ?? "reviewer");
   const local = ROLE_LOCAL_TOOLS[role];
   if (!local) throw new Error(`unsupported role: ${role}`);
-  const declared = parseRunnerTools(p.runner_tools, REVIEWER_TOOLS);
+  const declared = parseRunnerTools(p.runner_tools, [...REVIEWER_TOOLS, LOAD_TOOLS]);
   const settling = declared.filter((t) => t.settles);
   if (settling.length > 1) throw new Error("at most one runner tool may settle the run");
   const submitTool = settling[0]?.name ?? (local.includes("submit_review") ? "submit_review" : "");
@@ -557,9 +585,39 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     acceptsImages: () => acceptsImages(modelRef),
     settle: (value) => { if (entryRef) entryRef.submitted = value; },
   });
-  const tools = [...packet, ...fromRunner];
+  const allowed = [...local, ...declared.map(tool => tool.name)];
+  const loading = p.tool_loading === undefined ? undefined : new ToolLoading(p.tool_loading, allowed,
+    sessionManager.getBranch(), { role, packetRoot, declared, basePrompt });
+  let activeSession: AgentSession | undefined;
+  const applyLoadedTools = () => {
+    if (!activeSession || !loading) throw new Error("tool loading session is not ready");
+    activeSession.setActiveToolsByName(loading.active);
+    loading.assertActive(activeSession.getActiveToolNames());
+  };
+  const discovery = loading ? [loadingTool(loading, applyLoadedTools, (state) => {
+    sessionManager.appendCustomEntry(TOOL_LOADING_ENTRY, state);
+    if (entryRef?.execId) emit(clientSid, entryRef.execId, "performance", {
+      phase: "tool_loading", loaded_groups: state.groups, active_tools: loading.active,
+      system_prompt_sha256: createHash("sha256").update(activeSession!.systemPrompt).digest("hex"),
+      active_tool_schema_sha256: activeToolSchemaHash(activeSession!), schema_scope: "sdk_active_definitions",
+    });
+  })] : [];
+  const tools: ToolDefinition<any, any>[] = [...packet, ...fromRunner, ...discovery].map(tool => ({
+    ...tool,
+    execute: async (...args: Parameters<typeof tool.execute>) => {
+      if (loading) {
+        if (!entryRef?.execId || entryRef.cancelled) throw new Error("没有可执行的活动任务");
+        loading.assertActive(entryRef.session.getActiveToolNames());
+        loading.assertInvocation(tool.name, entryRef.toolBatch);
+      }
+      return (tool.execute as (...input: Parameters<typeof tool.execute>) => ReturnType<typeof tool.execute>)(...args);
+    },
+  }));
   const guides = Object.fromEntries(declared.map((t) => [t.name, t.guide ?? t.description]));
-  const systemPrompt = `${basePrompt}\n\n${toolGuide(tools.map((t) => t.name), guides, submitTool || "提交")}`;
+  if (loading) guides[LOAD_TOOLS] = LOAD_TOOLS_GUIDE;
+  const systemPrompt = () => `${basePrompt}\n\n${toolGuide(loading?.active ?? allowed, guides,
+    submitTool && (!loading || loading.active.includes(submitTool)) ? submitTool : loading ? "加载和提交" : "提交")}`
+    + (loading ? `\n\n${loading.guide()}` : "");
   let compactSession: AgentSession;
   const { session } = await createAgentSession({
     cwd,
@@ -579,9 +637,11 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     sessionManager,
     settingsManager,
   });
+  activeSession = session;
+  if (loading) applyLoadedTools();
   compactSession = session;
   const active = session.getActiveToolNames().sort();
-  const expected = [...local, ...declared.map((t) => t.name)].sort();
+  const expected = [...(loading?.active ?? allowed)].sort();
   if (active.join(",") !== expected.join(",")) {
     session.dispose();
     throw new Error(`${role} tool confinement check failed: active tools are ${JSON.stringify(active)}`);
@@ -592,6 +652,8 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     role,
     cwd,
     tools,
+    toolLoading: loading,
+    toolBatch: [],
     sessionFile: (session as any).sessionFile ?? sessionFile,
     execId: "",
     cancelled: false,
@@ -632,8 +694,12 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     thinking: session.thinkingLevel,
     runtime_policy: {sdk: "pi-coding-agent", thinking: session.thinkingLevel,
       compaction: session.autoCompactionEnabled, compaction_policy: COMPACTION_POLICY_VERSION, retries: 6, context_window: model.contextWindow, compaction_threshold: Math.floor(model.contextWindow * 0.95), output_limit: model.maxTokens,
-      tool_schema_sha256: createHash("sha256").update(JSON.stringify(declared)).digest("hex")},
+      tool_schema_sha256: createHash("sha256").update(JSON.stringify(declared)).digest("hex"),
+      tool_schema_scope: "runner_declared_registry",
+      active_tool_schema_sha256: activeToolSchemaHash(session), active_tool_schema_scope: "sdk_active_definitions"},
     tools: active,
+    ...(loading ? { tool_loading: { loaded_groups: loading.groups, restore_status: loading.restoreStatus,
+      configuration_fingerprint: loading.fingerprint } } : {}),
   });
 }
 
@@ -642,6 +708,7 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
   const entry = sessions.get(sid);
   if (!entry) throw new Error("unknown session_id");
   if (entry.execId) throw new Error("session busy");
+  entry.toolLoading?.assertActive(entry.session.getActiveToolNames());
   const execId = String(p.execution_id ?? "");
   const prompt = String(p.prompt ?? "");
   if (!execId || !prompt) throw new Error("execution_id and prompt required");
@@ -717,7 +784,7 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
         if (repairs < SUBMIT_REPAIRS) {
           repairs += 1;
           emit(sid, execId, "status", { message: `result not submitted; asking for ${entry.submitTool} (${repairs}/${SUBMIT_REPAIRS})` });
-          message = submitPrompt(entry.submitTool);
+          message = submitPrompt(entry);
           continue;
         }
         // Last resort: a bare JSON reply still reaches runner admission.

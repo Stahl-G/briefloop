@@ -35,6 +35,14 @@ WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报�
 WRITING_GUIDE += '\n' + DECISION_EVIDENCE_GUIDE
 
 
+NATIVE_WRITER_START = """你是本报告的 Analyst，按 writer_input_v1 写可读的中文报告。
+先读 input.json、writing.md、plan.json、research.json；遵循冻结 Reader Contract 与 writing.md 中本轮经验。source-index.json 和 source-context.json 是原文导航，研究摘要不是事实原件。采用建议须回读条件、例外、阶段与日期；引文、数字及因果结论需由所引原文支持。
+本阶段只用任务包，不联网补搜、不派发其他角色、不自行评分。正文用 Markdown，普通表格用管道格式，事实引用放在正文及相应单元格 [@src_ID]，不输出来源ID表或富文档 JSON。已登记图表用 briefloop-figure:fig_ID。篇幅服从用户要求，不为目标字数填充无关内容。
+新稿先 write_report(title, markdown) 保存正文；取得 revision 后单独调用 load_tools({"groups":["evidence"]})，收到回执再装配证据、检查和提交。
+已有稿的修订或中断恢复，先单独 load_tools({"groups":["revise"]})，收到回执后 read_draft 读取当前正文与 revision，不重写原稿。长稿、确定计算或看PDF时再加载相应组。
+同一稿件每轮只发一个写入，等新 revision 再继续；不凭旧摘要重放写入。具体参数在加载后的工具及组指南，必要时再读 document-guide.json / draft.schema.json，不预先通读接口。固定操作协议不由 writing.md 的可演化经验改写。"""
+
+
 def packet(store, run_id, folder, *, plan, research, source_ids=None, support=None,
            base_version=None, feedback=None, skill_override=_DEFAULT_SKILL, writer_protocol="rich_json_v1"):
     from .models import BriefDraft, Requirements, ScoutResult
@@ -407,7 +415,7 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
         prompt += f'\n需要确定计算时可使用本地计算工具；report_data 计算入口为 `{tool_command(store.root,backend=backend)} prepare-report-data --run {run_id} --file RAW_JSON --output PREPARED_JSON`。'
         prompt += f'\n将完整 BriefDraft 原子写入 {folder / "draft.json"}，随后用 `{tool_command(store.root,backend=backend)} check-draft --run {run_id} --file {folder / "draft.json"}` 检查结构、各章篇幅与引用/数字定位，修正后重新检查；检查返回完整 revision，再用 `{tool_command(store.root,backend=backend)} submit-draft --run {run_id} --file {folder / "draft.json"} --revision 返回的REVISION` 提交已检查版本。文件或元数据改变后旧 revision 无效。reader_contract 由程序绑定，不要复制。完成后简短回复文件路径，不重复整篇正文。'
     if writer_protocol == 'writer_input_v1':
-        prompt = writing_guide + f'\n任务包目录：{frozen["root"]}。'
+        prompt = (NATIVE_WRITER_START if backend == 'briefloop-native' else writing_guide) + f'\n任务包目录：{frozen["root"]}。'
         if backend != 'briefloop-native':
             command = tool_command(store.root, backend=backend)
             writer_command = f'{command} writer --run {run_id} --draft-file {folder / "draft.json"}'

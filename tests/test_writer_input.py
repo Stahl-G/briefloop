@@ -110,8 +110,11 @@ def test_native_and_cli_use_same_frozen_protocol(tmp_path):
     task = Path(config['packet_root'])/'input.json'
     payload = json.loads(task.read_text());payload['writer_input_protocol'] = writer.PROTOCOL
     task.write_text(json.dumps(payload))
-    names = {t['name'] for t in runner_tool_specs('analyst', config=config)}
-    assert 'write_report' in names and 'save_draft' not in names and 'save_draft_section' not in names
+    specs = {t['name']: t for t in runner_tool_specs('analyst', config=config)}
+    assert 'write_report' in specs and 'save_draft' not in specs and 'save_draft_section' not in specs
+    assert set(specs['write_report']['parameters']['properties']) == {'title', 'markdown'}
+    assert specs['write_report']['parameters']['additionalProperties'] is False
+    assert 'number_bindings' in writer.WriteReport.model_json_schema()['properties']
     chat = ChatStore(store)
     folder = Path(config['result_file']).parent
     session = chat.create('writer', {'backend':'pi'}, folder)
@@ -393,10 +396,16 @@ def test_markdown_prompt_preserves_content_rules_and_frozen_protocol(tmp_path):
     class Captured(Exception): pass
     class Runtime:
         def execute(self,job,prompt,folder):
-            assert '保留原始 records' in prompt
-            assert '表格内事实的引用放在相应单元格' in prompt
-            assert 'writer_input_v1' in prompt
-            assert '将完整 BriefDraft 原子写入' not in prompt
+            from briefloop.native_roles import analyst_tool_loading
+            config = {'packet_root': str(folder/'packet'), 'backend': 'briefloop-native'}
+            loading = analyst_tool_loading('analyst', config)
+            assert loading and 'write_report' in loading['initial']
+            assert prompt.startswith(analyst.NATIVE_WRITER_START)
+            assert writer.GUIDE not in prompt  # advanced protocol is loaded by group
+            # The same explicit protocol and content rules remain available in the packet.
+            guide = json.loads((folder/'packet/document-guide.json').read_text())
+            assert guide['protocol'] == 'writer_input_v1' and guide['writing'] == writer.GUIDE
+            assert 'writing.md' in prompt and '[@src_ID]' in prompt
             raise Captured()
     folder=store.root/'new-protocol-run'
     for requested in ('writer_input_v1','rich_json_v1'):

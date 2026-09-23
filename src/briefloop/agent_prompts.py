@@ -18,10 +18,13 @@ def _asset(name):
     return resources.files('briefloop').joinpath('prompt_assets', name).read_text(encoding='utf-8').strip()
 
 
-def system_prompt(role, mode='background'):
+def system_prompt(role, mode='background', *, tool_loading=False):
     if role not in ROLES:
         raise ValueError(f'unknown agent role: {role}')
     if mode not in MODES:
         raise ValueError(f'unknown agent mode: {mode}')
-    text = '\n\n'.join(_asset(name) for name in ('core.zh.md', f'role.{role}.zh.md', f'mode.{mode}.zh.md'))
+    if tool_loading and role != 'analyst':
+        raise ValueError('按需工具提示仅用于 Analyst')
+    role_asset = 'role.analyst-on-demand.zh.md' if tool_loading else f'role.{role}.zh.md'
+    text = '\n\n'.join(_asset(name) for name in ('core.zh.md', role_asset, f'mode.{mode}.zh.md'))
     return {'text': text, 'version': hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}

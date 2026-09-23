@@ -810,6 +810,125 @@ test("an evaluator session has packet reads plus the runner's tools, and nothing
     system_prompt: SYSTEM, runner_tools: [{ ...RENDER, name: "packet_read" }] }), /runner tool name taken: packet_read/);
 });
 
+const WRITING_TOOLS = [
+  { name: "write_report", description: "DEFERRED_BODY_SCHEMA", guide: "DEFERRED_BODY_GUIDE", sequential: true,
+    parameters: { type: "object", required: ["title", "markdown"], properties: { title: { type: "string" }, markdown: { type: "string" } } } },
+  { name: "check_draft", description: "Check saved revision", sequential: true,
+    parameters: { type: "object", required: ["revision"], properties: { revision: { type: "string" } } } },
+  { name: "submit_draft", description: "Submit checked revision", settles: true,
+    parameters: { type: "object", required: ["revision"], properties: { revision: { type: "string" } } } },
+];
+const WRITING_LOADING = { initial: ["packet_read"], groups: [
+  { name: "writing", description: "写稿与保存", tools: WRITING_TOOLS.map(tool => tool.name), guide: "LOADED_GROUP_GUIDE" },
+] };
+const requestToolNames = request => request.tools.map(tool => tool.function.name).sort();
+
+test("on-demand tools change the real request schemas, reject premature/mixed calls and preserve revision flow", async () => {
+  const s = await reviewer({ role: "analyst", runner_tools: WRITING_TOOLS, tool_loading: WRITING_LOADING });
+  assert.deepEqual(s.tools, ["load_tools", "packet_read"]);
+  const calls = [];
+  let checked;
+  runnerTool = (tool, args) => {
+    calls.push(tool);
+    if (tool === "write_report") return { ok: true, content: [{ type: "text", text: '{"revision":"r1"}' }] };
+    assert.equal(args.revision, "r1");
+    if (tool === "check_draft") { checked = "r1"; return { ok: true, content: [{ type: "text", text: '{"writer_action":"submit_draft","revision":"r1"}' }] }; }
+    assert.equal(checked, "r1");
+    return { ok: true, settle: '{"saved":true,"revision":"r1"}' };
+  };
+  try {
+    script(
+      reply.tool("write_report", { title: "premature", markdown: "must not be saved" }),
+      reply.tools(["load_tools", { groups: ["writing"] }], ["packet_read", { path: "notes.txt" }]),
+      reply.tool("load_tools", { groups: ["writing", "unknown"] }),
+      reply.tool("load_tools", { groups: ["writing"] }),
+      reply.tool("load_tools", { groups: ["writing", "writing"] }),
+      reply.tool("write_report", { title: "稿件", markdown: "正文" }),
+      reply.tool("check_draft", { revision: "r1" }),
+      reply.tool("submit_draft", { revision: "r1" }),
+    );
+    const evts = await turn(s.session_id, "demand-writing", { require_submit: true, idle_timeout_s: 30 });
+    assert.equal(ends(evts)[0].status, "completed");
+    assert.deepEqual(calls, ["write_report", "check_draft", "submit_draft"]);
+    assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { saved: true, revision: "r1" });
+    assert.equal(provider.requests.length, 8);
+    for (const request of provider.requests.slice(0, 4)) {
+      assert.deepEqual(requestToolNames(request), ["load_tools", "packet_read"]);
+      assert.doesNotMatch(JSON.stringify(request.messages[0]), /DEFERRED_BODY_GUIDE|LOADED_GROUP_GUIDE/);
+    }
+    for (const request of provider.requests.slice(4)) {
+      assert.deepEqual(requestToolNames(request), ["check_draft", "load_tools", "packet_read", "submit_draft", "write_report"]);
+      assert.match(JSON.stringify(request.messages[0]), /DEFERRED_BODY_GUIDE/);
+      assert.match(JSON.stringify(request.messages[0]), /LOADED_GROUP_GUIDE/);
+    }
+    assert.ok(evts.some(e => e.kind === "tool" && e.name === "load_tools" && e.is_error && /必须单独/.test(e.output)));
+    assert.ok(evts.some(e => e.kind === "tool" && e.name === "packet_read" && e.is_error && /必须单独/.test(e.output)));
+    assert.ok(evts.some(e => e.kind === "tool" && e.name === "load_tools" && !e.is_error && /already_loaded.*writing/.test(e.output)));
+    const saved = readFileSync(s.session_file, "utf8").trim().split("\n").map(JSON.parse)
+      .filter(entry => entry.type === "custom" && entry.customType === "briefloop.tool-loading.v1");
+    assert.equal(saved.length, 1, "repeat/invalid loads do not create new state records");
+    assert.deepEqual(saved[0].data.groups, ["writing"]);
+    assert.equal(s.runtime_policy.tool_schema_scope, "runner_declared_registry");
+    const activation = evts.find(e => e.kind === "performance" && e.phase === "tool_loading");
+    assert.equal(activation.schema_scope, "sdk_active_definitions");
+    assert.notEqual(activation.active_tool_schema_sha256, s.runtime_policy.active_tool_schema_sha256);
+  } finally { runnerTool = () => ({ ok: false, error: "no runner tool configured" }); }
+});
+
+test("deferred submission recovery asks to load the group before invoking its submit tool", async () => {
+  const s = await reviewer({ role: "analyst", runner_tools: WRITING_TOOLS, tool_loading: WRITING_LOADING });
+  runnerTool = () => ({ ok: true, settle: '{"saved":true}' });
+  try {
+    script(reply.text("正文已经准备好。"), reply.tool("load_tools", { groups: ["writing"] }), reply.tool("submit_draft", { revision: "existing-checked-revision" }));
+    const evts = await turn(s.session_id, "deferred-submit", { require_submit: true, idle_timeout_s: 30 });
+    assert.equal(ends(evts)[0].status, "completed");
+    const recovery = JSON.stringify(provider.requests[1].messages.filter(message => message.role === "user").at(-1).content);
+    assert.match(recovery, /先单独调用 load_tools/);
+    assert.match(recovery, /writing/);
+    assert.match(recovery, /下一轮/);
+    assert.ok(!requestToolNames(provider.requests[1]).includes("submit_draft"));
+    assert.ok(requestToolNames(provider.requests[2]).includes("submit_draft"));
+  } finally { runnerTool = () => ({ ok: false, error: "no runner tool configured" }); }
+});
+
+test("loaded groups survive cancellation and reconstruction, while changed authorization resets safely", async () => {
+  const options = { role: "analyst", runner_tools: WRITING_TOOLS, tool_loading: WRITING_LOADING };
+  const s = await reviewer(options);
+  let reached;
+  const waiting = new Promise(resolve => { reached = resolve; });
+  script(reply.tool("load_tools", { groups: ["writing"] }), res => { reached(); reply.stall()(res); });
+  const done = turn(s.session_id, "demand-cancel", { expect_json: false, idle_timeout_s: 30 });
+  await waiting;
+  await call("turn_abort", { session_id: s.session_id });
+  assert.equal(ends(await done)[0].status, "cancelled");
+  await call("session_close", { session_id: s.session_id });
+  const restored = await reviewer({ ...options, session_file: s.session_file });
+  assert.equal(restored.tool_loading.restore_status, "restored");
+  assert.deepEqual(restored.tool_loading.loaded_groups, ["writing"]);
+  assert.ok(restored.tools.includes("write_report"));
+  script(reply.text('{"restored":true}'));
+  await turn(restored.session_id, "demand-restored");
+  assert.ok(requestToolNames(provider.requests[0]).includes("write_report"));
+  assert.match(JSON.stringify(provider.requests[0].messages[0]), /LOADED_GROUP_GUIDE/);
+  await call("session_close", { session_id: restored.session_id });
+  const changed = await reviewer({ ...options, session_file: s.session_file,
+    tool_loading: { initial: ["packet_read"], groups: [{ name: "checking", description: "检查", tools: ["check_draft"] }] } });
+  assert.equal(changed.tool_loading.restore_status, "configuration_changed");
+  assert.deepEqual(changed.tools, ["load_tools", "packet_read"]);
+  script(reply.text('{"reset":true}'));
+  await turn(changed.session_id, "demand-reset");
+  assert.deepEqual(requestToolNames(provider.requests[0]), ["load_tools", "packet_read"]);
+  assert.doesNotMatch(JSON.stringify(provider.requests[0].messages[0]), /DEFERRED_BODY_GUIDE|LOADED_GROUP_GUIDE/);
+});
+
+test("tool-loading configuration cannot add unregistered tools or replace the discovery entry", async () => {
+  await assert.rejects(reviewer({ role: "analyst", tool_loading: { initial: ["bash"], groups: [] } }), /registered tool names/);
+  await assert.rejects(reviewer({ role: "analyst", tool_loading: { initial: ["packet_read"], groups: [
+    { name: "escape", description: "unregistered", tools: ["bash"] },
+  ] } }), /registered tool names/);
+  await assert.rejects(reviewer({ role: "analyst", runner_tools: [{ name: "load_tools", description: "override", parameters: { type: "object" } }] }), /name taken/);
+});
+
 const ADD_URL = { name: "add_url", description: "保存网页", parameters: { type: "object", required: ["url"], properties: { url: { type: "string" } } } };
 const SCOUT_SUBMIT = { name: "submit_scout_result", description: "提交研究结果", settles: true,
   parameters: { type: "object", required: ["sources"], properties: { sources: { type: "array", items: { type: "object" } } } } };

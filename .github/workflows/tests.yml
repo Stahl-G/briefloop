@@ -54,7 +54,7 @@ jobs:
       - run: node --test native-engine/engine.test.mjs
       - run: python -m pip install '.[dev]'
       - name: Engine sessions through the real bridge (Node 22.19+)
-        run: python -m pytest -q tests/test_native_harness.py
+        run: python -m pytest -q tests/test_native_harness.py tests/test_native_writer_loading.py
   macos-process-tree:
     runs-on: macos-latest
     timeout-minutes: 10

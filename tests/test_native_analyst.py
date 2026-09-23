@@ -219,3 +219,58 @@ def test_prepared_reader_requirements_reach_shared_writer_packet(tmp_path):
     assert ANALYST_GUIDE in shared
     assert shared in (pack['root']/'writing.md').read_text()
     assert ANALYST_GUIDE not in instructions(resolve(saved), 'reviewer')
+
+
+
+def test_markdown_analyst_sends_lazy_catalog_and_keeps_revision_capabilities(tmp_path):
+    from briefloop.native_harness import NativeHarness
+    from briefloop.native_roles import analyst_tool_loading
+    from test_native_harness import EngineFixture
+    store, run, source, inputs = setup(tmp_path)
+    packet = analyst.packet(store, run['id'], store.root/'lazy', writer_protocol='writer_input_v1', **inputs)
+    engine = EngineFixture()
+    harness = NativeHarness(store, engine)
+    config = harness._config({'model': 'fake/writer', 'native_role': 'analyst', 'run_id': run['id'],
+        'packet_root': str(packet['root']), 'result_file': str(packet['root'].parent/'draft.json')})
+    sid = harness.create_session('lazy', config, packet['root'].parent)['id']
+    try:
+        harness._engine_session(sid, config, packet['root'].parent)
+        params = next(p for method, p in engine.calls if method == 'session_create')
+        loading = params['tool_loading']
+        assert loading['initial'] == ['packet_list', 'packet_read', 'packet_grep', 'write_report']
+        groups = {g['name']: g for g in loading['groups']}
+        grouped = [name for g in groups.values() for name in g['tools']]
+        assert len(grouped) == len(set(grouped))
+        declared = {tool['name'] for tool in params['runner_tools']}
+        assert set(loading['initial']) | set(grouped) == declared | {'packet_list', 'packet_read', 'packet_grep', 'calc'}
+        assert {'read_draft', 'patch_report_text', 'replace_report_blocks'} <= set(groups['revise']['tools'])
+        assert {'check_draft', 'submit_draft'} <= set(groups['evidence']['tools'])
+        assert params['system_prompt'] == system_prompt('analyst', tool_loading=True)['text']
+        assert params['system_prompt'] != system_prompt('analyst')['text']
+        body = next(t for t in params['runner_tools'] if t['name'] == 'write_report')
+        assert set(body['parameters']['properties']) == {'title', 'markdown'}
+        revised = analyst_tool_loading('analyst', {**config, 'revision': {'id': 'fixture'}})
+        assert 'save_revision_metadata' in next(g['tools'] for g in revised['groups'] if g['name'] == 'revise')
+        assert analyst_tool_loading('analyst', {**config, 'backend': 'pi'}) is None
+        assert analyst_tool_loading('reviewer', config) is None
+    finally:
+        harness.close()
+
+
+def test_rich_analyst_session_keeps_eager_tools_and_original_system_prompt(tmp_path):
+    from briefloop.native_harness import NativeHarness
+    from test_native_harness import EngineFixture
+    store, run, source, inputs = setup(tmp_path)
+    packet = analyst.packet(store, run['id'], store.root/'rich', **inputs)
+    engine = EngineFixture(); harness = NativeHarness(store, engine)
+    config = harness._config({'model': 'fake/writer', 'native_role': 'analyst', 'run_id': run['id'],
+        'packet_root': str(packet['root']), 'result_file': str(packet['root'].parent/'draft.json')})
+    sid = harness.create_session('rich', config, packet['root'].parent)['id']
+    try:
+        harness._engine_session(sid, config, packet['root'].parent)
+        params = next(p for method, p in engine.calls if method == 'session_create')
+        assert 'tool_loading' not in params
+        assert params['system_prompt'] == system_prompt('analyst')['text']
+        assert {'save_draft', 'save_draft_section'} <= {t['name'] for t in params['runner_tools']}
+    finally:
+        harness.close()

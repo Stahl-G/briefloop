@@ -714,8 +714,46 @@ def _tools(role, mode=None, config=None):
     return RUNNER_TOOLS[role]
 
 
+def analyst_tool_loading(role, config=None):
+    """Fixed operation catalog, independent of user-evolved writing experience."""
+    if role != 'analyst' or not config or config.get('backend', 'briefloop-native') != 'briefloop-native' or not config.get('packet_root'):
+        return None
+    from .writer_input import protocol, PROTOCOL
+    if protocol(config) != PROTOCOL:
+        return None
+    groups = [
+        {'name': 'evidence', 'description': '正文已保存：装配证据、说明缺口、检查并提交。',
+         'tools': ['assemble_evidence', 'update_draft_details', 'check_draft', 'submit_draft'],
+         'guide': '用 write_report 返回的 revision 作为 base_revision，一次 assemble_evidence 装配所需证据。引用用 source_id/excerpt；数字和日期用 source_excerpt，逐字原文由程序定位，重复匹配才补 line 范围，不另写查行号脚本。数字还须给原始 value/unit、主体期间、正文唯一 report_quote 和 number_text；日期区分事件日与报道日。所传数组整类替换，未传类别保留；来源摘录登记不自动补正文引用。失败返回 repair_batch_id 时用原 base_revision 加 corrections（field、从0开始的index、完整record）只补错误项，正确项仍在拒收批次，全部通过才保存。缺口用 update_draft_details 保存。每次写入等新 revision，不并发更新同一稿件。回执丢失可原样重试；版本已变则加载 revise 读取现状。check_draft 后按 writer_action 修复确定问题或提交同一最新 revision；needs_attention、未支持单位和目标字数不要求反复改稿。保存和检查不是事实核实，提交后结束，不自行评分。'},
+        {'name': 'revise', 'description': '恢复或修改已有稿：读取现状、精确改字及局部证据更新。',
+         'tools': ['read_draft', 'patch_report_text', 'replace_report_blocks', 'update_citations', 'update_number_bindings', 'update_temporal_claims'],
+         'guide': '先 read_draft 取当前 revision；已有修订原稿由程序恢复，不调用 write_report 覆盖。正文小改用 patch_report_text；结构变化先读 body 的 block_keys 再 replace_report_blocks，保留人工格式、图片与未改内容。局部证据 records 直接写字段：引用 excerpt，数字/日期 source_excerpt；修改附 record_key，新增不带键，删除用 remove_keys。每次变更传最新 base_revision 并等待新 revision；回执丢失原样重试，旧 revision 不盲目替换。完成后加载 evidence 检查并提交。'},
+        {'name': 'sections', 'description': '长稿分章保存与组装。',
+         'tools': ['write_sections', 'assemble_report'],
+         'guide': 'write_sections 可一批保存多章 Markdown；覆盖已有章节带 expected_hash。按累计字数控制篇幅，再 assemble_report 指定有序 section_ids；已有完整稿带当前 base_revision。获得 revision 后加载 evidence 装配证据、检查和提交。'},
+        {'name': 'calculate', 'description': '确定计算、比较表和原始指标。',
+         'tools': ['calc', 'prepare_report_data'],
+         'guide': '用 calc 核对计算，不心算。结构化指标交 prepare_report_data 确定计算；结果使用后，加载 evidence，通过 update_draft_details 的 report_data 保留原始 records。单位、期间、分母和实际/预测状态需自己回读原文确认。'},
+        {'name': 'pdf', 'description': '实际查看已登记 PDF 的页面。',
+         'tools': ['render_pdf_pages'],
+         'guide': '仅查看本任务允许来源的 PDF 页面，按返回的图像和定位核对；没有看到图像不能声称已目视验收。'},
+    ]
+    if config.get('revision'):
+        groups[1]['tools'].append('save_revision_metadata')
+        groups[1]['guide'] += ' 本次独立审阅整改还须 save_revision_metadata 保存 review_findings 的逐项 responses 与已登记主张 bindings。'
+    return {'initial': ['packet_list', 'packet_read', 'packet_grep', 'write_report'], 'groups': groups}
+
+
 def runner_tool_specs(role, mode=None, config=None):
-    return [{key: value for key, value in tool.items() if key != 'handler'} for tool in _tools(role, mode, config)]
+    specs = [{key: value for key, value in tool.items() if key != 'handler'} for tool in _tools(role, mode, config)]
+    if analyst_tool_loading(role, config):
+        from .writer_input import WriteReportBody
+        for spec in specs:
+            if spec['name'] == 'write_report':
+                spec['parameters'] = WriteReportBody.model_json_schema()
+                spec['description'] = '首次保存标题与 Markdown 正文；正文引用用 [@src_ID]。返回 revision 后加载 evidence 组装配证据；已有稿先加载 revise 读取，不重交整稿。'
+                spec['guide'] = spec['description']
+    return specs
 
 
 def run_tool(store, config, name, args):

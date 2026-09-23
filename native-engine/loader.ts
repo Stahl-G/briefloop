@@ -9,7 +9,7 @@
 import { createExtensionRuntime } from "@earendil-works/pi-coding-agent";
 import type { ResourceLoader, Extension } from "@earendil-works/pi-coding-agent";
 
-export function fixedLoader(systemPrompt: string, bundledExtensions: Extension[] = []): ResourceLoader {
+export function fixedLoader(systemPrompt: string | (() => string), bundledExtensions: Extension[] = []): ResourceLoader {
   const runtime = createExtensionRuntime();
   return {
     getExtensions: () => ({ extensions: bundledExtensions, errors: [], runtime }),
@@ -17,7 +17,7 @@ export function fixedLoader(systemPrompt: string, bundledExtensions: Extension[]
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => systemPrompt,
+    getSystemPrompt: () => typeof systemPrompt === "function" ? systemPrompt() : systemPrompt,
     getSystemPromptSource: () => undefined,
     getAppendSystemPrompt: () => [],
     getAppendSystemPromptSources: () => [],
