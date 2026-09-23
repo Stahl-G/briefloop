@@ -300,7 +300,7 @@ def replace_report_blocks(store, config, args):
 
 def protocol(config):
     path = Path(config['packet_root']) / 'input.json'
-    return json.loads(path.read_text()).get('writer_input_protocol', 'rich_json_v1')
+    return json.loads(path.read_text(encoding='utf-8')).get('writer_input_protocol', 'rich_json_v1')
 
 
 def operations():
@@ -386,12 +386,12 @@ def update_draft_details(store, config, args):
 
 def ensure_revision_base(store, config):
     """Initialize a revision attempt from the frozen rich original, never retype it."""
-    task = json.loads((Path(config['packet_root'])/'input.json').read_text())
+    task = json.loads((Path(config['packet_root'])/'input.json').read_text(encoding='utf-8'))
     if task.get('mode') != 'revision': return
     with drafts.guard(store, config):
         if (drafts._root(store, config)/'current.json').exists(): return
         drafts._packet_hash(config)
-        original = json.loads((Path(config['packet_root'])/'original.json').read_text())
+        original = json.loads((Path(config['packet_root'])/'original.json').read_text(encoding='utf-8'))
         if original['id'] != task['base_version'] or original['hash'] != task['base_hash']:
             raise WritingError('base_identity', '冻结原稿身份不一致')
         doc = original['editor_document']

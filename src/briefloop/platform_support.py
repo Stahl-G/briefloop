@@ -8,6 +8,19 @@ import time
 import weakref
 
 
+def filesystem_path(path):
+    """Use extended Windows paths for I/O, after logical identity checks."""
+    path = Path(path)
+    if os.name != 'nt':
+        return path
+    value = os.path.abspath(path)
+    if value.startswith('\\\\?\\'):
+        return Path(value)
+    if value.startswith('\\\\'):
+        return Path('\\\\?\\UNC\\' + value[2:])
+    return Path('\\\\?\\' + value)
+
+
 class WorkspaceLock:
     """Acquire before opening SQLite; keep the same inode until service exit."""
     def __init__(self, workspace):

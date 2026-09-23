@@ -51,6 +51,10 @@ DTO 字段：
 
 Windows 默认委托 `electron-updater`；未来签名 macOS 构建可由主进程显式配置 `installMode: 'native'`。固定 GitHub provider，设置 `autoDownload=false`、`autoInstallOnAppQuit=false`、`allowPrerelease=false`、`allowDowngrade=false`。本模块不写 installer，不更换应用文件；实际安装只调用 `quitAndInstall(false, true)`。
 
+Windows 下载完成后，以当前实例的公开 `update-downloaded` 元数据和 `downloadUpdate()` 返回路径固定目标版本、上游 SHA-512 与实际 EXE 路径。文件名须为 `BriefLoop-Setup-{版本}-{架构}.exe`；缺校验信息、路径不一致、多 EXE 或额外 web-installer 包文件会拒绝，并提示重新检查下载。安装门禁内再次核对实际文件及 SHA-512；不将本地重新计算的 hash 当作可信基线。此复核不保证消除恶意同用户并发替换的全部时序窗口，也不解析 EXE 内部版本。
+
+安装请求失败后，Windows 清除 ready 并废弃本次 NsisUpdater；下次显式下载通过新实例重新核对同一目标版本和缓存。仅移除本包装层的进度/下载监听，旧实例保留无副作用的 error 监听；其迟到事件不能改变新实例状态。主进程按已接受安装请求的顺序保留退出事务，旧失败实例排队的退出仍被阻止；同步拒绝及安装前校验失败不会占用退出事务队列。不修改更新器的私有安装标志。
+
 原生更新仍需要正式 installer、对应 `latest.yml`/`latest-mac.yml` 等产物与平台签名配置。macOS 还需要 ZIP 配合更新元数据；NSIS 的安装/签名配置由 Windows 工作负责。`quitAndInstall()` 会先关闭窗口，主进程必须在调用前完成保存、busy 决策和 owned 服务退出，并避免再次触发同一退出门禁。[electron-builder 更新指南](https://www.electron.build/docs/features/auto-update/)、[AppUpdater API](https://www.electron.build/docs/api/electron-updater.class.appupdater/)
 
 ## 无公开发布的本地验证
@@ -74,6 +78,8 @@ Windows 默认委托 `electron-updater`；未来签名 macOS 构建可由主进�
 ```
 
 运行 `node --test test/updater.test.cjs`。测试使用临时回环 HTTP 服务和合成字节，不执行安装器：覆盖失败重试、哈希拒绝、稳定版/降级/缺资产、越界 URL 拒绝、公开来源约束、原生库方法委托及自动安装关闭。它们不证明 GitHub 公开更新链、macOS 原地更新或 Windows 本机安装已验收；安装包实测应由各平台另行完成。
+
+`node --test test/updater.test.cjs test/updater-integration.test.cjs` 另使用实际 NsisUpdater/BaseUpdater 的缓存、完成事件和退出调度，只替换传输、spawn、App 与工作区服务。合成字节放在中文/空格临时路径；验证异步启动失败后的第二次 spawn、旧事件/旧退出与新请求交错、同步失败及文件变更时恢复会话。这仍是隔离行为验证，不运行安装器，不证明系统安装失败后旧程序完整回滚。
 
 显式本地源也可提供与当前 App 完全相同的稳定版本，用于重新安装真实构建。此时 `reinstall: true`，界面显示“重新安装当前 App v{版本}”；版本、tag、资产文件名、大小与校验要求保持一致，不能用更高的虚报版本包装旧构建。本地 feed 作者须核对 DMG 内 App 的实际版本；下载器不挂载 DMG 或自行解释安装包，单凭文件名与哈希不证明包内 App 版本。生产官方源对同版本仍返回 `current`，所有来源均不能下载降级版本。此能力不改变正式更新 feed，也不代表发布了新版本。
 

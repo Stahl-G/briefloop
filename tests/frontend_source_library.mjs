@@ -1,4 +1,5 @@
 import * as time from '../frontend/time.js';
+import {createSourceLibrarySearch} from '../frontend/source-library-search.js';
 // A failed source keeps no usable original: the detail drawer must not show a
 // dead "打开原件" link. The same control must follow original_url when present and
 // open the page URL for web sources.
@@ -11,13 +12,13 @@ const code=slice('function sourceOriginalLink','function showSource(')
  +slice('let sourceMediaId=null',"$('source-dialog').addEventListener('close'")
  +slice('function sourceState','function renderTemplatesPage');
 
-function makeNode(){return {hidden:true,textContent:'',href:undefined,innerHTML:'',value:'',disabled:false,dataset:{},replaceChildren(){},append(){},removeAttribute(name){delete this[name]},setAttribute(){},querySelectorAll:()=>[]}}
+function makeNode(){return {hidden:true,textContent:'',href:undefined,innerHTML:'',value:'',disabled:false,dataset:{},replaceChildren(...children){this.children=children},append(){},scrollIntoView(){this.scrolled=true},removeAttribute(name){delete this[name]},setAttribute(){},querySelectorAll:()=>[]}}
 function context(s){return {source:s,text:'',provenance:{},attachment:{status:'failed',image_path:null},original_url:null}}
 function makeContext(record,response){
  const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,makeNode());return nodes.get(id)};
  const overview={innerHTML:'',querySelectorAll:()=>[]},usage={innerHTML:'',querySelectorAll:()=>[]};
- const document={querySelector:sel=>sel.includes('"overview"')?overview:sel.includes('"usage"')?usage:null,createElement:()=>({className:'',src:'',alt:'',append(){}})};
- const c=vm.createContext({...time,$:$,esc:String,parse:JSON.parse,document,URL,Map,
+ const document={querySelector:sel=>sel.includes('"overview"')?overview:sel.includes('"usage"')?usage:null,createElement:()=>makeNode(),createTextNode:text=>({textContent:text})};
+ const c=vm.createContext({...time,createSourceLibrarySearch,$:$,esc:String,parse:JSON.parse,document,URL,Map,
   state:{sources:[record],runs:[],briefs:[]},
   api:async()=>response,action:async fn=>fn(),notice:()=>{},openBrief:()=>{},page:()=>{}});
  vm.runInContext(code,c);return c;
@@ -44,3 +45,19 @@ await vm.runInContext("openSourceDrawer('src_ok',new Map())",ck);
 assert.equal(ck.$('source-drawer-original').hidden,false);assert.equal(ck.$('source-drawer-original').href,'/api/source-original?id=src_ok');
 assert.equal(ck.$('source-drawer-original').textContent,'下载 Tavily 返回内容 ↗');
 console.log('PASS: drawer original control follows original_url and provider_response kind');
+
+const textSource={id:'src_text',name:'text.txt',status:'ready',hash:'saved-hash'};
+const ct=makeContext(textSource,{source:textSource,text:'首行\x1c<script>needle</script>\r\n尾行',provenance:{},attachment:{},original_url:null});
+ct.match={source_hash:'saved-hash',hits:[{start_line:2}]};
+await vm.runInContext("openSourceDrawer('src_text',new Map(),match)",ct);
+const marked=ct.$('source-drawer-body').children[1];
+assert.equal(marked.textContent,'<script>needle</script>');assert.equal(marked.scrolled,true);
+ct.match.source_hash='old-hash';await vm.runInContext("openSourceDrawer('src_text',new Map(),match)",ct);
+assert.match(ct.$('source-drawer-body').textContent,/来源已变化/);
+const requests=[];ct.api=()=>new Promise(resolve=>requests.push(resolve));
+const a=vm.runInContext("openSourceDrawer('src_text',new Map())",ct);
+const b=vm.runInContext("openSourceDrawer('src_text',new Map())",ct);
+requests[1]({source:textSource,text:'最新正文',provenance:{},attachment:{}});await b;
+requests[0]({source:textSource,text:'旧正文',provenance:{},attachment:{}});await a;
+assert.equal(ct.$('source-drawer-body').textContent,'最新正文');
+console.log('PASS: source hit opens the verified original line as text and stale same-source reads cannot replace it');

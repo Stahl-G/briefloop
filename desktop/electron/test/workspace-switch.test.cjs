@@ -5,13 +5,15 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path').posix;
 const main = fs.readFileSync(require.resolve('../main.cjs'), 'utf8');
+const welcome = fs.readFileSync(require.resolve('../welcome.js'), 'utf8');
 const operations = main.slice(main.indexOf('async function stopCurrent()'), main.indexOf('async function chooseWorkspace('));
 const oldURL = 'http://127.0.0.1:12345';
 const targetURL = 'http://127.0.0.1:23456';
+const welcomeURL = 'file:///welcome.html';
 
 function fixture(options = {}) {
   const calls = [], instances = [], errors = [];
-  const oldDocument = {unsaved: 'Synthetic editor text'};
+  const oldDocument = options.welcome ? {url: welcomeURL} : {unsaved: 'Synthetic editor text'};
   let document = oldDocument;
   class Service {
     constructor(runtime, exited) { this.runtime = runtime; this.exited = exited; this.child = null; this.info = null; instances.push(this); }
@@ -41,12 +43,14 @@ function fixture(options = {}) {
       return this.info;
     }
   }
-  const previous = new Service({}, null);
-  previous.directory = '/old'; previous.child = {owner: 'old'};
-  previous.info = {path: '/old', url: oldURL};
+  const previous = options.welcome ? null : new Service({}, null);
+  if (previous) {
+    previous.directory = '/old'; previous.child = {owner: 'old'};
+    previous.info = {path: '/old', url: oldURL};
+  }
   const context = vm.createContext({URL, path, WorkspaceService: Service,
     service: previous, switching: false, quitting: false, closePending: false,
-    expectedExit: false, menuSave: null, workspaceOrigin: oldURL, welcomeURL: 'file:///welcome.html',
+    expectedExit: false, menuSave: null, workspaceOrigin: previous ? oldURL : null, welcomeURL,
     environment: {runtime: async () => { calls.push('runtime'); return {python: 'synthetic'}; }},
     prepareClose: async () => { calls.push('save'); },
     resumeEditing: () => calls.push('resume'),
@@ -58,6 +62,7 @@ function fixture(options = {}) {
       return {response: options.confirm ?? 1};
     }},
     window: {isDestroyed: () => false, setTitle: title => calls.push(['title', title]),
+      webContents: {getURL: () => document.url || oldURL},
       loadURL: async url => {
         calls.push(['load', url]);
         if (url === targetURL && options.loadError) throw Error('target page failed');
@@ -74,6 +79,39 @@ function fixture(options = {}) {
   };
 }
 const named = (f, name) => f.calls.filter(value => Array.isArray(value) && value[0] === name);
+
+test('an invalid folder keeps the welcome renderer alive to show its opening error', async () => {
+  const f = fixture({welcome: true, preflightError: true});
+  const status = {textContent: ''};
+  const renderer = vm.createContext({status, environment: {state: 'ready'}, opening: false,
+    renderEnvironment() {}, open: f.run});
+  vm.runInContext(welcome.slice(welcome.indexOf('function welcomeErrorMessage('), welcome.indexOf("document.getElementById('prepare').onclick")), renderer);
+  await vm.runInContext('action(open)', renderer);
+  assert.equal(f.document(), f.oldDocument, 'the IPC rejection must reach the same welcome document');
+  assert.match(status.textContent, /preflight failed/);
+  assert.equal(named(f, 'load').length, 0); assert.equal(named(f, 'start-target').length, 0);
+  assert.equal(renderer.opening, false); assert.equal(f.context.switching, false);
+  assert.equal(f.context.service, null);
+});
+
+test('welcome removes the IPC envelope while preserving the actionable error and diagnostic type', async () => {
+  const status = {textContent: ''};
+  const renderer = vm.createContext({status, environment: {state: 'ready'}, opening: false, renderEnvironment() {}});
+  vm.runInContext(welcome.slice(welcome.indexOf('function welcomeErrorMessage('), welcome.indexOf("document.getElementById('prepare').onclick")), renderer);
+  const explanation = '这个文件夹还不是 BriefLoop 工作区，请使用“新建工作区”。';
+  for (const [message, expected] of [
+    [`Error invoking remote method 'workspace:choose': Error: ${explanation}`, explanation],
+    ["Error invoking remote method 'workspace:open': TypeError: invalid workspace result", 'TypeError: invalid workspace result'],
+    ['EACCES: cannot read workspace', 'EACCES: cannot read workspace'],
+  ]) {
+    const error = Error(message), stack = error.stack;
+    renderer.open = async () => { throw error; };
+    await vm.runInContext('action(open)', renderer);
+    assert.equal(status.textContent, expected);
+    assert.equal(error.message, message); assert.equal(error.stack, stack);
+    assert.equal(renderer.opening, false);
+  }
+});
 
 test('target preflight fails before saving or stopping the current editor', async () => {
   const f = fixture({preflightError: true});

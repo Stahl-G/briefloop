@@ -52,7 +52,7 @@ def test_reader_source_upgrade_invalidates_both_renderer_caches(tmp_path, monkey
     current_input = export_jobs.export_input
     def old_input(*args, **kwargs):
         identity, figures = current_input(*args, **kwargs)
-        identity['renderer'] = 15 if identity['requirements'].get('template_id') else 17
+        identity['renderer'] = 22 if identity['requirements'].get('template_id') else 23
         return identity, figures
     for layout in (None, template_id):
         monkeypatch.setattr(export_jobs, 'export_input', old_input)
@@ -61,8 +61,9 @@ def test_reader_source_upgrade_invalidates_both_renderer_caches(tmp_path, monkey
         with store.tx() as c:
             c.execute("UPDATE jobs SET status='complete',result=? WHERE id=?", (dump(result), old['id']))
         assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == old['id']
+        old_bytes = export_jobs.output_path(store, old).read_bytes()
         monkeypatch.setattr(export_jobs, 'export_input', current_input)
         upgraded = export_jobs.enqueue_export(store, brief['id'], layout)
         assert upgraded['id'] != old['id']
         assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == upgraded['id']
-        assert export_jobs.output_path(store, old).is_file()
+        assert export_jobs.output_path(store, old).read_bytes() == old_bytes

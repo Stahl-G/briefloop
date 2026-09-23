@@ -13,6 +13,22 @@ from briefloop.platform_support import OwnedProcess, WorkspaceLock, cli_command,
 pytestmark = pytest.mark.skipif(os.name != 'nt', reason='Windows native behavior')
 
 
+def test_filesystem_path_reads_existing_files_and_preserves_windows_path_forms(tmp_path, monkeypatch):
+    from briefloop.platform_support import filesystem_path
+    from briefloop.native_roles import _atomic
+    monkeypatch.chdir(tmp_path)
+    original = Path('中文 existing.json')
+    original.write_text('legacy content', encoding='utf-8')
+    extended = filesystem_path(original)
+    assert str(extended) == '\\\\?\\' + str(original.absolute())
+    assert extended.read_text(encoding='utf-8') == 'legacy content'
+    assert filesystem_path(extended) == extended
+    assert str(filesystem_path(r'\\server\share\writer')) == r'\\?\UNC\server\share\writer'
+    _atomic(extended, 'replacement')
+    assert original.read_text(encoding='utf-8') == 'replacement'
+    assert not original.with_name(original.name + '.tmp').exists()
+
+
 def test_lock_is_exclusive_before_database_initialization(tmp_path):
     root = tmp_path / '中文 workspace'
     lock = WorkspaceLock(root)

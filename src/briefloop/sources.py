@@ -126,12 +126,13 @@ def extract(name, data, *, with_extractor=False):
             raise ValueError('XLSX 无法读取工作簿，文件可能已损坏') from exc
         extractor='XLSX cells and saved formula values (no recalculation)'
     elif ext == '.docx':
-        extractor='DOCX word/document.xml paragraph text'
+        extractor='DOCX body text and table cell coordinates'
         try:
             from .media import office_archive
+            from .docx_text import document_text
             with office_archive(data) as z:
                 doc=ET.fromstring(z.read('word/document.xml'))
-                text='\n'.join(''.join(n.itertext()) for n in doc.iter() if n.tag.endswith('}p'))
+                text=document_text(doc)
         except (KeyError,zipfile.BadZipFile,ET.ParseError) as exc:
             raise ValueError('DOCX 无法读取正文，文件可能已损坏') from exc
     elif ext in ('.html','.htm'):

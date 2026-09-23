@@ -15,6 +15,9 @@ SCHEMA_VERSION = 2
 STATUSES = ('complete', 'partial', 'not_applicable', 'failed')
 RELATIONS = ('compatible', 'different_scope', 'temporal_sequence', 'correction',
              'supersession', 'republication', 'attributed_difference', 'contradiction', 'unknown')
+OPEN_QUESTION_FIELD = 'question'
+OPEN_QUESTIONS_GUIDE = (f'open_questions 每项须为对象，包含非空 {OPEN_QUESTION_FIELD} 文本，'
+                        f'例如 {{"{OPEN_QUESTION_FIELD}":"待核查问题"}}；没有待查问题时使用 []，不要提交字符串数组。')
 
 
 class ReconciliationError(ValueError):
@@ -154,7 +157,7 @@ def save(store, run_id, payload):
         raise ReconciliationError('对照必须明确划分本轮全部来源陈述（examined ∪ unexamined）')
     open_questions = []
     for question in payload.get('open_questions', []) or []:
-        if not isinstance(question, dict) or not str(question.get('question', '')).strip():
+        if not isinstance(question, dict) or not str(question.get(OPEN_QUESTION_FIELD, '')).strip():
             raise ReconciliationError('待查问题需要 question 文本')
         open_questions.append(question)
     record = {'schema_version': SCHEMA_VERSION, 'run_id': run_id, 'status': status,

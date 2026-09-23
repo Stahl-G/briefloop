@@ -64,9 +64,19 @@ def without_duplicate_cover_heading(document,title):
     return result
 
 
-def render_document(doc, document, *, figures=None, sources=None, append_sources=True, styles=None):
+def render_document(doc, document, *, figures=None, sources=None, citations=None, append_sources=True, styles=None):
     from .industry_export import append_figure
     document = normalize_document(document); figures = figures or {}; sources = sources or {}; styles = styles or {}
+    locators = {}
+    # Older saved detail is read without the current Citation model validation.
+    for reference in citations if isinstance(citations, list) else []:
+        if not isinstance(reference, dict):continue
+        sid, locator = reference.get('source_id'), reference.get('locator')
+        if not isinstance(sid, str) or not isinstance(locator, str):continue
+        locator = locator.strip()
+        if locator:
+            saved = locators.setdefault(sid, [])
+            if locator not in saved:saved.append(locator)
     used = []; section = doc.sections[0]
     max_width = section.page_width - section.left_margin - section.right_margin
     max_height = min(Mm(180), section.page_height - section.top_margin - section.bottom_margin - Mm(25))
@@ -254,6 +264,9 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                         {'type': 'textStyle', 'attrs': {'color': '#0563C1'}}]}])
             else:
                 p.add_run(label)
+            if locators.get(sid):
+                # Saved locating text is useful context, not a verification result.
+                p.add_run(' · ' + '；'.join(locators[sid]))
     from .industry_export import populate_table_of_contents
     populate_table_of_contents(doc)
     return doc

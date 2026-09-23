@@ -57,6 +57,10 @@ class Conflict(ValueError):
     pass
 
 
+class SourceTooLarge(ValueError):
+    pass
+
+
 class OfflineFactCheck(ValueError):
     """Offline runs cannot enable web fact checks; code reaches API callers."""
     code = 'fact_check_requires_web'
@@ -180,15 +184,16 @@ class Store:
         result['role_models']=shaped
         return result
 
-    def update_settings(self, changes):
+    def update_settings(self, changes, *, connection=None):
         """Apply a patch (or compute one) against the latest settings atomically.
 
         Hold the SQLite write transaction through merge and validation, so an
         unrelated save cannot restore a concurrently revoked learning consent.
         Transforms are for read-dependent changes such as appending a target.
+        A supplied write transaction remains owned by the caller.
         """
         from .learning_budget import apply_settings_change
-        with self.tx() as c:
+        with (self.tx() if connection is None else nullcontext(connection)) as c:
             current=self.settings(connection=c)
             body=changes(current) if callable(changes) else changes
             merged=apply_settings_change(current,body)
@@ -217,12 +222,21 @@ class Store:
             source = dict(c.execute('SELECT * FROM sources WHERE id=?', (sid,)).fetchone())
         return source
 
-    def source_text(self, sid):
+    def source_text(self, sid, *, max_bytes=None):
         r = self.one("sources", sid)
         path = (self.root/r["path"]).resolve()
         if not path.is_relative_to(self.root):
             raise ValueError("Invalid source path")
-        text = path.read_bytes().decode("utf-8")
+        if max_bytes is None:
+            raw = path.read_bytes()
+        else:
+            if type(max_bytes) is not int or max_bytes < 1:
+                raise ValueError('Invalid source read limit')
+            with path.open('rb') as stream:
+                raw = stream.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise SourceTooLarge('正文超过本次搜索的单份读取上限')
+        text = raw.decode("utf-8")
         if content_hash(text) != r["hash"]:
             raise Conflict("Source changed outside the application")
         return text
@@ -385,7 +399,7 @@ class Store:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None, *, author='user', allow_markdown_conversion=False):
+    def revise(self, base_version, markdown='', editor_document=None, *, citations=None, author='user', allow_markdown_conversion=False):
         if author not in ('user','agent'):raise ValueError('无效修订作者')
         if type(allow_markdown_conversion) is not bool:raise ValueError('明确转换标记必须是布尔值')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
@@ -401,24 +415,40 @@ class Store:
             latest = c.execute("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (base["run_id"],)).fetchone()
             if latest["id"] != base_version:
                 raise Conflict("稿件已有更新，请先保留本地编辑并重新加载最新版本")
+            detail=json.loads(base['detail'])
+            if citations is not None:
+                from .models import Citation
+                if not isinstance(citations,list):raise ValueError('citations 必须是完整引用列表')
+                citations=[Citation.model_validate(ref).model_dump() for ref in citations]
+                allowed=set(self.source_ids(base['run_id']))
+                references=set(json.loads(self.one('runs',base['run_id'])['requirements']).get('reference_source_ids',[]))
+                for sid in {ref['source_id'] for ref in citations}:
+                    if sid in references:raise ValueError('风格参考不能作为报告事实引用')
+                    if sid not in allowed:raise ValueError('引用来源未登记到本轮报告：'+sid)
+                    self.source_text(sid)  # Reject changed source bytes; locator text is not verified evidence.
             converted=False
             if base['editor_document'] is not None and editor_document is None:
                 if markdown==base['markdown']:
-                    return dict(base)  # A projection-only no-op must keep its rich original.
-                if not allow_markdown_conversion:
+                    if citations is None:return dict(base)  # Keep the rich original for projection-only saves.
+                    editor_document=normalize_document(json.loads(base['editor_document']))
+                elif not allow_markdown_conversion:
                     raise ValueError('当前稿件是富文档；请提交完整 editor_document，或明确转换 Markdown（allow_markdown_conversion=true）。原版本保留。')
-                from .document_model import markdown_document
-                editor_document=normalize_document(markdown_document(markdown))
-                markdown=document_markdown(editor_document)
-                converted=True
+                else:
+                    from .document_model import markdown_document
+                    editor_document=normalize_document(markdown_document(markdown))
+                    markdown=document_markdown(editor_document)
+                    converted=True
             same_document=(editor_document is None and base['editor_document'] is None or
                            editor_document is not None and base['editor_document'] is not None and
                            normalize_document(json.loads(base['editor_document']))==editor_document)
-            if markdown == base["markdown"] and same_document:
+            if markdown == base["markdown"] and same_document and (citations is None or citations==detail.get('citations',[])):
                 return dict(base)
-            detail=json.loads(base['detail'])
             if converted:detail['content_conversion']={'input_format':'markdown','base_version':base_version,'explicit':True}
-            else:detail.pop('content_conversion',None)
+            elif markdown!=base['markdown'] or not same_document:detail.pop('content_conversion',None)
+            if citations is not None:
+                # Unchanged automatic refs must still disappear with their body/figure.
+                detail['content_citations']=[ref for ref in detail.get('content_citations',[]) if ref in citations]
+                detail['citations']=citations
             if editor_document is not None:
                 detail['document_schema']=1
             else:detail.pop('document_schema',None)

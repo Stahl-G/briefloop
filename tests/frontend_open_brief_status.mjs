@@ -58,7 +58,8 @@ test('polled version summaries load their body once and a later choice wins',asy
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
   api:route=>{requests.push(route);return new Promise(resolve=>{resolveBody=resolve})},encodeURIComponent});
- vm.runInContext(oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
+ vm.runInContext(functionBefore('syncPendingReport','tryOpenPending')+'\n'+oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
+ $('empty').hidden=false;
  assert.equal(vm.runInContext("openBrief(state.briefs[1])",context),true);
  vm.runInContext("openBrief(state.briefs[1])",context);
  assert.deepEqual(requests,['brief?id=old'],'repeated polling opens share one request');
@@ -67,6 +68,8 @@ test('polled version summaries load their body once and a later choice wins',asy
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(vm.runInContext('current.markdown',context),'Loaded old');
  assert.equal($('version-select').value,'old');
+ assert.equal($('document-area').hidden,false,'the loaded document is shown immediately');
+ assert.equal($('empty').hidden,true,'opening a saved body hides the initial empty state without another state change');
  vm.runInContext("openBrief(state.briefs[1])",context);
  assert.equal(requests.length,1,'an unchanged hash reuses the loaded body');
  // A newer choice made while a body is loading must not be replaced by it.

@@ -298,3 +298,43 @@ def test_long_single_line_can_be_found_read_and_recorded_without_copying_the_who
     response = run_tool(store, config, 'record_evidence', {'items': [value]})
     accepted = json.loads(response['content'][0]['text'])['accepted']
     assert accepted[0]['excerpt'] == phrase and 'excludes discontinued operations.' in accepted[0]['excerpt']
+
+
+def test_source_search_is_literal_unless_regex_is_requested(tmp_path):
+    store, run_id, _ = _run(tmp_path)
+    sid = store.add_source('Search case', '收入 Revenue (USD) [net]: 12\nRevenue USD: 19')['id']
+    store.attach_source(run_id, sid)
+    config = _config(store, run_id, 'search')
+    def grep(**args):
+        return run_tool(store, config, 'source_grep', {'source_id': sid, **args})
+    literal = grep(pattern='revenue (usd) [net]')
+    assert literal['ok'] and f'{sid} 1 (start_char=0)' in literal['content'][0]['text']
+    assert '收入 Revenue (USD) [net]: 12' in literal['content'][0]['text']
+    regex = grep(pattern=r'Revenue\s+USD', regex=True)
+    assert regex['ok'] and f'{sid} 2 (start_char=0)' in regex['content'][0]['text']
+    invalid = grep(pattern='[', regex=True)
+    assert not invalid['ok'] and '正则 pattern 无效' in str(invalid)
+    assert '[net]' in grep(pattern='[')['content'][0]['text']
+
+
+def test_source_regex_timeout_reaps_worker_and_next_search_works(tmp_path, monkeypatch):
+    import subprocess
+    from briefloop import source_search
+    store, run_id, _ = _run(tmp_path)
+    sid = store.add_source('Backtracking case', 'a' * 40 + '!\n收入(USD): 12')['id']
+    store.attach_source(run_id, sid)
+    config = _config(store, run_id, 'timeout')
+    processes = []
+    launch = subprocess.Popen
+    def track(*args, **kwargs):
+        child = launch(*args, **kwargs)
+        processes.append(child)
+        return child
+    monkeypatch.setattr(source_search.subprocess, 'Popen', track)
+    started = time.monotonic()
+    result = run_tool(store, config, 'source_grep', {'source_id': sid, 'pattern': '(a+)+$', 'regex': True})
+    assert not result['ok'] and '正则搜索超时' in str(result)
+    assert time.monotonic() - started < 10
+    assert len(processes) == 1 and processes[0].poll() is not None
+    following = run_tool(store, config, 'source_grep', {'source_id': sid, 'pattern': '收入(USD)'})
+    assert following['ok'] and f'{sid} 2 (start_char=0)' in following['content'][0]['text']

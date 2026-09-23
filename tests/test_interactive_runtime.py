@@ -52,6 +52,66 @@ def setup(tmp_path):
     return store, job, harness, InteractiveRuntime(store, harness), store.root / 'jobs' / job['id']
 
 
+@pytest.mark.parametrize('ending',['completed','timeout','exception'])
+def test_public_thread_usage_is_latest_and_persisted_on_failure(tmp_path,monkeypatch,ending):
+    monkeypatch.setattr('briefloop.interactive_runtime.time.sleep',lambda _:None)
+    clock=[0.0]
+    monkeypatch.setattr('briefloop.interactive_runtime.time.monotonic',lambda:clock[0])
+    monkeypatch.setattr('briefloop.execution_timing.policy',lambda *a,**k:{'hard_timeout_minutes':8})
+    store,job,harness,runtime,folder=setup(tmp_path)
+    calls=[]
+    original_snapshot=harness.snapshot
+    transport_failed=[]
+    def snapshot(sid,after=0):
+        if ending=='exception' and calls and not transport_failed:
+            transport_failed.append(True)
+            raise RuntimeError('original synthetic failure')
+        return original_snapshot(sid,after)
+    harness.snapshot=snapshot
+    def usage(thread,turn,total,child=False):
+        return {'kind':('child/' if child else '')+'thread/tokenUsage/updated',
+                'data':{'threadId':thread,'turnId':turn,'tokenUsage':{'total':{'totalTokens':total}}}}
+    def tick():
+        if runtime.session_id is None or calls:return
+        calls.append('once')
+        sid=runtime.session_id;snapshot=harness.sessions[sid]
+        events=[{'kind':'child/thread/started','data':{'threadId':'child','parentThreadId':'main','agentRole':'analyst'}},
+                {'kind':'item/completed','data':{'threadId':'main','item':{'type':'collabAgentToolCall',
+                    'receiverThreadIds':['child','unreported']}}},
+                usage('main','main-turn',100),usage('child','child-turn',10,True),
+                usage('child','child-turn-2',21,True),usage('main','main-turn',120),
+                {'kind':'thread/tokenUsage/updated','data':{'tokenUsage':{'total':{'totalTokens':5}}}}]
+        snapshot['events']=[{'seq':i+1,**event} for i,event in enumerate(events)]
+        if ending=='completed':snapshot['messages'][0]['status']='completed'
+        elif ending=='timeout':clock[0]=480.1
+    if ending=='completed':
+        result=runtime.execute(job,'PRIVATE TASK PROMPT',folder,tick)
+    else:
+        with pytest.raises(TimeoutError if ending=='timeout' else RuntimeError,
+                           match='时间上限' if ending=='timeout' else 'original synthetic failure'):
+            runtime.execute(job,'PRIVATE TASK PROMPT',folder,tick)
+        result=json.loads((folder/'execution.json').read_text(encoding='utf-8'))
+        assert result['status']==('interrupted' if ending=='timeout' else 'failed')
+        assert harness.cancelled
+    assert result==json.loads((folder/'execution.json').read_text(encoding='utf-8'))
+    assert [value['total']['totalTokens'] for value in result['usage']]==[100,120,5]
+    by_thread=result['usage_by_thread']
+    rows={row['threadId']:row for row in by_thread['threads']}
+    assert rows['main']['tokenUsage']['total']['totalTokens']==120
+    assert rows['child']['tokenUsage']['total']['totalTokens']==21
+    assert rows['child']['turnId']=='child-turn-2' and rows['child']['agentRole']=='analyst'
+    assert rows['unreported']['tokenUsage'] is None and rows['unreported']['agentRole'] is None
+    assert by_thread['coverage']['threads_without_usage']==['unreported']
+    assert by_thread['coverage']['unattributed_usage_events']==1
+    assert by_thread['coverage']['completeness']=='unknown' and by_thread['aggregation']=='none'
+    assert 'PRIVATE' not in json.dumps(result)
+    assert runtime.process is None
+    # Other backends keep their existing usage output; old events are not
+    # assigned to a made-up main/child thread or presented as zero tokens.
+    assert runtime._usage_diagnostics(folder/'events.jsonl','briefloop-native')=={'usage':result['usage']}
+    assert runtime._usage(folder/'events.jsonl')==result['usage']
+
+
 def test_draft_publishes_before_completion_and_recovery_does_not_resend(tmp_path, monkeypatch):
     monkeypatch.setattr('briefloop.interactive_runtime.time.sleep', lambda _: None)
     store, job, harness, runtime, folder = setup(tmp_path)

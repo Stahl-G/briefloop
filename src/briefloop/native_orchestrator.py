@@ -56,15 +56,17 @@ def action(store, config, args):
         if request.get('run_id', run_id) != run_id:
             raise ToolError('操作必须属于本轮报告')
         request['run_id'] = run_id
-        if request.get('version_id') and store.one('briefs', request['version_id'])['run_id'] != run_id:
-            raise ToolError('稿件不属于本轮报告')
+        for field in ('version_id','base_version'):
+            if request.get(field) and store.one('briefs', request[field])['run_id'] != run_id:
+                raise ToolError('稿件不属于本轮报告')
         source = (request.get('evidence') or request.get('fact') or {}).get('source_id')
         if source and source not in store.source_ids(run_id):
             raise ToolError('来源不属于本轮报告')
     if name == 'revise_document':
         if not isinstance(request.get('editor_document'), dict):
             raise ToolError('revise_document 需要 base_version 和完整 editor_document 对象')
-        return _json_result(store.revise(request['base_version'], editor_document=request['editor_document'], author='agent'))
+        saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent')
+        return _json_result(store.brief_view(saved['id']))
     if name == 'generate':
         if config.get('discuss_only'):
             raise ToolError('/discuss 只整理要求，不启动报告')
@@ -433,16 +435,16 @@ def prepare(store, job, folder, prompt):
         from .templates import template, _path
         row = template(store, payload['template_id'])
         root = folder / 'packet'; root.mkdir(exist_ok=True)
-        inventory = _path(store, row, 'inventory.json').read_text()
+        inventory = _path(store, row, 'inventory.json').read_text(encoding='utf-8')
         for image in _path(store, row, 'inventory.json').parent.rglob('*'):
             if image.is_file() and image.suffix.lower() in ('.png','.jpg','.jpeg','.webp') and image.resolve().is_relative_to(_path(store,row,'inventory.json').parent):
                 target = root / image.relative_to(_path(store,row,'inventory.json').parent)
                 target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(image.read_bytes())
         inventory = inventory.replace(str(_path(store,row,'inventory.json').parent) + '/', '')
-        (root/'inventory.json').write_text(inventory)
+        (root/'inventory.json').write_text(inventory,encoding='utf-8')
         prompt = prompt.replace(str(_path(store,row,'inventory.json')), 'inventory.json')
         return {'role':'orchestrator','task_kind':'prepare_template','job_id':job['id'],'template_id':row['id']}, (prompt + '\n本引擎使用 packet_read 读取 inventory.json 及清单图片；不读取包外文件，原 DOCX 由程序校验。用 submit_template 提交上述对象，不用 shell 或文件写入。')
-    data = json.loads((folder / 'input.json').read_text())
+    data = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
     run_id = payload.get('run_id') or store.one('briefs', payload['version_id'])['run_id']
     config = {'role': 'orchestrator', 'task_kind': job['kind'], 'job_id': job['id'], 'run_id': run_id,
               'allow_web': bool(job.get('allow_web')), 'search_channels': [p for p in allowed(for_run(store, run_id)) if p in MANAGED_PROVIDERS]}

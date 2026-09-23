@@ -324,7 +324,7 @@ class InteractiveRuntime:
                     result = {'returncode': 0 if status == 'completed' else 1, 'status': status,
                               'seconds': round(time.monotonic() - started, 2), 'finished': now(),
                               'runtime': configured, 'backend': backend, 'session_id': sid, 'message_id': binding['message_id'],
-                              'recovered': recovered, 'usage': self._usage(log_path)}
+                              'recovered': recovered, **self._usage_diagnostics(log_path, backend)}
                     assistant = [m['text'] for m in snapshot['messages']
                                  if m['role'] == 'assistant' and m.get('turn_id') == message.get('turn_id')]
                     if assistant:
@@ -358,10 +358,24 @@ class InteractiveRuntime:
                         harness.cancel(sid)
                     except Exception:
                         pass  # Preserve the original failure and bound session.
-            if isinstance(exc, (InterruptedError, TimeoutError)):
-                _write(saved, {'returncode': 1, 'status': 'interrupted', 'finished': now(),
-                               'session_id': sid, 'message_id': binding['message_id'], 'error': str(exc),
-                               'backend': backend})
+            # Take one non-waiting public snapshot after cancellation. A failed
+            # transport may prevent this; diagnostics must not mask its error.
+            try:
+                latest = harness.snapshot(sid, after=cursor)
+                cursor = self._project(latest, log_path, cursor, seen_messages)
+            except Exception:
+                pass
+            try:
+                previous = json.loads(saved.read_text(encoding='utf-8')) if saved.exists() else {}
+                if previous.get('status') in (None, 'running'):
+                    _write(saved, {'returncode': 1,
+                        'status': 'interrupted' if isinstance(exc, (InterruptedError, TimeoutError)) else 'failed',
+                        'finished': now(), 'seconds': round(time.monotonic() - started, 2),
+                        'session_id': sid, 'message_id': binding['message_id'], 'error': str(exc),
+                        'runtime': configured, 'backend': backend,
+                        **self._usage_diagnostics(log_path, backend)})
+            except Exception:
+                pass  # Preserve the original error and any already saved result.
             with (folder / 'stderr.log').open('a', encoding='utf-8') as errors:
                 errors.write(str(exc) + '\n')
             tick()
@@ -382,7 +396,8 @@ class InteractiveRuntime:
                 value = {'type': kind.replace('/', '.'), 'harness_seq': cursor, 'data': data}
                 if kind.removeprefix('child/') in ('item/started', 'item/updated', 'item/completed'):
                     item = dict(data.get('item', {}))
-                    aliases = {'collabAgentToolCall': 'collab_tool_call', 'commandExecution': 'command_execution'}
+                    aliases = {'collabAgentToolCall': 'collab_tool_call', 'commandExecution': 'command_execution',
+                               'subAgentActivity': 'subagent_activity'}
                     item['type'] = aliases.get(item.get('type'), item.get('type'))
                     if 'agentsStates' in item:
                         item['agents_states'] = item.pop('agentsStates')
@@ -399,12 +414,27 @@ class InteractiveRuntime:
 
     @staticmethod
     def _usage(path):
+        return [event['usage'] for event in InteractiveRuntime._public_events(path) if 'usage' in event]
+
+    @staticmethod
+    def _public_events(path):
         values = []
+        if not path.exists():
+            return values
         for line in path.read_text(encoding='utf-8').splitlines():
             try:
                 event = json.loads(line)
             except ValueError:
                 continue
-            if 'usage' in event:
-                values.append(event['usage'])
+            if isinstance(event, dict):
+                values.append(event)
         return values
+
+    @staticmethod
+    def _usage_diagnostics(path, backend):
+        events = InteractiveRuntime._public_events(path)
+        result = {'usage': [event['usage'] for event in events if 'usage' in event]}
+        if backend == 'codex':
+            from .codex_diagnostics import thread_usage
+            result['usage_by_thread'] = thread_usage(events)
+        return result
