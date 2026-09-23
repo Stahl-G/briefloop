@@ -56,9 +56,19 @@ async function exportReportPdf(event, request) {
     await fs.writeFile(filePath, data);
     return {status: 'saved', name: path.basename(filePath)};
   } finally {
-    if (printer && !printer.isDestroyed()) printer.destroy();
-    if (folder) await fs.rm(folder, {recursive: true, force: true});
-    pdfExporting = false;
+    try {
+      try {
+        if (printer && !printer.isDestroyed()) printer.destroy();
+      } finally {
+        // Windows can retain the rendered file briefly after the window closes.
+        if (folder) await fs.rm(folder, {recursive: true, force: true, maxRetries: 2, retryDelay: 100});
+      }
+    } catch (error) {
+      // Cleanup must not change a successful result or replace a render/save error.
+      console.warn('PDF export temporary cleanup failed:', error.code || 'unknown');
+    } finally {
+      pdfExporting = false;
+    }
   }
 }
 function environmentOperation(callback) {

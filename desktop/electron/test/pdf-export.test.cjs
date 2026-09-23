@@ -35,6 +35,7 @@ function fixture(options = {}) {
     destroy() { this.destroyed = true; calls.push('destroy'); }
   }
   const context = vm.createContext({URL, path, Buffer, BrowserWindow, window,
+    console: {warn: (...values) => calls.push(['warn', ...values])},
     welcomeURL: 'file:///welcome.html', workspaceOrigin: workspaceURL,
     app: {getPath: name => name === 'temp' ? '/tmp' : '/Users/synthetic/Downloads'},
     fs: {
@@ -106,6 +107,24 @@ test('a failed render cleans up and does not block the next export', async () =>
   assert.ok(calls.some(call => call[0] === 'rm'));
   await assert.rejects(context.exportReportPdf(event(), {html: '<p>x</p>', title: 'x'}), {message: 'print failed'});
   assert.equal(windows.length, 2);
+});
+
+test('locked temporary files preserve the export outcome and allow the next export', async () => {
+  for (const options of [{}, {cancel: true}, {printError: true}]) {
+    const {context, calls, windows, event} = fixture(options);
+    const remove = context.fs.rm;
+    context.fs.rm = async () => { throw Object.assign(Error('temporary report is locked'), {code: 'EBUSY'}); };
+    const exportPdf = () => context.exportReportPdf(event(), {html: '<p>x</p>', title: 'x'});
+    if (options.printError) await assert.rejects(exportPdf(), {message: 'print failed'});
+    else assert.equal((await exportPdf()).status, options.cancel ? 'cancelled' : 'saved');
+    assert.equal(windows[0].destroyed, true);
+    assert.ok(calls.some(call => call[0] === 'warn' && call.includes('EBUSY')));
+
+    context.fs.rm = remove;
+    if (options.printError) await assert.rejects(exportPdf(), {message: 'print failed'});
+    else assert.equal((await exportPdf()).status, options.cancel ? 'cancelled' : 'saved');
+    assert.equal(windows.length, 2);
+  }
 });
 
 test('only the workspace page may export, one valid document at a time', async () => {

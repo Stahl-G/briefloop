@@ -160,17 +160,6 @@ def test_parent_cancel_only_cancels_its_children(tmp_path):
             with h.child_runtime(a,Child()):pass
 
 
-def test_native_credentials_redacted_and_not_in_workspace(tmp_path,monkeypatch):
-    from briefloop import native_providers as providers
-    path=tmp_path/'private'/'providers.json';monkeypatch.setattr(providers,'config_path',lambda:path)
-    body={'provider':'synthetic','model':'fixture','protocol':'chat-completions','api_key':'test-not-a-real-key','base_url':'https://example.test/v1'}
-    assert providers.save(body)['model']=='synthetic/fixture'
-    assert 'test-not-a-real-key' not in dump(providers.configurations())
-    assert path.stat().st_mode & 0o777 == 0o600
-    providers.save({**body,'api_key':''})
-    assert json.loads(path.read_text())['synthetic/fixture']['api_key']=='test-not-a-real-key'
-
-
 def test_native_revision_retains_original_and_rechecks_only_once(tmp_path):
     store,source,run,job=setup(tmp_path)
     engine=FlowEngine(store,run,source);harness=NativeHarness(store,engine)

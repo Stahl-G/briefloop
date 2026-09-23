@@ -37,10 +37,10 @@ def _create_demo(store):
         store.set_meta('demo_import', pending)
     # With no jobs or sources, this only changes the new example workspace.
     # Choosing a real model and enabling learning remain explicit user actions.
-    settings = store.settings()
-    if settings.get('model_selection_required'):
-        settings['model'] = ''  # Do not treat the factory suggestion as consent.
-    store.set_meta('settings', {**settings, 'auto_learn': False})
+    # Do not treat the factory suggestion as consent or replace a model choice
+    # saved concurrently with importing this example.
+    store.update_settings(lambda settings: {'auto_learn': False,
+        **({'model': ''} if settings.get('model_selection_required') else {})})
     name = '合成团队周报材料.txt'
     existing = store.rows('SELECT * FROM sources WHERE name=? AND hash=?', (name, content_hash(SOURCE)))
     source = existing[0] if existing else upload(store, name, SOURCE.encode('utf-8'))

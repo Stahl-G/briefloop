@@ -30,12 +30,12 @@ def test_parent_resume_reuses_admissible_failed_review_in_background_lane(tmp_pa
     child=enqueue_review(store,brief['id'],payload={**json.loads(parent['payload']),'parent_job_id':parent['id']})
     folder=store.root/'jobs'/child['id'];fp,files=build_packet(store,brief['id'],folder)
     with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',('review_saved',brief['id'],child['id'],fp,'incomplete',dump({'packet_path':str((folder/'packet').relative_to(store.root)),'files':files}),None,now(),now()))
-    (folder/'review-id.json').write_text(dump({'review_id':'review_saved'}))
-    from review_checks import for_version
+    (folder/'review-id.json').write_text(dump({'review_id':'review_saved'}),encoding='utf-8')
+    from tests.review_checks import for_version
     value={'version_id':brief['id'],'fingerprint':fp,'status':'complete','summary':'Synthetic saved review','coverage_scan_complete':True,
            'requirement_checks':for_version(store,brief['id']),
            'assessment':{'brief_hash':brief['hash'],'status':'complete','summary':'Synthetic score','overall':'达到要求','evidence':3,'coverage':3,'analysis':3,'expression':3}}
-    (folder/'review.json').write_text(dump(value))
+    (folder/'review.json').write_text(dump(value),encoding='utf-8')
     store.update_job(child['id'],'failed',error='Old schema rejection');store.update_job(parent['id'],'failed',error='Child review failed')
     worker=Worker(store,NoModel(),review_runtime_factory=NoModel)
     worker.thread=type('LiveParent',(),{'is_alive':lambda self:True})()
@@ -56,6 +56,7 @@ def test_stop_is_persisted_before_transport_finishes_and_settlement_cannot_overw
     else:worker._review_jobs[job['id']]=(None,runtime,None)
     worker.stop_job(job['id'])
     assert store.one('jobs',job['id'])['status']=='cancelled' and runtime.cancelled.is_set()
+    with pytest.raises(ValueError,match='仍在停止'):worker.resume(job['id'])
     worker._settle_job(job['id'],'complete',result={'saved':True},runtime=runtime)
     worker._settle_job(job['id'],'failed',error='Late transport failure')
     assert store.one('jobs',job['id'])['status']=='cancelled'
@@ -80,17 +81,17 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
         def execute(self,job,prompt,folder,*args,**kwargs):
             self.calls.append(job['kind'])
             if job['kind']=='revise':
-                (folder/'draft.json').write_text(dump({'title':'Synthetic revision','markdown':'Revenue was USD 12 million, as reported.'}))
+                (folder/'draft.json').write_text(dump({'title':'Synthetic revision','markdown':'Revenue was USD 12 million, as reported.'}),encoding='utf-8')
                 if invalid_metadata=='anchor':
-                    (folder/'revision_bindings.json').write_text(dump([{'claim_id':claim['id'],'block_id':'wrong-block','quote':'Revenue was USD 12 million'}]))
+                    (folder/'revision_bindings.json').write_text(dump([{'claim_id':claim['id'],'block_id':'wrong-block','quote':'Revenue was USD 12 million'}]),encoding='utf-8')
                 else:
-                    (folder/'responses.json').write_text(dump([{'finding_id':'expression_redundant_explanation','action':'removed','reason':'Removed repeated wording'}]))
+                    (folder/'responses.json').write_text(dump([{'finding_id':'expression_redundant_explanation','action':'removed','reason':'Removed repeated wording'}]),encoding='utf-8')
             else:
                 assert job['kind']=='repair_revision_metadata'
-                packet=json.loads((folder/'input.json').read_text());revision=store.one('briefs',packet['version_id'])
+                packet=json.loads((folder/'input.json').read_text(encoding='utf-8'));revision=store.one('briefs',packet['version_id'])
                 if edit_during_repair:store.revise(revision['id'],editor_document=markdown_document('USER EDIT'))
                 bid=next(iter(blocks(brief_document(revision))))
-                (folder/'metadata.json').write_text(dump({'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}))
+                (folder/'metadata.json').write_text(dump({'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}),encoding='utf-8')
             return {'synthetic':True}
     runtime=RepairRuntime();worker=Worker(store,runtime);folder=worker.folder(job)
     with pytest.raises(ValueError,match='锚点' if invalid_metadata=='anchor' else 'unexpected.*expression_redundant_explanation'):
@@ -117,7 +118,7 @@ def test_generation_source_snapshot_is_frozen_at_admission_and_never_backfilled(
     run=store.create_run({'title':'Synthetic','objective':'Explain'},[source['id']]);job=store.enqueue('generate',{'run_id':run['id']})
     class DraftRuntime(NoModel):
         def execute(self,job,prompt,folder,on_tick=lambda:None,**kwargs):
-            (folder/'draft.json').write_text(dump({'title':'Synthetic','markdown':'Saved original conclusion'}));on_tick();return {}
+            (folder/'draft.json').write_text(dump({'title':'Synthetic','markdown':'Saved original conclusion'}),encoding='utf-8');on_tick();return {}
     worker=Worker(store,DraftRuntime());first=worker.generate(job,score=False)
     assert [item['source_id'] for item in first['source_snapshot']]==[source['id']]
     newer=store.add_source('Later addition','Later evidence');store.attach_source(run['id'],newer['id'])
@@ -134,13 +135,13 @@ class WaitingRuntime(NoModel):
         super().__init__();self.write_draft=write_draft;self.entered=threading.Event()
     def execute(self,job,prompt,folder,on_tick=lambda:None,**kwargs):
         if self.write_draft:
-            schema=json.loads((folder/'reader_contract.schema.json').read_text())
-            spec=json.loads((folder/'input.json').read_text())['deliverable_spec']
+            schema=json.loads((folder/'reader_contract.schema.json').read_text(encoding='utf-8'))
+            spec=json.loads((folder/'input.json').read_text(encoding='utf-8'))['deliverable_spec']
             contract={'source_fingerprint':schema['properties']['source_fingerprint']['const'],
                       'clauses':[{'requirement_id':item['requirement_id'],'kind':'reader_content',
                                   'source_quote':item['text'],'instruction':item['text']} for item in spec['requirement_items']]}
-            (folder/'plan.json').write_text(dump({'reader_contract':contract}))
-            (folder/'draft.json').write_text(dump({'title':'Synthetic','markdown':'Revenue was USD 12 million.'}))
+            (folder/'plan.json').write_text(dump({'reader_contract':contract}),encoding='utf-8')
+            (folder/'draft.json').write_text(dump({'title':'Synthetic','markdown':'Revenue was USD 12 million.'}),encoding='utf-8')
             on_tick()
         self.entered.set()
         if not self.cancelled.wait(10):raise AssertionError('Test did not stop its waiting runtime')
@@ -153,6 +154,53 @@ def wait_for(check):
         if check():return
         time.sleep(.01)
     assert check()
+
+
+def test_report_resume_waits_for_cancelled_executor_to_release_ownership(tmp_path):
+    store=Store(tmp_path)
+    store.set_meta('settings',{**store.settings(),'auto_learn':False,'max_reports':2})
+    worker=Worker(store,NoModel(),report_runtime_factory=NoModel)
+    entered={};started={attempt:threading.Event() for attempt in (1,2)}
+    release={attempt:threading.Event() for attempt in (1,2)}
+    def generate(job):
+        attempt=json.loads(job['payload']).get('attempt',1)
+        entered[attempt]=worker.runtime;started[attempt].set()
+        assert release[attempt].wait(10),'test did not release the report executor'
+        return {'attempt':attempt}
+    worker.generate=generate
+    job=store.enqueue('generate',{})
+    worker.thread.start()
+    try:
+        assert started[1].wait(5)
+        first_thread,first_runtime=worker._generation_jobs[job['id']]
+        worker.stop_job(job['id'])
+        stopped=store.one('jobs',job['id'])
+        assert stopped['status']=='cancelled' and first_runtime.cancelled.is_set()
+        # A spare slot must not admit a new attempt while the old one can settle.
+        with pytest.raises(ValueError,match='仍在停止'):worker.resume(job['id'])
+        assert store.one('jobs',job['id'])==stopped
+        assert worker._generation_jobs[job['id']]==(first_thread,first_runtime)
+        assert first_thread.is_alive() and not started[2].is_set()
+        release[1].set();first_thread.join(5)
+        assert not first_thread.is_alive() and job['id'] not in worker._generation_jobs
+        assert store.one('jobs',job['id'])==stopped
+
+        resumed=worker.resume(job['id'])
+        assert json.loads(resumed['payload'])['attempt']==2
+        assert started[2].wait(5)
+        second_thread,second_runtime=worker._generation_jobs[job['id']]
+        assert second_runtime is entered[2] and second_runtime is not first_runtime
+        assert store.one('jobs',job['id'])['status']=='running'
+        worker.stop_job(job['id'])
+        assert second_runtime.cancelled.is_set()
+        release[2].set();second_thread.join(5)
+        assert not second_thread.is_alive() and job['id'] not in worker._generation_jobs
+        finished=store.one('jobs',job['id'])
+        assert finished['status']=='cancelled' and json.loads(finished['payload'])['attempt']==2
+        assert not finished['result']  # Neither cancelled executor replaced the saved result.
+    finally:
+        for gate in release.values():gate.set()
+        worker.close()
 
 
 def test_word_file_completes_while_generation_and_review_still_run(tmp_path):
@@ -204,6 +252,7 @@ def test_file_stop_preserves_terminal_state_without_cancelling_model_and_can_res
         worker.stop_job(export['id'])
         assert store.one('jobs',export['id'])['status']=='cancelled'
         assert worker._file_cancelled.is_set() and not primary.cancelled.is_set()
+        with pytest.raises(ValueError,match='仍在停止'):worker.resume(export['id'])
         release_settlement.set();wait_for(lambda:worker.file_current is None)
         assert store.one('jobs',export['id'])['status']=='cancelled'
         assert store.one('jobs',generation['id'])['status']=='running'
@@ -226,7 +275,7 @@ def test_generation_continues_progress_only_turn_once(tmp_path,writes_draft):
             self.calls.append(kwargs)
             assert run['created'] in prompt
             if len(self.calls)==2 and writes_draft:
-                (folder/'draft.json').write_text(dump({'title':'日报','markdown':'当期证据不足，保留缺口。'}))
+                (folder/'draft.json').write_text(dump({'title':'日报','markdown':'当期证据不足，保留缺口。'}),encoding='utf-8')
             return {'returncode':0}
     runtime=ProgressRuntime();worker=Worker(store,runtime)
     if writes_draft:
