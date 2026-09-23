@@ -1,11 +1,11 @@
 """Local native-engine provider configuration, never included in workspace data."""
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 import threading
 from urllib.parse import urlsplit
+
+from .connectors.config import atomic_json, ConnectorError
 
 _LOCK = threading.RLock()
 PROTOCOLS = {'chat-completions':'openai-completions', 'responses':'openai-responses', 'anthropic-messages':'anthropic-messages', 'openai': 'openai-completions', 'openai-compatible': 'openai-completions',
@@ -57,21 +57,13 @@ def save(body):
         for row in rows.values():
             if row['provider'] == provider:
                 row.update(api_key=key, base_url=url, protocol=protocol, api=PROTOCOLS[protocol])
-        path = config_path();path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd, temp = tempfile.mkstemp(dir=path.parent, prefix='.providers-')
+        path = config_path();path.parent.mkdir(parents=True, exist_ok=True)
+        # Reuse the existing private, atomic writer: POSIX mode or verified
+        # Windows DACL is applied before any credential bytes reach the file.
         try:
-            # Enter the context before securing the file so a permission failure
-            # closes the descriptor before cleanup (Windows cannot unlink it open).
-            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                if os.name == 'nt':
-                    from .connectors.windows_acl import protect_private
-                    protect_private(Path(temp))
-                else:
-                    os.fchmod(stream.fileno(), 0o600)
-                json.dump(rows, stream);stream.flush();os.fsync(stream.fileno())
-            os.replace(temp, path)
-        finally:
-            if os.path.exists(temp):os.unlink(temp)
+            atomic_json(path, rows)
+        except ConnectorError as exc:
+            raise ValueError('无法保护内置引擎本地配置的访问权限，未保存凭据。') from exc
     return {'model': provider + '/' + model, 'saved': True}
 
 

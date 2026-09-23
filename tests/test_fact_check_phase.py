@@ -118,7 +118,7 @@ def test_cancelled_stage_rejects_new_and_late_requests(tmp_path):
     research_plan.finish_fact_check(store, run['id'], status='cancelled', summary='任务已停止')
     assert research_plan.settle_request(store, run['id'], reserved['request_id'], 'success') is False
     entry = research_plan.pending_requests(store, run['id'])[reserved['request_id']]
-    assert entry['status'] == 'reserved'  # a late result is not admitted as completed
+    assert entry['status'] == 'response_rejected' and entry['response_status'] == 'success'
     with pytest.raises(research_plan.AdmissionError) as blocked:
         budget.reserve_search(store, run['id'], 1)
     assert blocked.value.code == 'fact_check_closed'

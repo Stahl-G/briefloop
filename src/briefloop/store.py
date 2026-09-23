@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, name TEXT NOT NULL, path
 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, requirements TEXT NOT NULL,
  source_ids TEXT NOT NULL, skill_id TEXT, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS run_sources(run_id TEXT NOT NULL REFERENCES runs(id), source_id TEXT NOT NULL REFERENCES sources(id), PRIMARY KEY(run_id,source_id));
+CREATE TABLE IF NOT EXISTS page_claims(run_id TEXT NOT NULL REFERENCES runs(id), url TEXT NOT NULL,
+ owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,url));
+CREATE TABLE IF NOT EXISTS page_claim_results(owner TEXT NOT NULL, url TEXT NOT NULL,
+ outcome TEXT NOT NULL, source_id TEXT, error TEXT, completed_at REAL NOT NULL, PRIMARY KEY(owner,url));
+CREATE TABLE IF NOT EXISTS search_claims(run_id TEXT NOT NULL REFERENCES runs(id), claim_key TEXT NOT NULL,
+ owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,claim_key));
+CREATE TABLE IF NOT EXISTS search_claim_results(owner TEXT PRIMARY KEY, outcome TEXT NOT NULL,
+ result_path TEXT, error TEXT, failure_kind TEXT, http_status INTEGER, request_record_path TEXT,
+ completed_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS briefs(id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
  parent_id TEXT REFERENCES briefs(id), author TEXT NOT NULL, markdown TEXT NOT NULL,
  hash TEXT NOT NULL, detail TEXT NOT NULL, editor_document TEXT, created TEXT NOT NULL);
@@ -243,7 +252,7 @@ class Store:
 
     def _create_learning_run(self, origin_id, source_ids, *, skill_id=None):
         origin=self.one('runs',origin_id)
-        requirements={**json.loads(origin['requirements']),'allow_web':False}
+        requirements={**json.loads(origin['requirements']),'allow_web':False,'fact_check':False}
         return self.create_run(requirements,source_ids,mode='trial',skill_id=skill_id,
                                _learning_clone=(_LEARNING_CLONE,origin_id))
 
@@ -252,7 +261,7 @@ class Store:
         if clone is not None:
             if not isinstance(clone,tuple) or len(clone)!=2 or clone[0] is not _LEARNING_CLONE:
                 raise ValueError('Invalid internal learning clone')
-            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
+            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False,'fact_check':False}
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)

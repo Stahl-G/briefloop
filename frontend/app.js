@@ -71,7 +71,7 @@ document.addEventListener('focusout',e=>{if(e.target.closest('[data-tip]'))hideT
 document.addEventListener('scroll',()=>{if(tooltipTarget)hideTip()},true);
 function refresh(first=false){if(refresh.pending)return refresh.pending;refresh.pending=refreshState(first).finally(()=>{refresh.pending=null});return refresh.pending}
 function backgroundActive(){return !!state?.jobs?.some(j=>['queued','running'].includes(j.status))||chat.busy||chat.sessions.some(sessionBusy)}
-async function refreshState(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
+async function refreshState(first=false,signal){try{const next=await api('state');if(signal?.aborted)return false;$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -403,7 +403,7 @@ function tryOpenPending(){
  return false;
 }
 async function loadBrief(b){if(!b||'markdown' in b)return b;const bodies=openBrief.bodies||(openBrief.bodies=new Map()),cached=bodies.get(b.id);if(cached&&cached.hash===b.hash)return cached;const full=await api('brief?id='+encodeURIComponent(b.id));bodies.set(full.id,full);return full}
-function openBrief(b,{follow=false}={}){if(!b)return false;if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}if(!('markdown' in b)){const cached=openBrief.bodies?.get(b.id);if(cached?.hash!==b.hash){/* Polled state lists versions only. Choosing one records the request; it opens (and clears pending reports) only when its body arrives and is still the latest choice. */if(openBrief.request?.id===b.id&&openBrief.request.hash===b.hash)return true;const request=openBrief.request={id:b.id,hash:b.hash};loadBrief(b).then(full=>{if(openBrief.request===request){openBrief.request=null;openBrief(full,{follow})}}).catch(e=>{if(openBrief.request===request){openBrief.request=null;notice(e.message,true)}});return true}b=cached}openBrief.request=null;(openBrief.bodies||(openBrief.bodies=new Map())).set(b.id,b);pendingRun=null;followUpdates=follow;current=b;syncPendingReport();renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
+function openBrief(b,{follow=false}={}){if(!b)return false;if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}if(!('markdown' in b)){const cached=openBrief.bodies?.get(b.id);if(cached?.hash!==b.hash){/* Polled state lists versions only. Choosing one records the request; it opens (and clears pending reports) only when its body arrives and is still the latest choice. */if(openBrief.request?.id===b.id&&openBrief.request.hash===b.hash)return true;const request=openBrief.request={id:b.id,hash:b.hash};request.promise=loadBrief(b).then(full=>{if(openBrief.request!==request)return false;openBrief.request=null;return openBrief(full,{follow})}).catch(e=>{if(openBrief.request===request){openBrief.request=null;notice(e.message,true)}return false});return true}b=cached}openBrief.request=null;(openBrief.bodies||(openBrief.bodies=new Map())).set(b.id,b);pendingRun=null;followUpdates=follow;current=b;syncPendingReport();renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
 function changed(){followUpdates=false;dirty=true;assessmentPanel.bumpDeliveryTicket();const check=$('assessment').querySelector('.delivery-checks');if(check)updatePanel(check,'有未保存修改；保存后重新检查。');renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
 $('version-select').onchange=e=>{const value=e.target.value;if(value.startsWith('run:'))showPendingReport(value.slice(4));else openBrief(state.briefs.find(b=>b.id===value));refreshProgress()};
 let savePromise=null,lastSaveError=null;
@@ -646,7 +646,66 @@ $('markdown-import-cancel').onclick=cancelMarkdownImport;
 $('markdown-import-dialog').addEventListener('cancel',()=>{pendingMarkdownImport=null;$('markdown-import').value=''});
 $('markdown-import-confirm').onclick=()=>action(async()=>{const pending=pendingMarkdownImport;if(!pending)return;const text=await pending.file.text();const base=await savedVersion();if(base!==pending.base)throw Error('报告已有修改，请取消后重新选择 Markdown 文件');editor.commands.setContent(toEditor(text),{contentType:'markdown',emitUpdate:true});await savedVersion();cancelMarkdownImport();notice('已导入为新的富文档版本')});
 $('markdown-source').oninput=changed;window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
-(async()=>{try{setToken((await api('session')).token);await refresh(true);await initChat();refreshWorkspaces().catch(()=>{});adaptivePoll(()=>refresh(),{active:backgroundActive,fast:3000})}catch(e){notice(e.message,true)}})();
+// BEGIN_WORKSPACE_STARTUP
+const startup={sessionReady:false,stateReady:false,chatReady:false,ready:false,paused:false,suspended:false,running:null,controller:null,pollStops:[]};
+const startupDelays=[1000,2000,5000,10000,30000];
+function startupStatus(message,{retry=false,pausable=true}={}){
+ if(!startup.panel){
+  const box=document.createElement('section');box.className='panel';box.dataset.testid='startup-status';box.setAttribute('role','status');
+  const text=document.createElement('p'),again=document.createElement('button'),pause=document.createElement('button');
+  again.type=pause.type='button';again.className='outline';pause.className='ghost';again.textContent='重试连接';pause.textContent='暂停重试';
+  again.onclick=()=>{cancelStartup(false);void startWorkspace()};pause.onclick=()=>cancelStartup();
+  box.append(text,again,pause);document.querySelector('main').prepend(box);startup.panel={box,text,again,pause};
+ }
+ const {box,text,again,pause}=startup.panel;box.hidden=false;text.textContent=message;again.disabled=!retry;pause.hidden=!pausable;
+ $('connection').textContent='工作区尚未连接';
+}
+function cancelStartup(paused=true){
+ startup.paused=paused;startup.controller?.abort();
+ if(paused&&!startup.ready)startupStatus('连接重试已暂停，输入内容保留。',{retry:true,pausable:false});
+}
+function startupWait(ms,signal){
+ return new Promise(resolve=>{
+  const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',done);resolve()};
+  const timer=setTimeout(done,ms);signal.addEventListener('abort',done,{once:true});
+  if(signal.aborted)done();
+ });
+}
+function startWorkspacePolls(){
+ if(startup.pollStops.length)return;
+ startup.pollStops=[adaptivePoll(()=>refresh(),{active:backgroundActive,fast:3000}),adaptivePoll(()=>pollChat(),{active:backgroundActive,fast:1300})];
+}
+function startWorkspace(){
+ if(startup.paused||startup.suspended)return Promise.resolve(false);
+ if(startup.running)return startup.controller?.signal.aborted?startup.running.then(()=>startWorkspace()):startup.running;
+ if(startup.ready){startWorkspacePolls();return Promise.resolve(true)}
+ const controller=startup.controller=new AbortController(),signal=controller.signal;
+ startup.running=(async()=>{
+  for(let attempt=0;!signal.aborted;attempt++){
+   startupStatus('正在连接本地工作区…');
+   try{
+    if(!startup.sessionReady){const session=await api('session');if(signal.aborted)return false;setToken(session.token);startup.sessionReady=true}
+    if(!startup.stateReady){if(!await refreshState(true,signal))return false;startup.stateReady=true}
+    if(!startup.chatReady){if(!await initChat(signal))return false;startup.chatReady=true}
+    if(signal.aborted)return false;
+    startup.ready=true;startup.panel.box.hidden=true;$('connection').textContent='本地已连接';startWorkspacePolls();refreshWorkspaces().catch(()=>{});return true;
+   }catch(error){
+    if(signal.aborted)return false;
+    const delay=startupDelays[attempt];
+    if(delay===undefined){startupStatus('连接仍未恢复，自动重试已暂停。网络恢复后可重试连接。原因：'+error.message,{retry:true,pausable:false});return false}
+    startupStatus(`连接未完成，${delay/1000} 秒后重试（${attempt+1}/${startupDelays.length}）。输入内容保留。原因：${error.message}`,{retry:true});
+    await startupWait(delay,signal);
+   }
+  }
+  return false;
+ })().finally(()=>{startup.running=null});
+ return startup.running;
+}
+window.addEventListener('online',()=>{if(!startup.paused)void startWorkspace()});
+window.addEventListener('pagehide',()=>{startup.suspended=true;startup.controller?.abort();for(const stop of startup.pollStops)stop();startup.pollStops=[]});
+window.addEventListener('pageshow',()=>{startup.suspended=false;if(!startup.paused)void startWorkspace()});
+void startWorkspace();
+// END_WORKSPACE_STARTUP
 
 $('editor').addEventListener('click',e=>{const a=e.target.closest('a[href^="#source-"]');if(a){e.preventDefault();const id=a.getAttribute('href').slice(8);action(async()=>{const r=await api('source?id='+id);showSource(r)})}});
 
@@ -946,9 +1005,9 @@ $('chat-backend').onchange=()=>{
  chat.request=null;rememberDraft();updateComposer();refreshInlineModelPickers();
 };
 function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,variant:($('chat-variant')?.value||'').trim(),service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
-function restoreDraft(){
+function restoreDraft({preserveNewDraft=false}={}){
  const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
- const backend=(chat.id&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
+ const backend=((chat.id||preserveNewDraft)&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
  chat.nextBackend=backend;
  const saved=d&&(chat.id||d.backend===backend||(!d.backend&&sessionRuntime))?d:null;
  const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:settingsEffort(state.settings,backend),variant:backend==='mimo'?state.settings.runtime_efforts?.mimo:state.settings.model_variant,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
@@ -1208,23 +1267,45 @@ function renderChat(){
  renderMessages();renderActivities();autoOpenActivity();renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
 }
 async function selectChat(id){
- if(chat.busy||chat.uploading)return;if(id===chat.id){chat.home=false;renderChat();page('chat');return}rememberDraft();chat.home=false;chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(!chat.drafts.has(id))restoreDraft();
+ if(chat.busy||chat.uploading)return;if(id===chat.id){chat.home=false;renderChat();page('chat');return}rememberDraft();chat.home=false;chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(chat.id===id&&!chat.drafts.has(id))restoreDraft();
 }
-async function newChat(){
- if(chat.busy||chat.uploading)return;rememberDraft();chat.home=true;chat.view='active';$('session-view').value='active';chat.sessions=[];chat.id=null;chat.session=null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';chat.drafts.delete('new');localStorage.removeItem('briefloop-chat-session');restoreDraft();chatError();renderChat();page('chat');$('chat-input').focus();await pollChat(true).catch(e=>chatError(e.message));
+async function openChatHome({resetDraft=false}={}){
+ if(chat.busy||chat.uploading)return;
+ rememberDraft();chat.home=true;chat.view='active';$('session-view').value='active';chat.sessions=[];chat.id=null;chat.session=null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';
+ // Navigation restores the pending home composer; only an explicit new chat resets it.
+ if(resetDraft)chat.drafts.delete('new');
+ localStorage.removeItem('briefloop-chat-session');restoreDraft({preserveNewDraft:!resetDraft});rememberDraft();chatError();renderChat();page('chat');$('chat-input').focus();await pollChat(true).catch(e=>chatError(e.message));
 }
-async function showHome(){if(chat.busy||chat.uploading){page('chat');return}await newChat()}
+async function newChat(){await openChatHome({resetDraft:true})}
+async function showHome(){if(chat.busy||chat.uploading){page('chat');return}await openChatHome()}
 async function pollChat(force=false){
- if(chat.polling&&!force)return;chat.polling=true;const sid=chat.id,after=chat.after,view=chat.view;
- try{
-  const [list,snapshot]=await Promise.all([api('harness/sessions?view='+view),sid?api(`harness/session?id=${encodeURIComponent(sid)}&after=${after}&reasoning=1`):Promise.resolve(null)]);
-  if(view===chat.view)chat.sessions=list.sessions||[];if(sid===chat.id&&snapshot){chat.session=snapshot.session;chat.tokenUsage=snapshot.token_usage||null;chat.messages=snapshot.messages||[];chat.requests=snapshot.requests||[];for(const event of snapshot.events||[]){chat.events.set(event.seq,event);chat.after=Math.max(chat.after,event.seq)}}renderChat();
- }catch(e){if(force)throw e;else if(!$('chat').hidden){if(sessionMissing(e)){chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');chatError();renderChat()}else{$('chat-status').textContent='会话连接中断，正在重连';chatError(e.message)}}}finally{chat.polling=false}
+ if(chat.pollPromise||chat.pollQueued){
+  if(!force)return;
+  // Mutations and navigation supersede the in-flight snapshot; coalesce their refreshes.
+  chat.pollTicket=(chat.pollTicket||0)+1;
+  if(!chat.pollQueued)chat.pollQueued=chat.pollPromise.catch(()=>{}).then(()=>{chat.pollQueued=null;return pollChat(true)});
+  return chat.pollQueued;
+ }
+ const ticket=chat.pollTicket=(chat.pollTicket||0)+1,sid=chat.id,after=chat.after,view=chat.view,events=chat.events;
+ const relevant=()=>ticket===chat.pollTicket&&sid===chat.id&&events===chat.events;
+ chat.polling=true;
+ const pending=Promise.resolve().then(async()=>{
+  try{
+   // Wait for both reads, even if one fails, before starting a queued refresh.
+   const results=await Promise.allSettled([api('harness/sessions?view='+view),sid?api(`harness/session?id=${encodeURIComponent(sid)}&after=${after}&reasoning=1`):Promise.resolve(null)]);
+   if(!relevant())return;
+   const failure=results.find(result=>result.status==='rejected');if(failure)throw failure.reason;
+   const [list,snapshot]=results.map(result=>result.value);
+   if(view===chat.view)chat.sessions=list.sessions||[];
+   if(snapshot){chat.session=snapshot.session;chat.tokenUsage=snapshot.token_usage||null;chat.messages=snapshot.messages||[];chat.requests=snapshot.requests||[];for(const event of snapshot.events||[]){chat.events.set(event.seq,event);chat.after=Math.max(chat.after,event.seq)}}renderChat();
+  }catch(e){if(!relevant())return;if(force)throw e;else if(!$('chat').hidden){if(sessionMissing(e)){chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');chatError();renderChat()}else{$('chat-status').textContent='会话连接中断，正在重连';chatError(e.message)}}}
+ }).finally(()=>{if(chat.pollPromise===pending){chat.pollPromise=null;chat.polling=false}});
+ chat.pollPromise=pending;return pending;
 }
 async function sendChat(event){
  event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const rawInput=$('chat-input').value.trim();const command=/^\/(\w+)(?:\s+([\s\S]*))?$/.exec(rawInput);if(command){const name=command[1].toLowerCase();if(name==='new'){const panel=commandPanel();if(panel)panel.hidden=true;await newChat();return}if(name==='help'){notice(COMMAND_HELP);$('chat-input').value='';const panel=commandPanel();if(panel)panel.hidden=true;updateComposer();return}}const text=rawInput||(chat.attachments.size?'请查看附件。':'');if(!text)return;const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;chat.home=false;chat.busy=true;chatError();updateComposer();
  try{
-  const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);rememberDraft()}
+  const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);chat.drafts.delete('new');rememberDraft()}
   const reportOptions=compactReportInstruction();
   const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked};const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
@@ -1284,10 +1365,12 @@ for(const name of ['dragenter','dragover'])chatComposer.addEventListener(name,ev
 for(const name of ['dragleave','dragend'])chatComposer.addEventListener(name,()=>chatComposer.classList.remove('drag-over'));
 chatComposer.addEventListener('drop',event=>{const files=[...(event.dataTransfer?.files||[])];chatComposer.classList.remove('drag-over');if(!files.length)return;event.preventDefault();uploadChatFiles(files)});
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{$('chat-input').value=b.dataset.prompt;rememberDraft();updateComposer();$('chat-input').focus()});
-async function initChat(){
- try{const saved=JSON.parse(sessionStorage.getItem('briefloop-chat-drafts')||'[]');if(Array.isArray(saved))chat.drafts=new Map(saved)}catch{}
- chat.id=localStorage.getItem('briefloop-chat-session')||null;
- try{const list=await api('harness/sessions?view=active');chat.sessions=list.sessions||[]}catch{chat.sessions=[]}
+async function initChat(signal){
+ const list=await api('harness/sessions?view=active');if(signal?.aborted)return false;
+ const liveHomeChoice=!!chat.drafts.get('new')?.model;
+ // Input typed during a connection retry takes precedence over the stored snapshot.
+ try{const saved=JSON.parse(sessionStorage.getItem('briefloop-chat-drafts')||'[]');if(Array.isArray(saved))chat.drafts=new Map([...saved,...chat.drafts])}catch{}
+ chat.id=localStorage.getItem('briefloop-chat-session')||null;chat.sessions=list.sessions||[];
  const recoverable=!!chat.id&&chat.sessions.some(s=>s.id===chat.id);
  const settings=state&&state.settings;
  const fresh=chat.sessions.length===0&&!((state&&state.runs)||[]).length&&!((state&&state.briefs)||[]).length;
@@ -1301,11 +1384,10 @@ async function initChat(){
  }else{
   // Home always opens on the landing; conversations are opened from the sidebar.
   chat.home=true;chat.id=null;chat.session=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.removeItem('briefloop-chat-session');
-  page('chat');restoreDraft();renderChat();
-  try{await pollChat(true)}catch(e){chatError(e.message)}
+  page('chat');restoreDraft({preserveNewDraft:liveHomeChoice});renderChat();
  }
  renderSessions();
- adaptivePoll(()=>pollChat(),{active:backgroundActive,fast:1300});
+ return true;
 }
 
 $('chat-allow-web').onchange=rememberDraft;
@@ -2121,7 +2203,17 @@ async function refreshReleaseState(){
 }
 function updateReleaseChangeFields(){const linked=!!$('release-previous').value;$('release-change-fields').hidden=!linked;$('release-change-reason').required=linked}
 $('release-previous').onchange=updateReleaseChangeFields;
-$('release-open').onclick=()=>action(async()=>{await savedVersion();$('release-eligibility').textContent='正在核对当前版本的交付条件…';$('release-submit').disabled=true;$('release-dialog').showModal();await refreshReleaseState()});
+async function openReleaseDialog(brief=null){
+ if(brief&&!openBrief(brief,{follow:false}))return;
+ // A list choice is accepted before its body arrives. Never save/check the old editor.
+ const request=openBrief.request;
+ if(request){const opened=await request.promise;if(!opened||openBrief.request||current?.id!==request.id)return}
+ if(brief&&current?.id!==brief.id)return;
+ const runId=current?.run_id,version=await savedVersion();
+ if(openBrief.request||current?.id!==version||current?.run_id!==runId)return;
+ page('report');$('release-eligibility').textContent='正在核对当前版本的交付条件…';$('release-submit').disabled=true;$('release-dialog').showModal();await refreshReleaseState();
+}
+$('release-open').onclick=()=>action(()=>openReleaseDialog());
 $('release-close').onclick=()=>$('release-dialog').close();
 async function submitFormalRelease(){
  const previous=$('release-previous').value,changeType=$('release-change-type').value,reason=$('release-change-reason').value.trim();
@@ -2372,7 +2464,7 @@ function renderReports(){
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
- box.querySelectorAll('[data-report-release]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportRelease);if(b&&openBrief(b,{follow:false})){page('report');const btn=$('release-open');if(btn)btn.click()}});
+ box.querySelectorAll('[data-report-release]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportRelease);if(b)return action(()=>openReleaseDialog(b))});
 }
 function sourceState(s){return s.status==='failed'?'failed':s.needs_visual?'visual':'ready'}
 function sourceStatusChip(st){return `<span class="chip ${st==='ready'?'ok':st==='visual'?'warn':'danger'}">${st==='ready'?'可用':st==='visual'?'需视觉读取':'获取失败'}</span>`}

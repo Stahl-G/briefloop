@@ -56,8 +56,8 @@ def test_batch_failure_is_atomic_and_preserves_body(tmp_path):
     saved = writer.assemble_evidence(store, config, {'base_revision': first['revision'], 'number_bindings': [binding]})
     now = drafts._candidate(store, config, {'revision': saved['revision']})['draft']
     assert now['editor_document'] == before['editor_document']
-    with pytest.raises(ValueError):
-        writer.assemble_evidence(store, config, {'base_revision': first['revision'], 'number_bindings': [binding]})
+    assert writer.assemble_evidence(store, config, {
+        'base_revision': first['revision'], 'number_bindings': [binding]}) == {**saved, 'replayed': True}
     with pytest.raises(ValueError):
         drafts.submit(store, config, {'revision': saved['revision']})
     for value, pattern in [(dict(binding, source_id='src_outside'),'事实材料'),

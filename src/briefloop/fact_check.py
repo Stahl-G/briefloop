@@ -11,9 +11,10 @@ so nothing here gates delivery. The method borrows from SAFE (Apache-2.0) by
 translation and re-implementation; no upstream code is copied.
 """
 import json
+import re
 from datetime import date
 from typing import get_args
-from .store import dump, uid, now
+from .store import Conflict, dump, uid, now
 from .search_policy import for_run as search_policy_for_run
 from .evidence import digest, inspect_bindings, record as evidence_record
 from .review import ClaimCheck
@@ -22,6 +23,8 @@ from .research_plan import FACT_CHECK_STATUSES, AdmissionError, frozen as frozen
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS fact_checks(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),
  version_id TEXT NOT NULL REFERENCES briefs(id),stage_id TEXT,fingerprint TEXT NOT NULL,data TEXT NOT NULL,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fact_check_grant_requests(request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL,
+ result TEXT NOT NULL, created TEXT NOT NULL);
 '''
 
 # Candidate judgements stay aligned with the Reviewer's ClaimCheck states
@@ -388,25 +391,62 @@ def get_record(store,identity):
     return {**rows[0],'data':json.loads(rows[0]['data'])}
 
 
-def grant(store,version_id,limits,*,job_id=None):
+def grant(store,version_id,limits,*,job_id=None,request_id=None):
     """产品入口：用户为本次报告明确追加核查预算（方案 D3 二选一之二）。
 
     追加额度在阶段活跃期间并入 research_budget 计量限额（research_plan.
     add_fact_check_grant / research_budget._load），可实际花费；阶段以
     budget_exhausted 收束后追加会重开阶段并重新编排一次核查任务继续执行。
+    有 request_id 时同内容重试返回原回执；省略时每次调用仍是新的授权。
     """
-    from .research_plan import add_fact_check_grant
-    brief=store.one('briefs',version_id)
-    outcome=add_fact_check_grant(store,brief['run_id'],limits,job_id=job_id)
-    if outcome['status']=='reopened':
-        from .research_plan import _owner_job
-        owner=_owner_job(store,brief['run_id'])
-        payload={'run_id':brief['run_id'],'version_id':brief['id']}
-        if owner is not None:
-            original=json.loads(owner['payload'])
-            payload.update({key:original[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models') if key in original})
-        job=store.enqueue('fact_check',payload)
-        outcome['job_id']=job['id']
+    from .research_plan import add_fact_check_grant, _owner_job
+    from .external_requests import _RequestStore
+    if request_id is not None:
+        if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}',request_id):
+            raise ValueError('request_id 需要 1–128 个字母、数字或 ._:-')
+        request_hash=digest(dump({'version_id':version_id,'limits':limits,'job_id':job_id}))
+    # Grant, dispatch and receipt commit together. A lost success response can
+    # be replayed even after the stage closes or the runtime settings change.
+    with store.tx() as connection:
+        if request_id is not None:
+            previous=connection.execute('SELECT * FROM fact_check_grant_requests WHERE request_id=?',(request_id,)).fetchone()
+            if previous:
+                if previous['request_hash']!=request_hash:
+                    raise Conflict('该 request_id 已用于不同内容；请核对原追加请求')
+                return {**json.loads(previous['result']),'replayed':True}
+        view=_RequestStore(store,connection)
+        brief=view.one('briefs',version_id)
+        outcome=add_fact_check_grant(view,brief['run_id'],limits,job_id=job_id)
+        if outcome['status'] in ('reopened','active'):
+            stage=(view.meta('research_plan:'+brief['run_id']) or {})['fact_check']
+            owner=_owner_job(view,brief['run_id'])
+            matching=[]
+            for saved in view.rows("SELECT * FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.run_id')=? ORDER BY rowid DESC",
+                                   (brief['run_id'],)):
+                payload=json.loads(saved['payload'])
+                # Older jobs did not carry stage_id. They can belong to this
+                # stage only if created after its admission, not an earlier one.
+                if (payload.get('stage_id')==stage['stage_id'] or
+                        not payload.get('stage_id') and saved['created']>=stage['created']):
+                    matching.append(saved)
+            if matching:
+                # Failed/interrupted jobs retain their explicit resume path;
+                # adding allowance must not start a second paid attempt.
+                outcome['job_id']=matching[0]['id']
+            elif outcome['status']=='reopened' or owner is None or owner['status'] not in ('queued','running'):
+                # Repair old active stages stranded before dispatch. An active
+                # generating parent still owns its own first child admission.
+                payload={'run_id':brief['run_id'],'version_id':brief['id'],'stage_id':stage['stage_id']}
+                if owner is not None:
+                    original=json.loads(owner['payload'])
+                    payload.update({key:original[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models') if key in original})
+                job=view.enqueue('fact_check',payload)
+                outcome['job_id']=job['id']
+        if request_id is not None:
+            outcome={**outcome,'request_id':request_id,'replayed':False}
+            connection.execute('INSERT INTO fact_check_grant_requests VALUES(?,?,?,?)',
+                               (request_id,request_hash,dump(outcome),now()))
+    if view.jobs_admitted:store.wake_jobs()
     return outcome
 
 

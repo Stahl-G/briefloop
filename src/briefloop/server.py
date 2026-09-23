@@ -659,7 +659,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/fact-check-grant':
                     # 用户明确追加核查预算：并入阶段计量限额；阶段以预算耗尽收束后追加重开并继续核查。
                     from .fact_check import grant as grant_fact_check
-                    result=grant_fact_check(store,body['version_id'],body.get('limits'))
+                    result=grant_fact_check(store,body['version_id'],body.get('limits'),request_id=body.get('request_id'))
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
@@ -705,7 +705,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/source-refresh':
                     brief=store.one('briefs',body['version_id'])
                     if body['source_id'] not in store.source_ids(brief['run_id']):raise ValueError('来源不属于本轮报告')
-                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff'],'requested_by':'user'})
+                    source=store.one('sources',body['source_id'])
+                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':source['id'],
+                                                          'source_url':source['url'],'information_cutoff':body['information_cutoff'],'requested_by':'user'})
                 elif path=='/api/revise-findings':
                     store.one('briefs',body['version_id']);result=store.enqueue('revise',{'version_id':body['version_id']})
                 elif path=='/api/review':

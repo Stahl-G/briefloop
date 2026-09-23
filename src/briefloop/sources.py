@@ -6,7 +6,6 @@ from .host_bins import find as find_host_bin
 from io import BytesIO
 from urllib.parse import urlsplit
 from pathlib import Path
-from concurrent.futures import Future
 import hashlib
 import http.client
 import ipaddress
@@ -19,7 +18,6 @@ import urllib.request
 import urllib.error
 import zipfile
 import xml.etree.ElementTree as ET
-import threading
 
 TITLE_MAX_CHARS=200
 # Interstitial/anti-bot/error titles are not source labels.
@@ -29,10 +27,6 @@ _GENERIC_TITLE_RE=re.compile(r'^(?:just a moment|attention required|access denie
 _ACCESS_TITLE_RE=re.compile(_GENERIC_TITLE_RE.pattern+r'[.!?…]*(?:\s*[|–—-]\s*Cloudflare)?',re.I)
 _LOGIN_TITLE_RE=re.compile(r'(?:sign in|log in|login|登录)[.!?…]*',re.I)
 
-# This is deliberately an in-process, per-workspace/run registry, not a content
-# cache.  It only joins callers while one snapshot is being created.
-_INFLIGHT_FETCHES={}
-_INFLIGHT_FETCHES_LOCK=threading.Lock()
 
 
 class TextHTML(HTMLParser):
@@ -406,48 +400,121 @@ def existing_for_run(store,run_id,url):
     return None
 
 
+class PendingSources:
+    """Acquire raw files now; admit source rows and run bindings together later.
+
+    Fetch/extraction uses the normal Store interface, but add_source only stages
+    the decoded text. No network or extraction runs under the admission lock.
+    """
+    def __init__(self,store):
+        self.store=store
+        self.records=[]
+
+    def __getattr__(self,name):
+        return getattr(self.store,name)
+
+    def add_source(self,name,text,*,url=None,error=None,source_id=None):
+        from .store import uid,now,content_hash
+        sid=source_id or uid('src')
+        row={'id':sid,'name':name,'path':'sources/'+sid+'.txt','url':url,
+             'status':'failed' if error else 'ready','error':error,'hash':content_hash(text),'created':now()}
+        self.records.append((row,text))
+        return row
+
+    def admit(self,run_id,reservation,*,status='completed',claim_owner=None,claimed_urls=None):
+        from .research_plan import admit_response
+        from . import research_budget as budget
+        claimed_urls=list(claimed_urls or [])
+        if claim_owner and not claimed_urls:raise ValueError('来源认领缺少 URL')
+        with self.store.tx() as connection:
+            if claim_owner and not budget.owns_claims(connection,run_id,claim_owner,claimed_urls):
+                budget.reject_claim_request(connection,run_id,reservation,response_status=status)
+                budget.finish_claims(connection,run_id,claim_owner,claimed_urls,outcome='response_rejected')
+                return False
+            if not admit_response(connection,run_id,reservation,'pages',status=status):
+                if claim_owner:
+                    budget.finish_claims(connection,run_id,claim_owner,claimed_urls,outcome='response_rejected')
+                return False
+            for row,text in self.records:
+                saved=self.store.add_source(row['name'],text,url=row['url'],error=row['error'],
+                                             source_id=row['id'],connection=connection)
+                connection.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,row['id']))
+                row.update(saved)
+            if claim_owner:
+                ids={budget.canonical_url(row['url']):row['id'] for row,_ in self.records if row.get('url')}
+                budget.finish_claims(connection,run_id,claim_owner,claimed_urls,
+                                     outcome=status,source_ids=ids)
+        return True
+
+
 def fetch_for_run(store,run_id,url):
     import json
     run=store.one('runs',run_id)
     if not json.loads(run['requirements']).get('allow_web'):raise ValueError('本轮仅允许本地来源')
-    from .research_budget import canonical_url
-    canonical=canonical_url(url)
-    previous=existing_for_run(store,run_id,canonical)
     from . import research_budget as budget
-    if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
-    key=(str(store.root),run_id,canonical)
-    with _INFLIGHT_FETCHES_LOCK:
-        future=_INFLIGHT_FETCHES.get(key)
-        leader=future is None
-        if leader:
-            future=Future()
-            _INFLIGHT_FETCHES[key]=future
-    if not leader:
-        shared=future.result()
-        return {**shared,'reused':True,'shared':True,'budget':budget.snapshot(store,run_id)}
+    request_url=url.strip()
+    url=budget.canonical_url(request_url)
+    while True:
+        claim=budget.claim_pages(store,run_id,[url])
+        previous=claim['cached'].get(url)
+        if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
+        if claim['budget_exhausted']:return {**claim['budget_exhausted'],'url':request_url}
+        if url in claim['waiting']:
+            result=budget.wait_for_claim(store,run_id,url,claim['waiting'][url])
+            if result['source_id']:
+                previous=store.one('sources',result['source_id'])
+                if previous['status']=='failed':
+                    provenance=store.root/'sources'/(previous['id']+'.provenance.json')
+                    try:provider=json.loads(provenance.read_text(encoding='utf-8')).get('extractor')=='tavily.extract'
+                    except (OSError,ValueError):provider=False
+                    if provider:continue
+                return {**previous,'reused':True,'shared':True,
+                        'budget':budget.snapshot(store,run_id)}
+            if result['outcome'] in ('stale','response_rejected','failed'):continue
+            raise ValueError(result.get('error') or '同一来源读取未完成，请重试')
+        reservation=claim['reservation']
+        break
+    pending=PendingSources(store)
     try:
-        # A prior caller can finish after our first lookup and before this
-        # caller obtains the in-flight slot.  Recheck as the slot owner.
-        previous=existing_for_run(store,run_id,canonical)
-        if previous:
-            result={**previous,'reused':True,'shared':False,'budget':budget.snapshot(store,run_id)}
-        else:
-            try:reservation=budget.reserve_pages(store,run_id,[canonical])
-            except budget.BudgetExhausted as exc:
-                result={**exc.result,'url':url}
-            else:
-                source=fetch(store,url)
-                store.attach_source(run_id,source['id'])
-                if reservation.get('round_id'):
-                    from .research_plan import settle_request
-                    settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
-                result={**source,'reused':False,'shared':False,'budget':budget.snapshot(store,run_id),
-                        'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
-        future.set_result(result)
-        return result
-    except BaseException as exc:
-        future.set_exception(exc)
+        with budget.keep_claims_alive(store,run_id,claim['owner'],[url]):
+            source=fetch(pending,request_url)
+            status='completed' if source.get('status')=='ready' else 'failed'
+            accepted=pending.admit(run_id,reservation,status=status,
+                                   claim_owner=claim['owner'],claimed_urls=[url])
+    except Exception as exc:
+        budget.abort_claims(store,run_id,claim['owner'],[url],error=str(exc))
+        failure={'local_request_id':reservation['request_id'],'run_id':run_id,
+                 'round_id':reservation.get('round_id'),'stage':reservation.get('stage'),
+                 'operation':'direct_fetch','url':request_url,'canonical_url':url,'outcome':'failed',
+                 'source_id':None,'error':str(exc),'admitted':False}
+        path=budget.save_request_record(store,run_id,reservation['request_id'],failure)
+        if reservation.get('round_id'):
+            from .research_plan import settle_request
+            settle_request(store,run_id,reservation['request_id'],'failed',record_path=path)
         raise
-    finally:
-        with _INFLIGHT_FETCHES_LOCK:
-            _INFLIGHT_FETCHES.pop(key,None)
+    provenance=store.root/'sources'/(source['id']+'.provenance.json')
+    envelope={'local_request_id':reservation['request_id'],'run_id':run_id,'round_id':reservation.get('round_id'),
+              'stage':reservation.get('stage'),'operation':'direct_fetch','url':request_url,
+              'canonical_url':url,
+              'outcome':status if accepted else 'response_rejected','source_id':source['id'],
+              'error':source.get('error'),'admitted':accepted,
+              'provenance_path':str(provenance.relative_to(store.root)) if provenance.exists() else None}
+    if not accepted:
+        if reservation.get('round_id'):
+            from .research_plan import pending_requests
+            envelope['rejection_reason']=(pending_requests(store,run_id).get(reservation['request_id']) or {}).get('rejection_reason')
+        else:
+            envelope['rejection_reason']='page_claim_lost'
+    path=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
+    from .research_plan import settle_request,AdmissionError
+    settle_request(store,run_id,reservation['request_id'],status,record_path=path)
+    if not accepted:
+        lost=envelope.get('rejection_reason') in ('page_claim_lost','page_claim_expired')
+        message=('同一来源读取租约已被接管；迟到网页响应已保留，未登记为报告来源' if lost
+                 else '请求所属阶段已结束或更换；迟到网页响应已保留，未登记为报告来源')
+        error=AdmissionError(message,code='response_rejected')
+        error.request_record_path=path
+        raise error
+    return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
+            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id'),
+            'request_record_path':path}

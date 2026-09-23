@@ -4,7 +4,8 @@ import json
 import os
 from pathlib import Path
 from .store import dump, now, uid
-from .document_model import brief_document
+from .document_model import brief_document, source_ids
+from .document_export import reader_source_blocks
 from .figure_support import export_figures
 
 
@@ -15,9 +16,19 @@ def export_input(store, brief, template_override=None):
         # rendering template and must change the export fingerprint.
         requirements = {**requirements, 'template_id': template_override}
     figures = export_figures(store, brief)
-    identity = {'renderer': 23 if requirements.get('template_id') else 24, 'version_id': brief['id'], 'brief_hash': brief['hash'],
-                'document': brief_document(brief), 'detail': json.loads(brief['detail']),
+    document = brief_document(brief)
+    # Both Word paths pass the run's current sources into render_document.
+    # An internal source index is only replaced when all its rows resolve, so
+    # determine the effective blocks before choosing metadata for the hash.
+    run_sources = {sid: store.one('sources', sid) for sid in store.source_ids(brief['run_id'])}
+    blocks, indexed = reader_source_blocks(document, run_sources)
+    rendered_ids = dict.fromkeys(source_ids({'type': 'doc', 'content': blocks}) + indexed)
+    rendered_sources = {sid: {'name': run_sources[sid]['name'], 'url': run_sources[sid]['url'] or ''}
+                        if sid in run_sources else None for sid in rendered_ids}
+    identity = {'renderer': 28 if requirements.get('template_id') else 29, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+                'document': document, 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
+                'sources': rendered_sources,
                 'figures': {fid: {**{k: v for k, v in f.items() if k != 'image_bytes'},
                                   'image_hash': hashlib.sha256(f['image_bytes']).hexdigest()} for fid, f in figures.items()}}
     if requirements.get('template_id'):
@@ -84,16 +95,23 @@ def generate_word(store, job, cancelled):
     if hashlib.sha256(dump(identity).encode()).hexdigest() != payload['fingerprint']:
         raise ValueError('导出输入已变化，请对当前报告重新生成 Word')
     req = identity['requirements']; detail = identity['detail']
+    # Render with the exact source projection that was fingerprinted. A source
+    # can be attached or edited while Word is being built; re-reading it here
+    # would save different content under the old cache identity. Unresolved
+    # citations are absent from the mapping so render_document uses its normal
+    # missing-source label instead of dereferencing a None projection entry.
+    source_records = {sid: record for sid, record in identity['sources'].items() if record is not None}
     stage(2, '填充正文、表格和图表')
     if req.get('template_id'):
         from .templates import export_template
-        blob = export_template(store, brief, identity['document'], figures, template_id=payload.get('template_id'))
+        blob = export_template(store, brief, identity['document'], figures,
+                               template_id=payload.get('template_id'), source_records=source_records)
     else:
         blob = docx_bytes(document=identity['document'], report_profile=req.get('report_profile', 'brief'),
                           title=detail.get('title', req.get('title', '')), report_date=req.get('report_date', ''),
                           organization=req.get('organization', ''), period=req.get('period', ''), industry=req.get('industry', ''),
-                          figures=figures, source_records={sid: store.one('sources', sid) for sid in store.source_ids(brief['run_id'])},
-                          citations=detail.get('citations',[]),language=req.get('language'))
+                          figures=figures, source_records=source_records, language=req.get('language'),
+                          citations=detail.get('citations',[]))
     stage(3, '检查 Word 文件和资源')
     from docx import Document
     from io import BytesIO

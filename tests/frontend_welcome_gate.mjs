@@ -109,5 +109,5 @@ assert.deepEqual(startupPages,['report']);
 assert.equal(startupOpened[0],savedDemo);
 assert.match(startupEl('session-list').innerHTML,/对话会保存在这里/);
 assert.doesNotMatch(startupEl('session-list').innerHTML,/正在读取会话/);
-assert.equal(startupPolls.length,1,'background polling remains scheduled');
+assert.equal(startupPolls.length,0,'the startup coordinator alone schedules polling after successful initialization');
 console.log('PASS: demo restoration renders the loaded session list before background polling');

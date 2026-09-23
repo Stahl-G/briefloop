@@ -31,8 +31,8 @@ def test_native_credential_permission_failure_keeps_saved_config_and_closes_temp
     providers.save(body)
     previous = path.read_bytes()
 
-    def denied(*args):
-        pending = list(path.parent.glob('.providers-*'))
+    def denied(*args, **kwargs):
+        pending = list(path.parent.glob('.save-*'))
         assert len(pending) == 1 and pending[0].read_bytes() == b''
         raise PermissionError('synthetic private storage denial')
 
@@ -40,8 +40,8 @@ def test_native_credential_permission_failure_keeps_saved_config_and_closes_temp
         from briefloop.connectors import windows_acl
         monkeypatch.setattr(windows_acl, 'protect_private', denied)
     else:
-        monkeypatch.setattr(os, 'fchmod', denied)
-    with pytest.raises(PermissionError, match='synthetic private storage denial'):
+        monkeypatch.setattr(os, 'chmod', denied)
+    with pytest.raises(ValueError, match='未保存凭据'):
         providers.save({**body, 'api_key': 'synthetic-new-key'})
     assert path.read_bytes() == previous
-    assert not list(path.parent.glob('.providers-*'))
+    assert not list(path.parent.glob('.save-*'))

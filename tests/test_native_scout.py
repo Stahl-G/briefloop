@@ -1,6 +1,7 @@
 """The Scout on the native engine: a frozen task, metered web tools, checked evidence."""
 import json
 import queue
+import threading
 import time
 
 import pytest
@@ -210,6 +211,7 @@ class Engine:
     def __init__(self, sid):
         self.sid, self.calls, self.sinks = sid, [], {}
         self.process = object()
+        self._lock = threading.Lock()
 
     def subscribe(self, execution_id):
         self.sinks[execution_id] = queue.Queue()
@@ -219,7 +221,8 @@ class Engine:
         self.sinks.pop(execution_id, None)
 
     def call(self, method, params, timeout=None):
-        self.calls.append((method, params))
+        with self._lock:
+            self.calls.append((method, params))
         if method == 'session_create':
             return {'session_id': params['session_id'], 'session_file': '/s.jsonl', 'model': params['model']}
         if method == 'turn_start':

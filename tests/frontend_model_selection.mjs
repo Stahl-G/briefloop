@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const source=fs.readFileSync('frontend/app.js','utf8');
-const code=source.slice(source.indexOf('function restoreDraft(){'),source.indexOf('function renderChatRuntimePermissions()'));
+const code=source.slice(source.indexOf('function restoreDraft('),source.indexOf('function renderChatRuntimePermissions()'));
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
 const c=vm.createContext({settingsEffort,$:el,chat:{id:'existing',drafts:new Map(),session:{runtime:{backend:'claude',model:'default'}}},state:{settings:{agent_backend:'claude',model:'default',model_selection_required:true}},effortValue:()=>null,assignEffort:()=>{},refreshInlineModelPickers:()=>{},renderAttachments:()=>{},updateComposer:()=>{},autoSizeChatInput:()=>{}});
 vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),c);
@@ -30,7 +30,7 @@ c.api=async route=>{if(route==='harness/session')return {id:'new-session',runtim
 c.chatActive=()=>false;c.chatError=()=>{};c.pollChat=async()=>{};
 el('chat-input').value='你是谁';el('chat-input').focus=()=>{};el('chat-model').value='default';el('chat-model-provider').value='';
 vm.runInContext(source.slice(source.indexOf('const fastCapabilities='),source.indexOf('const fastCapabilityRequests=')),c);
-vm.runInContext(source.slice(source.indexOf('function rememberDraft(){'),source.indexOf('function restoreDraft(){')),c);
+vm.runInContext(source.slice(source.indexOf('function rememberDraft(){'),source.indexOf('function restoreDraft(')),c);
 vm.runInContext(source.slice(source.indexOf('async function sendChat(event){'),source.indexOf("$('chat-form').onsubmit=")),c);
 await vm.runInContext('sendChat({preventDefault(){}})',c);
 assert.equal(c.chat.drafts.get('new-session').text,'你是谁');

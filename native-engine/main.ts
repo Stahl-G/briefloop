@@ -151,11 +151,17 @@ function extractJson(text: string): unknown | undefined {
 }
 
 const sessions = new Map<string, SessionEntry>();
-let runtime: ModelRuntime | undefined;
-let registry: ModelRegistry | undefined;
 // Product default chosen by the user; explicit provider limits still win.
 const DEFAULT_CONTEXT_WINDOW = 1_000_000;
-const contextOverrides = new Map<string, number>();
+interface RuntimeSnapshot {
+  runtime: ModelRuntime;
+  registry: ModelRegistry;
+  contextOverrides: Map<string, number>;
+  revision: number;
+}
+let currentRuntime: RuntimeSnapshot | undefined;
+let loadingRuntime: Promise<RuntimeSnapshot> | undefined;
+let runtimeRevision = 0;
 
 function send(msg: unknown): void {
   process.stdout.write(JSON.stringify(msg) + "\n");
@@ -171,74 +177,94 @@ function emit(sessionId: string, executionId: string, kind: string, extra: Recor
 }
 
 let localProvidersFingerprint = "";
-async function ensureRuntime(): Promise<ModelRuntime> {
-  if (!runtime) {
-    // BriefLoop-owned models.json ships beside the bundle: it upserts catalog
-    // models the pinned pi release does not know yet (e.g. deepseek-v4.1-flash)
-    // without touching the user's ~/.pi config.
-    const modelsJson = fileURLToPath(new URL("./native-engine-models.json", import.meta.url));
-    if (existsSync(modelsJson)) {
-      const configured = JSON.parse(readFileSync(modelsJson, "utf8"));
-      for (const [provider, entry] of Object.entries(configured.providers ?? {}) as Array<[string, any]>) {
-        for (const model of entry.models ?? []) {
-          if (Number(model.contextWindow) > 0) contextOverrides.set(`${provider}/${model.id}`, Number(model.contextWindow));
-        }
+async function buildRuntime(raw: string): Promise<RuntimeSnapshot> {
+  // A catalog refresh must never change the credentials of an existing
+  // AgentSession: its model still contains the endpoint/protocol selected
+  // when it was created. Publish a new runtime only after all fields and
+  // credentials are ready; in-flight sessions retain their complete snapshot.
+  const rows = Object.values(JSON.parse(raw)) as Array<Record<string, any>>;
+  const contextOverrides = new Map<string, number>();
+  // BriefLoop-owned models.json ships beside the bundle: it upserts catalog
+  // models the pinned pi release does not know yet (e.g. deepseek-v4.1-flash)
+  // without touching the user's ~/.pi config.
+  const modelsJson = fileURLToPath(new URL("./native-engine-models.json", import.meta.url));
+  if (existsSync(modelsJson)) {
+    const configured = JSON.parse(readFileSync(modelsJson, "utf8"));
+    for (const [provider, entry] of Object.entries(configured.providers ?? {}) as Array<[string, any]>) {
+      for (const model of entry.models ?? []) {
+        if (Number(model.contextWindow) > 0) contextOverrides.set(`${provider}/${model.id}`, Number(model.contextWindow));
       }
     }
-    // FileModelsStore otherwise writes its cache beside modelsPath, which is
-    // inside the installed package — not writable and not ours to dirty.
-    const stateDir = join(homedir(), ".config", "briefloop", "native-engine");
-    mkdirSync(stateDir, { recursive: true });
-    runtime = await ModelRuntime.create({
-      allowModelNetwork: false,
-      modelsPath: existsSync(modelsJson) ? modelsJson : null,
-      modelsStorePath: join(stateDir, "models-store.json"),
+  }
+  // FileModelsStore otherwise writes its cache beside modelsPath, which is
+  // inside the installed package — not writable and not ours to dirty.
+  const stateDir = join(homedir(), ".config", "briefloop", "native-engine");
+  mkdirSync(stateDir, { recursive: true });
+  const runtime = await ModelRuntime.create({
+    allowModelNetwork: false,
+    modelsPath: existsSync(modelsJson) ? modelsJson : null,
+    modelsStorePath: join(stateDir, "models-store.json"),
+  });
+  const registry = new ModelRegistry(runtime);
+  for (const row of rows) {
+    if (Number(row.context_limit) > 0) contextOverrides.set(`${row.provider}/${row.model}`, Number(row.context_limit));
+  }
+  const protocols: Record<string, string> = { "chat-completions": "openai-completions", responses: "openai-responses", "anthropic-messages": "anthropic-messages" };
+  const providers = new Set(rows.map(r => r.provider));
+  for (const provider of providers) {
+    const items = rows.filter(r => r.provider === provider), first = items[0];
+    const api = first.api || protocols[first.protocol] || first.protocol;
+    runtime.registerProvider(provider, {
+      name: first.name, baseUrl: first.base_url, api: api as any,
+      models: items.map(r => {
+        // This registry has only the original catalog and shipped models;
+        // no previous UI override can become the fallback for a cleared one.
+        const known = registry.find(provider, r.model);
+        return { id: r.model, name: known?.name || r.model, api: api as any,
+          reasoning: known?.reasoning ?? false, input: r.supports_images == null ? (known?.input || ["text"]) : r.supports_images ? ["text", "image"] : ["text"],
+          cost: known?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: contextOverrides.get(`${r.provider}/${r.model}`) ?? DEFAULT_CONTEXT_WINDOW,
+          maxTokens: r.output_limit || known?.maxTokens || 8192,
+          ...(known?.compat ? { compat: known.compat } : {}),
+          ...(known?.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}) };
+      }),
     });
-    registry = new ModelRegistry(runtime);
+    // Literal runtime auth avoids models.json's !command/env interpolation.
+    await runtime.setRuntimeApiKey(provider, first.api_key);
   }
-  const localPath = join(homedir(), ".config", "briefloop", "native-engine", "providers.json");
-  if (existsSync(localPath)) {
-    const raw = readFileSync(localPath, "utf8");
-    const fingerprint = createHash("sha256").update(raw).digest("hex");
-    if (fingerprint !== localProvidersFingerprint) {
-      const rows = Object.values(JSON.parse(raw)) as Array<Record<string, any>>;
-      for (const row of rows) {
-        if (Number(row.context_limit) > 0) contextOverrides.set(`${row.provider}/${row.model}`, Number(row.context_limit));
-      }
-      const protocols: Record<string, string> = { "chat-completions": "openai-completions", responses: "openai-responses", "anthropic-messages": "anthropic-messages" };
-      const providers = new Set(rows.map(r => r.provider));
-      for (const provider of providers) {
-        const items = rows.filter(r => r.provider === provider), first = items[0];
-        const api = first.api || protocols[first.protocol] || first.protocol;
-        runtime.registerProvider(provider, {
-          name: first.name, baseUrl: first.base_url, api: api as any,
-          models: items.map(r => {
-            const known = registry!.find(provider, r.model);
-            return { id: r.model, name: known?.name || r.model, api: api as any,
-              reasoning: known?.reasoning ?? false, input: r.supports_images == null ? (known?.input || ["text"]) : r.supports_images ? ["text", "image"] : ["text"],
-              cost: known?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: r.context_limit || DEFAULT_CONTEXT_WINDOW, maxTokens: r.output_limit || known?.maxTokens || 8192,
-              ...(known?.compat ? { compat: known.compat } : {}),
-              ...(known?.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}) };
-          }),
-        });
-        // Literal runtime auth avoids models.json's !command/env interpolation.
-        await runtime.setRuntimeApiKey(provider, first.api_key);
-      }
-      localProvidersFingerprint = fingerprint;
-    }
-  }
-  return runtime;
+  return { runtime, registry, contextOverrides, revision: ++runtimeRevision };
 }
 
-function resolveModel(spec: unknown) {
-  if (!registry) return undefined;
+async function ensureRuntime(): Promise<RuntimeSnapshot> {
+  // NDJSON dispatches may overlap. Serialize construction, then re-read the
+  // file so a change made during another request's load is not lost.
+  if (loadingRuntime) {
+    await loadingRuntime;
+    return ensureRuntime();
+  }
+  const localPath = join(homedir(), ".config", "briefloop", "native-engine", "providers.json");
+  const raw = existsSync(localPath) ? readFileSync(localPath, "utf8") : "{}";
+  const fingerprint = createHash("sha256").update(raw).digest("hex");
+  if (currentRuntime && fingerprint === localProvidersFingerprint) return currentRuntime;
+  const pending = buildRuntime(raw);
+  loadingRuntime = pending;
+  try {
+    const snapshot = await pending;
+    currentRuntime = snapshot;
+    localProvidersFingerprint = fingerprint;
+    return snapshot;
+  } finally {
+    loadingRuntime = undefined;
+  }
+}
+
+function resolveModel(spec: unknown, snapshot: RuntimeSnapshot) {
   // No implicit default: a review must run on the model the job recorded.
   const s = String(spec ?? "").trim();
   const slash = s.indexOf("/");
   if (slash <= 0) return undefined;
-  const model = registry.find(s.slice(0, slash), s.slice(slash + 1));
-  return model ? { ...model, contextWindow: contextOverrides.get(s) ?? DEFAULT_CONTEXT_WINDOW } : undefined;
+  const model = snapshot.registry.find(s.slice(0, slash), s.slice(slash + 1));
+  return model ? { ...model, contextWindow: snapshot.contextOverrides.get(s) ?? DEFAULT_CONTEXT_WINDOW } : undefined;
 }
 
 // Any session event proves the model stream or a tool is alive. If nothing
@@ -478,8 +504,8 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   const sessionDir = String(p.session_dir ?? packetRoot);
   const sessionFile = p.session_file ? String(p.session_file) : undefined;
 
-  await ensureRuntime();
-  let model = resolveModel(p.model);
+  const snapshot = await ensureRuntime();
+  let model = resolveModel(p.model, snapshot);
   if (!model) throw new Error(`unknown or unavailable model: ${p.model}`);
   const maxTokens = Number(p.max_tokens);
   if (Number.isFinite(maxTokens) && maxTokens > 0) {
@@ -533,7 +559,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   let compactSession: AgentSession;
   const { session } = await createAgentSession({
     cwd,
-    modelRuntime: runtime,
+    modelRuntime: snapshot.runtime,
     model,
     thinkingLevel: (p.thinking as any) ?? "high",
     // Explicit allowlist: only our packet tools exist for this session. An
@@ -597,6 +623,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     session_id: clientSid,
     session_file: entry.sessionFile,
     resumed: resuming,
+    configuration_revision: snapshot.revision,
     model: `${model.provider}/${model.id}`,
     thinking: session.thinkingLevel,
     runtime_policy: {sdk: "pi-coding-agent", thinking: session.thinkingLevel,
@@ -764,23 +791,24 @@ async function dispatch(req: WireRequest): Promise<void> {
   try {
     switch (req.method) {
       case "ping": {
-        await ensureRuntime();
+        const snapshot = await ensureRuntime();
         reply(req.id, {
           engine: ENGINE_VERSION,
           pi: PI_VERSION,
           node: process.version,
           // Models whose provider has a credential; zero means nothing can run.
-          models_available: registry ? registry.getAvailable().length : 0,
+          models_available: snapshot.registry.getAvailable().length,
+          configuration_revision: snapshot.revision,
         });
         break;
       }
       case "list_models": {
-        await ensureRuntime();
-        const models = registry!.getAvailable().map((m) => ({
+        const snapshot = await ensureRuntime();
+        const models = snapshot.registry.getAvailable().map((m) => ({
           id: `${m.provider}/${m.id}`,
           name: m.name ?? m.id,
           provider: m.provider,
-          context_window: resolveModel(`${m.provider}/${m.id}`)!.contextWindow,
+          context_window: resolveModel(`${m.provider}/${m.id}`, snapshot)!.contextWindow,
           output_limit: m.maxTokens,
           thinking_levels: catalogThinkingLevels(m),
         }));

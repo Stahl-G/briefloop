@@ -112,12 +112,33 @@ def save(store, config, args):
         return _save_locked(store, config, args)
 
 
-def _save_locked(store, config, args):
+def _save_locked(store, config, args, *, writer_request=None, response_fields=None):
     """Caller must hold guard; shared by atomic writer-input operations."""
     from .analyst import validate_draft, _assemble_sections
     value = dict(args)
     base = value.pop('base_revision', None)
     root = _root(store, config)
+    current_path = root / 'current.json'
+    previous = _read(current_path) if current_path.exists() else {}
+    # Keep compact tombstones for accepted writer-input identities. Evicting
+    # keys would make a content-hash cycle A -> B -> A accept an old A -> B
+    # mutation again. Only the latest request needs its full replay response.
+    # Every save, including the older rich-JSON path, retires that response.
+    history = dict(previous.get('writer_input_history') or {})
+    last = previous.get('writer_input_receipt') or {}
+    if (isinstance(last, dict) and isinstance(last.get('operation'), str)
+            and isinstance(last.get('args_hash'), str)
+            and isinstance(last.get('response'), dict)
+            and last['response'].get('revision') == previous.get('revision')):
+        key = _writer_request_key(last['operation'], last['args_hash'])
+        history.setdefault(key, True)
+    writer_identity = None
+    if writer_request is not None:
+        operation, request_args = writer_request
+        args_hash = _hash(request_args)
+        writer_identity = _writer_request_key(operation, args_hash)
+        if writer_identity in history:
+            raise ValueError('同一写入请求已接纳；请读取当前稿件版本，不能重复执行')
     if base is not None:
         prior = _candidate(store, config, {'revision': base}, allow_section_changes='section_ids' in value)
         value = {**prior['draft'], **value}
@@ -130,11 +151,50 @@ def _save_locked(store, config, args):
                  'attempt_id': config['attempt_id'], 'sections_hash': section_hash}
     revision = _hash(candidate)
     _write(root / (revision + '.json'), candidate)
-    _write(root / 'current.json', {'revision': revision})
     from .length import count_brief
-    return {'revision': revision, 'status': 'saved', 'body_units': count_brief(value['markdown']),
+    response = {'revision': revision, 'status': 'saved', 'body_units': count_brief(value['markdown']),
             'review_status': 'not_reviewed', 'next': 'check_draft：只传 revision，检查完整正文及元数据',
             'update': '局部改稿用 base_revision 加改变的字段；修改章节后传 base_revision 与完整有序 section_ids，不重复未改元数据。'}
+    if response_fields:
+        response.update(response_fields)
+    current = {'revision': revision}
+    if writer_request is not None:
+        current['writer_input_receipt'] = {
+            'operation': operation, 'args_hash': args_hash, 'response': response}
+    if history:
+        current['writer_input_history'] = history
+    # The new revision and its replay receipt become visible together. A crash
+    # before this write leaves an unreferenced candidate, which a retry can
+    # safely recreate against the still-current base revision.
+    _write(current_path, current)
+    return response
+
+
+def _writer_request_key(operation, args_hash):
+    return _hash({'operation': operation, 'args_hash': args_hash})
+
+
+def _replay_writer_input_locked(store, config, operation, request_args):
+    """Replay only the latest identical write, after validating its live scope."""
+    path = _root(store, config) / 'current.json'
+    if not path.exists():
+        return None
+    current = _read(path)
+    receipt = current.get('writer_input_receipt') or {}
+    args_hash = _hash(request_args)
+    if receipt.get('operation') == operation and receipt.get('args_hash') == args_hash:
+        response = receipt.get('response')
+    else:
+        history = current.get('writer_input_history') or {}
+        if _writer_request_key(operation, args_hash) not in history:
+            return None
+        raise ValueError('同一写入请求已被后续修订覆盖；请读取当前稿件版本，不能重复执行')
+    if not isinstance(response, dict) or response.get('revision') != current.get('revision'):
+        raise ValueError('当前稿件的写入回执与修订版本不一致')
+    # This checks the current revision, attempt ID, frozen packet, section
+    # snapshot, and live source identity before returning a cached response.
+    _candidate(store, config, {'revision': current['revision']})
+    return {**response, 'replayed': True}
 
 
 def _candidate(store, config, args, *, allow_section_changes=False):

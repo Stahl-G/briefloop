@@ -220,14 +220,15 @@ def test_fetch_rechecks_snapshot_after_handoff_window(tmp_path,monkeypatch):
     store=Store(tmp_path)
     run=store.create_run({'title':'r','objective':'o','allow_web':True,
                           'research_budget':{'search_requests':1,'candidate_urls':1,'source_pages':1}},[])['id']
-    original=sources.existing_for_run; b_checked=threading.Event(); release_b=threading.Event(); calls=[]
-    def staged_existing(store_arg,run_id,url):
+    from briefloop import research_budget
+    original=research_budget.claim_pages; b_checked=threading.Event(); release_b=threading.Event(); calls=[]
+    def staged_claim(store_arg,run_id,urls):
+        # Pause before the atomic claim, never while holding SQLite's writer lock.
         if not b_checked.is_set():
             b_checked.set();assert release_b.wait(2)
-            return None
-        return original(store_arg,run_id,url)
+        return original(store_arg,run_id,urls)
     def response(url,**_):calls.append(url);return b'<html><body>saved once</body></html>','text/html','utf-8'
-    monkeypatch.setattr(sources,'existing_for_run',staged_existing)
+    monkeypatch.setattr(research_budget,'claim_pages',staged_claim)
     monkeypatch.setattr(sources,'_fetch_bytes',response)
     with ThreadPoolExecutor(max_workers=2,thread_name_prefix='scout') as pool:
         # Submit B first and stop it at its initial miss; A only starts after

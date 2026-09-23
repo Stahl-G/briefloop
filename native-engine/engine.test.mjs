@@ -8,12 +8,12 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BUNDLE = fileURLToPath(new URL("../src/briefloop/static/native-engine.mjs", import.meta.url));
+const BUNDLE = process.env.BRIEFLOOP_NATIVE_TEST_BUNDLE || fileURLToPath(new URL("../src/briefloop/static/native-engine.mjs", import.meta.url));
 const nodeBin = process.env.BRIEFLOOP_NODE || process.execPath;
 const MODEL = "fake/m1";
 const VISION_MODEL = "fake/m2";
@@ -22,12 +22,24 @@ const SYSTEM = "测试系统提示：BriefLoop Reviewer";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 // ---- scripted provider ------------------------------------------------------
-const provider = { script: [], requests: [], violations: [], stalled: new Set() };
+const provider = { script: [], requests: [], transports: [], violations: [], stalled: new Set() };
 const chunk = (res, delta, finish = null, usage) => res.write(`data: ${JSON.stringify({
   id: "c", object: "chat.completion.chunk", created: 0, model: "m1",
   choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`);
 const usage = { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 };
 const reply = {
+  anthropicText: (text) => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const emit = (event) => res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    emit({ type: "message_start", message: { id: "msg_fixture", type: "message", role: "assistant", model: "model",
+      content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0 } } });
+    emit({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    emit({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
+    emit({ type: "content_block_stop", index: 0 });
+    emit({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } });
+    emit({ type: "message_stop" });
+    res.end();
+  },
   text: (text) => (res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     chunk(res, { role: "assistant", content: text });
@@ -97,6 +109,8 @@ const server = http.createServer((req, res) => {
   req.on("end", () => {
     const parsed = JSON.parse(body || "{}");
     provider.requests.push(parsed);
+    provider.transports.push({ path: req.url, key: req.headers.authorization || req.headers['x-api-key'],
+      output: parsed.max_completion_tokens ?? parsed.max_tokens });
     const violation = sequenceViolation(parsed.messages || []);
     if (violation) {
       provider.violations.push(violation);
@@ -110,6 +124,7 @@ const server = http.createServer((req, res) => {
 function script(...steps) {
   provider.script = steps;
   provider.requests = [];
+  provider.transports = [];
   provider.violations = [];
 }
 
@@ -856,6 +871,106 @@ test('locally saved provider credentials and custom models are usable without a 
   const result=await turn(s.session_id,'local-provider',{expect_json:false,require_submit:false});
   assert.equal(ends(result)[0].final_text,'Configured locally');
   assert.ok(!JSON.stringify(catalog).includes('fake-local-literal-key'));
+});
+
+test('provider edits freeze active turns and replace endpoint, protocol, key and cleared limits together', async () => {
+  const dir = join(root, 'home', '.config', 'briefloop', 'native-engine');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'providers.json');
+  const original = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const saved = JSON.parse(original || '{}');
+  const record = { provider: 'snapshot', model: 'model', name: 'Snapshot fixture', protocol: 'chat-completions',
+    base_url: `http://127.0.0.1:${server.address().port}/old/v1`, api_key: 'fixture-old-key',
+    context_limit: 65536, output_limit: 1024, supports_images: false };
+  const save = (changes = {}) => {
+    Object.assign(record, changes);
+    writeFileSync(path, JSON.stringify({ ...saved, 'snapshot/model': record }));
+  };
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  let started;
+  const toolStarted = new Promise(resolve => { started = resolve; });
+  const tools = [{ name: 'workspace_action', description: 'Fixture operation', parameters: { type: 'object' }, long_running: true }];
+  try {
+    save();
+    const initial = await reviewer({ role: 'chat', model: 'snapshot/model', runner_tools: tools });
+    script(reply.tool('workspace_action'), reply.text('old turn finished'));
+    runnerTool = () => { started(); return waiting; };
+    const active = turn(initial.session_id, 'provider-active', { expect_json: false, require_submit: false });
+    await toolStarted;
+    save({ protocol: 'anthropic-messages', base_url: `http://127.0.0.1:${server.address().port}/new`,
+      api_key: 'fixture-new-key', context_limit: 32768, output_limit: 256, supports_images: true });
+    const [catalog, metadata] = await Promise.all([call('list_models'), call('ping')]);
+    assert.ok(metadata.configuration_revision > initial.configuration_revision);
+    assert.equal(catalog.models.find(m => m.id === 'snapshot/model').output_limit, 256);
+    // The second request in the SAME turn is made after the catalog refreshed.
+    release({ ok: true, content: [{ type: 'text', text: 'operation complete' }] });
+    assert.equal(ends(await active)[0].status, 'completed');
+    assert.deepEqual(provider.transports, [
+      { path: '/old/v1/chat/completions', key: 'Bearer fixture-old-key', output: 1024 },
+      { path: '/old/v1/chat/completions', key: 'Bearer fixture-old-key', output: 1024 },
+    ]);
+
+    // NativeHarness performs this close/resume only at the next turn boundary.
+    await call('session_close', { session_id: initial.session_id });
+    const resumed = await reviewer({ role: 'chat', model: 'snapshot/model', runner_tools: tools, session_file: initial.session_file });
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.configuration_revision, metadata.configuration_revision);
+    assert.equal(resumed.runtime_policy.context_window, 32768);
+    assert.equal(resumed.image_input, true);
+    script(reply.anthropicText('new turn finished'));
+    assert.equal(ends(await turn(resumed.session_id, 'provider-resumed', { expect_json: false, require_submit: false }))[0].status, 'completed');
+    assert.deepEqual(provider.transports, [{ path: '/new/v1/messages?beta=true', key: 'fixture-new-key', output: 256 }]);
+    assert.match(JSON.stringify(provider.requests[0].messages), /old turn finished/, 'provider changes preserve the transcript');
+
+    save({ context_limit: null, output_limit: null, supports_images: null });
+    const cleared = (await call('list_models')).models.find(m => m.id === 'snapshot/model');
+    assert.equal(cleared.context_window, 1_000_000);
+    assert.equal(cleared.output_limit, 8192);
+    await call('session_close', { session_id: resumed.session_id });
+    const continued = await reviewer({ role: 'chat', model: 'snapshot/model', session_file: resumed.session_file });
+    const fresh = await reviewer({ role: 'chat', model: 'snapshot/model' });
+    for (const [label, session] of [['continued', continued], ['fresh', fresh]]) {
+      assert.equal(session.runtime_policy.context_window, 1_000_000);
+      assert.equal(session.runtime_policy.output_limit, 8192);
+      assert.equal(session.image_input, false);
+      script(reply.anthropicText(label));
+      assert.equal(ends(await turn(session.session_id, 'provider-cleared-' + label, { expect_json: false, require_submit: false }))[0].status, 'completed');
+      assert.deepEqual(provider.transports, [{ path: '/new/v1/messages?beta=true', key: 'fixture-new-key', output: 8192 }]);
+    }
+  } finally {
+    release({ ok: false, error: 'test finished' });
+    runnerTool = () => ({ ok: false, error: 'no runner tool configured' });
+    if (original === null) rmSync(path, { force: true });
+    else writeFileSync(path, original);
+  }
+});
+
+test('clearing local overrides restores shipped model capabilities rather than previous overrides', async () => {
+  const dir = join(root, 'home', '.config', 'briefloop', 'native-engine');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'providers.json');
+  const original = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const record = { provider: 'fake', model: 'm2', protocol: 'chat-completions',
+    base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-override-key',
+    context_limit: 20000, output_limit: 300, supports_images: false };
+  const save = () => writeFileSync(path, JSON.stringify({ ...JSON.parse(original || '{}'), 'fake/m2': record }));
+  try {
+    save();
+    const overridden = await reviewer({ model: VISION_MODEL });
+    assert.equal(overridden.runtime_policy.context_window, 20000);
+    assert.equal(overridden.runtime_policy.output_limit, 300);
+    assert.equal(overridden.image_input, false);
+    Object.assign(record, { context_limit: null, output_limit: null, supports_images: null });
+    save();
+    const restored = await reviewer({ model: VISION_MODEL });
+    assert.equal(restored.runtime_policy.context_window, 100000);
+    assert.equal(restored.runtime_policy.output_limit, 1000);
+    assert.equal(restored.image_input, true);
+  } finally {
+    if (original === null) rmSync(path, { force: true });
+    else writeFileSync(path, original);
+  }
 });
 
 test('aborting a pending child runner tool does not wait for its natural result', async () => {
