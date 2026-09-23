@@ -218,7 +218,7 @@ class Store:
 
     def _create_learning_run(self, origin_id, source_ids, *, skill_id=None):
         origin=self.one('runs',origin_id)
-        requirements={**json.loads(origin['requirements']),'allow_web':False}
+        requirements={**json.loads(origin['requirements']),'allow_web':False,'fact_check':False}
         return self.create_run(requirements,source_ids,mode='trial',skill_id=skill_id,
                                _learning_clone=(_LEARNING_CLONE,origin_id))
 
@@ -227,7 +227,7 @@ class Store:
         if clone is not None:
             if not isinstance(clone,tuple) or len(clone)!=2 or clone[0] is not _LEARNING_CLONE:
                 raise ValueError('Invalid internal learning clone')
-            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
+            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False,'fact_check':False}
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
