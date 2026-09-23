@@ -70,9 +70,13 @@ def test_analyst_cli_examples_update_json_version_then_check_and_submit(tmp_path
     assert 'extra_forbidden' in refused['error'] and 'revision' in refused['error']
     assert drafts._read(drafts._root(store, config) / 'current.json')['revision'] == first
 
-    updated = cli('OPERATION', update_args)['revision']
+    receipt = cli('OPERATION', update_args)
+    updated = receipt['revision']
     assert updated != first
-    cli('OPERATION', update_args, succeeds=False)  # stale JSON base_revision remains refused
+    assert cli('OPERATION', update_args) == {**receipt, 'replayed': True}
+    params.write_text(json.dumps({'base_revision': first, 'records': [{
+        'source_id': source['id'], 'locator': 'line 1-1', 'excerpt': store.source_text(source['id'])}]}))
+    cli('OPERATION', update_args, succeeds=False)  # changed request cannot reuse the stale base
     assert drafts._read(drafts._root(store, config) / 'current.json')['revision'] == updated
     assert cli('check_draft', {'REVISION': updated})['revision'] == updated
     assert cli('submit_draft', {'REVISION': updated})['revision'] == updated
