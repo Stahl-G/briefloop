@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .models import Citation, NumberBinding, TemporalClaim
 
+MAX_ASSEMBLY_ERRORS = 8
+
 
 class CitationInput(Citation):
     model_config = ConfigDict(extra='forbid', strict=True)
@@ -79,13 +81,23 @@ def assemble(config, evidence, markdown, prior_citations=()):
     """
     root = Path(config['packet_root']).resolve()
     index = {s['source_id']: s for s in json.loads((root/'source-index.json').read_text(encoding='utf-8'))['sources']}
-    cache, result = {}, {}
+    cache, result, errors = {}, {}, []
+
+    def reject(message):
+        # Report independent record errors together. Nothing is saved until
+        # the whole batch passes; keep recovery responses small for the model.
+        errors.append(message)
+        if len(errors) >= MAX_ASSEMBLY_ERRORS:
+            raise ValueError('\n'.join(errors) +
+                f'\n每次最多列出 {MAX_ASSEMBLY_ERRORS} 项错误；本批未保存，请修复后重试。') from None
+
     for field in ('citations', 'number_bindings', 'temporal_claims'):
         if field not in evidence.model_fields_set:
             continue
         items = getattr(evidence, field)
         if items is None:
-            raise ValueError(f'{field}: 清空请传 []，不要传 null')
+            reject(f'{field}: 清空请传 []，不要传 null')
+            continue
         records = []
         for i, item in enumerate(items):
             try:
@@ -113,8 +125,10 @@ def assemble(config, evidence, markdown, prior_citations=()):
                 if value not in records:
                     records.append(value)
             except (ValueError, OSError) as exc:
-                raise ValueError(f'{field}[{i}]: {exc}') from None
+                reject(f'{field}[{i}]: {exc}')
         result[field] = records
+    if errors:
+        raise ValueError('\n'.join(errors))
     # A supplied source excerpt is sufficient to construct a location record,
     # but never to insert a citation into an arbitrary body sentence.
     supporting = list(result.get('citations', prior_citations))

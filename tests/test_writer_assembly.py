@@ -48,11 +48,14 @@ def test_batch_failure_is_atomic_and_preserves_body(tmp_path):
     first = writer.write_report(store, config, {'title': '报告', 'markdown': f'**收入**增长20%。[@{source["id"]}]'})
     before = drafts._candidate(store, config, {'revision': first['revision']})['draft']
     binding = number(source['id']);binding['report_quote'] = '增长20%'
-    bad = {'base_revision': first['revision'], 'number_bindings': [binding],
+    bad = {'base_revision': first['revision'],
+           'number_bindings': [dict(binding, report_quote='正文没有这句话')],
            'citations': [{'source_id': source['id'], 'excerpt': '原文不存在的引用'}]}
-    with pytest.raises(ValueError, match=r'citations\[0\]'):
+    with pytest.raises(ValueError, match=r'citations\[0\]') as rejected:
         writer.assemble_evidence(store, config, bad)
+    assert 'number_bindings[0]: report_quote' in str(rejected.value)
     assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == first['revision']
+    assert drafts._candidate(store, config, {'revision': first['revision']})['draft'] == before
     saved = writer.assemble_evidence(store, config, {'base_revision': first['revision'], 'number_bindings': [binding]})
     now = drafts._candidate(store, config, {'revision': saved['revision']})['draft']
     assert now['editor_document'] == before['editor_document']
@@ -98,3 +101,17 @@ def test_missing_binding_is_setup_error_not_identity_creation(tmp_path):
     with pytest.raises(ValueError, match='任务启动器'):
         drafts.file_config(store, run['id'], target)
     assert not (target.parent / 'conversation.json').exists()
+
+
+def test_many_invalid_records_return_bounded_diagnostics_without_saving(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    saved = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%。'})
+    request = {'base_revision': saved['revision'], 'citations': [
+        {'source_id': source['id'], 'excerpt': f'不存在的摘录{i}'} for i in range(12)]}
+    with pytest.raises(ValueError) as rejected:
+        writer.assemble_evidence(store, config, request)
+    message = str(rejected.value)
+    assert message.count('citations[') == 8
+    assert 'citations[7]' in message and 'citations[8]' not in message
+    assert '本批未保存' in message
+    assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == saved['revision']
