@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const code=['friendlyModel','runtimeName','modelLabel','jobModelLabel'].map(name=>source.split('\n').find(line=>line.startsWith('function '+name+'('))).join('\n');
 const view=vm.createContext({...time,withoutSupersededRetries,parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
@@ -41,7 +42,7 @@ assert.doesNotMatch(view.$('jobs').innerHTML,/undefined/);
 view.state.jobs=[job];
 view.current=null;view.pendingRun='report';view.showSettings=()=>{};view.action=async fn=>fn();
 view.api=async route=>route.startsWith('events?')?[]:{worker_alive:true,pid:1,returncode:null};
-vm.runInContext(source.slice(source.indexOf('function effectiveReportJobs'),source.indexOf('function friendlyModel')),view);
+vm.runInContext(section(source,'function effectiveReportJobs','function friendlyModel','frontend/app.js'),view);
 await view.refreshProgress();
 assert.match(view.$('run-progress').innerHTML,/OpenCode · opencode\/muse-spark-1.3-contributor-free \/ 模型默认/);
 // Event backend is a fallback for older jobs; a frozen nested backend takes precedence.

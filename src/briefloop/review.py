@@ -817,11 +817,17 @@ def review_status(store,version_id):
             reconciliation=read_reconciliation(store,brief['run_id'],detail['reconciliation_id'])
         except (ValueError,OSError) as exc:
             reconciliation={'id':detail['reconciliation_id'],'error':str(exc)}
-    return {'version_id':version_id,'conflicts':for_run(store,brief['run_id']),'reviews':[
+    # Deterministic tool observations ride along for display only; they never
+    # enter the Review schema or any frozen delivery input.
+    from .office_cli import version_office_view
+    status={'version_id':version_id,'conflicts':for_run(store,brief['run_id']),'reviews':[
                 {**{k:r[k] for k in ('id','status','created')},'result':json.loads(r['result']) if r['result'] else None,
                  **_review_requirement_index(store,r)} for r in reviews],
             'reconciliation':reconciliation,
             'findings':[{**f,'data':json.loads(f['data'])} for f in findings]}
+    office=version_office_view(store,version_id)
+    if office is not None:status['office_checks']=office
+    return status
 
 
 def review_job_payload(store,payload):

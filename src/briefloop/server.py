@@ -291,6 +291,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     source,provenance,original=source_details(store,q['id'][0])
                     if original is None:raise ValueError('该来源未保留原件')
                     self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/office-image':
+                    from .office_cli import office_image
+                    payload=office_image(store,q.get('digest',[''])[0],q.get('page',[''])[0])
+                    self.send(200,payload,'image/png')
                 elif u.path=='/api/figure':
                     from .figure_support import export_figures
                     brief=store.one('briefs',q['version'][0]);figures=export_figures(store,brief)
@@ -338,6 +342,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=bridge.discover()
                     from .native_engine import discovery
                     result['runtimes'].insert(0,discovery())
+                    from . import office_cli
+                    result['capabilities']={'officecli':office_cli.capability(store)}
                     self.send(200,result)
                 elif u.path=='/api/runtime/fast-capability':
                     from .backends import validate_backend
@@ -436,7 +442,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,inspect_bindings(store,q['version'][0]))
                 elif u.path=='/api/version-checks':
                     from .delivery_checks import brief_checks
-                    self.send(200,brief_checks(store,q['version'][0]))
+                    result=brief_checks(store,q['version'][0])
+                    # The office view is composed here, outside brief_checks, so
+                    # eligibility's frozen deterministic input stays officecli-free.
+                    from .office_cli import version_office_view
+                    office=version_office_view(store,q['version'][0])
+                    if office is not None:result['office']=office
+                    self.send(200,result)
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
                     from .exports import reader_markdown,docx_bytes
@@ -704,9 +716,16 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/release':
                     from .release import enqueue_release
                     result=enqueue_release(store,body['version_id'],previous_id=body.get('previous_id'),change_type=body.get('change_type'),change_reason=body.get('change_reason',''))
+                elif path=='/api/office-check':
+                    from .office_cli import run_check_for_job
+                    result={'office':run_check_for_job(store,body['job_id'])}
+                elif path=='/api/office-preview':
+                    from .office_cli import render_preview
+                    result=render_preview(store,body)
                 elif path=='/api/audit-bundle':
                     from .audit_bundle import enqueue_bundle
-                    result=enqueue_bundle(store,body['release_id'],body.get('source_permissions',{}))
+                    result=enqueue_bundle(store,body['release_id'],body.get('source_permissions',{}),
+                                          include_office_render=bool(body.get('include_office_render')))
                 elif path=='/api/source-refresh':
                     brief=store.one('briefs',body['version_id'])
                     if body['source_id'] not in store.source_ids(brief['run_id']):raise ValueError('来源不属于本轮报告')

@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const code=source.slice(source.indexOf('function effectiveReportJobs'),source.indexOf('function friendlyModel'));
+const code=section(source,'function effectiveReportJobs','function friendlyModel','frontend/app.js');
 function fixture(status='running'){
  const nodes=new Map(),pending=[];
  const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,innerHTML:'',textContent:'',insertAdjacentHTML(_position,html){this.innerHTML+=html}});return nodes.get(id)};

@@ -14,6 +14,7 @@ import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
 import {preflightSources,uploadPayload} from './uploads.js';
 import {runtimeCard,runtimeModelSummary} from './runtime-cards.js';
+import {createOfficeTools} from './office-tools.js';
 import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
 import {activityCenter} from './notifications.js';
 var activity=null;
@@ -27,6 +28,10 @@ import Image from '@tiptap/extension-image';
 import {Markdown} from '@tiptap/markdown';
 import {connectorSettings} from './connectors.js';
 import {mcpSelection} from './mcp-selection.js';
+import {appUpdatesUI} from './app-updates.js';
+import {templatesUI,GENRE_META,ICONS,splitTemplateName} from './templates.js';
+import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
+import {reportExportUI} from './report-export.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -61,6 +66,9 @@ function notice(s,error=false){$('notice').textContent=s;$('notice').classList.t
 function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先选择 Agent 和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
+// Optional OfficeCLI enhancement; every surface it adds hides itself while the
+// switch is off, so behaviour matches a machine without the binary.
+const office=createOfficeTools({api,action,$,esc,parse,getState:()=>state,notice});
 let tooltipTarget=null;
 function showTip(el){const tip=$('tooltip');if(!tip)return;const text=el.getAttribute('data-tip');if(!text)return;tooltipTarget=el;tip.textContent=text;tip.hidden=false;const r=el.getBoundingClientRect(),t=tip.getBoundingClientRect();let left=r.left+r.width/2-t.width/2;left=Math.max(8,Math.min(left,window.innerWidth-t.width-8));let top=r.bottom+8;if(top+t.height>window.innerHeight-8)top=r.top-t.height-8;tip.style.left=left+'px';tip.style.top=top+'px'}
 function hideTip(){const tip=$('tooltip');if(tip)tip.hidden=true;tooltipTarget=null}
@@ -74,7 +82,7 @@ function backgroundActive(){return !!state?.jobs?.some(j=>['queued','running'].i
 // Every snapshot carries the server clock. That stamp alone must not rebuild the
 // page, which would reset focus and selections on each poll; only the timed task
 // cards and the result banner follow the clock.
-async function refreshState(first=false,signal){try{const next=await api('state');if(signal?.aborted)return false;$('connection').textContent='本地已连接';const {system_clock,...stable}=next;const signature=JSON.stringify(stable);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}else{renderTasks();renderTaskBanner()}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
+async function refreshState(first=false,signal){try{const next=await api('state');if(signal?.aborted)return false;$('connection').textContent='本地已连接';const {system_clock,...stable}=next;const signature=JSON.stringify(stable);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)delivery.refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}else{renderTasks();renderTaskBanner()}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -359,7 +367,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -377,7 +385,7 @@ function render(first){
  tryOpenPending();if(!current&&!pendingRun&&!openBrief.request&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  syncPendingReport();
  $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${esc(taskLabel(j.kind)||j.kind)}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(jobModelLabel(j)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||moment(j.created))}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">沿用原模型恢复</button>${['review','learn'].includes(j.kind)?`<button data-retry-current="${j.id}">按当前模型重试</button>`:''}`:''}</div>`).join('');
- document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));document.querySelectorAll('[data-retry-current]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.retryCurrent,use_current_model:true})));renderTasks();renderTaskGraph();renderTaskBanner();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();renderTemplatesPage();if($('welcome')&&!$('welcome').hidden)renderWelcome();
+ document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));document.querySelectorAll('[data-retry-current]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.retryCurrent,use_current_model:true})));renderTasks();renderTaskGraph();renderTaskBanner();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();templatesPage.render();if($('welcome')&&!$('welcome').hidden)renderWelcome();
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
@@ -443,28 +451,12 @@ async function savedVersion(){
  if(!current)throw Error('尚无稿件');
  return current.id;
 }
-let wordDownloading=false;
-async function downloadWord(){
- if(wordDownloading)return;wordDownloading=true;const button=$('download-word');button.disabled=true;button.textContent='正在制作…';
- try{
-  const version=await savedVersion(),workspace=state.workspace_id;
-  const override=$('export-template')?.value;
-  let job=await api('export',{version_id:version,...(override?{template_id:override}:{})});
-  while(['queued','running'].includes(job.status)){
-   button.textContent=job.status==='queued'?'等待制作…':'正在制作…';
-   await new Promise(resolve=>setTimeout(resolve,1000));
-   if(state.workspace_id!==workspace)throw Error('工作区已切换，请在原工作区下载');
-   job=await api('export-status?job='+encodeURIComponent(job.id));
-  }
-  if(job.status!=='complete')throw Error(job.error||'Word 制作未完成，请重试');
-  const link=document.createElement('a');link.href='/api/export-file?job='+encodeURIComponent(job.id)+'&workspace_id='+encodeURIComponent(workspace);link.download='';link.click();notice('Word 已生成，正在下载');await refresh();
- }catch(e){notice('Word 下载未完成：'+e.message,true)}finally{wordDownloading=false;button.disabled=false;button.textContent='下载 Word'}
-}
-$('download-word').onclick=downloadWord;
+const reportExport=reportExportUI({api,notice,refresh,savedVersion,toEditor,parse,getState:()=>state,getCurrent:()=>current,getEditor:()=>editor});
+reportExport.init();
 for(const id of ['download','download-docx','download-bundle']){
  const link=$(id);if(!link)continue;
  link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){
-   await downloadWord();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
+   await reportExport.downloadWord();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
 }
 
 
@@ -474,79 +466,6 @@ document.addEventListener('click',event=>{if(event.target.closest('button')?.id!
  if(!confirm('删除这份报告及全部稿件版本？报告将从列表移除，来源文件和已下载文件保留；内部核查与学习引用记录保留。'))return;
  await api('reports/delete',{version_id:version});current=null;dirty=false;await refresh();page('reports');notice('报告已删除');
 })});
-function exportFileName(title){return String(title??'').replace(/[\x00-\x1f<>:"/\\|?*]/g,'_').replace(/^[. ]+|[. ]+$/g,'').slice(0,120)||'报告'}
-// Print from a sandboxed frame instead of a new window: the desktop shell
-// denies window.open, and a frame needs no pop-up permission in browsers.
-// Its load event already waits for the inline images; img.decode() would not
-// settle here because browsers pause rendering in a hidden frame.
-function printHtml(html){
- printHtml.frame?.remove();
- const frame=document.createElement('iframe');printHtml.frame=frame;
- frame.setAttribute('sandbox','allow-same-origin allow-modals');frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
- frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
- return new Promise((resolve,reject)=>{
-  frame.onload=()=>{
-   const view=frame.contentWindow;if(view?.location.href!=='about:srcdoc')return;
-   try{
-    view.addEventListener('afterprint',()=>{if(printHtml.frame===frame){frame.remove();printHtml.frame=null}},{once:true});
-    view.focus();view.print();resolve();
-   }catch(e){frame.remove();reject(e)}
-  };
-  frame.srcdoc=html;document.body.append(frame);
- });
-}
-async function exportPdf(html,title){
- const desktop=window.briefloopDesktop;
- if(typeof desktop?.exportPdf!=='function'){await printHtml(html);return}
- let result;
- try{result=await desktop.exportPdf({html,title})}
- catch(e){throw Error(String(e.message||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,''))}
- if(result?.status==='saved')notice('PDF 已保存：'+result.name);
-}
-if(typeof window.briefloopDesktop?.exportPdf==='function'&&$('download-pdf'))$('download-pdf').textContent='导出 PDF';
-document.addEventListener('click',async event=>{
- const id=event.target.closest('button')?.id;if(!['download-html','download-pdf'].includes(id))return;
- const kind=id==='download-html'?'html':'pdf';
- try{
-  // savedVersion() settles pending edits and returns the open draft's id, whose
-  // full body is `current`; the report list does not need to carry bodies.
-  const version=await savedVersion(),brief=current;
-  let doc;
-  if(brief.editor_document)doc=parse(brief.editor_document);
-  else {const tmp=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(brief.markdown),contentType:'markdown'});try{doc=tmp.getJSON()}finally{tmp.destroy()}}
-  const body=document.createElement('article');
-  body.append(DOMSerializer.fromSchema(editor.schema).serializeFragment(editor.schema.nodeFromJSON(editorDocument(doc,version)).content));
-  const cited=[];
-  for(const a of body.querySelectorAll('a[href^="#source-"]')){
-   const sid=a.getAttribute('href').slice(8);if(!cited.includes(sid))cited.push(sid);
-   const number=cited.indexOf(sid)+1;
-   a.setAttribute('href','#reference-'+number);
-   // A numeric citation from an older draft still shows the workspace source
-   // number; renumber it with the reference list. Named link text is kept.
-   const label=a.textContent.trim(),numeric=/^([[(（【]?)\s*(\d+)\s*([\])）】]?)$/.exec(label);
-   if(numeric)a.textContent=numeric[1]+number+numeric[3];
-  }
-  if(cited.length){const heading=document.createElement('h2');heading.textContent='来源';body.append(heading);const list=document.createElement('ol');
-   for(const [i,sid] of cited.entries()){const source=state.sources.find(s=>s.id===sid);const row=document.createElement('li');row.id='reference-'+(i+1);const name=source?.name||'未关联来源';
-    if(source?.url&&/^https?:\/\//i.test(source.url)){const link=document.createElement('a');link.href=source.url;link.textContent=name;row.append(link)}else row.textContent=name;
-    list.append(row);
-   }body.append(list);
-  }
-  // A saved HTML file opens outside the app: keep only web, mail and in-page links.
-  for(const a of body.querySelectorAll('a[href]'))if(!/^(https?:|mailto:|#)/i.test(a.getAttribute('href')))a.removeAttribute('href');
-  for(const img of body.querySelectorAll('img')){
-   const url=new URL(img.getAttribute('src'),location.href);
-   if(url.protocol==='data:')continue;
-   if(url.origin!==location.origin)throw Error('图片尚未保存到工作区，无法生成独立文件');
-   const res=await fetch(url);if(!res.ok)throw Error('图片读取失败');
-   const blob=await res.blob();img.src=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob)});
-  }
-  const title=parse(brief.detail).title||'报告';
-  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+esc(title)+'</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#1E2320;line-height:1.7;margin:40px auto;padding:0 24px;max-width:900px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DEDFD8;padding:6px 8px;vertical-align:top}td p,th p{margin:0}img{max-width:100%;height:auto}figure{margin:16px 0}figure p{margin:4px 0}a{color:#006838}h1,h2,h3{break-after:avoid}tr,img{break-inside:avoid}@page{size:A4;margin:20mm}@page briefloop-report{size:A4;margin:20mm}@media print{body{page:briefloop-report;margin:0;padding:0;max-width:none;font-size:11pt;line-height:1.55}p{margin:0 0 8pt}h1{font-size:20pt;margin:0 0 14pt}h2{font-size:14pt;margin:14pt 0 7pt}h3{font-size:12pt;margin:12pt 0 6pt}td,th{padding:4pt 6pt}td p,th p{margin:0}table{margin:8pt 0 12pt}thead{display:table-header-group}p{orphans:3;widows:3}figure{margin:10pt 0}img{max-height:220mm;object-fit:contain}}</style><body>'+body.innerHTML+'</body></html>';
-  if(kind==='pdf')await exportPdf(html,title);
-  else{const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=exportFileName(title)+'.html';document.body.append(a);a.click();a.remove();notice('HTML 已生成，正在下载');setTimeout(()=>URL.revokeObjectURL(url),60000)}
- }catch(e){notice('导出未完成：'+e.message,true)}
-});
 
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
 const assessmentPanel=createAssessmentPanel({
@@ -879,7 +798,7 @@ async function refreshRuntimeDiscovery(force=false){
  const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
  if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Agent CLI</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
  $('runtime-discovery-status').textContent='正在检测执行引擎…';$('runtime-discovery-refresh').disabled=true;
- try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用，需另行短测试。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
+ try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();if(typeof office!=='undefined'&&data.capabilities?.officecli)office.renderSettingsCapability(data.capabilities.officecli);$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用，需另行短测试。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 }
 $('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};assignEffort('effort-select',settingsEffort(state.settings,backend));$('model-variant').value=backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');reasoning.refresh();$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
 let modelCatalog={backend:null,at:0,models:[]};
@@ -1406,6 +1325,13 @@ $('settings-chat-web-default').onchange=async()=>{
  catch(e){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('settings-chat-web-status').textContent=e.message}
  finally{$('settings-chat-web-default').disabled=false}
 };
+$('settings-officecli').onchange=async()=>{
+ const value=$('settings-officecli').checked;
+ $('settings-officecli').disabled=true;
+ try{await api('settings',{officecli_enabled:value});state.settings.officecli_enabled=value;state.office={...(state.office||{}),enabled:value};$('settings-officecli-status').textContent='已保存。'+(value?'导出 Word 后将运行本地质检；质检失败只记录结果，不影响导出。':'导出与预览不再运行 OfficeCLI 质检。')}
+ catch(e){$('settings-officecli').checked=state.settings.officecli_enabled===true;$('settings-officecli-status').textContent=e.message}
+ finally{$('settings-officecli').disabled=false}
+};
 function renderPermissionRequests(){
  const pending=chat.requests.filter(r=>r.status==='pending'&&(r.data?.native_options||String(r.method||'').includes('Approval')));
  $('chat-permissions-open').textContent='权限'+(pending.length?' · '+pending.length:'');
@@ -1584,7 +1510,7 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
-function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
+function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();office.syncSettingsToggle();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
 $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
@@ -1661,15 +1587,35 @@ function showSource(result){
 let sourceMediaId=null;
 const dialogSourceMediaView=()=>({media:$('source-media'),images:$('source-images'),controls:$('source-page-controls'),note:$('source-media-note'),pages:$('source-pages'),render:$('source-pages-render')});
 const drawerSourceMediaView=()=>({media:$('source-drawer-media'),images:$('source-drawer-images'),controls:$('source-drawer-page-controls'),note:$('source-drawer-media-note'),pages:$('source-drawer-pages'),render:$('source-drawer-pages-render')});
-function resetSourceMedia(view){view=view||dialogSourceMediaView();sourceMediaId=null;if(!view.media)return;view.media.hidden=true;view.images.replaceChildren();if(view.render)view.render.disabled=false}
+function resetSourceMedia(view){view=view||dialogSourceMediaView();sourceMediaId=null;if(!view.media)return;view.media.hidden=true;view.images.replaceChildren();if(view.render){view.render.disabled=false;view.render.hidden=false}const label=view.controls?.querySelector?.('label');if(label)label.textContent='查看 PDF 页码';const officeButton=officeMediaButton(view);if(officeButton)officeButton.hidden=true}
+function officeMediaButton(view){
+ // The drawer has a static control; the source dialog gets an equivalent one lazily.
+ if(!view.media)return null;
+ if(view.media.id==='source-drawer-media')return $('source-drawer-office-render');
+ let button=$('source-office-render');
+ if(!button){button=document.createElement('button');button.type='button';button.className='outline';button.id='source-office-render';button.hidden=true;button.textContent='OfficeCLI 查看页面（本地渲染，不调用模型）';view.controls?.after?.(button)}
+ return button;
+}
 function showSourceMedia(result,view){
  view=view||dialogSourceMediaView();sourceMediaId=null;
  const media=result.attachment;
  if(!media||result.source?.status==='failed'){resetSourceMedia(view);return}
  const isPDF=media.media_type==='application/pdf',isImage=media.media_type?.startsWith('image/');
- if(!isPDF&&!isImage){resetSourceMedia(view);return}
+ // OfficeCLI page preview is an optional enhancement: without the switch an
+ // Office original renders exactly like today, with no extra controls.
+ const isOfficeFile=typeof office!=='undefined'&&office.officeEnabled()&&/\.(docx|xlsx|pptx)$/i.test(result.source?.name||'');
+ if(!isPDF&&!isImage&&!isOfficeFile){resetSourceMedia(view);return}
  resetSourceMedia(view);sourceMediaId=result.source.id;
- view.media.hidden=false;view.controls.hidden=!isPDF;view.pages.value='1';
+ view.media.hidden=false;
+ if(isOfficeFile){
+  view.controls.hidden=false;view.pages.value='1';
+  const label=view.controls?.querySelector?.('label');if(label)label.textContent='查看页码（1–4）';
+  if(view.render)view.render.hidden=true;
+  const officeButton=officeMediaButton(view);if(officeButton){officeButton.hidden=false;officeButton.onclick=()=>action(()=>office.previewSourceInto(sourceMediaId,view,officeButton))}
+  view.note.textContent='Office 原件可用 OfficeCLI 本地渲染页面查看；本地渲染，不调用模型，预览失败不影响文件本身。';
+  return;
+ }
+ view.controls.hidden=!isPDF;view.pages.value='1';
  view.note.textContent=isPDF?`PDF 原件可用${media.pages?'，共 '+media.pages+' 页':''}。正文提取不覆盖所有图表，可按页查看。`:'原图已保存；发送给支持视觉的模型时会作为图片输入，不冒充 OCR 文本。';
  if(isImage&&result.image_url){const img=document.createElement('img');img.src=result.image_url;img.alt=result.source.name||'来源图片';img.className='source-preview-image';view.images.append(img)}
  if(view.render)view.render.onclick=()=>action(()=>renderSourcePages(sourceMediaId,view));
@@ -1982,7 +1928,10 @@ function renderWordExports(){
  const fileKinds={export_docx:'工作稿 Word',release:'正式 Word',audit_bundle:'审计包'};
  const jobs=state.jobs.filter(j=>fileKinds[j.kind]&&(!current||parse(j.payload).run_id===current.run_id));
  box.hidden=!jobs.length;
- box.innerHTML=jobs.slice(0,6).map(j=>{const result=parse(j.result),payload=parse(j.payload);const url=j.kind==='release'?'/api/release-file?id='+encodeURIComponent(payload.release_id):j.kind==='audit_bundle'?'/api/audit-file?job='+encodeURIComponent(j.id):result.download_url;return `<div class="job"><span>${fileKinds[j.kind]} · ${j.status==='complete'?'已制作':statuses[j.status]||esc(j.status)}</span><small>${payload.version_id===current?.id?'当前稿件版本':'历史稿件版本'}</small>${j.status==='complete'&&url?`<a href="${esc(url)}" download>下载${fileKinds[j.kind]}</a>`:`<span>${esc(j.error||'使用提交时固定的版本，可继续编辑')}</span>`}</div>`}).join('');
+ box.innerHTML=jobs.slice(0,6).map(j=>{const result=parse(j.result),payload=parse(j.payload);const url=j.kind==='release'?'/api/release-file?id='+encodeURIComponent(payload.release_id):j.kind==='audit_bundle'?'/api/audit-file?job='+encodeURIComponent(j.id):result.download_url;const officeSummary=j.status==='complete'&&result.office&&typeof office!=='undefined'?esc(office.officeCheckSummary(result.office)):'';const previewButton=j.status==='complete'&&url&&typeof office!=='undefined'&&office.officeEnabled()?`<button type="button" data-office-preview="${esc(j.id)}">预览</button>`:'';return `<div class="job"><span>${fileKinds[j.kind]} · ${j.status==='complete'?'已制作':statuses[j.status]||esc(j.status)}</span><small>${payload.version_id===current?.id?'当前稿件版本':'历史稿件版本'}</small>${j.status==='complete'&&url?`<a href="${esc(url)}" download>下载${fileKinds[j.kind]}</a>`:`<span>${esc(j.error||'使用提交时固定的版本，可继续编辑')}</span>`}${officeSummary?`<span>${officeSummary}</span>`:''}${previewButton}</div>`}).join('');
+ if(typeof office!=='undefined')box.querySelectorAll('[data-office-preview]').forEach(b=>b.onclick=()=>office.openPreview({job_id:b.dataset.officePreview}));
+ // Detected but not enabled: one dismissible hint, never auto-enabled.
+ if(typeof office!=='undefined'&&!renderWordExports.officeHintClosed&&state.office?.installed&&!state.office.enabled){const hint=document.createElement('p');hint.className='help';hint.textContent='检测到 OfficeCLI，可在设置中开启导出质检；不开启不影响现有导出。';const close=document.createElement('button');close.type='button';close.className='outline';close.textContent='知道了';close.onclick=()=>{renderWordExports.officeHintClosed=true;hint.remove()};hint.append(close);box.append(hint)}
  const active=jobs.find(j=>j.status==='running');
  if(active)api('events?job='+active.id).then(events=>{const last=[...events].reverse().find(e=>e.kind==='export_progress');if(last&&box.isConnected&&box.dataset.version===scope){const p=parse(last.data);const meter=document.createElement('div');meter.textContent=p.message;const progress=document.createElement('progress');if(Number.isFinite(p.total)&&Number.isFinite(p.step)){progress.max=p.total;progress.value=p.step}progress.setAttribute('aria-label',p.message||'文件制作中');meter.append(progress);box.append(meter)}}).catch(()=>{});
 }
@@ -2173,77 +2122,10 @@ $('review-revise').onclick=()=>action(async()=>{const version=await savedVersion
 
 function premiseCards(premises){return premises.map(p=>`<details><summary>间接依据／前提：${esc(p.claim?.data.statement||p.claim_id)}${p.status==='unreviewed'?'':' · 依据需复核'}</summary>${(p.evidence||[]).map(e=>`<p>${esc(e.source_name)} · ${esc(evidenceLocation(e.data.locator))}</p><blockquote>${esc(e.data.excerpt)}</blockquote><button type="button" data-evidence-source="${esc(e.source_id)}">查看原始来源</button>`).join('')}${premiseCards(p.premises||[])}</details>`).join('')}
 
-// Formal delivery is an explicit action over a saved version; draft export stays available.
-let releaseView={version:null,data:null,loading:false},auditTarget=null;
-const releaseStatus={pending:'等待制作',released:'正式件已保存',failed:'制作未完成',cancelled:'已停止'};
-const changeTypeLabel={initial:'首次交付',correction:'更正',update:'后续信息更新'};
-const displayDate=value=>value?moment(value):'时间未记录';
-function releaseEligibilityHTML(eligibility){
- if(!eligibility)return '<p>交付条件暂不可用，尚未判定通过。</p>';
- const blockers=eligibility.blockers||[],notices=eligibility.notices||[];
- return `<h3>${eligibility.eligible?'当前版本满足正式交付条件':'当前版本还有需处理事项'}</h3>${blockers.length?`<ul class="release-blockers">${blockers.map(item=>`<li>${esc(item.message||item)}</li>`).join('')}</ul>`:''}${notices.length?`<details open><summary>保留的提示 · ${notices.length} 项</summary><ul>${notices.map(item=>`<li>${esc(item.message||item)}</li>`).join('')}</ul></details>`:''}${eligibility.eligible?'':'<p class="help">工作稿仍可编辑和下载。请在“审阅与需处理”中处理问题后复核。</p>'}`;
-}
-function releaseCardHTML(release){
- const job=state.jobs.find(j=>j.id===release.job_id),status=release.status==='released'?releaseStatus.released:statuses[job?.status]||releaseStatus[release.status]||release.status;
- const change=changeTypeLabel[release.change_type]||(release.previous_id?'关联旧正式件':'首次交付');
- return `<article class="release-card"><div class="section-title"><strong>${esc(change)} · ${esc(displayDate(release.created))}</strong><span class="tag">${esc(status)}</span></div><p class="help">${release.version_id===current?.id?'当前正在查看的稿件版本':'历史稿件版本'}${release.previous_id?' · 关联旧正式件 '+esc(release.previous_id.slice(-8)):''}</p>${release.change_reason?`<p>${esc(release.change_reason)}</p>`:''}${job?.error?`<p class="error">${esc(job.error)}</p>`:''}${release.status==='released'?`<div class="release-actions"><a href="/api/release-file?id=${encodeURIComponent(release.id)}" download>下载正式 Word</a><button type="button" data-audit-release="${esc(release.id)}">导出审计包…</button></div>`:'<p class="help">任务进度见报告下方的文件制作记录。</p>'}</article>`;
-}
-async function refreshReleaseState(){
- if(releaseView.loading||!$('release-dialog').open)return;
- const version=current?.id;if(!version)return;
- releaseView.loading=true;
- try{
-  const data=await api('release-state?version='+encodeURIComponent(version));
-  if(!$('release-dialog').open||current?.id!==version)return;
-  releaseView.version=version;releaseView.data=data;
-  $('release-eligibility').innerHTML=(dirty?'<p class="help">有未保存修改，下列条件针对上次保存的版本。</p>':'')+releaseEligibilityHTML(data.eligibility);
-  $('release-submit').disabled=dirty||saving||!data.eligibility?.eligible||releaseView.submitting;
-  const released=(data.releases||[]).filter(r=>r.status==='released');
-  const previous=$('release-previous'),choices=released.map(r=>r.id).join(',');
-  if(previous.dataset.choices!==choices){const chosen=previous.value;previous.innerHTML='<option value="">首次交付</option>'+released.map(r=>`<option value="${esc(r.id)}">${esc(displayDate(r.created))} · ${esc(changeTypeLabel[r.change_type]||'正式件')} · ${esc(r.id.slice(-8))}</option>`).join('');previous.dataset.choices=choices;if(released.some(r=>r.id===chosen))previous.value=chosen;updateReleaseChangeFields()}
-  const html=(data.releases||[]).map(releaseCardHTML).join('')||'<p class="help">此报告尚无正式交付记录。</p>';
-  if($('release-list').innerHTML!==html){$('release-list').innerHTML=html;$('release-list').querySelectorAll('[data-audit-release]').forEach(button=>button.onclick=()=>openAuditBundle(button.dataset.auditRelease))}
- }finally{releaseView.loading=false}
-}
-function updateReleaseChangeFields(){const linked=!!$('release-previous').value;$('release-change-fields').hidden=!linked;$('release-change-reason').required=linked}
-$('release-previous').onchange=updateReleaseChangeFields;
-async function openReleaseDialog(brief=null){
- if(brief&&!openBrief(brief,{follow:false}))return;
- // A list choice is accepted before its body arrives. Never save/check the old editor.
- const request=openBrief.request;
- if(request){const opened=await request.promise;if(!opened||openBrief.request||current?.id!==request.id)return}
- if(brief&&current?.id!==brief.id)return;
- const runId=current?.run_id,version=await savedVersion();
- if(openBrief.request||current?.id!==version||current?.run_id!==runId)return;
- page('report');$('release-eligibility').textContent='正在核对当前版本的交付条件…';$('release-submit').disabled=true;$('release-dialog').showModal();await refreshReleaseState();
-}
-$('release-open').onclick=()=>action(()=>openReleaseDialog());
-$('release-close').onclick=()=>$('release-dialog').close();
-async function submitFormalRelease(){
- const previous=$('release-previous').value,changeType=$('release-change-type').value,reason=$('release-change-reason').value.trim();
- if(previous&&!reason)throw Error('请说明本次更正或更新的依据和影响');
- const version=await savedVersion();
- const payload={version_id:version};if(previous)Object.assign(payload,{previous_id:previous,change_type:changeType,change_reason:reason});
- const result=await api('release',payload);
- return result;
-}
-$('release-form').onsubmit=event=>{event.preventDefault();if(releaseView.submitting)return;releaseView.submitting=true;$('release-submit').disabled=true;action(async()=>{try{await submitFormalRelease();$('release-dialog').close();notice('正式 Word 已排队，使用本次提交时固定的版本')}finally{releaseView.submitting=false;await refreshReleaseState()}})};
-function openAuditBundle(releaseId){
- const release=releaseView.data?.releases.find(r=>r.id===releaseId);if(!release||release.status!=='released'){notice('请先等待正式件制作完成',true);return}
- auditTarget=release;
- $('audit-target').textContent='正式件：'+displayDate(release.created)+' · '+(changeTypeLabel[release.change_type]||'首次交付')+' · '+release.id.slice(-8);
- $('audit-source-list').innerHTML=(release.sources||release.data?.snapshot?.sources||[]).map(source=>`<label class="audit-source-row"><span>${esc(source.name||source.id)}</span><select data-audit-source="${esc(source.id)}" aria-label="${esc(source.name||source.id)}的打包范围"><option value="metadata">仅定位，不含原件和摘录</option><option value="excerpt">定位与证据摘录</option><option value="original">原件及证据摘录</option></select></label>`).join('')||'<p class="help">此正式件没有登记来源文件。</p>';
- $('audit-submit').disabled=false;$('audit-dialog').showModal();
-}
-$('audit-close').onclick=()=>$('audit-dialog').close();
-$('audit-all-original').onclick=()=>{$('audit-source-list').querySelectorAll('[data-audit-source]').forEach(select=>select.value='original')};
-$('audit-all-metadata').onclick=()=>{$('audit-source-list').querySelectorAll('[data-audit-source]').forEach(select=>select.value='metadata')};
-async function submitAuditBundle(){
- if(!auditTarget)throw Error('请先选择一个已保存的正式件');
- const releaseId=auditTarget.id,permissions=Object.fromEntries([...$('audit-source-list').querySelectorAll('[data-audit-source]')].map(select=>[select.dataset.auditSource,select.value]));
- return api('audit-bundle',{release_id:releaseId,source_permissions:permissions});
-}
-$('audit-form').onsubmit=event=>{event.preventDefault();if($('audit-submit').disabled)return;$('audit-submit').disabled=true;action(async()=>{try{await submitAuditBundle();$('audit-dialog').close();$('release-dialog').close();notice('审计包已排队，完成后可在文件制作记录下载')}finally{$('audit-submit').disabled=false}})};
+const delivery=deliveryUI({api,notice,action,page,openBrief,savedVersion,statuses,getState:()=>state,getCurrent:()=>current,isDirty:()=>dirty,isSaving:()=>saving,office});
+delivery.init();
+// Optional OfficeCLI preview dialog; markup ships in index.html, module logic in office-tools.js.
+$('office-preview-close').onclick=()=>$('office-preview-dialog').close();
 $('source-updates-close').onclick=()=>$('source-updates-dialog').close();
 $('source-updates-open').onclick=()=>action(async()=>{
  const version=await savedVersion(),data=await api('source-update-state?version='+encodeURIComponent(version)),changes=Array.isArray(data)?data:data.changes||[];
@@ -2293,7 +2175,7 @@ function settingsView(name){
  for(const view of ['models','execution','learning','workspaces','connectors','updates'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
  if(name==='workspaces')return renderSettingsWorkspaces();
- if(name==='updates'){activity?.readCategory('updates');return refreshAppUpdates();}
+ if(name==='updates'){activity?.readCategory('updates');return appUpdates.refreshAppUpdates();}
  if(name==='connectors'){
   connectorPanel ||= connectorSettings($('settings-view-connectors'),api);
   return connectorPanel.refresh();
@@ -2470,7 +2352,7 @@ function renderReports(){
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
- box.querySelectorAll('[data-report-release]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportRelease);if(b)return action(()=>openReleaseDialog(b))});
+ box.querySelectorAll('[data-report-release]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportRelease);if(b)return action(()=>delivery.openReleaseDialog(b))});
 }
 function sourceState(s){return s.status==='failed'?'failed':s.needs_visual?'visual':'ready'}
 function sourceStatusChip(st){return `<span class="chip ${st==='ready'?'ok':st==='visual'?'warn':'danger'}">${st==='ready'?'可用':st==='visual'?'需视觉读取':'获取失败'}</span>`}
@@ -2586,97 +2468,7 @@ async function openSourceDrawer(id,usage,match){
  }
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1)}if(b)b.hidden=true}
-const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
-// Categories name a colour from the token palette; the tiles take it from
-// the .cat-* class, so the hex lives in tokens.css only.
-const GENRE_META={
- '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',cat:'cat-business'},
- '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',cat:'cat-markets'},
- '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',cat:'cat-academic'},
- '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',cat:'cat-collab'},
- '合同':{desc:'适用于各类合同、协议。',icon:'file',cat:'cat-business'},
- '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',cat:'cat-business'},
- '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',cat:'cat-markets'},
- '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',cat:'cat-neutral'},
-};
-const ICONS={
- briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
- // Filled rounded bars matching home suggestion tiles (DESIGN §5 / settings icon set)
- chart:'<rect x="4" y="12" width="4" height="8" rx="1.2"/><rect x="10" y="6" width="4" height="14" rx="1.2"/><rect x="16" y="9" width="4" height="11" rx="1.2"/>',
- book:'<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
- users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
- file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
- bars:'<rect x="4" y="12" width="4" height="8" rx="1.2"/><rect x="10" y="6" width="4" height="14" rx="1.2"/><rect x="16" y="9" width="4" height="11" rx="1.2"/>',
- // Comparison: two column pairs for competitor benchmarking
- compare:'<rect x="3" y="10" width="3.5" height="10" rx="1"/><rect x="7.5" y="6" width="3.5" height="14" rx="1"/><rect x="13" y="13" width="3.5" height="7" rx="1"/><rect x="17.5" y="8" width="3.5" height="12" rx="1"/>',
- landmark:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="5" y1="22" x2="5" y2="11"/><line x1="9" y1="22" x2="9" y2="11"/><line x1="15" y1="22" x2="15" y2="11"/><line x1="19" y1="22" x2="19" y2="11"/><path d="M2 11L12 3l10 8z"/>',
- layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
- paperclip:'<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
- // Two buildings separated by a slash — competitor / dual-entity compare (Downloads icon ref)
- buildingsSlash:'<path d="M4 21V9.5L9 6v15"/><path d="M4 21h7"/><line x1="6.2" y1="11" x2="7.8" y2="11"/><line x1="6.2" y1="14" x2="7.8" y2="14"/><line x1="6.2" y1="17" x2="7.8" y2="17"/><line x1="13.2" y1="5.5" x2="17.8" y2="18.5"/><path d="M14 21v-9.5L18.5 8.5V21"/><path d="M14 21h7"/><line x1="16" y1="14" x2="17.5" y2="14"/><line x1="16" y1="17" x2="17.5" y2="17"/>',
-};
-const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
-const THEME_ORDER=Object.keys(THEME_COLORS);
-function splitTemplateName(name){const i=name.lastIndexOf('·');return i<0?{genre:name,theme:''}:{genre:name.slice(0,i),theme:name.slice(i+1)}}
-function templatePickState(){
- const builtins=(state.templates||[]).filter(t=>t.origin==='builtin'&&t.name.includes('·')).map(t=>({id:t.id,...splitTemplateName(t.name),status:t.status}));
- const genres={};for(const item of builtins)(genres[item.genre]=genres[item.genre]||[]).push(item);
- for(const genre in genres)genres[genre].sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
- return {builtins,genres};
-}
-let templatePick=null;
-function renderTemplatesPage(){
- const box=$('templates-page-list');if(!box||!state)return;
- const list=state.templates||[];
- const sig=JSON.stringify([state.settings&&state.settings.default_template_id,templatePick,...list.map(t=>[t.id,t.status,t.revision,t.name,t.origin])]);
- if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
- const {builtins,genres}=templatePickState();
- if(!templatePick||!builtins.some(t=>t.id===templatePick.id)){
-  const saved=builtins.find(t=>t.id===(state.settings||{}).default_template_id);
-  const picked=saved||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌绿')||builtins[0];
-  templatePick=picked?{genre:picked.genre,theme:picked.theme,id:picked.id}:null;
- }
- const fallback=(state.settings||{}).default_template_id;
- const cards=GENRE_ORDER.filter(g=>genres[g]).map(genre=>{
-  const meta=GENRE_META[genre]||{desc:'',icon:'file',cat:'cat-neutral'};
-  const items=genres[genre];
-  const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
-  const selected=templatePick&&templatePick.genre===genre;
-  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="--swatch-color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
-  return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
-   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
-   +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
-   +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
- }).join('');
- const pickedLabel=templatePick?`已选：<strong>${esc(templatePick.genre)} · ${esc(templatePick.theme)}</strong>`:'已选：—';
- const mine=list.filter(t=>t.origin!=='builtin');
- const mineRows=mine.length?`<p class="help">我的模板</p>`+mine.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'';
- box.innerHTML=(cards?`<div class="tpl-grid">${cards}</div><div class="tpl-bar"><span class="picked">${pickedLabel}</span><button type="button" id="template-apply" class="primary" ${templatePick?'':'disabled'}>使用该模板 →</button></div>`:'')
-  +mineRows+(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
- if(!cards)return;
- box.querySelectorAll('.tpl-card').forEach(card=>card.onclick=event=>{
-  if(event.target.closest('.color-dot'))return;
-  const genre=card.dataset.genre;const items=genres[genre]||[];
-  const keepTheme=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
-  const target=items.find(i=>i.theme===keepTheme)||items[0];
-  templatePick={genre,theme:target.theme,id:target.id};renderTemplatesPage.sig='';renderTemplatesPage();
- });
- box.querySelectorAll('.color-dot').forEach(dot=>dot.onclick=event=>{
-  event.stopPropagation();
-  templatePick={genre:dot.dataset.genre,theme:dot.dataset.theme,id:dot.dataset.id};
-  renderTemplatesPage.sig='';renderTemplatesPage();
- });
- const apply=$('template-apply');
- if(apply)apply.onclick=()=>action(async()=>{
-  if(!templatePick)return;
-  await api('settings',{default_template_id:templatePick.id});
-  state.settings={...(state.settings||{}),default_template_id:templatePick.id};
-  $('template-select').value=templatePick.id;renderWorkflowChoices();
-  templateSections();
-  notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
-  renderTemplatesPage.sig='';page('setup');
- });
-}
+const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,setSettings:next=>state.settings=next});
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
 if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
@@ -2714,90 +2506,8 @@ if(window.briefloopDesktop?.onPrepareClose){
  });
 }
 
-// App updates: fixed desktop capabilities, with a read-only browser fallback.
-let appUpdateState=null,softwareInfo=null,appUpdatePending=false,appUpdateLastAction='check';
-function renderAppUpdates(value=appUpdateState){
- const box=$('settings-view-updates');if(!box)return;
- const desktop=typeof window.briefloopDesktop?.updateStatus==='function';
- $('app-update-controls').hidden=false;
- $('app-update-version').textContent=softwareInfo?`BriefLoop v${softwareInfo.version}${softwareInfo.build?` · 构建 ${softwareInfo.build}`:''}${desktop?` · 桌面 App v${value?.currentAppVersion||'读取中'}`:''}`:'正在读取实际运行版本…';
- const installations={desktop:'桌面管理的后端 · App 与 CLI 共用',source:'开发源码',pip:'Python 包安装',pipx:'pipx 安装',uv:'uv 工具安装'};
- $('app-update-installation').textContent=softwareInfo?installations[softwareInfo.installation]||'独立安装':'';
- $('app-update-command').hidden=!softwareInfo?.update_command;
- $('app-update-command').textContent=softwareInfo?.update_command||'';
- $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':desktop?'官方稳定来源：Stahl-G/briefloop · GitHub Releases':'Python 包稳定来源：PyPI · briefloop';
- const reinstall=value?.source==='local-test'&&value?.reinstall===true;
- $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='zip'?'优先增量下载 ZIP 更新包并校验完整文件。保存并退出后打开 Finder；将 BriefLoop 拖到 Applications 替换，再重新启动。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
- const errorOperation=value?.error?.operation||(value?.error?.code==='open_failed'?'install':appUpdateLastAction);
- const errorLabel={check:'更新检查失败（当前安装不受影响）',download:'更新包下载未完成',install:'更新安装未完成'}[errorOperation]||'更新检查失败（当前安装不受影响）';
- const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:errorLabel};
- const reinstallLabel=`重新安装当前 App v${value?.currentAppVersion||''}`;
- $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(value?.state==='error'&&errorOperation==='check'?'':reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):({idle:'尚未检查更新',checking:'正在检查更新…',available:`发现可用后端版本 v${value?.releaseVersion||''}`,current:'当前后端已是 PyPI 最新稳定版',ahead:`当前后端高于 PyPI 已发布版本 v${value?.releaseVersion||''}`,error:'版本检查未完成'}[value?.state||'idle']||'尚未检查更新');
- $('app-update-download').textContent=reinstall?'下载当前版本安装包':'下载更新';
- const busy=appUpdatePending||['checking','downloading'].includes(value?.state);
- $('app-update-check').disabled=busy;
- $('app-update-download').hidden=!desktop||value?.state!=='available';$('app-update-download').disabled=busy;
- $('app-update-install').hidden=!desktop||value?.state!=='downloaded';$('app-update-install').disabled=busy;
- $('app-update-install').textContent=value?.installMode==='zip'?'保存并打开更新文件夹':value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
- $('app-update-retry').hidden=value?.state!=='error'||!value?.retryable;$('app-update-retry').disabled=busy;
- $('app-update-error').hidden=!value?.error;$('app-update-error').textContent=value?.error?.message||'';
- const progress=value?.progress;
- $('app-update-progress-box').hidden=!progress;
- $('app-update-progress').value=progress?.percent||0;
- $('app-update-progress-text').textContent=progress?`${Math.round(progress.percent||0)}% · ${(Math.max(0,progress.transferred||0)/1048576).toFixed(1)} / ${(Math.max(0,progress.total||0)/1048576).toFixed(1)} MiB`:'';
- if(progress?.mode==='differential')$('app-update-progress-text').textContent+=` · 增量下载，复用 ${(Math.max(0,progress.reused||0)/1048576).toFixed(1)} MiB`;
- else if(progress?.mode==='full')$('app-update-progress-text').textContent+=' · '+({
-  no_baseline:'无有效基准缓存，完整下载并建立缓存',
-  little_reuse:'本次可复用内容较少，完整下载',
-  range_unavailable:'下载服务不支持分段传输，完整下载',
-  range_size:'分段响应不完整，重新完整下载',
-  delta_hash:'增量重建校验失败，重新完整下载',
-  differential_unavailable:'增量不可用，已回退完整下载',
-  blockmap_unavailable:'此版本无可用增量信息，完整下载'
- }[progress.fallback]||'完整下载');
- $('app-update-notes-box').hidden=!value?.notes;$('app-update-notes').textContent=value?.notes||'';
-}
-async function refreshAppUpdates(){
- renderAppUpdates();
- try{softwareInfo=await api('software-version');
- if(typeof window.briefloopDesktop?.updateStatus==='function')appUpdateState=await window.briefloopDesktop.updateStatus();
- renderAppUpdates()}
- catch{notice('无法读取 App 更新状态，请重新打开设置。',true)}
-}
-async function runAppUpdate(command){
- if(appUpdatePending)return;
- const desktop=window.briefloopDesktop;
- if(typeof desktop?.updateStatus!=='function'){
-  if(command!=='check')return;
-  appUpdatePending=true;appUpdateState={state:'checking'};renderAppUpdates();
-  try{appUpdateState=await api('software-update-check',{});softwareInfo=appUpdateState}
-  catch(error){appUpdateState={state:'error',retryable:true,error:{message:error.message||'版本检查未完成'}}}
-  finally{appUpdatePending=false;renderAppUpdates()}
-  return;
- }
- appUpdatePending=true;appUpdateLastAction=command;renderAppUpdates();
- try{
-  if(command==='install'){
-   const result=await desktop.installUpdate();
-   if(result?.cancelled)notice('已保留当前工作区，更新包仍可稍后安装。');
-   // Successful installation closes this renderer. A cancelled gate keeps it live.
-   if(result?.cancelled)appUpdateState=await desktop.updateStatus();
-  }else appUpdateState=await (command==='download'?desktop.downloadUpdate():desktop.checkForUpdates());
- }catch(error){
-  notice(error.message||'更新操作未完成，请重试。',true);
-  try{appUpdateState=await desktop.updateStatus()}catch{}
- }finally{appUpdatePending=false;renderAppUpdates()}
-}
-if($('settings-view-updates')){
- $('app-update-check').onclick=()=>runAppUpdate('check');
- $('app-update-download').onclick=()=>runAppUpdate('download');
- $('app-update-install').onclick=()=>runAppUpdate('install');
- // A temporary DMG open error can retry the saved asset through the same gate.
- $('app-update-retry').onclick=()=>runAppUpdate(appUpdateState?.error?.code==='open_failed'?'install':(appUpdateState?.error?.operation||appUpdateLastAction)==='install'?'download':appUpdateState?.error?.operation||appUpdateLastAction);
- window.briefloopDesktop?.onUpdateStatus?.(value=>{appUpdateState=value;renderAppUpdates()});
- renderAppUpdates();
-}
-// End App updates.
+const appUpdates=appUpdatesUI({api,notice});
+appUpdates.init();
 
 activity=activityCenter({api,getState:()=>state,page,openBrief,showSettings,settingsView});
 
