@@ -10,7 +10,7 @@ from zipfile import ZipFile
 import pytest
 
 from briefloop.deliverable_spec import instructions, reader_contract_schema, resolve, save_reader_contract
-from briefloop.delivery_checks import quantities
+from briefloop.delivery_checks import check_numbers, quantities
 from briefloop.document_model import markdown_document
 from briefloop.export_jobs import enqueue_export, generate_word, output_path
 from briefloop.exports import docx_bytes, reader_markdown
@@ -67,11 +67,13 @@ def test_legacy_english_run_accepts_contract_built_from_normalized_requirements(
 def test_english_numbers_bind_to_chinese_source_units():
     found = {text: value for text, value in
              ((m, v) for m in ['RMB 12.3 billion', '123亿元', 'US$1.2 billion', '1.2万亿元', '$1.2 trillion',
-                               '3.5 percentage points', '40 pp'] for _, _, v in quantities(m))}
+                               '3.5 percentage points', '40 pp', '526,000 units', '52.6万辆', '1.01 million vehicles', '101万台']
+              for _, _, v in quantities(m))}
     assert found['RMB 12.3 billion'] == found['123亿元']
     assert found['US$1.2 billion'][1] == 'USD'
     assert found['1.2万亿元'][0] == found['$1.2 trillion'][0]
     assert found['3.5 percentage points'][1] == found['40 pp'][1] == 'percentage_point'
+    assert found['526,000 units'] == found['52.6万辆'] and found['1.01 million vehicles'] == found['101万台']
 
 
 def test_english_word_exports_label_sources_and_use_english_layouts(tmp_path):
@@ -101,3 +103,19 @@ def test_english_word_exports_label_sources_and_use_english_layouts(tmp_path):
                          citations=[{'source_id': source['id'], 'locator': 'line 1'}], language='en')
     with ZipFile(BytesIO(generic)) as archive:
         assert '>Sources<' in archive.read('word/document.xml').decode()
+
+
+def test_bare_table_count_is_unchecked_not_a_mismatch(tmp_path):
+    store = Store(tmp_path / 'workspace')
+    source = store.add_source('CPCA', 'Chery ranked third with 68,431 vehicles.\n其中，新能源汽车出口52.6万辆。')
+    def bind(quote, token, value, unit, line, excerpt):
+        return {'label': token, 'value': value, 'unit': unit, 'source_id': source['id'], 'locator': line,
+                'source_excerpt': excerpt, 'report_quote': quote, 'number_text': token}
+    markdown = '| Exporter | Units |\n|---|---|\n| Chery | 68,431 |\n\nNEV exports reached 526,000 units, not 52,600 units.'
+    results = check_numbers(markdown, [
+        bind('| Chery | 68,431 |', '68,431', 68431, 'units', 'line 1', 'Chery ranked third with 68,431 vehicles.'),
+        bind('reached 526,000 units', '526,000 units', 526000, 'units', 'line 2', '新能源汽车出口52.6万辆'),
+        bind('not 52,600 units', '52,600 units', 526000, 'units', 'line 2', '新能源汽车出口52.6万辆')], store=store)
+    assert results[0]['checked'] is False and '单位未机械核对' in results[0]['reason']
+    assert results[1]['checked'] and results[1]['found']
+    assert results[2]['checked'] and not results[2]['found'], 'a wrong scale conversion is still a mismatch'

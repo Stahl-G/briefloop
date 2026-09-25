@@ -36,6 +36,9 @@ export function reportLanguageUI({notice,onChange}){
   for(const option of $('length-preset')?.options||[])if(LENGTH_PRESETS[language][option.value])option.textContent=presetLabel(language,option.value);
   if($('target-words-label'))$('target-words-label').textContent=`目标${unit}数`;
   if($('max-words-label'))$('max-words-label').textContent=`${unit}数上限`;
+  // Word covers print the period and organization as typed.
+  const period=$('requirements')?.elements?.period;
+  if(period)period.placeholder=language==='en'?'例如：August 2026（封面原样显示，英文报告请用英文填写）':'例如：本周，或指定日期';
  }
  function changed(){render();onChange?.(current())}
  // Restoring saved requirements normalizes legacy values without resetting lengths.

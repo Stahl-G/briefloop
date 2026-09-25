@@ -44,6 +44,14 @@ def normalized(value, unit):
         return number, 'ratio'
     if unit in ('个', '项', '次', '人', '家', '条', 'count', 'items'):
         return number, 'count'
+    # Unit counts with a scale: an English report restating 52.6万辆 as
+    # 526,000 units must still compare with the Chinese source.
+    counted = re.fullmatch(r'(?:(thousand|millions?|billions?) )?(?:units?|vehicles?|cars?)', unit)
+    if counted:
+        return number * _SCALES[(counted[1] or '').rstrip('s')], 'count'
+    counted = re.fullmatch(r'(万亿|亿|万)?(?:辆|台)', unit)
+    if counted:
+        return number * _SCALES[counted[1] or ''], 'count'
     if unit == '':
         return number, 'scalar'
     if unit in ('$', 'usd', '美元'):
@@ -66,7 +74,8 @@ def normalized(value, unit):
 # Full numeric tokens, including sign, thousands separators and scientific form.
 # Prefix/suffix currency conflicts or compound dimensions remain unsupported.
 _NUM = r'[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
-_UNIT = (r'(?:thousand|millions?|billions?|trillions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
+_UNIT = (r'(?:thousand|millions?|billions?)\s+(?:units?|vehicles?|cars?)|units?|vehicles?|cars?|(?:万亿|亿|万)?(?:辆|台)'
+         r'|(?:thousand|millions?|billions?|trillions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
          r'|(?:USD|CNY|RMB|EUR|GBP)(?:\s+(?:thousand|millions?|billions?|trillions?))?'
          r'|(?:万亿|十亿|千万|百万|亿|万)?(?:美元|元人民币|人民币|元)'
          r'|百分点|百分之|percentage points?|pp|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股'
@@ -201,6 +210,14 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
         if not candidates:
             row['reason'] = '正文数值不是完整的受支持数值与单位，未检查'
             continue
+        if candidates[0][1] == 'scalar' and expected[1] != 'scalar':
+            # Table cells and restated figures often leave the unit to the
+            # header or the sentence. The same bare number is not a mismatch;
+            # its unit simply was not checked mechanically.
+            bare = normalized(item.get('value'), '')
+            if bare is not None and candidates[0][0] == bare[0]:
+                row['reason'] = '正文数值未带单位（单位在表头或上下文），数值与绑定值一致；单位未机械核对'
+                continue
         row['checked'] = True
         row['found'] = candidates[0] == expected
         if row['found'] and row.get('dimensionless'):
