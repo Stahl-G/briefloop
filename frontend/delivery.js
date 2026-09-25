@@ -3,7 +3,7 @@ import {$,esc} from './dom.js';
 import {moment} from './time.js';
 export const changeTypeLabel={initial:'首次交付',correction:'更正',update:'后续信息更新'};
 export const displayDate=value=>value?moment(value):'时间未记录';
-export function deliveryUI({api,notice,action,page,openBrief,savedVersion,statuses,getState,getCurrent,isDirty,isSaving}){
+export function deliveryUI({api,notice,action,page,openBrief,savedVersion,statuses,getState,getCurrent,isDirty,isSaving,office}){
  let releaseView={version:null,data:null,loading:false},auditTarget=null;
  const releaseStatus={pending:'等待制作',released:'正式件已保存',failed:'制作未完成',cancelled:'已停止'};
  function releaseEligibilityHTML(eligibility){
@@ -56,6 +56,9 @@ export function deliveryUI({api,notice,action,page,openBrief,savedVersion,status
  function openAuditBundle(releaseId){
   const release=releaseView.data?.releases.find(r=>r.id===releaseId);if(!release||release.status!=='released'){notice('请先等待正式件制作完成',true);return}
   auditTarget=release;
+  // Every open resets the optional render choice so no stale checkbox leaks in.
+  const officeRender=$('audit-office-render');if(officeRender)officeRender.checked=false;
+  const officeRow=$('audit-office-row');if(officeRow)officeRow.hidden=!office?.officeEnabled();
   $('audit-target').textContent='正式件：'+displayDate(release.created)+' · '+(changeTypeLabel[release.change_type]||'首次交付')+' · '+release.id.slice(-8);
   $('audit-source-list').innerHTML=(release.sources||release.data?.snapshot?.sources||[]).map(source=>`<label class="audit-source-row"><span>${esc(source.name||source.id)}</span><select data-audit-source="${esc(source.id)}" aria-label="${esc(source.name||source.id)}的打包范围"><option value="metadata">仅定位，不含原件和摘录</option><option value="excerpt">定位与证据摘录</option><option value="original">原件及证据摘录</option></select></label>`).join('')||'<p class="help">此正式件没有登记来源文件。</p>';
   $('audit-submit').disabled=false;$('audit-dialog').showModal();
@@ -63,7 +66,7 @@ export function deliveryUI({api,notice,action,page,openBrief,savedVersion,status
  async function submitAuditBundle(){
   if(!auditTarget)throw Error('请先选择一个已保存的正式件');
   const releaseId=auditTarget.id,permissions=Object.fromEntries([...$('audit-source-list').querySelectorAll('[data-audit-source]')].map(select=>[select.dataset.auditSource,select.value]));
-  return api('audit-bundle',{release_id:releaseId,source_permissions:permissions});
+  return api('audit-bundle',{release_id:releaseId,source_permissions:permissions,include_office_render:$('audit-office-render')?.checked===true});
  }
  function init(){
   $('release-previous').onchange=updateReleaseChangeFields;
