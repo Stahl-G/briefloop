@@ -71,7 +71,10 @@ document.addEventListener('focusout',e=>{if(e.target.closest('[data-tip]'))hideT
 document.addEventListener('scroll',()=>{if(tooltipTarget)hideTip()},true);
 function refresh(first=false){if(refresh.pending)return refresh.pending;refresh.pending=refreshState(first).finally(()=>{refresh.pending=null});return refresh.pending}
 function backgroundActive(){return !!state?.jobs?.some(j=>['queued','running'].includes(j.status))||chat.busy||chat.sessions.some(sessionBusy)}
-async function refreshState(first=false,signal){try{const next=await api('state');if(signal?.aborted)return false;$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
+// Every snapshot carries the server clock. That stamp alone must not rebuild the
+// page, which would reset focus and selections on each poll; only the timed task
+// cards and the result banner follow the clock.
+async function refreshState(first=false,signal){try{const next=await api('state');if(signal?.aborted)return false;$('connection').textContent='本地已连接';const {system_clock,...stable}=next;const signature=JSON.stringify(stable);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}else{renderTasks();renderTaskBanner()}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -245,31 +248,32 @@ function setBannerDismissKey(key){try{localStorage.setItem('briefloop-task-banne
 function bannerBrief(job){const p=parse(job.payload)||{};return (state.briefs||[]).find(b=>b.id===p.version_id)||(state.briefs||[]).find(b=>b.run_id===p.run_id)||null}
 function bannerTitle(job){const brief=bannerBrief(job);if(brief){const t=parse(brief.detail).title;if(t)return t}const run=(state.runs||[]).find(r=>r.id===(parse(job.payload)||{}).run_id);if(run){const req=parse(run.requirements);if(req.title)return req.title}return ''}
 function renderTaskBanner(){
- const box=$('task-banner');if(!box)return;if(!state){box.hidden=true;box.innerHTML='';return}
+ const box=$('task-banner');if(!box)return;if(!state){box.hidden=true;updatePanel(box,'');return}
  const now=Date.now(),dismissed=bannerDismissKey();
  const running=(state.jobs||[]).filter(j=>taskLabel(j.kind)&&['queued','running'].includes(j.status));
  const finished=(state.jobs||[]).filter(j=>BANNER_RESULT_KINDS.includes(j.kind)&&['complete','failed','interrupted','cancelled'].includes(j.status)&&now-new Date(j.updated||j.created).getTime()<BANNER_RESULT_WINDOW);
  const candidates=[...running,...finished].filter(j=>j.id+':'+j.status!==dismissed).sort((a,b)=>new Date(b.updated||b.created)-new Date(a.updated||a.created));
  const job=candidates[0];
- if(!job){box.hidden=true;box.innerHTML='';return}
+ if(!job){box.hidden=true;updatePanel(box,'');return}
  const title=bannerTitle(job),label=taskLabel(job.kind);
  box.hidden=false;
+ // Unchanged markup keeps its buttons, and keyboard focus, across polls; handlers still rebind.
  if(['queued','running'].includes(job.status)){
   box.className='task-banner running';
-  box.innerHTML=`<span class="task-banner-icon" aria-hidden="true"></span><div class="task-banner-main"><strong>正在${esc(label)}${title?'：'+esc(title):''}</strong><small>${esc(statuses[job.status]||job.status)}${job.progress?` · 第 ${job.progress.round}/${job.progress.k} 轮`:''} · 完成后会在这里提示</small></div><button type="button" class="outline" data-banner-open>查看任务</button><button type="button" class="task-banner-close" data-banner-close aria-label="暂时隐藏">✕</button>`;
+  updatePanel(box,`<span class="task-banner-icon" aria-hidden="true"></span><div class="task-banner-main"><strong>正在${esc(label)}${title?'：'+esc(title):''}</strong><small>${esc(statuses[job.status]||job.status)}${job.progress?` · 第 ${job.progress.round}/${job.progress.k} 轮`:''} · 完成后会在这里提示</small></div><button type="button" class="outline" data-banner-open>查看任务</button><button type="button" class="task-banner-close" data-banner-close aria-label="暂时隐藏">✕</button>`);
   box.querySelector('[data-banner-open]').onclick=()=>page('reports');
  }else if(job.status==='complete'){
   box.className='task-banner ok';
   const verb=job.kind==='assess'?'评分已完成':job.kind==='review'?'独立审阅已完成':'新报告已生成';
-  box.innerHTML=`<span class="task-banner-icon" aria-hidden="true">✓</span><div class="task-banner-main"><strong>${verb}${title?'：'+esc(title):''}</strong><small>已保存，可直接打开查看</small></div><button type="button" class="primary" data-banner-open>查看报告</button><button type="button" class="task-banner-close" data-banner-close aria-label="关闭">✕</button>`;
+  updatePanel(box,`<span class="task-banner-icon" aria-hidden="true">✓</span><div class="task-banner-main"><strong>${verb}${title?'：'+esc(title):''}</strong><small>已保存，可直接打开查看</small></div><button type="button" class="primary" data-banner-open>查看报告</button><button type="button" class="task-banner-close" data-banner-close aria-label="关闭">✕</button>`);
   box.querySelector('[data-banner-open]').onclick=()=>{setBannerDismissKey(job.id+':'+job.status);const brief=bannerBrief(job);if(brief&&openBrief(brief,{follow:false}))page('report');else page('reports')};
  }else{
   box.className='task-banner error';
-  box.innerHTML=`<span class="task-banner-icon" aria-hidden="true">!</span><div class="task-banner-main"><strong>${esc(label)}未完成${title?'：'+esc(title):''}</strong><small>${esc(job.error||statuses[job.status]||job.status)}</small></div><button type="button" class="outline" data-banner-open>查看详情</button><button type="button" class="outline" data-banner-retry>重试</button><button type="button" class="task-banner-close" data-banner-close aria-label="关闭">✕</button>`;
+  updatePanel(box,`<span class="task-banner-icon" aria-hidden="true">!</span><div class="task-banner-main"><strong>${esc(label)}未完成${title?'：'+esc(title):''}</strong><small>${esc(job.error||statuses[job.status]||job.status)}</small></div><button type="button" class="outline" data-banner-open>查看详情</button><button type="button" class="outline" data-banner-retry>重试</button><button type="button" class="task-banner-close" data-banner-close aria-label="关闭">✕</button>`);
   box.querySelector('[data-banner-open]').onclick=()=>page('reports');
   box.querySelector('[data-banner-retry]').onclick=()=>action(()=>api('resume',{job_id:job.id}),'已按页面显示的模型重新提交');
  }
- box.querySelector('[data-banner-close]').onclick=()=>{setBannerDismissKey(job.id+':'+job.status);box.hidden=true;box.innerHTML=''};
+ box.querySelector('[data-banner-close]').onclick=()=>{setBannerDismissKey(job.id+':'+job.status);box.hidden=true;updatePanel(box,'')};
 }
 let welcomeMode=null,welcomeBackend,welcomeExpanded=false,welcomeBusy=false,welcomeScanning=false,welcomeFromProvider=false;
 async function chooseWelcomeAgent(id){
