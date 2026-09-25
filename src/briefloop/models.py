@@ -19,7 +19,6 @@ LENGTH_PRESETS = {'quick':(350,500),'compact':(800,1000),'balanced':(1500,2000),
 LENGTH_PRESETS_EN = {'quick':(250,350),'compact':(500,650),'balanced':(1000,1300),'detailed':(1300,1600)}
 DEEP_LENGTH = {'zh':(10000,12000),'en':(6500,8000)}
 INDUSTRY_LENGTH = {'zh':(5000,5500),'en':(3200,3600)}
-REPORT_LANGUAGES = ('zh','en')
 
 
 def report_language(value):

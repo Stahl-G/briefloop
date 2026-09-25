@@ -45,7 +45,7 @@ def test_writers_and_reviewers_see_english_while_chinese_specs_stay_unchanged():
     assert '本轮报告正文语言：英文' in instructions(english, role='revision')
     assert '发现与理由仍用中文写' in instructions(english, role='reviewer')
     assert 'excerpt 保持原文逐字' in instructions(english, role='scout')
-    assert '英文' not in instructions(chinese, role='analyst').split('本轮产物约定：')[0].replace('英文字母', '')
+    assert '本轮报告正文语言' not in instructions(chinese, role='analyst')
 
 
 def test_legacy_english_run_accepts_contract_built_from_normalized_requirements(tmp_path):
