@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
+import {deliveryUI} from '../frontend/delivery.js';
 import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const saveCode=section(source,'let savePromise=','\nfunction scheduleLearning','frontend/app.js');
@@ -117,13 +118,16 @@ assert.equal(c.current.id,'new-report');assert.equal(c.pendingRun,null);assert.e
 console.log('PASS: workspace learning progress and pending report survives save; comment stays on edited report');
 
 // Formal delivery waits for the current edit, while an audit bundle pins an existing release.
-const releaseCode=section(source,'async function submitFormalRelease()',"$('release-form').onsubmit=",'frontend/app.js');
-const auditCode=section(source,'async function submitAuditBundle()',"$('audit-form').onsubmit=",'frontend/app.js');
-vm.runInContext(releaseCode+'\n'+auditCode,c);
+const releaseStateData={eligibility:{eligible:true},releases:[{id:'release-fixed',status:'released',created:'2026-09-01T00:00:00Z',change_type:'correction',sources:[]}]};
+const delivery=deliveryUI({api:async(route,payload)=>route.startsWith('release-state')?(calls.push({route,payload}),releaseStateData):c.api(route,payload),
+ notice:c.notice,action:c.action,page:()=>{},openBrief:()=>{},savedVersion:()=>c.savedVersion(),statuses:{},
+ getState:()=>c.state,getCurrent:()=>c.current,isDirty:()=>c.dirty,isSaving:()=>c.saving});
+const previousDocument=globalThis.document;globalThis.document={getElementById:el};
+el('release-list').querySelectorAll=()=>[];el('audit-dialog').showModal=()=>{};el('release-previous').dataset={};
 c.dirty=true;c.pendingRun=null;c.current={id:'release-base',run_id:'r'};
 el('markdown-source').value='Corrected revenue';
 el('release-previous').value='release-old';el('release-change-type').value='correction';el('release-change-reason').value='Corrected unit from the original table';
-const release=vm.runInContext('submitFormalRelease()',c);
+const release=delivery.submitFormalRelease();
 assert.equal(calls.at(-1).route,'save');
 pending.shift().resolve({id:'release-corrected',run_id:'r'});await release;
 assert.equal(calls.at(-1).route,'release');
@@ -131,17 +135,20 @@ assert.equal(calls.at(-1).payload.version_id,'release-corrected');
 assert.equal(calls.at(-1).payload.previous_id,'release-old');
 assert.equal(calls.at(-1).payload.change_type,'correction');
 // A later edit cannot change which archived release an audit bundle describes.
-c.current={id:'future-edit',run_id:'r'};c.dirty=true;c.auditTarget={id:'release-fixed'};
+c.current={id:'future-edit',run_id:'r'};c.dirty=true;
+el('release-dialog').open=true;await delivery.refreshReleaseState();
+delivery.openAuditBundle('release-fixed');
 el('audit-source-list').querySelectorAll=()=>[{dataset:{auditSource:'source-a'},value:'metadata'},{dataset:{auditSource:'source-b'},value:'excerpt'}];
-await vm.runInContext('submitAuditBundle()',c);
+await delivery.submitAuditBundle();
 assert.equal(calls.at(-1).route,'audit-bundle');
 assert.equal(calls.at(-1).payload.release_id,'release-fixed');
 assert.equal(calls.at(-1).payload.source_permissions['source-a'],'metadata');
 assert.equal(calls.at(-1).payload.source_permissions['source-b'],'excerpt');
 assert.equal(c.dirty,true);
 // A save conflict cannot create a formal release.
-c.dirty=true;const rejectedRelease=vm.runInContext('submitFormalRelease()',c);pending.shift().reject(Error('conflict'));
+c.dirty=true;const rejectedRelease=delivery.submitFormalRelease();pending.shift().reject(Error('conflict'));
 await assert.rejects(rejectedRelease,/conflict/);assert.equal(calls.at(-1).route,'save');
+globalThis.document=previousDocument;
 console.log('PASS: formal release waits for saved corrections; audit package uses fixed release and explicit material scope');
 
 // Provider image input declarations retain three distinct values across the real form handler.

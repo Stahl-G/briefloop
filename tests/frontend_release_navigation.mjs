@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {deliveryUI} from '../frontend/delivery.js';
 import {section as sectionOf} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
@@ -19,7 +20,6 @@ function fixture(){
   parse:JSON.parse,notice:message=>notices.push(message),page:name=>pages.push(name),clearTimeout(){},
   Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},ReportTrailingParagraph:{},
   editorDocument:value=>value,toEditor:value=>value,changed(){},updateFormattingTools(){},assessment(){},citations(){},renderBriefLength(){},setReportView(){},renderReportStatus(){},renderAssistantSummary(){},syncPendingReport(){},renderWordExports(){},updateDownloads(){},
-  releaseView:{loading:false},releaseEligibilityHTML:()=> 'Checked',releaseCardHTML:()=>'',updateReleaseChangeFields(){},
   box:{querySelectorAll:()=>buttons},
   api:async route=>{calls.push(route);if(route.startsWith('brief?id='))return new Promise((resolve,reject)=>pending.set(route.slice(9),{resolve,reject}));if(route.startsWith('release-state?'))return {eligibility:{eligible:true},releases:[]};throw Error('Unexpected request: '+route)},
  });
@@ -28,14 +28,18 @@ function fixture(){
  vm.runInContext([
   line('loadBrief'),line('openBrief'),
   section('async function savedVersion(){','let wordDownloading='),
-  section('async function refreshReleaseState(){','function updateReleaseChangeFields()'),
-  section('async function openReleaseDialog(',"$('release-close').onclick="),
-  source.split('\n').find(row=>row.trim().startsWith("box.querySelectorAll('[data-report-release]')")),
  ].join('\n'),context);
  const original=context.savedVersion;
  context.savedVersion=async()=>{saved.push(context.current?.id);return original()};
+ // The real delivery module reads the editor state through these accessors.
+ const delivery=deliveryUI({api:context.api,notice:context.notice,action:context.action,page:context.page,openBrief:context.openBrief,savedVersion:context.savedVersion,statuses:{},
+  getState:()=>context.state,getCurrent:()=>context.current,isDirty:()=>context.dirty,isSaving:()=>context.saving});
+ globalThis.document={getElementById:$};
+ delivery.init();
+ context.delivery=delivery;
+ vm.runInContext(source.split('\n').find(row=>row.trim().startsWith("box.querySelectorAll('[data-report-release]')")),context);
  const resolve=id=>pending.get(id).resolve({...context.state.briefs.find(b=>b.id===id),markdown:'Report '+id});
- return {context,$,calls,notices,saved,pages,buttons,resolve,reject:(id)=>pending.get(id).reject(Error('Body unavailable'))};
+ return {context,delivery,$,calls,notices,saved,pages,buttons,resolve,reject:(id)=>pending.get(id).reject(Error('Body unavailable'))};
 }
 
 test('list delivery waits for the chosen report body before saving or checking eligibility',async()=>{
