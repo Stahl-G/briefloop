@@ -2,11 +2,12 @@ import {settingsEffort} from '../frontend/reasoning-controls.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
-const code=source.slice(source.indexOf('function restoreDraft('),source.indexOf('function renderChatRuntimePermissions()'));
+const code=section(source,'function restoreDraft(','function renderChatRuntimePermissions()','frontend/app.js');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
 const c=vm.createContext({settingsEffort,$:el,chat:{id:'existing',drafts:new Map(),session:{runtime:{backend:'claude',model:'default'}}},state:{settings:{agent_backend:'claude',model:'default',model_selection_required:true}},effortValue:()=>null,assignEffort:()=>{},refreshInlineModelPickers:()=>{},renderAttachments:()=>{},updateComposer:()=>{},autoSizeChatInput:()=>{}});
-vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),c);
+vm.runInContext(section(source,'function chatBackendChoice(){','function renderChatBackendChoice(){','frontend/app.js'),c);
 vm.runInContext(code,c);vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'default');
 c.chat.id=null;c.chat.session=null;c.chat.drafts.set('new',{text:'unsent message',backend:'claude',model:'default'});
 vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'default');assert.equal(el('chat-input').value,'unsent message');
@@ -29,9 +30,9 @@ c.runtimeChoice=()=>({backend:'claude',model:'default',permission:'runtime-nativ
 c.api=async route=>{if(route==='harness/session')return {id:'new-session',runtime:{backend:'claude',model:'default'}};throw Error('send failed')};
 c.chatActive=()=>false;c.chatError=()=>{};c.pollChat=async()=>{};
 el('chat-input').value='你是谁';el('chat-input').focus=()=>{};el('chat-model').value='default';el('chat-model-provider').value='';
-vm.runInContext(source.slice(source.indexOf('const fastCapabilities='),source.indexOf('const fastCapabilityRequests=')),c);
-vm.runInContext(source.slice(source.indexOf('function rememberDraft(){'),source.indexOf('function restoreDraft(')),c);
-vm.runInContext(source.slice(source.indexOf('async function sendChat(event){'),source.indexOf("$('chat-form').onsubmit=")),c);
+vm.runInContext(section(source,'const fastCapabilities=','const fastCapabilityRequests=','frontend/app.js'),c);
+vm.runInContext(section(source,'function rememberDraft(){','function restoreDraft(','frontend/app.js'),c);
+vm.runInContext(section(source,'async function sendChat(event){',"$('chat-form').onsubmit=",'frontend/app.js'),c);
 await vm.runInContext('sendChat({preventDefault(){}})',c);
 assert.equal(c.chat.drafts.get('new-session').text,'你是谁');
 assert.equal(c.chat.drafts.get('new-session').model,'default');
@@ -40,14 +41,14 @@ console.log('PASS: failed initial send preserves text and model on the created s
 
 // The permission control follows what the runtime advertises, and a single mode is
 // not presented as a dropdown the user could choose from.
-const permissionCode=source.slice(source.indexOf('const PERMISSION_MODES='),source.indexOf('function messageTime('));
+const permissionCode=section(source,'const PERMISSION_MODES=','function messageTime(','frontend/app.js');
 const select={value:'',hidden:false,title:'',replaceChildren(...options){this.options=options}};
 const mode={value:'queue',options:[{value:'queue'},{value:'steer',hidden:false,disabled:false}]};
 const p=vm.createContext({$:id=>id==='chat-permission'?select:id==='chat-mode'?mode:{value:'',hidden:false},
  chat:{session:{runtime:{backend:'claude'}}},state:{settings:{agent_backend:'claude'}},runtimeCatalog:[],
  reasoning:{configure(){}},document:{querySelector:()=>({hidden:false})},JSON,console,
  Option:class{constructor(text,value){this.text=text;this.value=value}}});
-vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),p);
+vm.runInContext(section(source,'function chatBackendChoice(){','function renderChatBackendChoice(){','frontend/app.js'),p);
 vm.runInContext(permissionCode,p);
 vm.runInContext('renderChatRuntimePermissions()',p);
 assert.equal(select.options.length,1);assert.equal(select.hidden,true,'a single permission mode is not a choice');
@@ -66,7 +67,7 @@ assert.equal(select.options.length,1);assert.equal(select.hidden,true);assert.eq
 console.log('PASS: chat permission options come from the runtime and hide when there is no choice');
 
 // A model catalogue that failed to load must explain itself, not render as a blank list.
-const pickerCode=source.slice(source.indexOf('function emptyCatalogLabel('),source.indexOf('function setupModelPickers('));
+const pickerCode=section(source,'function emptyCatalogLabel(','function setupModelPickers(','frontend/app.js');
 const optionList=[];const pickerSelect={replaceChildren(){optionList.length=0},add(option){optionList.push(option)}};
 pickerSelect.parentElement={querySelector:()=>({id:'chat-model',dataset:{}})};
 const pc=vm.createContext({document:{querySelectorAll:()=>[pickerSelect]},console,Option:class{constructor(text,value){this.text=text;this.value=value}},

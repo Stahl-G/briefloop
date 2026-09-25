@@ -6,11 +6,12 @@ import {createSourceLibrarySearch} from '../frontend/source-library-search.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const slice=(from,to)=>source.slice(source.indexOf(from),source.indexOf(to));
+const slice=(from,to)=>section(source,from,to,'frontend/app.js');
 const code=slice('function sourceOriginalLink','function showSource(')
  +slice('let sourceMediaId=null',"$('source-dialog').addEventListener('close'")
- +slice('function sourceState','function renderTemplatesPage');
+ +slice('function sourceState','const templatesPage=templatesUI(');
 
 function makeNode(){return {hidden:true,textContent:'',href:undefined,innerHTML:'',value:'',disabled:false,dataset:{},replaceChildren(...children){this.children=children},append(){},scrollIntoView(){this.scrolled=true},removeAttribute(name){delete this[name]},setAttribute(){},querySelectorAll:()=>[]}}
 function context(s){return {source:s,text:'',provenance:{},attachment:{status:'failed',image_path:null},original_url:null}}

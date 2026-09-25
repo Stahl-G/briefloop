@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
 
 const elements=new Map();
@@ -11,8 +12,8 @@ const body={classList:{contains:c=>classes.has(c),add:c=>classes.add(c),remove:c
 const navButton={dataset:{page:'chat'},classList:{toggle(){}}};
 const documentMock={body,querySelectorAll:()=>[navButton]};
 
-const drawerCode=source.slice(source.indexOf('function setReportChatOpen'),source.indexOf('function renderReportStatus'));
-const pageCode=source.slice(source.indexOf('function page(name){'),source.indexOf('async function action(fn'));
+const drawerCode=section(source,'function setReportChatOpen','function renderReportStatus','frontend/app.js');
+const pageCode=section(source,'function page(name){','async function action(fn','frontend/app.js');
 const c=vm.createContext({
  $:el,chat:{sessions:[],id:null},selectChat:()=>Promise.resolve(),setTimeout:()=>0,
  state:{settings:{model:'chosen-model',model_selection_required:false}},

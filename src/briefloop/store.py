@@ -128,9 +128,11 @@ class Store:
             from .release import SCHEMA as RELEASE_SCHEMA
             from .source_updates import SCHEMA as SOURCE_UPDATE_SCHEMA
             from .fact_check import SCHEMA as FACT_CHECK_SCHEMA
+            from .office_cli import SCHEMA as OFFICE_SCHEMA
             c.executescript(RELEASE_SCHEMA)
             c.executescript(SOURCE_UPDATE_SCHEMA)
             c.executescript(FACT_CHECK_SCHEMA)
+            c.executescript(OFFICE_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
@@ -749,7 +751,9 @@ class Store:
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
         from .task_labels import reported_labels
+        from . import office_cli
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
+                "office": office_cli.snapshot_hint(self),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],

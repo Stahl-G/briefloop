@@ -5,9 +5,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {scheduleUI} from '../frontend/schedules.js';
+import {section as sectionOf} from './source_section.mjs';
 
 const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const section=(start,end)=>app.slice(app.indexOf(start),app.indexOf(end));
+const section=(start,end)=>sectionOf(app,start,end,'frontend/app.js');
 function elements(){
  const nodes=new Map();
  return id=>{

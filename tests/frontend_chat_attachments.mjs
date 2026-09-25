@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {preflightSources} from '../frontend/uploads.js';
+import {section} from './source_section.mjs';
 
 const source=fs.readFileSync('frontend/app.js','utf8');
-const code=source.slice(source.indexOf('async function uploadChatFiles('),source.indexOf("document.querySelectorAll('[data-prompt]')"));
+const code=section(source,'async function uploadChatFiles(',"document.querySelectorAll('[data-prompt]')",'frontend/app.js');
 const elements=new Map();
 const el=id=>{
  if(!elements.has(id))elements.set(id,{handlers:{},classList:{add(){},remove(){}},addEventListener(name,handler){this.handlers[name]=handler}});
@@ -18,7 +19,7 @@ const context=vm.createContext({$:el,chat,runtimeCatalog,state:{settings:{agent_
  chatError(message){if(message)errors.push(message)},updateComposer(){},runtimeName:name=>name,
  async uploadSource(file){uploads.push(file);return {id:'source_'+uploads.length,status:'ready'}},
  async refresh(){},renderAttachments(){},rememberDraft(){}});
-vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),context);
+vm.runInContext(section(source,'function chatBackendChoice(){','function renderChatBackendChoice(){','frontend/app.js'),context);
 vm.runInContext(code,context);
 const file=new File(['Synthetic source'],'source.txt',{type:'text/plain'});
 const drop=()=>el('chat-form').handlers.drop({dataTransfer:{files:[file]},preventDefault(){}});

@@ -2,13 +2,14 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(process.env.BRIEFLOOP_APP_JS||new URL('../frontend/app.js',import.meta.url),'utf8');
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,hidden:false,disabled:false,textContent:'',innerHTML:'',dataset:{},classList:{toggle(){}},closest:()=>({hidden:false}),querySelector:()=>null,append(){}});return elements.get(id)};
 
 // Template rows keep the edits saved with the last run, unrelated refreshes do not rebuild
 // them, and a template that is not ready blocks the run instead of using the general layout.
-const templateCode=source.slice(source.indexOf('function readTemplateSections()'),source.indexOf("$('template-import-button').onclick"));
+const templateCode=section(source,'function readTemplateSections()',"$('template-import-button').onclick",'frontend/app.js');
 let sectionWrites=0;
 const rows=[];
 const chapterTitle={value:''},chapterMode={value:''};
@@ -44,7 +45,7 @@ console.log('PASS: template choice survives refreshes and an unready template bl
 // facts must not silently become current evidence.
 const evidenceB={checked:false};
 el('source-list').querySelector=selector=>selector.includes('"b"')?evidenceB:null;
-const profileCode=source.slice(source.indexOf('const INDUSTRY_TASK_OUTLINE='),source.indexOf("$('industry-task-outline').onclick"));
+const profileCode=section(source,'const INDUSTRY_TASK_OUTLINE=',"$('industry-task-outline').onclick",'frontend/app.js');
 const c=vm.createContext({$:el,console,JSON,CSS:{escape:s=>s},validateLengthInputs:()=>{},
  LENGTH_PRESETS:{compact:[800,1000],balanced:[1500,2000],detailed:[2000,2500]},
  selected:new Set(['a','b']),referenceSelected:new Set(['b']),
@@ -59,7 +60,7 @@ assert.equal(evidenceB.checked,false);
 console.log('PASS: changing purpose preserves the reference/evidence separation');
 
 // A template suggestion is visible; explicit method selection survives style changes.
-const workflowCode=source.slice(source.indexOf('function readWorkflowChoice()'),source.indexOf('// Reference reports are explicitly'));
+const workflowCode=section(source,'function readWorkflowChoice()','// Reference reports are explicitly','frontend/app.js');
 const workflows=JSON.parse(fs.readFileSync(new URL('../src/briefloop/workflow_assets/business_report/manifest.json',import.meta.url)));
 c.esc=String;c.state.workflows=[workflows];c.state.templates=[{id:'business',workflow_hint:'business_report'}];
 vm.runInContext(workflowCode,c);
@@ -77,8 +78,8 @@ console.log('PASS: explicit document purpose survives template changes');
 c.page=()=>{};c.notice=()=>{};c.Event=class{};
 const manualSections={value:'',dispatchEvent(){}};
 el('requirements').elements={manual_sections_text:manualSections};
-vm.runInContext(source.slice(source.indexOf('function applyRequirements(text)'),source.indexOf('const taskLabel=')),c);
-vm.runInContext(source.slice(source.indexOf('function applyOutlineToSetup()'),source.indexOf('function expandReportPanel()')),c);
+vm.runInContext(section(source,'function applyRequirements(text)','const taskLabel=','frontend/app.js'),c);
+vm.runInContext(section(source,'function applyOutlineToSetup()','function expandReportPanel()','frontend/app.js'),c);
 el('workflow-choice').value='business_report/work_progress';
 vm.runInContext('applyRequirements(JSON.stringify({manual_sections:["融资进度"]}))',c);
 assert.equal(el('workflow-choice').value,'business_report/work_progress');

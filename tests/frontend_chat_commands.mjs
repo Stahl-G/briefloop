@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
-const code=source.slice(source.indexOf('const CHAT_COMMANDS=['),source.indexOf('function applyRequirements'));
+const code=section(source,'const CHAT_COMMANDS=[','function applyRequirements','frontend/app.js');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
 const input=el('chat-input'),panel=el('chat-commands');
 panel.querySelectorAll=()=>[];input.focus=()=>{};input.setSelectionRange=()=>{};

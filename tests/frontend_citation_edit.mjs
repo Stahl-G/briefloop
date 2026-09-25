@@ -6,6 +6,7 @@ import {getSchema} from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import {EditorState,TextSelection} from '@tiptap/pm/state';
 import {citationBoundaryPlugin} from '../frontend/rich-document.js';
+import {section} from './source_section.mjs';
 
 test('typing at a citation boundary excludes its mark without changing ordinary links or internal edits',()=>{
  const schema=getSchema([StarterKit]);
@@ -31,9 +32,9 @@ test('typing at a citation boundary excludes its mark without changing ordinary 
 
 test('editor Markdown conversion preserves edited citation text and keeps bare references canonical',()=>{
  const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
- const mapping=source.split('// BEGIN_FIGURE_EDITOR_MAPPING')[1].split('// END_FIGURE_EDITOR_MAPPING')[0];
+ const mapping=section(source,'// BEGIN_FIGURE_EDITOR_MAPPING','// END_FIGURE_EDITOR_MAPPING','frontend/app.js').split('\n').slice(1).join('\n');
  const context=vm.createContext({window:{location:{origin:'http://localhost'}},URL});
- vm.runInContext(mapping.slice(mapping.indexOf('\n'))+'\nthis.convert=fromEditor;',context);
+ vm.runInContext(mapping+'\nthis.convert=fromEditor;',context);
  assert.equal(context.convert('[1](#source-src_test)'), '[@src_test]');
  assert.equal(context.convert('[1 新增中文 12345](#source-src_test)'), '1 新增中文 12345[@src_test]');
 });

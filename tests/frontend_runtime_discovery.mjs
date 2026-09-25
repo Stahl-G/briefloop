@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {runtimeCard} from '../frontend/runtime-cards.js';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const code=source.slice(source.indexOf('function renderRuntimeDiscovery()'),source.indexOf("$('agent-backend').onchange="));
+const code=section(source,'function renderRuntimeDiscovery()',"$('agent-backend').onchange=",'frontend/app.js');
 const nodes=new Map(),calls=[];
 const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',textContent:'',hidden:true,options:[],querySelectorAll:()=>[],append:()=>{},replaceChildren(){this.options=[]},add(option){this.options.push(option)}});return nodes.get(id)};
 const runtimes=[

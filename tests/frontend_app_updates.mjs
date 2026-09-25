@@ -1,8 +1,7 @@
 import fs from 'node:fs';
-import vm from 'node:vm';
 import assert from 'node:assert/strict';
-const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const code=source.slice(source.indexOf('// App updates: fixed desktop capabilities'),source.indexOf('// End App updates.'));
+import {appUpdatesUI} from '../frontend/app-updates.js';
+
 const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
 const version=JSON.parse(fs.readFileSync(new URL('../desktop/electron/package.json',import.meta.url))).version;
 assert.ok(html.includes(`data-web-version="${version}"`));
@@ -11,11 +10,14 @@ function fixture(desktop){
  const elements=new Map(),notices=[];
  const el=id=>{if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,textContent:'',dataset:{webVersion:version}});return elements.get(id)};
  const info={version,installation:'source',build:'abc123',guidance:'当前运行开发源码',update_command:null};
- const ctx=vm.createContext({$:el,window:{briefloopDesktop:desktop},api:async(name)=>name==='software-version'?info:{...info,state:'ahead',releaseVersion:'0.18.0'},notice:(...args)=>notices.push(args)});
- vm.runInContext(code,ctx);
- return {el,ctx,notices,run:expression=>vm.runInContext(expression,ctx)};
+ // dom.js resolves $ through the document global; the desktop bridge through window.
+ globalThis.document={getElementById:el};
+ globalThis.window={briefloopDesktop:desktop};
+ const ui=appUpdatesUI({api:async(name)=>name==='software-version'?info:{...info,state:'ahead',releaseVersion:'0.18.0'},notice:(...args)=>notices.push(args)});
+ ui.init();
+ return {el,ui,notices};
 }
-const browser=fixture();await browser.run('refreshAppUpdates()');
+const browser=fixture();await browser.ui.refreshAppUpdates();
 assert.equal(browser.el('app-update-controls').hidden,false);
 assert.match(browser.el('app-update-version').textContent,new RegExp(`BriefLoop v${version}`));
 assert.match(browser.el('app-update-guidance').textContent,/开发源码/);
@@ -27,7 +29,7 @@ let dto={currentAppVersion:'0.17.0',source:'local-test',state:'available',releas
 const desktop=fixture({updateStatus:async()=>dto,onUpdateStatus:fn=>{changed=fn},
  checkForUpdates:async()=>{calls.push('check');return dto},downloadUpdate:async()=>{calls.push('download');return dto},
  installUpdate:async()=>{calls.push('install');return {cancelled:true}}});
-await desktop.run('refreshAppUpdates()');
+await desktop.ui.refreshAppUpdates();
 assert.equal(desktop.el('app-update-version').textContent,`BriefLoop v${version} · 构建 abc123 · 桌面 App v0.17.0`);
 assert.match(desktop.el('app-update-source').textContent,/本地测试/);
 assert.equal(desktop.el('app-update-notes').textContent,dto.notes);
@@ -39,7 +41,8 @@ dto={...dto,state:'downloaded'};changed(dto);
 assert.equal(desktop.el('app-update-install').hidden,false);
 await desktop.el('app-update-install').onclick();
 assert.deepEqual(calls,['install']);assert.match(desktop.notices[0][0],/已保留/);
-dto={...dto,state:'error',retryable:true,error:{code:'open_failed',message:'无法打开 DMG'}};changed(dto);
+dto={...dto,state:'error',retryable:true,error:{code:'open_failed',message:'无法打开 DMG'}};
+changed(dto);
 await desktop.el('app-update-retry').onclick();assert.deepEqual(calls,['install','install']);
 assert.equal(desktop.el('app-update-error').textContent,'无法打开 DMG');
 console.log('PASS: browser fallback, actual App version, local-test label, text-only notes, progress, install cancellation and retry');

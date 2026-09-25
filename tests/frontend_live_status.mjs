@@ -2,8 +2,9 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const code=source.slice(source.indexOf('function publicActivity'),source.indexOf('function renderMessages'));
+const code=section(source,'function publicActivity','function renderMessages','frontend/app.js');
 const events=new Map();
 const c=vm.createContext({chat:{events},esc:v=>String(v),chatStates:{},messageTime:()=>'',$:()=>({}),document:{}});
 vm.runInContext(code,c);

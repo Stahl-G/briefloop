@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {section,allFrontendSources} from './source_section.mjs';
 
 const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
 const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const schedules=fs.readFileSync(new URL('../frontend/schedules.js',import.meta.url),'utf8');
-const genre=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
+const genre=fs.readFileSync(new URL('../frontend/templates.js',import.meta.url),'utf8');
 const tokens=fs.readFileSync(new URL('../src/briefloop/static/tokens.css',import.meta.url),'utf8');
 const style=fs.readFileSync(new URL('../src/briefloop/static/style.css',import.meta.url),'utf8');
+const frontendAll=allFrontendSources();
 
 test('home loads tokens.css and keeps composer progressive disclosure markers',()=>{
   assert.match(html,/href="\/tokens\.css"/);
@@ -35,8 +37,8 @@ test('renderHome shows main recent when rows exist and rail for running jobs',()
   assert.match(app,/has-home-rail/);
   assert.match(app,/home-rail-jobs/);
   assert.match(app,/home-rail-recent-list/);
-  const renderHome=app.slice(app.indexOf('function renderHome()'),app.indexOf('function homeReportRowHTML()')) || app.slice(app.indexOf('function renderHome()'),app.indexOf('let autoOpenedActivityTurn'));
-  const rail=app.slice(app.indexOf('function renderHomeTasks()'),app.indexOf('function homeReportRowHTML('));
+  const renderHome=section(app,'function renderHome()','function homeReportRowHTML(','frontend/app.js');
+  const rail=section(app,'function renderHomeTasks()','function homeReportRowHTML(','frontend/app.js');
   assert.match(rail,/has-home-rail/);
   assert.match(rail,/home-rail-jobs/);
   assert.match(renderHome,/home-block-recent/);
@@ -46,7 +48,7 @@ test('renderHome shows main recent when rows exist and rail for running jobs',()
 test('home does not render empty schedule/report placeholders',()=>{
   assert.doesNotMatch(schedules,/还没有计划/);
   assert.match(schedules,/home-block-schedule/);
-  const renderHome=app.slice(app.indexOf('function renderHome()'),app.indexOf('function autoOpenActivity'));
+  const renderHome=section(app,'function renderHome()','function autoOpenActivity','frontend/app.js');
   assert.doesNotMatch(renderHome,/还没有报告/);
   assert.match(renderHome,/home-block-recent/);
   assert.match(app,/wireComposerParams/);
@@ -63,7 +65,7 @@ test('the category palette lives in the tokens and avoids the status hues',()=>{
   assert.doesNotMatch(tokens,/--c-cat-[a-z]+-fg:\s*#C62828/);   // the danger red
   assert.match(genre,/'学术论文'[^}]*cat:'cat-academic'/);
   assert.match(genre,/'券商研报'[^}]*cat:'cat-markets'/);
-  assert.doesNotMatch(genre,/tile:'#|color:'#/);
+  assert.doesNotMatch(frontendAll,/tile:'#|color:'#/);
   for(const cat of ['business','markets','academic','collab','neutral'])
     assert.match(style,new RegExp(`\\.cat-${cat}\\{background:var\\(--cat-${cat}-bg\\);color:var\\(--cat-${cat}-fg\\)\\}`));
 });
@@ -89,5 +91,5 @@ test('the Opencode effort field is not wired to the model picker',()=>{
   assert.match(html,/<label id="variant-field" hidden>推理强度<input id="model-variant" list="effort-suggestions"/);
   assert.match(app,/role-variant-field[^`]*<span>推理强度<\/span>/);
   for(const id of ['model-variant','role-\\$\\{role\\}-variant'])
-    assert.doesNotMatch(html+app,new RegExp('id="'+id+'"[^>]*list="model-suggestions"'));
+    assert.doesNotMatch(html+frontendAll,new RegExp('id="'+id+'"[^>]*list="model-suggestions"'));
 });

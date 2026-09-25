@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {reviewPending,withoutSupersededRetries,factCheckHTML,locatorText} from '../frontend/review-status.js';
+import {section} from './source_section.mjs';
 
 const source=readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const start=source.indexOf('function reviewResultHTML('),end=source.indexOf('\n}',start)+2;
-assert.ok(start>=0&&end>start);
 const renderer=vm.createContext({esc:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))});
-vm.runInContext(source.slice(start,end),renderer);
+vm.runInContext(section(source,'function reviewResultHTML(','\n}','frontend/app.js')+'\n}',renderer);
 
 test('review results render frozen new and legacy checks, not current run requirements',()=>{
  const review={status:'complete',protocol:'clauses_v1',requirement_items:[{requirement_id:'r1',kind:'objective',text:'Frozen <objective>'}],

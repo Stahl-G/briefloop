@@ -131,6 +131,18 @@ def generate_word(store, job, cancelled):
         store.event(job['id'],'export_saved_as',{'path':str(destination.relative_to(store.root)),
                                                'reason':'原文件被占用或不可替换，已另存本次 Word'})
     stage(4, 'Word 已生成，可以下载')
-    return {'version_id': brief['id'], 'fingerprint': payload['fingerprint'],
-            'path': str(destination.relative_to(store.root)), 'sha256': hashlib.sha256(blob).hexdigest(),
-            'download_url': '/api/export-file?job=' + job['id']}
+    result = {'version_id': brief['id'], 'fingerprint': payload['fingerprint'],
+              'path': str(destination.relative_to(store.root)), 'sha256': hashlib.sha256(blob).hexdigest(),
+              'download_url': '/api/export-file?job=' + job['id']}
+    # Optional local quality gate after the atomic write: any failure is only a
+    # recorded check result. file_loop treats exceptions as job failure, so this
+    # hook swallows everything itself as a second guard.
+    try:
+        from . import office_cli
+        office = office_cli.check_file(store, destination, job_id=job['id'],
+                                       version_id=payload.get('version_id'))
+    except Exception:
+        office = None
+    if office is not None:
+        result['office'] = office
+    return result

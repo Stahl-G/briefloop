@@ -3,8 +3,9 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const code=source.slice(source.indexOf('function workspaceProposal'),source.indexOf("$('workspace-switch').onclick=showWorkspacePicker;"));
+const code=section(source,'function workspaceProposal',"$('workspace-switch').onclick=showWorkspacePicker;",'frontend/app.js');
 const status=()=>({textContent:'',classList:{add(){},remove(){},toggle(){}}});
 const dialog={querySelectorAll:()=>[]};
 const node={appended:[],append(child){this.appended.push(child)}};

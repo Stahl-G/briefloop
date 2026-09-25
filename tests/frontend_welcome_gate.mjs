@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {welcomeReady,welcomeAgents,welcomeAgentCard} from '../frontend/welcome.js';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{hidden:id!=='welcome'});return elements.get(id)};
 // A factory model, an unavailable CLI or an unfinished selection must not start.
@@ -20,7 +21,7 @@ assert.equal(welcomeReady(settings,runtimes,'native'),true);
 let backendChanges=0;
 const selection=vm.createContext({$:el,state:{settings},runtimeCatalog:runtimes,renderWelcome(){}});
 el('agent-backend').onchange=()=>{backendChanges++};
-vm.runInContext(source.slice(source.indexOf('let welcomeMode='),source.indexOf('function applyPendingSetupFields')),selection);
+vm.runInContext(section(source,'let welcomeMode=','function applyPendingSetupFields','frontend/app.js'),selection);
 await vm.runInContext("chooseWelcomeAgent('briefloop-native')",selection);
 assert.equal(backendChanges,0);
 assert.equal(settings.model_selection_required,false);
@@ -48,7 +49,7 @@ el('model-picker-search').onkeydown(input);
 assert.deepEqual(picked,['vendor/model']);
 
 // Clicking the sidebar cannot bypass the first-run page.
-const pageCode=source.slice(source.indexOf('function page(name){'),source.indexOf("document.querySelectorAll('[data-page]')"));
+const pageCode=section(source,'function page(name){',"document.querySelectorAll('[data-page]')",'frontend/app.js');
 const notices=[];
 const p=vm.createContext({
  chat:{id:null},
@@ -77,7 +78,7 @@ vm.runInContext("page('setup')",p);
 assert.equal(el('welcome').hidden,false,'browsing saved reports does not bypass model selection for a new task');
 
 // An empty workspace has no current brief while the welcome page is rendered.
-const statusCode=source.slice(source.indexOf('function renderReportStatus(){'),source.indexOf('function renderAssistantSummary(){'));
+const statusCode=section(source,'function renderReportStatus(){','function renderAssistantSummary(){','frontend/app.js');
 const empty=vm.createContext({$:el,current:undefined,state:{assessments:[],jobs:[]}});
 vm.runInContext(statusCode,empty);
 vm.runInContext('renderReportStatus()',empty);
@@ -101,8 +102,7 @@ const startup=vm.createContext({
  renderWelcome(){throw Error('a saved demo should open locally')},renderChat(){throw Error('demo restoration does not enter chat')},
 });
 for(const name of ['renderSessions','initChat']){
- const at=source.indexOf(`${name==='initChat'?'async ':''}function ${name}(`);
- vm.runInContext(source.slice(at,source.indexOf('\n}',at)+2),startup);
+ vm.runInContext(section(source,`${name==='initChat'?'async ':''}function ${name}(`,'\n}','frontend/app.js')+'\n}',startup);
 }
 await vm.runInContext('initChat()',startup);
 assert.deepEqual(startupPages,['report']);

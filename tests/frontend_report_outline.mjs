@@ -2,9 +2,10 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const outlineCode=source.slice(source.indexOf('function outlineHeadings'),source.indexOf('function applyOutlineToSetup'));
-const openCode=source.slice(source.indexOf('function openBrief'),source.indexOf('function changed()'));
+const outlineCode=section(source,'function outlineHeadings','function applyOutlineToSetup','frontend/app.js');
+const openCode=section(source,'function openBrief','function changed()','frontend/app.js');
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',textContent:'',hidden:false,innerHTML:'',querySelectorAll:()=>[]});return elements.get(id)};
 let editorContent='';
@@ -48,7 +49,7 @@ console.log('PASS: outline edits persist across view switches and reset restores
 
 // applyOutlineToSetup must only change manual_sections_text, never unrelated fields.
 {
- const applyCode=source.slice(source.indexOf('function applyOutlineToSetup'),source.indexOf('function expandReportPanel'));
+ const applyCode=section(source,'function applyOutlineToSetup','function expandReportPanel','frontend/app.js');
  const calls=[];
  const outlineEl={value:'## Alpha\n\n## Beta\n123\n## Gamma'};
  const form={elements:{manual_sections_text:{value:''},objective:{value:'ORIGINAL'},report_profile:{value:'p'}}};
