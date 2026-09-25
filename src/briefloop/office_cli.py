@@ -30,6 +30,17 @@ OFFICE_SUFFIXES = ('.docx', '.xlsx', '.pptx')
 # check must not do any of that on the user's behalf.
 QUIET_ENV = {'OFFICECLI_SKIP_UPDATE': '1', 'OFFICECLI_NO_AUTO_INSTALL': '1'}
 
+# officecli fires these punctuation/spacing findings on normal prose (full-width
+# CJK punctuation, aligned spacing). They carry no report-level signal, so the
+# issues step filters them out; raw and post-filter counts are both kept.
+PUNCTUATION_NOISE_MESSAGES = frozenset({'Duplicate punctuation', 'Consecutive spaces'})
+# Shared marker for "no subprocess was started: the request budget ran out".
+BUDGET_EXHAUSTED = '请求时间预算用尽'
+
+
+class BudgetExhausted(ValueError):
+    """A render step was skipped because the shared request budget ran out."""
+
 
 def _env():
     return {**os.environ, **QUIET_ENV}
@@ -137,7 +148,7 @@ def run_json(args, *, timeout, deadline=None):
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= MIN_STEP_SECONDS:
-            return {'ok': False, 'data': None, 'reason': '请求时间预算用尽'}
+            return {'ok': False, 'data': None, 'reason': BUDGET_EXHAUSTED}
         timeout = min(timeout, remaining)
     try:
         command = platform_support.cli_command([str(item) for item in args])
@@ -190,12 +201,20 @@ def _record_check(store, kind, target, digest, outcome, job_id, version_id, tool
         else:
             count = data.get('count') if isinstance(data, dict) else None
             items = data.get('issues') if isinstance(data, dict) else None
-            count = count if type(count) is int and count >= 0 else 0
-            items = [item for item in items if isinstance(item, dict)][:MAX_ISSUE_ITEMS] if isinstance(items, list) else []
-            found = count or len(items)
-            status = 'issues' if found else 'ok'
-            summary = f'{found} 项质检发现' if found else '未发现质检问题'
-            payload = {'count': count, 'issues': items}
+            count = count if type(count) is int and count >= 0 else None
+            listed = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+            total = count if count is not None else len(listed)
+            noise = sum(1 for item in listed if item.get('message') in PUNCTUATION_NOISE_MESSAGES)
+            items = [item for item in listed if item.get('message') not in PUNCTUATION_NOISE_MESSAGES][:MAX_ISSUE_ITEMS]
+            found = total - noise
+            # Neutral observation wording: findings are worth reading, not an
+            # alarm; pure punctuation noise stays visible only as a count.
+            status = 'observed' if found else 'ok'
+            if found:
+                summary = f'观察 {found} 项' + (f'（另过滤 {noise} 项纯标点类噪音）' if noise else '')
+            else:
+                summary = '未发现质检问题' + (f'（过滤 {noise} 项纯标点类噪音）' if noise else '')
+            payload = {'count': found, 'total': total, 'noise_filtered': noise, 'issues': items}
     else:
         status, summary, payload = 'error', outcome['reason'], {'reason': outcome['reason']}
     with store.tx() as c:
@@ -209,7 +228,8 @@ def _record_check(store, kind, target, digest, outcome, job_id, version_id, tool
     elif kind == 'validate':
         view['summary'] = summary
     else:
-        view.update(count=payload['count'], items=list(payload['issues']))
+        view.update(count=payload['count'], total=payload['total'],
+                    noise_filtered=payload['noise_filtered'], items=list(payload['issues']))
     return view
 
 
@@ -223,14 +243,19 @@ def _row_view(row):
     else:
         view.update(count=int(data.get('count') or 0),
                     items=list(data.get('issues') or [])[:MAX_ISSUE_ITEMS])
+        for key in ('total', 'noise_filtered'):
+            if type(data.get(key)) is int:
+                view[key] = data[key]
     return view
 
 
-def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
+def check_file(store, path, *, job_id=None, version_id=None, deadline=None, cancelled=None):
     """Best-effort validate + issues for one exported file; never raises.
 
     Silent no-op unless the switch is on, the suffix is an Office format and
-    the binary is found: no subprocess, no rows, no events.
+    the binary is found: no subprocess, no rows, no events. `cancelled` is an
+    optional event checked between the sub-steps: a stop request never waits
+    out the remaining subprocess budget, it just leaves the gate unfinished.
     """
     try:
         target = Path(path)
@@ -245,10 +270,13 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
         tool_version = version(binary)
         steps = (('validate', [binary, 'validate', str(target), '--json'], VALIDATE_TIMEOUT),
                  ('issues', [binary, 'view', str(target), 'issues', '--json'], ISSUES_TIMEOUT))
-        views = {kind: _record_check(store, kind, target, digest,
-                                     run_json(args, timeout=limit, deadline=deadline),
-                                     job_id, version_id, tool_version)
-                 for kind, args, limit in steps}
+        views = {}
+        for kind, args, limit in steps:
+            if cancelled is not None and cancelled.is_set():
+                return None
+            views[kind] = _record_check(store, kind, target, digest,
+                                        run_json(args, timeout=limit, deadline=deadline),
+                                        job_id, version_id, tool_version)
         summary = {'tool': BINARY, 'tool_version': tool_version,
                    'validate': views['validate'], 'issues': views['issues']}
         if job_id:
@@ -381,11 +409,15 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
     cached = _cached_render(directory, digest, page)
     if cached:
         return cached
-    staging = directory / f'.render-{page}.tmp.png'
+    # Per-request staging name: concurrent renders of the same page must not
+    # write into (or clean up) each other's temporary file.
+    staging = directory / f'.render-{page:04d}-{uid("render")}.tmp.png'
     try:
         outcome = run_json([binary, 'view', str(target), 'screenshot', '--page', str(page),
                             '-o', str(staging), '--json'], timeout=timeout, deadline=deadline)
         if not outcome['ok']:
+            if outcome['reason'] == BUDGET_EXHAUSTED:
+                raise BudgetExhausted('预览失败：' + BUDGET_EXHAUSTED)
             raise ValueError('预览失败，不影响文件本身：' + str(outcome['reason']))
         payload = staging.read_bytes()
         width, height = _png_size(payload)
@@ -451,9 +483,14 @@ def render_preview(store, body):
     for page in pages:
         try:
             found = render_page(store, target['path'], page, deadline=deadline)
+        except BudgetExhausted:
+            incomplete, reason = True, BUDGET_EXHAUSTED + '，仅返回已完成页面'
+            break
         except ValueError as exc:
-            if deadline - time.monotonic() <= MIN_STEP_SECONDS:
-                incomplete, reason = True, '请求时间预算用尽，仅返回已完成页面'
+            if rendered and deadline - time.monotonic() <= MIN_STEP_SECONDS:
+                # A real page failure is not budget exhaustion: name the actual
+                # cause even when the shared budget is spent at the same time.
+                incomplete, reason = True, f'第 {page} 页渲染失败（{exc}），请求时间预算也已用尽，仅返回已完成页面'
                 break
             raise
         cached_all = cached_all and found['cached']
