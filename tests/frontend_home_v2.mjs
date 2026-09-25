@@ -6,7 +6,7 @@ import {section,allFrontendSources} from './source_section.mjs';
 const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
 const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const schedules=fs.readFileSync(new URL('../frontend/schedules.js',import.meta.url),'utf8');
-const genre=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
+const genre=fs.readFileSync(new URL('../frontend/templates.js',import.meta.url),'utf8');
 const tokens=fs.readFileSync(new URL('../src/briefloop/static/tokens.css',import.meta.url),'utf8');
 const style=fs.readFileSync(new URL('../src/briefloop/static/style.css',import.meta.url),'utf8');
 const frontendAll=allFrontendSources();
