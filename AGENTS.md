@@ -4,6 +4,7 @@
 
 - 若存在 private_planning/PLAN.md，以其中的最新用户决定为准；普通 clone 以本文件和 README 为准。旧项目的阶段、审批和测试约定不自动继承。
 - 实现真实可操作的网页和后台 agent 执行，不把手动 JSON 或 mock 当成完成。
+- 前端新增功能直接写进 `frontend/` 下的新模块（工厂函数注入依赖，参考 schedules.js、app-updates.js 的写法）；`app.js` 只保留全局状态、启动与组装，不再整块增长。
 - 保留精简 SQLite ControlStore、来源、稿件版本、评分绑定和恢复；不复制旧 mandatory Auditor/Editor/Claim Ledger 流程。
 - BriefLoop（主 Agent，代码中也叫 Orchestrator）和实际 agent 负责规划、研究、写作、评分；Python 负责工具、进程、存储、确定计算及既定选择规则。
 - 用户原稿/修订可见；低分不隐藏稿件，普通工作稿始终可下载。正式交付不能豁免确定重大错误、核心证据缺口或未决重要冲突。Wiki 是经验，不是当期事实来源。
