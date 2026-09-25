@@ -10,11 +10,23 @@ import os
 from pathlib import Path, PurePosixPath
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
-from .store import dump
+from .store import dump, now
 from .release import get_release, validate_release, safe_file, sha
 from .packet_views import DERIVED_VIEWS
 
 SCHEMA_VERSION = 2
+
+
+def _bundle_identity(release_id, manifest_hash, permissions, office_render):
+    """Single construction of the bundle fingerprint input.
+
+    The enqueue fingerprint and the regeneration check must hash exactly this
+    dict, so the optional render page can never yield one fingerprint with two
+    different package contents.
+    """
+    return {'release_id': release_id, 'manifest_hash': manifest_hash,
+            'permissions': permissions, 'schema_version': SCHEMA_VERSION,
+            'office_render': bool(office_render)}
 
 _OMITTED_TEXT = '[omitted: source export permissions]'
 # Only structural metadata survives in unattributed research records. New free
@@ -117,12 +129,12 @@ def permissions_for(source_ids, permissions):
     return result
 
 
-def enqueue_bundle(store, release_id, source_permissions):
+def enqueue_bundle(store, release_id, source_permissions, include_office_render=False):
     release = get_release(store, release_id)
     validate_release(store, release)
     permissions = permissions_for([s['id'] for s in release['data']['snapshot']['sources']], source_permissions)
-    fingerprint = sha(dump({'release_id': release_id, 'manifest_hash': release['result']['manifest_hash'],
-                            'permissions': permissions, 'schema_version': SCHEMA_VERSION}).encode())
+    fingerprint = sha(dump(_bundle_identity(release_id, release['result']['manifest_hash'],
+                                            permissions, include_office_render)).encode())
     for job in store.rows("SELECT * FROM jobs WHERE kind='audit_bundle' ORDER BY rowid DESC"):
         payload = json.loads(job['payload'])
         if payload.get('fingerprint') != fingerprint:
@@ -137,6 +149,7 @@ def enqueue_bundle(store, release_id, source_permissions):
                 pass
     return store.enqueue('audit_bundle', {'release_id': release_id, 'version_id': release['version_id'],
                                           'run_id': release['data']['run_id'], 'permissions': permissions,
+                                          'office_render': bool(include_office_render),
                                           'fingerprint': fingerprint})
 
 
@@ -176,8 +189,8 @@ def generate_bundle(store, job, cancelled):
     release = get_release(store, payload['release_id'])
     release_manifest = validate_release(store, release)
     permissions = permissions_for([s['id'] for s in release['data']['snapshot']['sources']], payload['permissions'])
-    expected = sha(dump({'release_id': release['id'], 'manifest_hash': release['result']['manifest_hash'],
-                         'permissions': permissions, 'schema_version': SCHEMA_VERSION}).encode())
+    expected = sha(dump(_bundle_identity(release['id'], release['result']['manifest_hash'],
+                                         permissions, payload.get('office_render'))).encode())
     if payload['fingerprint'] != expected:
         raise ValueError('审计包与正式件或授权选择不一致')
     folder = safe_file(store.root, release['result']['manifest_path']).parent
@@ -300,6 +313,23 @@ def generate_bundle(store, job, cancelled):
     if records['export_input'].get('template'):
         omissions.append({'kind': 'template_original', 'reason': '仅提供冻结模板标识、样式说明及最终Word，不打包历史模板原件'})
     blobs['release-manifest.json'] = safe_file(store.root, release['result']['manifest_path']).read_bytes()
+    office_render = None
+    if payload.get('office_render'):
+        # Optional enhancement over the frozen delivery: a local render of the
+        # first page. Unavailable or failed rendering never blocks the bundle.
+        try:
+            from . import office_cli
+            office_cli.require_enabled(store)
+            report = safe_file(store.root, release['result']['path'])
+            rendered = office_cli.render_page(store, report, 1)
+            name = 'office-render/report-page-1.png'
+            blobs[name] = Path(rendered['path']).read_bytes()
+            office_render = {'status': 'ok', 'file': name, 'source': 'report.docx',
+                             'source_sha256': release['result']['sha256'], 'tool': 'officecli',
+                             'tool_version': rendered.get('tool_version'), 'render': 'screenshot',
+                             'page': 1, 'created': now()}
+        except Exception as exc:
+            office_render = {'status': 'unavailable', 'reason': str(exc)}
     for item in transformations:
         if item['file'] in release_manifest['files']:
             item['original_sha256'] = release_manifest['files'][item['file']]
@@ -314,6 +344,7 @@ def generate_bundle(store, job, cancelled):
                 'transformations': transformations,
                 'complete_materials': not omissions and not transformations,
                 'files': {name: sha(blob) for name, blob in blobs.items()},
+                **({'office_render': office_render} if office_render is not None else {}),
                 'validation_scope': '结构、文件完整性和版本关联；不判断事实真伪，不提供防本机管理员篡改保证。'}
     blobs['manifest.json'] = dump(manifest).encode()
     buffer = BytesIO()
