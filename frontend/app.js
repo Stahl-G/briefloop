@@ -32,6 +32,7 @@ import {appUpdatesUI} from './app-updates.js';
 import {templatesUI,GENRE_META,ICONS,splitTemplateName} from './templates.js';
 import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
 import {reportExportUI} from './report-export.js';
+import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,DEEP_LENGTH,INDUSTRY_LENGTH,lengthUnit,runLanguage} from './report-language.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -160,6 +161,8 @@ function applyRequirements(text){
  try{list('key_questions');list('manual_sections',true);list('writing_preferences')}catch(e){notice('要求清单无法应用：'+e.message,true);return}
  const form=$('requirements');if(!form)return;
  const set=(name,value)=>{const el=form.elements[name];if(el&&value!=null){el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}};
+ // Language first: its change event resets untouched lengths before explicit numbers apply.
+ if(data.language!=null){const language=reportLanguage(data.language);if(language)set('language',language)}
  set('title',data.title);set('objective',data.objective);set('audience',data.audience);set('period',data.period);
  for(const key of ['period_start','period_end','report_timezone'])set(key,data[key]);
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
@@ -367,7 +370,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');reportLanguageForm.restore(state.requirements?.language);initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -1687,25 +1690,33 @@ $('chat-model-provider').oninput=()=>{rememberDraft();updateComposer()};
 for(const id of ['chat-model','chat-model-provider','model-select','model-provider'])$(id).addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();event.stopPropagation();$(id).blur()}});
 
 let lengthEdited=false;
-const LENGTH_PRESETS={quick:[350,500],compact:[800,1000],balanced:[1500,2000],detailed:[2000,2500]};
+// Length presets follow the report language; untouched numbers follow a language change.
+const reportLanguageForm=reportLanguageUI({notice,onChange:language=>{
+ if(lengthEdited)return;
+ briefLengthChoice=null;industryLengthChoice=[...INDUSTRY_LENGTH[language]];
+ [$('target-words').value,$('max-words').value]=industryProfileActive()?industryLengthChoice:$('research-tier').value==='deep'?DEEP_LENGTH[language]:presetLengths($('length-preset').value);
+ validateLengthInputs();
+}});
+reportLanguageForm.init();
+function presetLengths(extent){const presets=LANGUAGE_LENGTHS[reportLanguageForm.current()];return presets[extent]||presets.balanced}
 function initializeLengthInputs(requirements){
- const preset=LENGTH_PRESETS[$('length-preset').value]||LENGTH_PRESETS.balanced;
+ const preset=presetLengths($('length-preset').value);
  $('target-words').value=requirements.target_words??preset[0];$('max-words').value=requirements.max_words??preset[1];validateLengthInputs();
 }
 function validateLengthInputs(){
  const target=Number($('target-words').value),maximum=Number($('max-words').value);
  $('max-words').setCustomValidity(Number.isInteger(target)&&target>0&&Number.isInteger(maximum)&&maximum>0&&maximum<target?'字数上限不能小于目标字数。':'');
 }
-$('length-preset').onchange=()=>{lengthEdited=true;const [target,maximum]=LENGTH_PRESETS[$('length-preset').value];$('target-words').value=target;$('max-words').value=maximum;validateLengthInputs()};
+$('length-preset').onchange=()=>{lengthEdited=true;const [target,maximum]=presetLengths($('length-preset').value);$('target-words').value=target;$('max-words').value=maximum;validateLengthInputs()};
 for(const id of ['target-words','max-words'])$(id).oninput=()=>{lengthEdited=true;validateLengthInputs()};
 function renderBriefLength(){
  renderReportDataButton();
  const element=$('brief-length');if(!current){element.hidden=true;return}element.hidden=false;
  const stats=state.briefs.find(brief=>brief.id===current.id)?.length_stats||current.length_stats;
  element.classList.remove('over-limit');if(!stats||!Number.isFinite(stats.count)){element.textContent='字数信息暂不可用';return}
- const count=value=>new Intl.NumberFormat('zh-CN').format(value),parts=[`${dirty?'上次保存':'正文'} ${count(stats.count)} 字`];
- if(stats.target_words==null&&stats.max_words==null)parts.push('字数目标与上限未设置');else {parts.push(stats.target_words==null?'目标未设置':`目标 ${count(stats.target_words)}`);parts.push(stats.max_words==null?'上限未设置':`上限 ${count(stats.max_words)}`)}
- if(stats.over_limit===true&&stats.max_words!=null){parts.push(`超出 ${count(stats.count-stats.max_words)} 字`);element.classList.add('over-limit')}
+ const unit=lengthUnit(runLanguage(state,current.run_id)),count=value=>new Intl.NumberFormat('zh-CN').format(value),parts=[`${dirty?'上次保存':'正文'} ${count(stats.count)} ${unit}`];
+ if(stats.target_words==null&&stats.max_words==null)parts.push(`${unit}数目标与上限未设置`);else {parts.push(stats.target_words==null?'目标未设置':`目标 ${count(stats.target_words)}`);parts.push(stats.max_words==null?'上限未设置':`上限 ${count(stats.max_words)}`)}
+ if(stats.over_limit===true&&stats.max_words!=null){parts.push(`超出 ${count(stats.count-stats.max_words)} ${unit}`);element.classList.add('over-limit')}
  if(dirty)parts.push('保存后更新');element.textContent=parts.join(' · ');
 }
 
@@ -1748,7 +1759,7 @@ function initializeResearchBudget(requirements){const budget=requirements.resear
 function renderBudgetProviderScope(){const p=readSearchPolicy(),native=p.primary_provider==='native'||(p.coverage_mode!=='primary_only'&&p.native_search_enabled);$('budget-provider-scope').textContent='受控 API 渠道共享搜索与候选预算；正文按唯一 URL 计量。'+(native?'宿主原生搜索次数未知，单独显示，不计入受控 API 硬上限。':'')}
 $('budget-preset').onchange=()=>{const budget=RESEARCH_BUDGET_PRESETS[$('budget-preset').value];if(budget)for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key]};
 for(const id of Object.values(BUDGET_FIELDS))$(id).oninput=reflectBudgetPreset;
-$('research-tier').onchange=()=>{if($('research-tier').value==='deep'&&!lengthEdited){$('target-words').value=10000;$('max-words').value=12000;validateLengthInputs()}const budget=RESEARCH_TIERS[$('research-tier').value];if(!budget)return;for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key];reflectBudgetPreset();renderBudgetProviderScope()};
+$('research-tier').onchange=()=>{if($('research-tier').value==='deep'&&!lengthEdited){[$('target-words').value,$('max-words').value]=DEEP_LENGTH[reportLanguageForm.current()];validateLengthInputs()}const budget=RESEARCH_TIERS[$('research-tier').value];if(!budget)return;for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key];reflectBudgetPreset();renderBudgetProviderScope()};
 
 let budgetPolling=false;
 function researchBudgetTarget(){
@@ -1826,7 +1837,8 @@ function initializeReportProfile(requirements){
  for(const id of referenceSelected)selected.delete(id);
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();
  if(industryProfileActive()){
-  $('target-words').value=requirements.target_words??5000;$('max-words').value=requirements.max_words??5500;
+  const [target,maximum]=INDUSTRY_LENGTH[reportLanguageForm.current()];
+  $('target-words').value=requirements.target_words??target;$('max-words').value=requirements.max_words??maximum;
   industryLengthChoice=[$('target-words').value,$('max-words').value];
  }
  validateLengthInputs();renderReferenceSources();
@@ -1838,7 +1850,7 @@ $('report-profile').onchange=()=>{
   for(const id of referenceSelected){selected.delete(id);const evidence=$('source-list').querySelector(`[data-check="${CSS.escape(id)}"]`);if(evidence)evidence.checked=false}
  }else{
   industryLengthChoice=[$('target-words').value,$('max-words').value];
-  [$('target-words').value,$('max-words').value]=briefLengthChoice||LENGTH_PRESETS[$('length-preset').value]||LENGTH_PRESETS.balanced;
+  [$('target-words').value,$('max-words').value]=briefLengthChoice||presetLengths($('length-preset').value);
 
  }
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();validateLengthInputs();
@@ -1982,7 +1994,7 @@ function renderTemplates(first=false){
  templateSections();
  applyTemplateSectionEdits();
 }
-$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits();renderWorkflowChoices()};
+$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits();renderWorkflowChoices();reportLanguageForm.syncTemplate(state.templates?.find(t=>t.id===$('template-select').value))};
 $('template-import-button').onclick=()=>$('template-file').click();
 $('template-file').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;await api('template-import',await uploadPayload(file,getUploadLimits()));e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式，完成后可在我的模板中选择')});
 
@@ -2468,7 +2480,7 @@ async function openSourceDrawer(id,usage,match){
  }
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1)}if(b)b.hidden=true}
-const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,setSettings:next=>state.settings=next});
+const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,setSettings:next=>state.settings=next,syncTemplateLanguage:template=>reportLanguageForm.syncTemplate(template)});
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
 if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
@@ -2525,7 +2537,7 @@ function compactReportInstruction(){
  const row=document.querySelector('[data-report-options="chat"]');if(!row)return '';
  const tier=row.querySelector('[data-option="tier"]').value;
  const fact=row.querySelector('[data-option="fact"]').checked&&$('chat-allow-web').checked;
- return `\n\n本轮报告选项（仅当用户要求生成报告时使用，不因此自动生成）：research_tier=${tier}，fact_check=${fact}。生成时传入 requirements；${tier==='deep'?'深度研究建议 8000–12000 字，默认 target_words=10000、max_words=12000；':''}用户正文另有明确选择则按正文。`;
+ return `\n\n本轮报告选项（仅当用户要求生成报告时使用，不因此自动生成）：research_tier=${tier}，fact_check=${fact}。生成时传入 requirements；${tier==='deep'?'深度研究建议 8000–12000 字（英文报告约 6500–8000 词）；不传 target_words/max_words 时按报告语言取默认；':''}用户正文另有明确选择则按正文。`;
 }
 function compactReportControls(where){
  const row=document.createElement('div');row.className='compact-report-options';row.dataset.reportOptions=where;

@@ -222,6 +222,16 @@ BUILTIN_TEMPLATES = (
         ('stock-research-zh-t3.docx', 'stock-research-zh-t3.spec.json', '券商研报·珊瑚红'),
         ('stock-research-zh-t4.docx', 'stock-research-zh-t4.spec.json', '券商研报·石墨黑'),
         ('stock-research-zh-t5.docx', 'stock-research-zh-t5.spec.json', '券商研报·典雅灰'),
+        ('general-report-en-t1.docx', 'general-report-en-t1.spec.json', '英文通用报告·品牌绿'),
+        ('general-report-en-t2.docx', 'general-report-en-t2.spec.json', '英文通用报告·极简蓝'),
+        ('general-report-en-t3.docx', 'general-report-en-t3.spec.json', '英文通用报告·珊瑚红'),
+        ('general-report-en-t4.docx', 'general-report-en-t4.spec.json', '英文通用报告·石墨黑'),
+        ('general-report-en-t5.docx', 'general-report-en-t5.spec.json', '英文通用报告·典雅灰'),
+        ('stock-research-en-t1.docx', 'stock-research-en-t1.spec.json', '英文研报·品牌绿'),
+        ('stock-research-en-t2.docx', 'stock-research-en-t2.spec.json', '英文研报·极简蓝'),
+        ('stock-research-en-t3.docx', 'stock-research-en-t3.spec.json', '英文研报·珊瑚红'),
+        ('stock-research-en-t4.docx', 'stock-research-en-t4.spec.json', '英文研报·石墨黑'),
+        ('stock-research-en-t5.docx', 'stock-research-en-t5.spec.json', '英文研报·典雅灰'),
 )
 
 
@@ -384,7 +394,7 @@ def export_template(store,brief,document,figures,template_id=None,source_records
     if source_records is None:
         source_records={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])}
     render_document(doc,document,figures=figures,styles=styles,
-                    sources=source_records,citations=detail.get('citations',[]))
+                    sources=source_records,citations=detail.get('citations',[]),language=req.get('language'))
     if ' TOC ' in doc.element.xml:
         from .industry_export import enable_update_fields
         enable_update_fields(doc)
