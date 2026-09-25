@@ -4,6 +4,7 @@ import threading
 
 from briefloop.server import make_server
 from briefloop.sources import upload
+from briefloop.templates import import_builtin
 
 
 def test_foreign_host_cannot_read_workspace_or_use_session_token(tmp_path):
@@ -84,6 +85,21 @@ def test_private_get_origin_boundary_preserves_navigation_and_native_clients(tmp
             assert get(path,[('Origin','https://untrusted.example'),('Sec-Fetch-Site','cross-site')])[0]==200
     finally:server.shutdown();thread.join();_close_service(server)
 
+
+def test_polled_state_carries_template_outlines_without_word_styles(tmp_path):
+    from briefloop.server import _close_service
+    server=make_server(tmp_path/'workspace',port=0,paused=True)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        import_builtin(server.store)
+        conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        conn.request('GET','/api/state')
+        polled=json.loads(conn.getresponse().read())['templates'];conn.close()
+        stored={row['id']:json.loads(row['spec']) for row in server.store.rows('SELECT id,spec FROM templates')}
+        # The page re-reads this snapshot on every poll; it edits section outlines only.
+        assert polled and all(json.loads(t['spec'])=={'sections':stored[t['id']]['sections']} for t in polled)
+        assert any('styles' in spec for spec in stored.values())
+    finally:server.shutdown();thread.join();_close_service(server)
 
 def test_upload_limits_are_disclosed_and_enforced_before_source_creation(tmp_path,monkeypatch):
     import base64
