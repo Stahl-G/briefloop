@@ -25,7 +25,11 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
 
-ASSETS = Path(__file__).resolve().parent.parent / 'src' / 'briefloop' / 'template_assets'
+SRC = Path(__file__).resolve().parent.parent / 'src'
+sys.path.insert(0, str(SRC))
+from briefloop.ooxml_order import add_ordered  # noqa: E402  (the checkout's own package)
+
+ASSETS = SRC / 'briefloop' / 'template_assets'
 
 
 # ------------------------------------------------------------------ themes
@@ -134,10 +138,7 @@ def run_props(run, *, size=None, bold=False, color=INK, east='宋体', western='
 
 
 def shade_element(ppr, fill):
-    element = OxmlElement('w:shd')
-    element.set(qn('w:val'), 'clear')
-    element.set(qn('w:fill'), fill)
-    ppr.append(element)
+    add_ordered(ppr, 'shd', val='clear', fill=fill)
 
 
 def shade(paragraph, fill):
@@ -145,12 +146,8 @@ def shade(paragraph, fill):
 
 
 def bottom_border_ppr(ppr, *, color, sz='6', space='4'):
-    border = OxmlElement('w:pBdr')
-    bottom = OxmlElement('w:bottom')
-    for key, value in (('val', 'single'), ('sz', sz), ('color', color), ('space', space)):
-        bottom.set(qn('w:' + key), value)
-    border.append(bottom)
-    ppr.append(border)
+    border = add_ordered(ppr, 'pBdr')
+    add_ordered(border, 'bottom', val='single', sz=sz, color=color, space=space)
 
 
 def bottom_border(paragraph, *, color, sz='6', space='4'):
@@ -164,14 +161,9 @@ def page_break(doc):
 
 
 def table_borders(table, spec):
-    borders = OxmlElement('w:tblBorders')
+    borders = add_ordered(table._tbl.tblPr, 'tblBorders')
     for edge, kind, size in spec:
-        element = OxmlElement('w:' + edge)
-        element.set(qn('w:val'), kind)
-        element.set(qn('w:sz'), size)
-        element.set(qn('w:color'), '1E2320')
-        borders.append(element)
-    table._tbl.tblPr.append(borders)
+        add_ordered(borders, edge, val=kind, sz=size, color='1E2320')
 
 
 THREE_LINE = (('top', 'single', '12'), ('bottom', 'single', '12'),
@@ -194,16 +186,9 @@ def add_sample_table(doc, *, kind, header_fill=None, rows=3, cols=3):
             if r == 0:
                 cell.paragraphs[0].runs[0].font.bold = True
                 if header_fill:
-                    cell_shade = OxmlElement('w:shd')
-                    cell_shade.set(qn('w:val'), 'clear')
-                    cell_shade.set(qn('w:fill'), header_fill)
-                    cell._tc.get_or_add_tcPr().append(cell_shade)
-                cell_borders = OxmlElement('w:tcBorders')
-                bottom = OxmlElement('w:bottom')
-                for key, value in (('val', 'single'), ('sz', '8'), ('color', '1E2320')):
-                    bottom.set(qn('w:' + key), value)
-                cell_borders.append(bottom)
-                cell._tc.get_or_add_tcPr().append(cell_borders)
+                    add_ordered(cell._tc.get_or_add_tcPr(), 'shd', val='clear', fill=header_fill)
+                cell_borders = add_ordered(cell._tc.get_or_add_tcPr(), 'tcBorders')
+                add_ordered(cell_borders, 'bottom', val='single', sz='8', color='1E2320')
     return table
 
 

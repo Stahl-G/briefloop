@@ -6,6 +6,7 @@ from docx.shared import Mm, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from .default_fonts import WESTERN_FONT
+from .ooxml_order import add_ordered, insert_ordered
 
 BLUE = '17466B'
 
@@ -17,11 +18,7 @@ def set_east_asia(run, name):
 
 
 def _element(parent, tag, **attributes):
-    node = OxmlElement('w:' + tag)
-    for key, value in attributes.items():
-        node.set(qn('w:' + key), str(value))
-    parent.append(node)
-    return node
+    return add_ordered(parent, tag, **attributes)
 
 
 def _paragraph_after(paragraph, *, style=None):
@@ -224,7 +221,7 @@ def enable_update_fields(doc):
     if settings.find(qn('w:updateFields')) is None:
         update = OxmlElement('w:updateFields')
         update.set(qn('w:val'), 'true')
-        settings.append(update)
+        insert_ordered(settings, update)
 
 
 def style_heading(paragraph, level, *, first=False):
@@ -250,7 +247,7 @@ def style_table(table):
             cell.width = Mm(widths[index])
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             tcpr = cell._tc.get_or_add_tcPr()
-            _element(tcpr, 'shd', fill=BLUE if row_index == 0 else ('EBF2F8' if row_index % 2 else 'FFFFFF'))
+            _element(tcpr, 'shd', val='clear', fill=BLUE if row_index == 0 else ('EBF2F8' if row_index % 2 else 'FFFFFF'))
             margins = _element(tcpr, 'tcMar')
             for edge in ('top', 'bottom'): _element(margins, edge, w=80, type='dxa')
             for edge in ('left', 'right'): _element(margins, edge, w=90, type='dxa')
