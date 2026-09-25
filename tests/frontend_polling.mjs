@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {adaptivePoll} from '../frontend/polling.js';
 import {updatePanel} from '../frontend/report-panels.js';
+import {section} from './source_section.mjs';
 
 test('polling backs off idle/hidden, refreshes on return and never overlaps a slow request',async()=>{
  const timers=new Map();let sequence=0,listener,active=false,release,calls=0;
@@ -25,7 +26,11 @@ test('polling backs off idle/hidden, refreshes on return and never overlaps a sl
 });
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const line=name=>source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
+const line=name=>{
+ const row=source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
+ if(!row)throw Error(`frontend/app.js has no function ${name}`);
+ return row;
+};
 
 test('a snapshot that differs only by the server clock keeps the page; timed task views still refresh',async()=>{
  let clock='2026-09-25T10:00:00+00:00',jobs=[],renders=0;const timed=[];
@@ -45,8 +50,8 @@ test('a snapshot that differs only by the server clock keeps the page; timed tas
 });
 
 test('an unchanged task banner keeps its buttons across polls and a closed one stays consistent',()=>{
- const start=source.indexOf('const BANNER_RESULT_KINDS=');
- const end=source.indexOf('\n}\n',source.indexOf('function renderTaskBanner(){'))+3;
+ // The banner constants and helpers are one-line functions; renderTaskBanner is the first block closed by \n}.
+ const banner=section(source,'const BANNER_RESULT_KINDS=','\n}\n','frontend/app.js')+'\n}\n';
  let writes=0,stored=null;const buttons=new Map();
  const box={hidden:true,className:'',html:'',get innerHTML(){return this.html},set innerHTML(value){writes++;this.html=value},
   querySelector:selector=>{if(!buttons.has(selector))buttons.set(selector,{});return buttons.get(selector)}};
@@ -54,7 +59,7 @@ test('an unchanged task banner keeps its buttons across polls and a closed one s
  const context=vm.createContext({$:()=>box,state:{jobs:[job],briefs:[],runs:[]},parse:value=>JSON.parse(value||'{}'),esc:String,
   statuses:{running:'运行中'},taskLabel:()=>'生成报告',updatePanel,page(){},action(){},api(){},openBrief(){},
   localStorage:{getItem:()=>stored,setItem:(_,value)=>{stored=value}}});
- vm.runInContext(source.slice(start,end),context);
+ vm.runInContext(banner,context);
  vm.runInContext('renderTaskBanner();renderTaskBanner()',context);
  assert.equal(writes,1,'polling with the same task does not replace the announced banner');
  assert.equal(box.hidden,false);assert.match(box.html,/正在生成报告/);

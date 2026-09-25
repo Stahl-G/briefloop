@@ -1,5 +1,6 @@
 import {reasoningControls,settingsEffort,reasoningModel} from './reasoning-controls.js';
 import {$,esc} from './dom.js';
+import {markTab} from './tabs.js';
 import {clock,day,dayTime,dateTime,dateTimeSeconds,moment} from './time.js';
 import {api,uploadSource,setToken,getUploadLimits} from './api.js';
 import {createSourceLibrarySearch} from './source-library-search.js';
@@ -2203,8 +2204,6 @@ function settingsModelTab(name){
  document.querySelector('.model-settings legend').textContent='当前模型与角色';
 }
 /* ===== Report workspace redesign (see DESIGN.md) ===== */
-// Tab rows show the choice with .active; aria-selected gives assistive tech the same state.
-function markTab(button,selected){button.classList.toggle('active',selected);button.setAttribute('aria-selected',String(selected))}
 const REPORT_TABS=['assistant','sources','checks'];
 function setReportTab(name){
  const panel=$('report-panel');if(!panel)return;
