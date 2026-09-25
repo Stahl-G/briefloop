@@ -4,6 +4,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
+from .ooxml_order import add_ordered, insert_ordered
 from .document_model import normalize_document, table_layout, citation_label_text
 
 ALIGN = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER,
@@ -86,7 +87,7 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
         from docx.oxml import parse_xml
         from copy import deepcopy
         for child in parse_xml(serialized):
-            if target.find(child.tag) is None:target.append(deepcopy(child))
+            if target.find(child.tag) is None:insert_ordered(target,deepcopy(child))
 
     existing_bookmarks = doc.element.xpath('.//w:bookmarkStart')
     bookmark_count = [max((int(node.get(qn('w:id'))) for node in existing_bookmarks
@@ -184,9 +185,8 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
         elif kind == 'blockquote':
             for child in children: block(child, container, None, depth + 1)
         elif kind == 'horizontalRule':
-            p = paragraph(container); borders = OxmlElement('w:pBdr'); border = OxmlElement('w:bottom')
-            for key, value in [('val', 'single'), ('sz', '4'), ('color', 'CCCCCC')]: border.set(qn('w:' + key), value)
-            borders.append(border); p._p.get_or_add_pPr().append(borders)
+            p = paragraph(container); borders = add_ordered(p._p.get_or_add_pPr(), 'pBdr')
+            add_ordered(borders, 'bottom', val='single', sz=4, color='CCCCCC')
         elif kind == 'image':
             fid = attrs['src'].split(':', 1)[1]
             if fid not in figures: raise ValueError('图表资源未登记到此版本：' + fid)
@@ -222,7 +222,7 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
                 profiles=styles.get(profile_name) or styles.get('table_body') or []
                 profile=profiles[min(c,len(profiles)-1)] if profiles else {}
                 if ca.get('backgroundColor'):
-                    shading = OxmlElement('w:shd'); shading.set(qn('w:fill'), ca['backgroundColor'][1:]); cell._tc.get_or_add_tcPr().append(shading)
+                    add_ordered(cell._tc.get_or_add_tcPr(), 'shd', val='clear', fill=ca['backgroundColor'][1:])
                 widths = ca.get('colwidth')
                 cell.width = min(max_width, sum(widths) * 9525) if widths and all(widths) else sum(table.columns[i].width for i in range(c,c+cs))
                 inherit_properties(cell._tc.get_or_add_tcPr(),profile.get('cell'))
