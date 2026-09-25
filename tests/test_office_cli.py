@@ -427,3 +427,26 @@ def test_real_officecli_validate_issues_and_screenshot(tmp_path):
     with Image.open(BytesIO(payload)) as image:
         assert image.format == 'PNG'
     assert office_cli.office_image(store, rendered['digest'], 1) == payload
+
+
+def test_every_invocation_skips_the_tools_self_update(tmp_path, monkeypatch):
+    """Without these variables each call runs officecli's daily update check:
+    it writes ~/.officecli, contacts the vendor mirror in a background process
+    and refreshes skill files it installed into other AI tools."""
+    binary = tmp_path / 'officecli'
+    binary.write_text('')
+    seen = []
+
+    def record(command, **kwargs):
+        seen.append(kwargs.get('env') or {})
+        return subprocess.CompletedProcess(command, 0, stdout='{"success":true,"data":"ok"}', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', record)
+    monkeypatch.delenv('OFFICECLI_SKIP_UPDATE', raising=False)
+    office_cli._clear_caches()
+    office_cli.version(str(binary))
+    office_cli.run_json([str(binary), 'validate', 'x.docx', '--json'], timeout=5)
+    assert len(seen) == 2
+    for env in seen:
+        assert env.get('OFFICECLI_SKIP_UPDATE') == '1' and env.get('OFFICECLI_NO_AUTO_INSTALL') == '1'
+        assert env.get('PATH') == os.environ.get('PATH')  # the rest of the environment is kept

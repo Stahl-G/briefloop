@@ -261,9 +261,31 @@ def test_audit_bundle_identity_changes_only_with_the_option(tmp_path, monkeypatc
                                      permissions, True)
     without_identity = _bundle_identity(release['id'], release['result']['manifest_hash'],
                                         permissions, False)
-    assert with_identity['office_render'] is True and without_identity['office_render'] is False
+    assert with_identity['office_render'] is True and 'office_render' not in without_identity
     assert sha(dump(without_identity).encode()) != sha(dump(with_identity).encode())
     plain = enqueue_bundle(store, release['id'], {})
     assert json.loads(plain['payload'])['fingerprint'] == sha(dump(_bundle_identity(
         release['id'], release['result']['manifest_hash'],
         json.loads(plain['payload'])['permissions'], False)).encode())
+
+
+def test_bundles_without_a_render_keep_their_pre_option_fingerprint(tmp_path):
+    """A job queued before the option existed carries the old fingerprint; it
+    must still regenerate after an upgrade, and a finished bundle must still be
+    found and reused instead of being rebuilt."""
+    store, source, brief, review = reviewed_report(tmp_path)
+    release, job = complete_release(store, brief)
+    from briefloop.audit_bundle import (SCHEMA_VERSION, _bundle_identity, enqueue_bundle,
+                                        generate_bundle, permissions_for)
+    from briefloop.release import sha
+    permissions = permissions_for([s['id'] for s in release['data']['snapshot']['sources']], {})
+    legacy = sha(dump({'release_id': release['id'], 'manifest_hash': release['result']['manifest_hash'],
+                       'permissions': permissions, 'schema_version': SCHEMA_VERSION}).encode())
+    assert sha(dump(_bundle_identity(release['id'], release['result']['manifest_hash'],
+                                     permissions, False)).encode()) == legacy
+    old = store.enqueue('audit_bundle', {'release_id': release['id'], 'version_id': release['version_id'],
+                                         'run_id': release['data']['run_id'], 'permissions': permissions,
+                                         'fingerprint': legacy})
+    result = generate_bundle(store, old, threading.Event())
+    store.update_job(old['id'], 'complete', result=result)
+    assert enqueue_bundle(store, release['id'], {})['id'] == old['id']

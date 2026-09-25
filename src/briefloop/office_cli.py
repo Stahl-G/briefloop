@@ -23,6 +23,16 @@ from .store import dump, now, uid
 
 BINARY = 'officecli'
 OFFICE_SUFFIXES = ('.docx', '.xlsx', '.pptx')
+# Every officecli invocation otherwise runs its daily self-update check: it
+# writes ~/.officecli/config.json, spawns a background process that contacts
+# the vendor's release mirror (and replaces a non-package-managed binary), and
+# refreshes skill files it installed into other AI tools. A background quality
+# check must not do any of that on the user's behalf.
+QUIET_ENV = {'OFFICECLI_SKIP_UPDATE': '1', 'OFFICECLI_NO_AUTO_INSTALL': '1'}
+
+
+def _env():
+    return {**os.environ, **QUIET_ENV}
 # One HTTP request (office-check: validate+issues, office-preview: all pages)
 # shares this budget, so service shutdown is never blocked by one caller.
 REQUEST_BUDGET_SECONDS = 180
@@ -79,7 +89,7 @@ def version(path):
     try:
         probe = subprocess.run(platform_support.cli_command([str(path), '--version']),
                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                               encoding='utf-8', timeout=VERSION_TIMEOUT, check=True)
+                               encoding='utf-8', timeout=VERSION_TIMEOUT, check=True, env=_env())
         value = probe.stdout.strip().split('\n')[0][:160] or None
     except (OSError, subprocess.SubprocessError):
         value = None
@@ -132,7 +142,8 @@ def run_json(args, *, timeout, deadline=None):
     try:
         command = platform_support.cli_command([str(item) for item in args])
         completed = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
-                                   text=True, encoding='utf-8', timeout=timeout, check=False)
+                                   text=True, encoding='utf-8', timeout=timeout, check=False,
+                                   env=_env())
     except subprocess.TimeoutExpired:
         return {'ok': False, 'data': None, 'reason': f'officecli 执行超时（{int(timeout)} 秒）'}
     except (OSError, subprocess.SubprocessError, ValueError) as exc:

@@ -22,11 +22,16 @@ def _bundle_identity(release_id, manifest_hash, permissions, office_render):
 
     The enqueue fingerprint and the regeneration check must hash exactly this
     dict, so the optional render page can never yield one fingerprint with two
-    different package contents.
+    different package contents. The key is present only when the render is
+    requested, so a bundle without it keeps the fingerprint it had before the
+    option existed: jobs queued before an upgrade still regenerate, and a
+    finished bundle is still found and reused.
     """
-    return {'release_id': release_id, 'manifest_hash': manifest_hash,
-            'permissions': permissions, 'schema_version': SCHEMA_VERSION,
-            'office_render': bool(office_render)}
+    identity = {'release_id': release_id, 'manifest_hash': manifest_hash,
+                'permissions': permissions, 'schema_version': SCHEMA_VERSION}
+    if office_render:
+        identity['office_render'] = True
+    return identity
 
 _OMITTED_TEXT = '[omitted: source export permissions]'
 # Only structural metadata survives in unattributed research records. New free
