@@ -259,6 +259,9 @@ class Settings(RoleModel):
     company_context_enabled: bool | None = None
     # Workspace-wide default for the per-task fact_check switch; tasks may override.
     fact_checker: bool = False
+    # Workspace-wide optional local file quality checks via officecli; the
+    # switch has no effect while the binary is not installed.
+    officecli_enabled: bool = False
     research_tier: Literal['quick','standard','deep'] = 'standard'
 
 
