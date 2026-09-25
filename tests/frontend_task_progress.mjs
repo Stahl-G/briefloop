@@ -14,8 +14,9 @@ assert.equal(elapsedText(job.created,Date.parse(job.created)+84000),'1 分 24 �
 // Stopped/replaced requests cannot overwrite the newer card snapshot.
 const {readFileSync}=await import('node:fs');
 const vm=await import('node:vm');
+const {section}=await import('./source_section.mjs');
 const source=readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const controller=source.slice(source.indexOf('const taskSnapshots='),source.indexOf('function renderTasks(){'));
+const controller=section(source,'const taskSnapshots=','function renderTasks(){','frontend/app.js');
 const pending=[],renders=[];
 const c=vm.createContext({state:{jobs:[{...job,kind:'generate',payload:'{}'}],task_labels:{generate:'报告'}},taskLabel:k=>({generate:'报告'})[k],parse:JSON.parse,
  $:()=>({hidden:false}),api:route=>new Promise((resolve,reject)=>pending.push({route,resolve,reject})),
@@ -34,7 +35,7 @@ assert.doesNotMatch(vm.runInContext("JSON.stringify(taskSnapshots.get('j'))",c),
 // Empty list refreshes when the first report starts, despite unchanged draft IDs.
 const nodes=new Map();const el=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',querySelectorAll:()=>[]});return nodes.get(id)};
 const emptyContext=vm.createContext({$:el,state:{briefs:[],jobs:[]}});
-vm.runInContext(source.slice(source.indexOf('function renderReports(){'),source.indexOf('function sourceState(')),emptyContext);
+vm.runInContext(section(source,'function renderReports(){','function sourceState(','frontend/app.js'),emptyContext);
 emptyContext.renderReports();assert.match(el('reports-list').innerHTML,/还没有报告/);
 emptyContext.state.jobs.push({kind:'generate',status:'running'});
 emptyContext.renderReports();assert.match(el('reports-list').innerHTML,/首份报告正在制作/);

@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {section} from './source_section.mjs';
 
 test('Markdown replacement requires confirmation and cancellation preserves the editor',async()=>{
  const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
- const code=source.slice(source.indexOf('let pendingMarkdownImport='),source.indexOf("$('markdown-source').oninput="));
+ const code=section(source,'let pendingMarkdownImport=',"$('markdown-source').oninput=",'frontend/app.js');
  let version='original',changes=0;
  const nodes=new Map();
  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'selected.md',showModal(){this.open=true},close(){this.open=false},addEventListener(name,fn){this[name]=fn}});return nodes.get(id)};

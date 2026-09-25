@@ -29,10 +29,13 @@ def test_the_page_is_given_the_names_and_keeps_none(tmp_path):
     state = Store(tmp_path).snapshot()
     assert state['task_labels'] == reported_labels()
     assert set(state['task_labels']) == set(REPORTED)
-    app = (ROOT / 'frontend' / 'app.js').read_text(encoding='utf-8')
     # A name written next to its kind is a table; the same words in prose are not.
-    tables = [f'{kind}:{name}' for kind, name in LABELS.items()
-              if re.search(r"\b" + kind + r"\s*:\s*'" + re.escape(name), app)]
+    tables = []
+    for path in sorted((ROOT / 'frontend').glob('*.js')):
+        page = path.read_text(encoding='utf-8')
+        for kind, name in LABELS.items():
+            if re.search(r"\b" + kind + r"\s*:\s*'" + re.escape(name), page):
+                tables.append(f'{path.name}: {kind}:{name}')
     assert tables == [], f'the page keeps its own table: {tables}'
 
 

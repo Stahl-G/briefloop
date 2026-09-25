@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {section} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const between=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end));
+const between=(start,end)=>section(source,start,end,'frontend/app.js');
 const code=[
  between('function chatBackendChoice(){','function renderChatBackendChoice(){'),
  between('function rememberDraft(){','const PERMISSION_MODES='),
