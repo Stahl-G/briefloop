@@ -2321,12 +2321,14 @@ function settingsModelTab(name){
  document.querySelector('.model-settings legend').textContent='当前模型与角色';
 }
 /* ===== Report workspace redesign (see DESIGN.md) ===== */
+// Tab rows show the choice with .active; aria-selected gives assistive tech the same state.
+function markTab(button,selected){button.classList.toggle('active',selected);button.setAttribute('aria-selected',String(selected))}
 const REPORT_TABS=['assistant','sources','checks'];
 function setReportTab(name){
  const panel=$('report-panel');if(!panel)return;
  if(!REPORT_TABS.includes(name))name='assistant';
  panel.querySelectorAll('[data-pane]').forEach(p=>{p.hidden=p.dataset.pane!==name});
- document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.classList.toggle('active',b.dataset.reportTab===name));
+ document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>markTab(b,b.dataset.reportTab===name));
  expandReportPanel();
 }
 function outlineHeadings(){
@@ -2339,7 +2341,7 @@ function outlineHeadings(){
 function setReportView(view){
  if(!['edit','outline'].includes(view))view='edit';
  const grid=$('report-grid'),outline=$('report-outline');
- document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.classList.toggle('active',b.dataset.reportView===view));
+ document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>markTab(b,b.dataset.reportView===view));
  if(outline)outline.hidden=view!=='outline';
  if(grid)grid.hidden=view==='outline';
  if(view==='outline')renderOutline();
@@ -2464,7 +2466,7 @@ function renderReports(){
  const makingFirst=!state.briefs.length&&state.jobs.some(j=>j.kind==='generate'&&['queued','running'].includes(j.status));
  const sig=JSON.stringify([view,q,fStatus,fTime,fSource,makingFirst,all.length,rows.map(b=>{const st=reportStatus(b);return [b.id,b.status,b.updated,st.label,runSourceCount(b.run_id)]})]);if(renderReports.sig===sig)return;renderReports.sig=sig;
  const end=$('reports-end');if(end)end.hidden=!rows.length;
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=dayTime(b.updated||b.created),meta=reportIconMeta(b);return `<article class="report-card"><span class="report-card-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,24)}</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。使用左侧「新建报告」开始制作。</p></div>');
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=dayTime(b.updated||b.created),meta=reportIconMeta(b);return `<article class="report-card"><span class="report-card-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,24)}</span><div class="report-card-body"><h2 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h2>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。使用左侧「新建报告」开始制作。</p></div>');
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
@@ -2545,7 +2547,7 @@ function setSourceDrawerTab(name){
  const drawer=$('source-drawer');if(!drawer)return;
  if(!['overview','text','usage'].includes(name))name='overview';
  drawer.querySelectorAll('[data-source-pane]').forEach(p=>p.hidden=p.dataset.sourcePane!==name);
- drawer.querySelectorAll('[data-source-tab]').forEach(b=>b.classList.toggle('active',b.dataset.sourceTab===name));
+ drawer.querySelectorAll('[data-source-tab]').forEach(b=>markTab(b,b.dataset.sourceTab===name));
 }
 async function openSourceDrawer(id,usage,match){
  const s=(state.sources||[]).find(x=>x.id===id);if(!s)return;
@@ -2681,7 +2683,7 @@ if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const 
 if($('templates-upload'))$('templates-upload').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;await api('template-import',await uploadPayload(file,getUploadLimits()));e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式')});
 if($('sources-search'))$('sources-search').oninput=()=>{renderSourcesPage.sig='';renderSourcesPage()};
 if($('sources-type-filter'))$('sources-type-filter').onchange=()=>{renderSourcesPage.sig='';renderSourcesPage()};
-document.querySelectorAll('[data-sources-status]').forEach(b=>b.onclick=()=>{renderSourcesPage.status=b.dataset.sourcesStatus;document.querySelectorAll('[data-sources-status]').forEach(x=>x.classList.toggle('active',x===b));renderSourcesPage.sig='';renderSourcesPage()});
+document.querySelectorAll('[data-sources-status]').forEach(b=>b.onclick=()=>{renderSourcesPage.status=b.dataset.sourcesStatus;document.querySelectorAll('[data-sources-status]').forEach(x=>markTab(x,x===b));renderSourcesPage.sig='';renderSourcesPage()});
 if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(state.sources||[]).filter(s=>s.status==='failed');if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个失败来源`)});
 if($('sources-add-file'))$('sources-add-file').onclick=()=>$('sources-upload').click();
 if($('sources-add-url-open'))$('sources-add-url-open').onclick=()=>{const row=$('sources-add-url-row');if(row){row.hidden=false;const u=$('sources-url');if(u)u.focus()}};
