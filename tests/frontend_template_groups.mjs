@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source = fs.readFileSync('frontend/app.js', 'utf8');
 
 // The templates page is a gallery: one icon card per genre with color dots,
 // a selection bar that names the picked genre+theme, and 使用该模板 which
 // persists the default and opens the new-report form. My templates and the
 // empty state stay below the gallery.
-const code = source.slice(source.indexOf("const GENRE_ORDER="), source.indexOf("if($('new-report'))"));
+const code = section(source, "const GENRE_ORDER=", "if($('new-report'))", 'frontend/app.js');
 const handlers = [];
 const elements = {'template-select': {value: 'tpl_biz_g'}, 'templates-page-list': {innerHTML: '', querySelectorAll(sel) {
   if (sel !== '.tpl-card' && sel !== '.color-dot') return [];

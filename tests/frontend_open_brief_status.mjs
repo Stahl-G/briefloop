@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {reviewPending} from '../frontend/review-status.js';
+import {section} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const oneLine=name=>source.split('\n').find(line=>line.startsWith(`function ${name}(`)||line.startsWith(`async function ${name}(`));
-const functionBefore=(name,next)=>source.slice(source.indexOf(`function ${name}(){`),source.indexOf(`\nfunction ${next}(`));
+const functionBefore=(name,next)=>section(source,`function ${name}(){`,`\nfunction ${next}(`,'frontend/app.js');
 
 test('opening another version immediately refreshes scored and unscored headers with unchanged API state',async()=>{
  const briefs=['revise','approved','unscored'].map(id=>({id,run_id:'run',detail:'{}',markdown:'Saved report',author:'user'}));
@@ -25,7 +26,7 @@ test('opening another version immediately refreshes scored and unscored headers 
   api:async()=>state,syncPendingReport:()=>{},renderWordExports:()=>{},render:()=>renders++,refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},refreshReleaseState:async()=>{}});
  // Run the real app entry point and renderers; only editor/DOM plumbing is stubbed.
  vm.runInContext([
-  source.slice(source.indexOf('function renderWordExports(){'),source.indexOf('function renderWordExports(){')+source.slice(source.indexOf('function renderWordExports(){')).indexOf('\n}')+2),
+  section(source,'function renderWordExports(){','\n}','frontend/app.js')+'\n}',
   functionBefore('renderReportStatus','renderAssistantSummary'),
   functionBefore('renderAssistantSummary','sendReportQuestion'),
   oneLine('openBrief'),oneLine('refresh'),oneLine('refreshState')
@@ -83,7 +84,7 @@ test('a loading body never overrides a later pending report or the report being 
  const tick=()=>new Promise(resolve=>setImmediate(resolve));
  const a={id:'version-A',run_id:'run-A',hash:'hash-A',detail:'{}',author:'agent'};
  const b={id:'version-B',run_id:'run-B',hash:'hash-B',detail:'{}',author:'agent'};
- const renderTail=source.slice(source.indexOf('tryOpenPending();if(!current'),source.indexOf('if(current&&followUpdates&&!dirty&&!saving){'));
+ const renderTail=section(source,'tryOpenPending();if(!current','if(current&&followUpdates&&!dirty&&!saving){','frontend/app.js');
  const fixture=briefs=>{
   const nodes=new Map(),requests=[],resolvers=new Map();
   const $=id=>{if(!nodes.has(id))nodes.set(id,{dataset:{},value:'',hidden:false,textContent:'',querySelectorAll:()=>[]});return nodes.get(id)};
@@ -93,7 +94,7 @@ test('a loading body never overrides a later pending report or the report being 
    Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
    editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
    api:route=>{requests.push(route);return new Promise(resolve=>resolvers.set(route,resolve))},encodeURIComponent});
-  vm.runInContext([oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>{const at=source.indexOf(`function ${name}(`);return source.slice(at,source.indexOf('\n}',at)+2)})].join('\n'),context);
+  vm.runInContext([oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>section(source,`function ${name}(`,'\n}','frontend/app.js')+'\n}')].join('\n'),context);
   return {context,requests,resolve:brief=>resolvers.get('brief?id='+brief.id)({...brief,markdown:'Body for '+brief.id})};
  };
  // Choosing a generating report invalidates a body still loading for another version.

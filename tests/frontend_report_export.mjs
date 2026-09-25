@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {allFrontendSources} from './source_section.mjs';
 
 // Windows checkouts may use CRLF; function extraction below matches LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
@@ -14,7 +15,7 @@ function extract(name){
 }
 
 test('report exports never depend on opening a new window',()=>{
- assert.ok(!source.includes('window.open('),'the desktop shell denies new windows');
+ assert.ok(!allFrontendSources().includes('window.open('),'the desktop shell denies new windows');
  assert.match(source,/a\.download=exportFileName\(title\)\+'\.html'/);
  assert.match(source,/if\(kind==='pdf'\)await exportPdf\(html,title\);/);
 });

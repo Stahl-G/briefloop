@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {section as sectionOf} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const section=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end));
+const section=(start,end)=>sectionOf(source,start,end,'frontend/app.js');
 const line=name=>source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 

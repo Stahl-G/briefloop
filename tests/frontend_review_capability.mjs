@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {section} from './source_section.mjs';
 
 // Windows checkouts may use CRLF; function extraction below matches LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const line=name=>source.split('\n').find(l=>l.startsWith(`function ${name}(`));
-const start=source.indexOf('function syncFactCheckControl(){');
-const sync=source.slice(start,source.indexOf('\n}\n',start)+2);
+const sync=section(source,'function syncFactCheckControl(){','\n}\n','frontend/app.js')+'\n}\n';
 
 function form({backend='codex',label='Codex CLI',allowWeb=true,factCheck=true,mode='internal_report',listed=[{id:'opencode',label:'Opencode CLI'}],reviewer=null}={}){
  const note={hidden:true,textContent:''};

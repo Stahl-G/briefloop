@@ -3,9 +3,10 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const listCode=source.slice(source.indexOf('let workspaceInventory='),source.indexOf("$('workspace-switch').onclick"));
-const settingsCode=source.slice(source.indexOf('function settingsView('),source.indexOf('function settingsModelTab('));
+const listCode=section(source,'let workspaceInventory=',"$('workspace-switch').onclick",'frontend/app.js');
+const settingsCode=section(source,'function settingsView(','function settingsModelTab(','frontend/app.js');
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',disabled:false,hidden:false,title:'',textContent:'',innerHTML:'',classList:{toggle(){},add(){},remove(){}},querySelectorAll:()=>[],showModal(){},close(){}});return elements.get(id)};
 let inventory={current:{name:'A',path:'/a'},workspaces:[{name:'A',path:'/a'},{name:'B',path:'/b'}]};

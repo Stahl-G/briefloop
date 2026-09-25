@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const code=source.slice(source.indexOf('// App updates: fixed desktop capabilities'),source.indexOf('// End App updates.'));
+const code=section(source,'// App updates: fixed desktop capabilities','// End App updates.','frontend/app.js');
 const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
 const version=JSON.parse(fs.readFileSync(new URL('../desktop/electron/package.json',import.meta.url))).version;
 assert.ok(html.includes(`data-web-version="${version}"`));

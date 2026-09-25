@@ -3,18 +3,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {section} from './source_section.mjs';
 
 // Windows checkouts may use CRLF; handler extraction below matches LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const start=source.indexOf("$('version-diff').onclick=");
-const handler=source.slice(start,source.indexOf('\n});\n',start)+4);
+const handler=section(source,"$('version-diff').onclick=",'\n});\n','frontend/app.js')+'\n});\n';
 
 test('HTML and PDF exports take the open draft rather than a bodiless list entry',()=>{
  assert.match(source,/const version=await savedVersion\(\),brief=current;/);
- const exportStart=source.indexOf("if(!['download-html','download-pdf'].includes(id))return;");
- const exportEnd=source.indexOf("notice('导出未完成：'",exportStart);
- assert.ok(exportStart>0&&exportEnd>exportStart);
- assert.ok(!source.slice(exportStart,exportEnd).includes('state.briefs'),'exports must not read bodies from polled state');
+ const exportCode=section(source,"if(!['download-html','download-pdf'].includes(id))return;","notice('导出未完成：'",'frontend/app.js');
+ assert.ok(!exportCode.includes('state.briefs'),'exports must not read bodies from polled state');
 });
 
 function fixture(load){

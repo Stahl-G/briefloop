@@ -3,10 +3,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
+import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const saveCode=source.slice(source.indexOf('let savePromise='),source.indexOf('\nfunction scheduleLearning'));
+const saveCode=section(source,'let savePromise=','\nfunction scheduleLearning','frontend/app.js');
 const commentCode=source.split('\n').find(l=>l.startsWith("$('comment-submit').onclick="));
-const progressCode=source.slice(source.indexOf('function effectiveReportJobs'),source.indexOf('let progressRequest='));
+const progressCode=section(source,'function effectiveReportJobs','let progressRequest=','frontend/app.js');
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:''});return elements.get(id)};
 let pending=[],calls=[],downloads=[],timers=[];
@@ -62,7 +63,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  const view=vm.createContext({withoutSupersededRetries,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
   current:revised,pendingRun:null,state:{jobs:history,briefs:[revised,original],runs:[],sources:[],settings:{timeout_minutes:30}},
   api:async(route,payload)=>{requests.push({route,payload});return route.startsWith('events?')?[]:{}},action:async fn=>fn()});
- vm.runInContext(progressCode+source.slice(source.indexOf('let progressRequest='),source.indexOf('function friendlyModel')),view);
+ vm.runInContext(progressCode+section(source,'let progressRequest=','function friendlyModel','frontend/app.js'),view);
  assert.equal(vm.runInContext('effectiveReportJobs().map(j=>j.id).join(",")',view),'review_current,job_revision');
  await view.refreshProgress();assert.equal(node('run-progress').hidden,true);
  assert.deepEqual(history.map(j=>j.id),['review_current','job_revision','review_old','job_original']);
@@ -89,7 +90,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  console.log('PASS: progress follows the selected revision and latest check; current failures, active work and learning remain visible');
 }
 // Use the real openBrief and pending logic with minimal editor/DOM fixtures.
-const opening=source.slice(source.indexOf('function tryOpenPending'),source.indexOf('function changed()'));
+const opening=section(source,'function tryOpenPending','function changed()','frontend/app.js');
 let editorContent='';
 c.changed=()=>{};
 c.updateFormattingTools=()=>{};
@@ -116,8 +117,8 @@ assert.equal(c.current.id,'new-report');assert.equal(c.pendingRun,null);assert.e
 console.log('PASS: workspace learning progress and pending report survives save; comment stays on edited report');
 
 // Formal delivery waits for the current edit, while an audit bundle pins an existing release.
-const releaseCode=source.slice(source.indexOf('async function submitFormalRelease()'),source.indexOf("$('release-form').onsubmit="));
-const auditCode=source.slice(source.indexOf('async function submitAuditBundle()'),source.indexOf("$('audit-form').onsubmit="));
+const releaseCode=section(source,'async function submitFormalRelease()',"$('release-form').onsubmit=",'frontend/app.js');
+const auditCode=section(source,'async function submitAuditBundle()',"$('audit-form').onsubmit=",'frontend/app.js');
 vm.runInContext(releaseCode+'\n'+auditCode,c);
 c.dirty=true;c.pendingRun=null;c.current={id:'release-base',run_id:'r'};
 el('markdown-source').value='Corrected revenue';
@@ -144,7 +145,7 @@ await assert.rejects(rejectedRelease,/conflict/);assert.equal(calls.at(-1).route
 console.log('PASS: formal release waits for saved corrections; audit package uses fixed release and explicit material scope');
 
 // Provider image input declarations retain three distinct values across the real form handler.
-const providerCode=source.slice(source.indexOf("$('provider-form').onsubmit="),source.indexOf("$('timeout-minutes').onchange="));
+const providerCode=section(source,"$('provider-form').onsubmit=","$('timeout-minutes').onchange=",'frontend/app.js');
 let providerBodies=[];
 const p=vm.createContext({$:el,providerEndpoint:()=> 'opencode',api:async(route,body)=>{providerBodies.push({...body});return {model:'example/model'}},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},chatActive:()=>true});
 vm.runInContext(providerCode,p);
@@ -154,7 +155,7 @@ assert.deepEqual(providerBodies.map(body=>body.supports_images),[null,true,false
 console.log('PASS: custom provider preserves undeclared, image-enabled and image-disabled model settings');
 
 // Intake keeps a saved chapter responsibility for the same template, but not across templates.
-const templateReader=source.slice(source.indexOf('function readTemplateSections()'),source.indexOf('function templateSections()'));
+const templateReader=section(source,'function readTemplateSections()','function templateSections()','frontend/app.js');
 const chapterFields={'[data-title]':{value:'Current section'},select:{value:'required'}};
 el('template-sections').querySelectorAll=()=>[{dataset:{sectionId:'shared'},querySelector:selector=>chapterFields[selector]||null}];
 const templateContext=vm.createContext({$:el,parse:JSON.parse,state:{templates:[{id:'template-a',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template A original purpose'}]})},{id:'template-b',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template B purpose'}]})}],requirements:{template_id:'template-a',sections:[{section_id:'shared',purpose:'Saved task-specific purpose'}]}}});
@@ -169,7 +170,7 @@ console.log('PASS: intake preserves same-template saved purpose and isolates pur
 
 // A malformed pasted image must not strand the entire application in saving.
 const richSource=fs.readFileSync(new URL('../frontend/rich-document.js',import.meta.url),'utf8');
-const imageTransforms=richSource.slice(richSource.indexOf('function mapImages('),richSource.indexOf('// Which findings'))
+const imageTransforms=section(richSource,'function mapImages(','// Which findings','frontend/rich-document.js')
  .replaceAll('export function ','function ');
 c.URL=URL;c.structuredClone=structuredClone;c.window.location.origin='http://127.0.0.1:8765';
 vm.runInContext(imageTransforms,c);
