@@ -47,7 +47,8 @@ export function reasoningControls({api}){
   };
   if(control.dataset.reasoningKey!==key)render({options:[]},true);
   control.dataset.reasoningKey=key;
-  if(!requests.has(key))requests.set(key,api('runtime/reasoning?backend='+encodeURIComponent(backend)+'&model='+encodeURIComponent(model||'default')));
+  // briefloop-native validates the model against its registry; 'default' is not registered, so wait for a real pick.
+  if(!requests.has(key))requests.set(key,backend==='briefloop-native'&&!model?Promise.resolve({options:[],note:'选择模型后读取该模型的档位。'}):api('runtime/reasoning?backend='+encodeURIComponent(backend)+'&model='+encodeURIComponent(model||'default')));
   return requests.get(key).then(info=>{
    if(control.dataset.reasoningKey!==key)return;
    render(info);delete control.dataset.reasoningError;
