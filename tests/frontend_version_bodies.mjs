@@ -8,10 +8,11 @@ import {section} from './source_section.mjs';
 // Windows checkouts may use CRLF; handler extraction below matches LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const handler=section(source,"$('version-diff').onclick=",'\n});\n','frontend/app.js')+'\n});\n';
+const exportModule=fs.readFileSync(new URL('../frontend/report-export.js',import.meta.url),'utf8');
 
 test('HTML and PDF exports take the open draft rather than a bodiless list entry',()=>{
- assert.match(source,/const version=await savedVersion\(\),brief=current;/);
- const exportCode=section(source,"if(!['download-html','download-pdf'].includes(id))return;","notice('导出未完成：'",'frontend/app.js');
+ assert.match(exportModule,/const version=await savedVersion\(\),brief=getCurrent\(\)/,'exports must read the freshly saved draft after the save flush');
+ const exportCode=section(exportModule,"if(!['download-html','download-pdf'].includes(id))return;","notice('导出未完成：'",'frontend/report-export.js');
  assert.ok(!exportCode.includes('state.briefs'),'exports must not read bodies from polled state');
 });
 

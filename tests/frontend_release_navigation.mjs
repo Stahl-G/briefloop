@@ -27,7 +27,7 @@ function fixture(){
  context.save=async()=>{context.current={...context.current,id:context.current.id+'-saved'};context.dirty=false};
  vm.runInContext([
   line('loadBrief'),line('openBrief'),
-  section('async function savedVersion(){','let wordDownloading='),
+  section('async function savedVersion(){','const reportExport=reportExportUI('),
  ].join('\n'),context);
  const original=context.savedVersion;
  context.savedVersion=async()=>{saved.push(context.current?.id);return original()};

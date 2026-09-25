@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
 import {deliveryUI} from '../frontend/delivery.js';
+import {reportExportUI} from '../frontend/report-export.js';
 import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const saveCode=section(source,'let savePromise=','\nfunction scheduleLearning','frontend/app.js');
@@ -18,6 +19,12 @@ const c=vm.createContext({console,Promise,withoutSupersededRetries,syncPendingRe
  window:{location:{assign:url=>downloads.push(url)}},
  api:(route,payload)=>{calls.push({route,payload});if(route==='save')return new Promise((resolve,reject)=>pending.push({resolve,reject}));return Promise.resolve({})},
  action:async fn=>fn(),parse:s=>JSON.parse(s||'{}'),pendingRun:null,tryOpenPending:()=>{}});
+// The download links loop now reaches the export module; the sliced instantiation
+// line receives the real factory product, with init left inert in this context.
+const reportExport=reportExportUI({api:c.api,notice:c.notice,refresh:async()=>{},savedVersion:()=>c.savedVersion(),toEditor:x=>x,parse:s=>JSON.parse(s||'{}'),getState:()=>c.state,getCurrent:()=>c.current,getEditor:()=>null});
+c.reportExportUI=()=>({init(){},downloadWord:reportExport.downloadWord});
+c.toEditor=x=>x;
+globalThis.document={getElementById:el,createElement:()=>({click(){}})};
 vm.runInContext(saveCode+'\n'+commentCode+'\n'+progressCode,c);
 el('markdown-source').value='Revenue 12';el('comment').value='Comment about 12';
 const comment=el('comment-submit').onclick();
