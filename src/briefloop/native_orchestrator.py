@@ -154,7 +154,7 @@ def _child(store, config, directory, callback):
     def progress(status):
         with harness._lock:
             path = _folder(config) / 'agents.json'
-            records = json.loads(path.read_text()) if path.exists() else {'agents': []}
+            records = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {'agents': []}
             records['agents'] = [a for a in records['agents'] if a['agent_id'] != identity]
             records['agents'].append({'agent_id': identity, 'role': role, 'status': status})
             _save(path, records)
@@ -187,7 +187,7 @@ def run_scouts(store, config, args):
     if frozen_plan and current is None:
         raise ToolError('研究轮次已结束；确有缺口时先 begin_research_round')
     round_id = str((current or {}).get('index', 1))
-    data = json.loads((folder / 'input.json').read_text())
+    data = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
     limit = data['max_parallel']
     breadth = int((frozen_plan or {}).get('structure', {}).get('breadth') or limit)
     tasks = args.get('tasks')
@@ -201,7 +201,7 @@ def run_scouts(store, config, args):
         path = folder / ('round-' + round_id) / task['slot_id']
         path.mkdir(parents=True, exist_ok=True)
         assignment = path / 'assignment.json'
-        if assignment.exists() and json.loads(assignment.read_text()) != task:
+        if assignment.exists() and json.loads(assignment.read_text(encoding='utf-8')) != task:
             raise ToolError('已有槽位任务不同；复用原分工，或结束本轮后在下一轮安排新任务')
         _save(assignment, task)
         store.event(job['id'], 'native_child', {'role': 'scout', 'slot_id': task['slot_id'], 'status': 'running'})
@@ -252,8 +252,8 @@ def write_report(store, config, args):
     require_review(store, store.one('runs', config['run_id']))
     if not (folder / 'plan.json').exists() or not (folder / 'research.json').exists():
         raise ToolError('先保存计划、读取材料并完成 Scout 交接')
-    plan = json.loads((folder / 'plan.json').read_text())
-    research = json.loads((folder / 'research.json').read_text())
+    plan = json.loads((folder / 'plan.json').read_text(encoding='utf-8'))
+    research = json.loads((folder / 'research.json').read_text(encoding='utf-8'))
     if args.get('instructions'):
         plan = {**plan, 'writing_instructions': args['instructions']}
     job = store.one('jobs', config['job_id'])
@@ -262,7 +262,7 @@ def write_report(store, config, args):
     support = {}
     if (folder / 'reconciliation.json').exists():
         from .reconciliation import read
-        saved = json.loads((folder / 'reconciliation.json').read_text())
+        saved = json.loads((folder / 'reconciliation.json').read_text(encoding='utf-8'))
         support['reconciliation.json'] = read(store, config['run_id'], saved['id'])
         if support['reconciliation.json'].get('stale'):
             raise ToolError('来源陈述已变化，请先更新写前对照')
@@ -271,7 +271,7 @@ def write_report(store, config, args):
         'briefloop-native', plan=plan, research=research, support=support, publish=False))
     with config['_harness']._lock:
         _alive(store, config)
-        value = json.loads((path / 'draft.json').read_text())
+        value = json.loads((path / 'draft.json').read_text(encoding='utf-8'))
         if support:
             value['reconciliation_id'] = support['reconciliation.json']['id']
         _save(folder / 'draft.json', value)
@@ -289,7 +289,7 @@ def finish(store, config, args):
         path = _folder(config) / 'draft.json'
         if not path.exists():
             raise ToolError('Analyst 尚未保存草稿，进度文字不能代替报告')
-        BriefDraft.model_validate_json(path.read_text())
+        BriefDraft.model_validate_json(path.read_text(encoding='utf-8'))
         result = {'draft_saved': True, 'review_status': 'pending', 'message': '草稿已保存，后续检查由任务控制器独立执行'}
     return {**_json_result(result), 'settle': dump(result)}
 
@@ -297,7 +297,7 @@ def finish(store, config, args):
 def revision_metadata(store, config, args):
     # The runtime performs final admission against the actual published version.
     # Check coverage now so the writer can repair without rewriting its draft.
-    original = json.loads((_folder(config) / 'input.json').read_text())
+    original = json.loads((_folder(config) / 'input.json').read_text(encoding='utf-8'))
     findings = original.get('review_findings', [])
     responses = args.get('responses')
     expected = {f['id'] for f in findings}
@@ -340,7 +340,7 @@ def template_submit(store, config, args):
 
 
 def metadata_submit(store, config, args):
-    original = json.loads((Path(config['packet_root']) / 'input.json').read_text())
+    original = json.loads((Path(config['packet_root']) / 'input.json').read_text(encoding='utf-8'))
     if any(args.get(k) != original[k] for k in ('version_id', 'brief_hash')):
         raise ToolError('元数据必须绑定本次既有版本与 hash')
     bindings, responses = args.get('bindings'), args.get('responses')
@@ -454,8 +454,8 @@ def prepare(store, job, folder, prompt):
         plan_path = folder.parent / 'plan.json'
         research_path = folder.parent / 'research.json'
         packet(store, run_id, folder,
-               plan=json.loads(plan_path.read_text()) if plan_path.exists() else {},
-               research=json.loads(research_path.read_text()) if research_path.exists() else {'sources': [], 'gaps': []},
+               plan=json.loads(plan_path.read_text(encoding='utf-8')) if plan_path.exists() else {},
+               research=json.loads(research_path.read_text(encoding='utf-8')) if research_path.exists() else {'sources': [], 'gaps': []},
                base_version=data['brief']['id'], feedback=data)
         return {**config, 'role': 'analyst', 'revision': True, 'result_file': str(folder / 'draft.json')}, (WRITING_GUIDE +
             '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')

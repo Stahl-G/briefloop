@@ -54,7 +54,7 @@ async function scenario(t, failure) {
   assert.equal(sha(await fs.readFile(path.join(directory,'updates',index.file))), sha(next));
   assert.equal(result.installMode,'zip');
   if (!failure) {
-    assert.equal(result.progress.mode,'differential'); assert.equal(transferred,8192); assert.equal(full,0); assert.equal(ranges,1);
+    assert.equal(result.progress.mode,'differential', JSON.stringify(result.progress)); assert.equal(transferred,8192); assert.equal(full,0); assert.equal(ranges,1);
     assert.equal(result.progress.reused,11*8192);
   } else {assert.equal(result.progress.mode,'full'); assert.equal(full,1);}
 }

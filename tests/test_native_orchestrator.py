@@ -1,7 +1,10 @@
 """Exercise the production main-agent tools with a scripted, unbilled engine."""
 import json
+import os
 from pathlib import Path
 import queue
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -67,10 +70,10 @@ class FlowEngine:
                 draft={'title':'经营简报', 'editor_document':{'type':'doc','content':[{'type':'paragraph','content':[
                     {'type':'text','text':'2025年收入1200万元。'}, {'type':'citation','attrs':{'sourceId':self.source['id']}}]}]},
                     'citations':[{'source_id':self.source['id'],'locator':'line 1'}]}
-                packet=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text())
+                packet=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text(encoding='utf-8'))
                 self.queues[sid]=([('save_revision_metadata',{'responses':[],'bindings':[]})] if packet.get('mode')=='revision' else [])+[('save_draft',draft),('check_draft',{}),('submit_draft',{})]
             elif role == 'evaluator':
-                packet=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text())
+                packet=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text(encoding='utf-8'))
                 self.queues[sid]=[('submit_assessment',{'assessment':{'brief_hash':packet['brief']['hash'],'summary':'synthetic check','overall':'达到要求','evidence':3,'coverage':3,'analysis':3,'expression':3}})]
             else:raise AssertionError(role)
             self.next(sid)
@@ -121,6 +124,18 @@ def test_worker_native_plan_parallel_research_writer_and_saved_draft(tmp_path):
     before=len([c for c in engine.calls if c[0]=='turn_start'])
     assert worker.generate(job,score=False)['version_id']==brief['id']
     assert len([c for c in engine.calls if c[0]=='turn_start'])==before
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows legacy code page regression')
+def test_native_report_flow_with_utf8_mode_disabled(tmp_path):
+    env = {**os.environ, 'PYTHONUTF8': '0'}
+    run = subprocess.run([sys.executable, '-X', 'utf8=0', '-m', 'pytest',
+        'tests/test_native_orchestrator.py::test_worker_native_plan_parallel_research_writer_and_saved_draft',
+        'tests/test_native_orchestrator.py::test_native_revision_retains_original_and_rechecks_only_once',
+        '-q', '--tb=short', '--basetemp=' + str(tmp_path.parent / ('cp936-' + str(os.getpid())))],
+        cwd=Path(__file__).resolve().parents[1], env=env, capture_output=True,
+        encoding='utf-8', errors='replace', timeout=90)
+    assert run.returncode == 0, run.stdout + run.stderr
 
 
 def test_native_quick_run_without_frozen_plan_reads_local_sources_and_saves_report(tmp_path):
@@ -238,7 +253,7 @@ def test_scout_and_analyst_receive_candidate_skill_without_changing_active_skill
     task=scout.task(store,run['id'],{'slot_id':'scout-1'},skill_override=candidate)
     assert task['skill']==candidate['content']
     frozen=analyst.packet(store,run['id'],store.root/'candidate',plan={},research={'sources':[],'gaps':[]},skill_override=candidate)
-    assert candidate['content'] in (frozen['root']/'writing.md').read_text()
+    assert candidate['content'] in (frozen['root']/'writing.md').read_text(encoding='utf-8')
     assert candidate['content'] not in scout.task(store,run['id'],{'slot_id':'scout-1'})['skill']
 
 
@@ -307,7 +322,7 @@ def test_revision_metadata_rejects_number_bindings_before_saving(tmp_path):
     assert not (folder/'revision_bindings.json').exists()
     assert not (folder/'responses.json').exists()
     revision_metadata(store,config,{'responses':[],'bindings':[]})
-    assert json.loads((folder/'revision_bindings.json').read_text())==[]
+    assert json.loads((folder/'revision_bindings.json').read_text(encoding='utf-8'))==[]
 
 
 def test_metadata_repair_rejects_source_ids_as_claims_before_settling(tmp_path):
