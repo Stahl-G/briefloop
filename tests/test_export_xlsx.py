@@ -203,6 +203,32 @@ def test_sheet_name_case_collisions_match_index_and_enhancement_paths(tmp_path):
     assert {item['path'].split('/')[1] for item in plan['commands']} == set(workbook.sheetnames[1:])
 
 
+@pytest.mark.parametrize('layout', ['sheets', 'single'])
+def test_english_excel_labels_preserve_authored_text(tmp_path, layout):
+    store = _store(tmp_path)
+    document = [_table(_row(_cell('原文列名', 'tableHeader')), _row(_cell('1,234'))),
+                _heading('原文表名'), _table(_row(_cell('Value', 'tableHeader')), _row(_cell('25%')))]
+    brief = _brief(store, document, title='原文报告标题', requirements={'language':'en'})
+    result = _generate(store, _queued_xlsx(store, brief, layout))
+    workbook = _open(tmp_path, result)
+    if layout == 'sheets':
+        assert workbook.sheetnames == ['Contents', 'Table 1', '原文表名']
+        index = workbook['Contents']
+        assert index['A1'].value == '原文报告标题'
+        assert [index.cell(3, c).value for c in (1, 2, 3)] == ['No.', 'Table title', 'Worksheet']
+        assert [index.cell(r, 3).value for r in (4, 5)] == ['Table 1', '原文表名']
+        assert workbook['Table 1']['A2'].value == '原文列名'
+    else:
+        assert workbook.sheetnames == ['原文报告标题']
+        sheet = workbook.active
+        assert sheet['A1'].value == 'Table 1' and sheet['A2'].value == '原文列名'
+        assert sheet['A5'].value == '原文表名' and sheet['A6'].value == 'Value'
+    models = xlsx_export._layout({'type':'doc','content':document}, layout,
+                                 report_title='原文报告标题', language='en')
+    plan = xlsx_export.plan_enhancements(models)
+    assert {command['path'].split('/')[1] for command in plan['commands']} <= set(workbook.sheetnames)
+
+
 def test_freeze_panes_follow_the_layout(tmp_path):
     store = _store(tmp_path)
     header_table = _table(_row(_cell('a', 'tableHeader')), _row(_cell('1')))

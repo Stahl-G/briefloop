@@ -6,22 +6,26 @@ from markdown_it import MarkdownIt
 
 
 def reader_markdown(store,brief):
+    from .document_export import reader_labels
     text=brief['markdown'];refs=json.loads(brief['detail']).get('citations',[]);used=[]
+    try:language=json.loads(store.one('runs',brief['run_id'])['requirements']).get('language')
+    except (KeyError,ValueError):language=None  # comparison cases may carry a bare version row
+    words=reader_labels(language)
     def replace(match):
         sid=match.group(1).replace('\\','')
         if sid not in used:used.append(sid)
         return '['+str(used.index(sid)+1)+']'
     text=re.sub(r'\\?\[@(src\\?_[a-zA-Z0-9]+)\\?\]',replace,text)
     if used:
-        text+='\n\n## 来源\n\n'
+        text+='\n\n## '+words['sources']+'\n\n'
         for i,sid in enumerate(used,1):
             try:source=store.one('sources',sid)
             except ValueError:
-                text+=f'{i}. 引用未关联到来源，请补充核对。\n';continue
+                text+=f"{i}. {words['unlinked']}\n";continue
             locators=list(dict.fromkeys(r.get('locator','') for r in refs if r['source_id']==sid and r.get('locator')))
             title=source['name']
             if source['url']:title=f'[{title}]({source["url"]})'
-            text+=f'{i}. {title}'+(' · '+'；'.join(locators) if locators else '')+'\n'
+            text+=f'{i}. {title}'+(' · '+words['separator'].join(locators) if locators else '')+'\n'
     return text
 
 
@@ -35,10 +39,10 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
         doc=Document()
         if industry_report:
             document=without_duplicate_cover_heading(document,title)
-            configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry)
-            insert_table_of_contents(doc)
+            configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry,language=language)
+            insert_table_of_contents(doc,language=language)
             enable_update_fields(doc)
-        render_document(doc,document,figures=figures,sources=source_records,citations=citations)
+        render_document(doc,document,figures=figures,sources=source_records,citations=citations,language=language)
         output=BytesIO();doc.save(output);return native_default_fonts(output.getvalue(),language=language)
     tokens=MarkdownIt('commonmark').enable('table').parse(markdown)
     levels=[int(t.tag[1]) for t in tokens if t.type=='heading_open']
@@ -47,8 +51,8 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
         tokens=tokens[3:]
     doc=Document()
     if industry_report:
-        configure_document(doc, title=title, report_date=report_date, organization=organization, period=period, industry=industry)
-        insert_table_of_contents(doc)
+        configure_document(doc, title=title, report_date=report_date, organization=organization, period=period, industry=industry, language=language)
+        insert_table_of_contents(doc, language=language)
         enable_update_fields(doc)
     from docx.shared import Mm
     section=doc.sections[0]
@@ -87,8 +91,8 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
             if row is not None and cell is not None and cell>=0:
                 cell_width=row.cells[cell].width
                 if cell_width:available_width=min(available_width,max(Mm(5),cell_width-Mm(4)))
-            paragraph=append_inline(paragraph,t.children,figures=figures,max_figure_width=available_width,max_figure_height=figure_height)
+            paragraph=append_inline(paragraph,t.children,figures=figures,max_figure_width=available_width,max_figure_height=figure_height,language=language)
         elif t.type in ('fence','code_block'):doc.add_paragraph(t.content)
     # Old callers retain the legacy chart; new callers pass a mapping, even {}.
-    if industry_report and report_data and figures is None and not explicit_figures: append_data_chart(doc, report_data)
+    if industry_report and report_data and figures is None and not explicit_figures: append_data_chart(doc, report_data, language=language)
     buf=BytesIO();doc.save(buf);return native_default_fonts(buf.getvalue(),language=language)

@@ -14,6 +14,31 @@ class Model(BaseModel):
 
 
 LENGTH_PRESETS = {'quick':(350,500),'compact':(800,1000),'balanced':(1500,2000),'detailed':(2000,2500)}
+# English counts one unit per word, so the same reading length needs fewer
+# units than Chinese characters (about 0.65 words per character).
+LENGTH_PRESETS_EN = {'quick':(250,350),'compact':(500,650),'balanced':(1000,1300),'detailed':(1300,1600)}
+DEEP_LENGTH = {'zh':(10000,12000),'en':(6500,8000)}
+INDUSTRY_LENGTH = {'zh':(5000,5500),'en':(3200,3600)}
+
+
+def report_language(value):
+    """Map a saved or typed report language to 'zh'/'en'; None when unrecognized.
+
+    Runs saved before the enum stored free text such as "中文" or "English";
+    readers of raw requirements JSON call this instead of comparing strings.
+    """
+    if value is None:
+        return 'zh'
+    text = str(value).strip().lower().replace('_', '-')
+    if text in ('', 'zh', '中文', '汉语', '简体中文', '简体', 'chinese', 'simplified chinese') or text.startswith('zh-'):
+        return 'zh'
+    if text in ('en', 'english', '英文', '英语') or text.startswith('en-') or text.startswith('english'):
+        return 'en'
+    return None
+
+
+def length_presets(language='zh'):
+    return LENGTH_PRESETS_EN if report_language(language) == 'en' else LENGTH_PRESETS
 
 
 RESEARCH_BUDGET_PRESETS = {
@@ -73,7 +98,9 @@ class Requirements(Model):
     company_context_revision: str | None = None
     company_context_required: bool = False
     audience: str = "自己"
-    language: str = "中文"
+    # Report body language. The interface, internal records and review notes
+    # stay Chinese; only the report text and its length presets follow this.
+    language: Literal["zh", "en"] = "zh"
     extent: Literal["quick", "compact", "balanced", "detailed"] = "balanced"
     allow_web: bool = False
     search_policy: SearchPolicy | None = None
@@ -110,6 +137,14 @@ class Requirements(Model):
                                        and value.get('workflow_variant') == 'industry_periodic' else 'brief')
         return value
 
+    @field_validator('language', mode='before')
+    @classmethod
+    def known_language(cls, value):
+        language = report_language(value)
+        if language is None:
+            raise ValueError('报告语言只支持中文（zh）或英文（en）')
+        return language
+
     @field_validator('report_date')
     @classmethod
     def valid_report_date(cls, value):
@@ -119,7 +154,8 @@ class Requirements(Model):
 
     @model_validator(mode='after')
     def fill_length_preferences(self):
-        target,maximum=(10000,12000) if self.research_tier=="deep" else (5000,5500) if self.report_profile=="industry_periodic" else LENGTH_PRESETS[self.extent]
+        target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else INDUSTRY_LENGTH[self.language]
+                        if self.report_profile=="industry_periodic" else length_presets(self.language)[self.extent])
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:

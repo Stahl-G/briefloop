@@ -11,6 +11,22 @@ ALIGN = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER,
          'right': WD_ALIGN_PARAGRAPH.RIGHT, 'justify': WD_ALIGN_PARAGRAPH.JUSTIFY}
 
 
+def reader_labels(language=None):
+    """Reader-facing labels that Word adds to the body; the app UI stays Chinese."""
+    from .models import report_language
+    if report_language(language) == 'en':
+        return {'sources': 'Sources', 'unlinked': 'Source not linked; check this citation.', 'separator': '; ',
+                'contents': 'Contents', 'contents_pending': 'The table of contents is generated when the document is opened.',
+                'contents_empty': 'No headings to list', 'page': ('Page ', ''), 'period': 'Period: ',
+                'industry_report': 'Industry Report', 'industry_joiner': ' ', 'data_charts': 'Data Charts', 'data_basis': 'Data sources: ',
+                'source_n': 'Source {}', 'forecast_as_of': ' (forecast, as of {})', 'figure_source': 'Source: '}
+    return {'sources': '来源', 'unlinked': '引用来源未关联，请补充核对', 'separator': '；',
+            'contents': '目录', 'contents_pending': '目录将在打开文档时自动生成',
+            'contents_empty': '暂无可列入目录的标题', 'page': ('第 ', ' 页'), 'period': '覆盖期间：',
+            'industry_report': '行业定期报告', 'industry_joiner': '', 'data_charts': '数据图表', 'data_basis': '数据依据：',
+            'source_n': '来源{}', 'forecast_as_of': '（预测值，截至 {}）', 'figure_source': '来源：'}
+
+
 def reader_source_blocks(document, sources):
     """Replace only a recognized internal source index, not authored data tables."""
     def text(node):
@@ -22,7 +38,7 @@ def reader_source_blocks(document, sources):
         headers = [text(c).strip() for c in rows[0].get('content', [])] if rows else []
         ids = []
         if (node.get('type') == 'table' and kept and kept[-1].get('type') == 'heading'
-                and text(kept[-1]).strip() in ('来源', '参考来源', '参考资料')
+                and text(kept[-1]).strip() in ('来源', '参考来源', '参考资料', 'Sources', 'References')
                 and headers in (['编号', '主体/来源', 'source_id'], ['编号', '主体来源', 'source_id'])
                 and len(rows) > 1):
             for row in rows[1:]:
@@ -65,8 +81,9 @@ def without_duplicate_cover_heading(document,title):
     return result
 
 
-def render_document(doc, document, *, figures=None, sources=None, citations=None, append_sources=True, styles=None):
+def render_document(doc, document, *, figures=None, sources=None, citations=None, append_sources=True, styles=None, language=None):
     from .industry_export import append_figure
+    labels = reader_labels(language)
     document = normalize_document(document); figures = figures or {}; sources = sources or {}; styles = styles or {}
     locators = {}
     # Older saved detail is read without the current Citation model validation.
@@ -195,7 +212,7 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
             available = min(max_width, max(Mm(5), container.width - Mm(4))) if hasattr(container, '_tc') and container.width else max_width
             width = min(available, attrs['width'] * 9525) if attrs.get('width') else available
             height = min(max_height, attrs['height'] * 9525) if attrs.get('height') else max_height
-            append_figure(paragraph(container), fid, figure, attrs.get('alt', ''), max_width=width, max_height=height)
+            append_figure(paragraph(container), fid, figure, attrs.get('alt', ''), max_width=width, max_height=height, language=language)
         elif kind == 'table':
             nr, nc, cells = table_layout(node)
             table = container.add_table(rows=nr, cols=nc)
@@ -252,12 +269,12 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
     for sid in indexed:
         if sid not in used: used.append(sid)
     if append_sources and used:
-        doc.add_heading('来源', level=2)
+        doc.add_heading(labels['sources'], level=2)
         for i, sid in enumerate(used, 1):
             source = sources.get(sid, {})
             p = doc.add_paragraph(f'{i}. ')
             anchor_heading(p, 'briefloop_source_' + str(i))
-            label = source.get('name') or '引用来源未关联，请补充核对'
+            label = source.get('name') or labels['unlinked']
             url = source.get('url') or ''
             if url.startswith(('https://', 'http://')):
                 inline(p, [{'type': 'text', 'text': label, 'marks': [{'type': 'link', 'attrs': {'href': url}},
@@ -266,7 +283,7 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
                 p.add_run(label)
             if locators.get(sid):
                 # Saved locating text is useful context, not a verification result.
-                p.add_run(' · ' + '；'.join(locators[sid]))
+                p.add_run(' · ' + labels['separator'].join(locators[sid]))
     from .industry_export import populate_table_of_contents
-    populate_table_of_contents(doc)
+    populate_table_of_contents(doc, empty_label=labels['contents_empty'])
     return doc

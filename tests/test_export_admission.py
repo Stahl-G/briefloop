@@ -1,4 +1,5 @@
 import threading
+import json
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
@@ -35,6 +36,55 @@ def _has_source_index(document, source_id):
                and [cell.text.strip() for cell in table.rows[0].cells] == ['编号', '主体/来源', 'source_id']
                and any(row.cells[2].text.strip() == source_id for row in table.rows[1:])
                for table in document.tables if table.rows)
+
+
+@pytest.mark.parametrize('use_template', [False, True])
+def test_legacy_english_word_cache_is_rebuilt_with_english_labels(tmp_path, monkeypatch, use_template):
+    from briefloop import document_export
+    from briefloop.document_model import markdown_document
+    from briefloop.templates import import_builtin
+    store = Store(tmp_path)
+    layout = None
+    if use_template:
+        import_builtin(store)
+        # An existing Chinese layout was also usable for English text before
+        # dedicated English layouts shipped; its identity must stay unchanged.
+        layout = next(row['id'] for row in store.snapshot()['templates'] if row['name'] == '通用报告·品牌绿')
+    source = store.add_source('Annual report', 'Revenue grew.', url='https://example.org/report')
+    run = store.create_run({'title': 'English update', 'objective': 'Explain results'}, [source['id']])
+    requirements = {**json.loads(run['requirements']), 'language': 'English'}
+    with store.tx() as connection:
+        connection.execute('UPDATE runs SET requirements=? WHERE id=?', (dump(requirements), run['id']))
+    brief = store.publish(run['id'], {'title': 'English update', 'editor_document':
+        markdown_document('## Results\n\nRevenue grew [@' + source['id'] + '].')})
+    original_brief = store.one('briefs', brief['id'])
+    current_input, current_labels = export_jobs.export_input, document_export.reader_labels
+
+    def old_input(*args, **kwargs):
+        identity, figures = current_input(*args, **kwargs)
+        identity['renderer'] = 28 if identity['requirements'].get('template_id') else 29
+        return identity, figures
+
+    # Save a complete, hash-valid legacy cache file, with the historical reader
+    # labels and renderer identity. No run or template migration changes its key.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(export_jobs, 'export_input', old_input)
+        legacy.setattr(document_export, 'reader_labels', lambda language=None: current_labels('zh'))
+        old = export_jobs.enqueue_export(store, brief['id'], layout)
+        old_doc = _complete_word(store, old)
+        assert any(p.text == '来源' for p in old_doc.paragraphs)
+        assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == old['id']
+    old_bytes = export_jobs.output_path(store, old).read_bytes()
+
+    upgraded = export_jobs.enqueue_export(store, brief['id'], layout)
+    assert upgraded['id'] != old['id']
+    new_doc = _complete_word(store, upgraded)
+    assert any(p.text == 'Sources' for p in new_doc.paragraphs)
+    assert not any(p.text == '来源' for p in new_doc.paragraphs)
+    assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == upgraded['id']
+    assert export_jobs.output_path(store, old).read_bytes() == old_bytes
+    assert store.one('briefs', brief['id']) == original_brief
+    assert json.loads(store.one('runs', run['id'])['requirements']) == requirements
 
 
 def test_source_projection_invalidates_word_cache_only_when_rendered_source_changes(tmp_path):

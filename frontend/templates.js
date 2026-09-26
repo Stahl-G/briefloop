@@ -1,6 +1,6 @@
 // The templates page: one builtin card per genre, theme dots and the apply bar.
 import {$,esc} from './dom.js';
-export const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
+export const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告','英文通用报告','英文研报'];
 // Categories name a colour from the token palette; the tiles take it from
 // the .cat-* class, so the hex lives in tokens.css only.
 export const GENRE_META={
@@ -12,6 +12,8 @@ export const GENRE_META={
  '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',cat:'cat-business'},
  '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',cat:'cat-markets'},
  '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',cat:'cat-neutral'},
+ '英文通用报告':{desc:'英文正文与章节标题，适用于面向海外读者的报告；选用后报告语言设为英文。',icon:'layers',cat:'cat-neutral'},
+ '英文研报':{desc:'英文证券研究版式，适用于面向海外投资者的公司与行业研究；选用后报告语言设为英文。',icon:'chart',cat:'cat-markets'},
 };
 export const ICONS={
  briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
@@ -32,7 +34,7 @@ export const ICONS={
 const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
 const THEME_ORDER=Object.keys(THEME_COLORS);
 export function splitTemplateName(name){const i=name.lastIndexOf('·');return i<0?{genre:name,theme:''}:{genre:name.slice(0,i),theme:name.slice(i+1)}}
-export function templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState,setSettings}){
+export function templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState,setSettings,syncTemplateLanguage}){
  function templatePickState(){
   const builtins=(getState().templates||[]).filter(t=>t.origin==='builtin'&&t.name.includes('·')).map(t=>({id:t.id,...splitTemplateName(t.name),status:t.status}));
   const genres={};for(const item of builtins)(genres[item.genre]=genres[item.genre]||[]).push(item);
@@ -88,7 +90,7 @@ export function templatesUI({api,notice,action,page,renderWorkflowChoices,templa
    await api('settings',{default_template_id:templatePick.id});
    setSettings({...getState().settings||{},default_template_id:templatePick.id});
    $('template-select').value=templatePick.id;renderWorkflowChoices();
-   templateSections();
+   templateSections();syncTemplateLanguage?.((getState().templates||[]).find(t=>t.id===templatePick.id));
    notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
    renderTemplatesPage.sig='';page('setup');
   });

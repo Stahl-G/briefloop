@@ -154,22 +154,32 @@ def _format_decimals(fraction):
     return ('.' + '0' * len(fraction)) if fraction else ''
 
 
-def table_titles(document):
+def _excel_labels(language=None):
+    from .models import report_language
+    from .document_export import reader_labels
+    english = report_language(language) == 'en'
+    return {'contents': reader_labels(language)['contents'],
+            'columns': ('No.', 'Table title', 'Worksheet') if english else ('序号', '表格标题', '工作表'),
+            'table': 'Table {}' if english else '表{}', 'sheet_fallback': 'Report' if english else '表'}
+
+
+def table_titles(document, *, language=None):
     """(表格标题, 表节点) in document order; the title is the nearest preceding
     heading's text, or '表N' (1-based table number) when there is none."""
     heading = None
+    labels = _excel_labels(language)
     found = []
     for node in document.get('content', []):
         if node.get('type') == 'heading':
             heading = _inline_text(node).strip()
         elif node.get('type') == 'table':
-            found.append((heading or f'表{len(found) + 1}', node))
+            found.append((heading or labels['table'].format(len(found) + 1), node))
     return found
 
 
-def _sheet_base(raw):
+def _sheet_base(raw, fallback='表'):
     name = _SHEET_ILLEGAL.sub('-', raw.strip())[:_SHEET_BASE_MAX].strip()
-    return name or '表'
+    return name or fallback
 
 
 def _dedupe_sheet_names(raw_names):
@@ -190,10 +200,11 @@ def _report_title(detail, requirements):
     return (detail.get('title') or requirements.get('title') or '').strip()
 
 
-def _layout(document, layout_id, *, report_title=''):
+def _layout(document, layout_id, *, report_title='', language=None):
     """Positioned table models shared by the renderer and the enhancement plan."""
     models = []
-    for index, (title, node) in enumerate(table_titles(document)):
+    labels = _excel_labels(language)
+    for index, (title, node) in enumerate(table_titles(document, language=language)):
         nr, nc, cells = table_layout(node)
         rows = [[None] * nc for _ in range(nr)]
         spans = []
@@ -207,14 +218,14 @@ def _layout(document, layout_id, *, report_title=''):
         models.append({'title': title, 'rows': rows, 'texts': texts, 'width': nc, 'height': nr,
                        'spans': spans, 'header': header, 'index': index})
     if layout_id == 'single':
-        sheet = _sheet_base(report_title)[: _SHEET_BASE_MAX] or '报表'
+        sheet = _sheet_base(report_title, labels['sheet_fallback'])[:_SHEET_BASE_MAX]
         cursor = 1
         for model in models:
             model['sheet'] = sheet
             model['title_row'] = cursor
             cursor += 1 + model['height'] + 1  # title + grid + one blank spacer row
         return models
-    names = _dedupe_sheet_names([_sheet_base(INDEX_SHEET_TITLE)] +
+    names = _dedupe_sheet_names([_sheet_base(labels['contents'])] +
                                 [_sheet_base(model['title']) for model in models])
     for model, name in zip(models, names[1:]):
         model['sheet'] = name
@@ -419,23 +430,25 @@ def xlsx_bytes(document, detail, requirements, layout_id):
     global _BORDER
     if _BORDER is None: _BORDER = _border()
     title = _report_title(detail, requirements)
+    language = requirements.get('language')
+    labels = _excel_labels(language)
     report_date = requirements.get('report_date') or ''
-    models = _layout(document, layout_id, report_title=title)
+    models = _layout(document, layout_id, report_title=title, language=language)
     workbook = Workbook()
     workbook.remove(workbook.active)
     from openpyxl.styles import Font
     if layout_id == 'single':
-        sheet = workbook.create_sheet(models[0]['sheet'] if models else _sheet_base(title) or '报表')
+        sheet = workbook.create_sheet(models[0]['sheet'] if models else _sheet_base(title, labels['sheet_fallback']))
         for model in models:
             cell = _literal_text(sheet.cell(row=model['title_row'], column=1), model['title'])
             cell.font = Font(bold=True)
             _paint_table(sheet, model, model['title_row'] + 1)
     else:
-        index = workbook.create_sheet(_dedupe_sheet_names([_sheet_base(INDEX_SHEET_TITLE)])[0])
+        index = workbook.create_sheet(_sheet_base(labels['contents']))
         _literal_text(index.cell(row=1, column=1), title).font = Font(bold=True)
         if report_date:
             _literal_text(index.cell(row=2, column=1), report_date)
-        for column, label in enumerate(('序号', '表格标题', '工作表'), 1):
+        for column, label in enumerate(labels['columns'], 1):
             cell = index.cell(row=3, column=column, value=label)
             cell.font = Font(bold=True)
         for row, model in enumerate(models, 4):
@@ -541,7 +554,8 @@ def generate_xlsx(store, job, cancelled):
     enhanced, reason = bool(payload.get('enhanced')), None
     if enhanced:
         plan = plan_enhancements(_layout(identity['document'], layout_id,
-                                         report_title=_report_title(detail, requirements)))
+                                         report_title=_report_title(detail, requirements),
+                                         language=requirements.get('language')))
         staging = destination.with_name('report.staging.xlsx')
         try:
             if plan['commands']:

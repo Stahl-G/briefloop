@@ -1,0 +1,54 @@
+{
+ "sections": [
+  {
+   "section_id": "views",
+   "title": "Key Takeaways",
+   "index": 5,
+   "purpose": "核心判断"
+  },
+  {
+   "section_id": "events",
+   "title": "Recent Developments",
+   "index": 6,
+   "purpose": "触发事件"
+  },
+  {
+   "section_id": "forecast",
+   "title": "Earnings Forecast and Valuation",
+   "index": 7,
+   "purpose": "预测与估值"
+  },
+  {
+   "section_id": "risks",
+   "title": "Key Risks",
+   "index": 8,
+   "purpose": "会改变判断的具体风险与观察指标"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4
+ ],
+ "paragraph_index": 9,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}
