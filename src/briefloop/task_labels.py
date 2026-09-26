@@ -19,6 +19,7 @@ LABELS = {
     'fact_check': '独立事实核查',
     'learn': 'WikiSkill 学习',
     'export_docx': '生成工作稿 Word',
+    'export_xlsx': '生成报表 Excel',
     'release': '制作正式 Word',
     'audit_bundle': '制作审计包',
     'source_refresh': '复查来源',
@@ -29,8 +30,8 @@ LABELS = {
 
 STEPS = ('company_review',)
 REPORTED = ('generate', 'assess', 'review', 'revise', 'fact_check', 'learn',
-            'export_docx', 'release', 'audit_bundle', 'source_refresh',
-            'prepare_template')
+            'export_docx', 'export_xlsx', 'release', 'audit_bundle',
+            'source_refresh', 'prepare_template')
 
 
 def label(kind, default='报告任务'):

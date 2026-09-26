@@ -32,6 +32,7 @@ import {appUpdatesUI} from './app-updates.js';
 import {templatesUI,GENRE_META,ICONS,splitTemplateName} from './templates.js';
 import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
 import {reportExportUI} from './report-export.js';
+import {excelExportUI} from './excel-export.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -449,6 +450,8 @@ async function savedVersion(){
 }
 const reportExport=reportExportUI({api,notice,refresh,savedVersion,toEditor,parse,getState:()=>state,getCurrent:()=>current,getEditor:()=>editor});
 reportExport.init();
+const excelExport=excelExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state});
+excelExport.init();
 for(const id of ['download','download-docx','download-bundle']){
  const link=$(id);if(!link)continue;
  link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){
@@ -1921,7 +1924,7 @@ $('paragraph-align').onchange=e=>{if(!editor)return;const type=editor.isActive('
 function renderWordExports(){
  const box=$('word-exports');if(!box||!state)return;
  const scope=current?.id||'';box.dataset.version=scope;
- const fileKinds={export_docx:'工作稿 Word',release:'正式 Word',audit_bundle:'审计包'};
+ const fileKinds={export_docx:'工作稿 Word',release:'正式 Word',audit_bundle:'审计包',export_xlsx:'工作稿 Excel'};
  const jobs=state.jobs.filter(j=>fileKinds[j.kind]&&(!current||parse(j.payload).run_id===current.run_id));
  box.hidden=!jobs.length;
  box.innerHTML=jobs.slice(0,6).map(j=>{const result=parse(j.result),payload=parse(j.payload);const url=j.kind==='release'?'/api/release-file?id='+encodeURIComponent(payload.release_id):j.kind==='audit_bundle'?'/api/audit-file?job='+encodeURIComponent(j.id):result.download_url;const officeSummary=j.status==='complete'&&result.office&&typeof office!=='undefined'?esc(office.officeCheckSummary(result.office)):'';const previewButton=j.status==='complete'&&url&&typeof office!=='undefined'&&office.officeEnabled()?`<button type="button" data-office-preview="${esc(j.id)}">预览</button>`:'';return `<div class="job"><span>${fileKinds[j.kind]} · ${j.status==='complete'?'已制作':statuses[j.status]||esc(j.status)}</span><small>${payload.version_id===current?.id?'当前稿件版本':'历史稿件版本'}</small>${j.status==='complete'&&url?`<a href="${esc(url)}" download>下载${fileKinds[j.kind]}</a>`:`<span>${esc(j.error||'使用提交时固定的版本，可继续编辑')}</span>`}${officeSummary?`<span>${officeSummary}</span>`:''}${previewButton}</div>`}).join('');

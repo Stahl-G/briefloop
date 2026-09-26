@@ -42,7 +42,7 @@ def mark_read(store, through, category=None, seq=None):
 def job_status(store, job, status):
     kind=job.get('kind')
     category='templates' if kind=='prepare_template' else 'learning' if kind=='learn' else 'reports'
-    if kind not in ('generate','revise','fact_check','export_docx','release','prepare_template','learn'):
+    if kind not in ('generate','revise','fact_check','export_docx','export_xlsx','release','prepare_template','learn'):
         return
     if status not in ('running','complete','failed','interrupted','cancelled'):
         return

@@ -42,6 +42,11 @@ MIN_STEP_SECONDS = 5
 VALIDATE_TIMEOUT = 120
 ISSUES_TIMEOUT = 120
 SCREENSHOT_TIMEOUT = 180
+# One workbook enhancement shares the per-request budget; standalone `batch` is
+# a single open/apply/save cycle, and the trailing `close` only matters if a
+# resident process was left behind.
+ENHANCE_BATCH_TIMEOUT = 150
+ENHANCE_CLOSE_TIMEOUT = 30
 VERSION_TIMEOUT = 5
 VERSION_TTL_SECONDS = 600
 HINT_TTL_SECONDS = 30
@@ -100,6 +105,12 @@ def version(path):
 
 def _enabled(store):
     return store.settings().get('officecli_enabled') is True
+
+
+def enhancement_ready(store):
+    """Can an export be enhanced right now? Frozen into export fingerprints, so
+    flipping the switch changes the identity instead of reusing a base file."""
+    return _enabled(store) and find() is not None
 
 
 def require_enabled(store):
@@ -258,6 +269,44 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
         return None
 
 
+def enhance_workbook(store, path, plan):
+    """Apply one planned batch of workbook enhancements on a staging copy.
+
+    The whole plan goes out as a single standalone `batch` command — that form
+    is one open/save cycle, so the file is on disk the moment officecli exits
+    (verified against 1.0.152: openpyxl reads formulas, cached values and
+    number formats immediately). Splitting it into per-cell `set` calls would
+    take the resident delayed-flush path instead and leave edits invisible.
+    The defensive `close` afterwards is idempotent ("already saved to disk;
+    nothing to close") and covers a resident that some other tool left behind.
+
+    A failed batch step is reported through the summary; officecli writes data
+    bars as an x14 extension, which openpyxl drops on re-save — callers verify
+    read-only and never re-save an enhanced workbook. Like check_file this
+    never raises: the caller keeps the base artifact on any failure.
+    """
+    try:
+        commands = (plan or {}).get('commands') or []
+        if not commands:
+            return {'applied': False, 'reason': None}
+        if not _enabled(store) or not find():
+            return {'applied': False, 'reason': '未检测到 OfficeCLI 或未开启'}
+        binary = find()
+        deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
+        outcome = run_json([binary, 'batch', str(path), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
+                           timeout=ENHANCE_BATCH_TIMEOUT, deadline=deadline)
+        if not outcome['ok']:
+            return {'applied': False, 'reason': outcome['reason']}
+        summary = (outcome['data'] or {}).get('summary') if isinstance(outcome['data'], dict) else None
+        failed = summary.get('failed') if isinstance(summary, dict) else None
+        if type(failed) is int and failed > 0:
+            return {'applied': False, 'reason': f'officecli batch 有 {failed} 条命令未成功'}
+        run_json([binary, 'close', str(path)], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
+        return {'applied': True, 'reason': None}
+    except Exception as exc:
+        return {'applied': False, 'reason': '无法运行 officecli：' + type(exc).__name__}
+
+
 def _view_for_digest(store, digest):
     rows = {row['kind']: row for row in
             store.rows('SELECT * FROM office_checks WHERE file_sha256=? ORDER BY rowid', (digest,))}
@@ -276,7 +325,13 @@ def _view_for_digest(store, digest):
 
 
 def version_office_view(store, version_id):
-    """Check view for the newest complete export/release artifact of a version."""
+    """Check view for the newest complete export/release artifact of a version.
+
+    Deliberately still Word-only: this view feeds /api/version-checks and the
+    review status, both of which describe the formal Word deliverable. An
+    Excel export (a working artifact, checkable from its own task card and
+    POST /api/office-check) must not take over those delivery-bound surfaces.
+    """
     rows = store.rows("SELECT result FROM jobs WHERE kind IN ('export_docx','release') AND status='complete' "
                       "AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC", (version_id,))
     for row in rows:
@@ -294,8 +349,8 @@ def run_check_for_job(store, job_id):
     if not isinstance(job_id, str) or not job_id.strip():
         raise ValueError('缺少任务编号')
     job = store.one('jobs', job_id)
-    if job['kind'] not in ('export_docx', 'release'):
-        raise ValueError('只能对 Word 导出或正式交付任务运行 OfficeCLI 质检')
+    if job['kind'] not in ('export_docx', 'export_xlsx', 'release'):
+        raise ValueError('只能对 Word/Excel 导出或正式交付任务运行 OfficeCLI 质检')
     if job['status'] != 'complete':
         raise ValueError('任务尚未完成，无法质检')
     result = json.loads(job['result'] or '{}')
@@ -414,8 +469,8 @@ def _resolve_target(store, kind, identity):
         return {'kind': 'source', 'id': source['id'], 'name': source['name'], 'path': original}
     if kind == 'job_id':
         job = store.one('jobs', identity)
-        if job['kind'] not in ('export_docx', 'release'):
-            raise ValueError('不是 Word 导出或正式交付任务')
+        if job['kind'] not in ('export_docx', 'export_xlsx', 'release'):
+            raise ValueError('不是 Word/Excel 导出或正式交付任务')
         if job['status'] != 'complete':
             raise ValueError('任务尚未完成，无法预览')
         result = json.loads(job['result'] or '{}')

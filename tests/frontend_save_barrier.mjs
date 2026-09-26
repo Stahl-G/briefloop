@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
 import {deliveryUI} from '../frontend/delivery.js';
 import {reportExportUI} from '../frontend/report-export.js';
+import {excelExportUI} from '../frontend/excel-export.js';
 import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const saveCode=section(source,'let savePromise=','\nfunction scheduleLearning','frontend/app.js');
@@ -23,6 +24,8 @@ const c=vm.createContext({console,Promise,withoutSupersededRetries,syncPendingRe
 // line receives the real factory product, with init left inert in this context.
 const reportExport=reportExportUI({api:c.api,notice:c.notice,refresh:async()=>{},savedVersion:()=>c.savedVersion(),toEditor:x=>x,parse:s=>JSON.parse(s||'{}'),getState:()=>c.state,getCurrent:()=>c.current,getEditor:()=>null});
 c.reportExportUI=()=>({init(){},downloadWord:reportExport.downloadWord});
+const excelExport=excelExportUI({api:c.api,notice:c.notice,refresh:async()=>{},savedVersion:()=>c.savedVersion(),parse:s=>JSON.parse(s||'{}'),getState:()=>c.state});
+c.excelExportUI=()=>({init(){},downloadXlsx:excelExport.downloadXlsx});
 c.toEditor=x=>x;
 globalThis.document={getElementById:el,createElement:()=>({click(){}})};
 vm.runInContext(saveCode+'\n'+commentCode+'\n'+progressCode,c);
