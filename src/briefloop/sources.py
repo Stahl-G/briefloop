@@ -384,7 +384,8 @@ def retry_source(store, source_id):
     old,_,original=source_files(store,source_id)
     if old['url']:return fetch(store,old['url'],allow_private=True)
     if original is None:raise ValueError('原始文件未保留，请重新上传；原失败记录仍保留')
-    return upload(store,old['name'],original.read_bytes())
+    from .source_ingestion import retry_upload
+    return retry_upload(store,source_id)
 
 
 def existing_for_run(store,run_id,url):

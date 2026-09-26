@@ -483,7 +483,7 @@ class Worker:
         self._execution_local=threading.local()
         self.opened_paused=False
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
-        self._queue_wakes=[threading.Event() for _ in range(3)]
+        self._queue_wakes=[threading.Event() for _ in range(4)]
         self.store._job_wakeup=self.wake
         self.schedule_thread=threading.Thread(target=self.schedule_loop,name='briefloop-schedules',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
@@ -491,6 +491,8 @@ class Worker:
         self.review_thread=threading.Thread(target=self.review_loop,name='briefloop-review-worker',daemon=True)
         self.file_current=None;self._file_cancelled=threading.Event()
         self.file_thread=threading.Thread(target=self.file_loop,name='briefloop-file-worker',daemon=True)
+        self.extraction_current=None;self._extraction_cancelled=threading.Event()
+        self.extraction_thread=threading.Thread(target=self.extraction_loop,name='briefloop-source-worker',daemon=True)
 
     @property
     def runtime(self):
@@ -508,12 +510,25 @@ class Worker:
         self._runtime=value
 
     def start(self):
+        from .source_ingestion import recover_uploads
+        recover_uploads(self.store)
+        # A service can die between the terminal job commit and its source-state
+        # update. Reconcile that receipt before exposing it as still extracting.
+        for job in self.store.rows("SELECT j.* FROM jobs j JOIN sources s ON s.id=json_extract(j.payload,'$.source_id') WHERE j.kind='source_extract' AND j.status IN ('failed','cancelled','interrupted') AND s.status IN ('queued','extracting')"):
+            from .source_extraction import sync_terminal_source
+            sync_terminal_source(self.store,job,job['status'],job.get('error'))
         # Old running jobs are not silently replayed; preserve them for explicit recovery.
         for job in self.store.rows("SELECT * FROM jobs WHERE status='running'"):
             self.store.update_job(job['id'],'interrupted',error='本地服务中断；已保存进度，可恢复')
+            if job['kind']=='source_extract':
+                from .source_extraction import sync_terminal_source
+                sync_terminal_source(self.store,job,'interrupted','本地服务中断；原件已保留，可恢复读取')
         if self.opened_paused:
             for job in self.store.rows("SELECT * FROM jobs WHERE status='queued'"):
                 self.store.update_job(job['id'],'interrupted',error='打开工作区时保留旧任务，尚未执行；点击恢复可继续')
+                if job['kind']=='source_extract':
+                    from .source_extraction import sync_terminal_source
+                    sync_terminal_source(self.store,job,'interrupted','打开工作区时保留原件；点击恢复可继续读取')
         # A learning batch queued before this release carries no confirmed bound.
         # Hold it instead of letting the idle dispatcher start paid work (#727).
         from .learning_budget import LearningAuthorizationRequired, verify
@@ -523,10 +538,10 @@ class Worker:
                 self.store.update_job(job['id'],'interrupted',error=str(exc))
         from .schedules import skip_offline
         skip_offline(self.store)
-        self.thread.start();self.review_thread.start();self.file_thread.start();self.schedule_thread.start()
+        self.thread.start();self.review_thread.start();self.file_thread.start();self.extraction_thread.start();self.schedule_thread.start()
 
     def close(self):
-        self.stopping.set();self.wake();self._file_cancelled.set();self.runtime.cancel()
+        self.stopping.set();self.wake();self._file_cancelled.set();self._extraction_cancelled.set();self.runtime.cancel()
         with self._claim_lock:
             generations=list(self._generation_jobs.values())
             reviews=list(self._review_jobs.values())
@@ -539,6 +554,7 @@ class Worker:
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
         for thread,runtime,run_id in reviews:thread.join(timeout=12)
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
+        if self.extraction_thread.is_alive():self.extraction_thread.join(timeout=12)
         if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
 
     def schedule_loop(self):
@@ -554,7 +570,7 @@ class Worker:
         for event in self._queue_wakes:event.set()
 
     def _queued(self, queue, query, args=()):
-        """Back off empty queues; same-process commits wake all three readers.
+        """Back off empty queues; same-process commits wake each local reader.
 
         The low-frequency fallback also observes CLI writes from other Store
         instances/processes. This never limits the execution time of a job.
@@ -583,6 +599,11 @@ class Worker:
                 if self.current==jid:self.runtime.cancel()
                 if jid in self._review_jobs:self._review_jobs[jid][1].cancel()
                 if self.file_current==jid:self._file_cancelled.set()
+                if self.extraction_current==jid:self._extraction_cancelled.set()
+                stopped=self.store.one('jobs',jid)
+                if stopped['kind']=='source_extract':
+                    from .source_extraction import sync_terminal_source
+                    sync_terminal_source(self.store,stopped,'cancelled','文件读取已取消，原件已保留')
                 from .task_notify import notify as _notify_task
                 _notify_task(self.store,self.store.one('jobs',jid),'cancelled')
             for child in self.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running') AND json_extract(payload,'$.parent_job_id')=?",(jid,)):
@@ -616,7 +637,7 @@ class Worker:
                 job=dict(row)
                 if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
                 # Stop commits before execution unwinds; keep its slot until final settlement.
-                if jid in self._generation_jobs or jid in self._review_jobs or jid==self.current or jid==self.file_current:
+                if jid in self._generation_jobs or jid in self._review_jobs or jid==self.current or jid==self.file_current or jid==self.extraction_current:
                     raise ValueError('原任务仍在停止，请稍后恢复')
                 payload=json.loads(job['payload'])
                 if payload.get('inline_owner_job_id'):
@@ -626,6 +647,8 @@ class Worker:
                 # Resume keeps the frozen configuration and original task identity.
                 payload['attempt']=int(payload.get('attempt',1))+1
                 c.execute("UPDATE jobs SET payload=?,status='queued',error=NULL,updated=? WHERE id=?",(dump(payload),now(),jid))
+                if job['kind']=='source_extract':
+                    c.execute("UPDATE sources SET status='queued',error=NULL WHERE id=? AND status<>'ready'",(payload['source_id'],))
         self.wake()
         return self.store.one('jobs',jid)
 
@@ -756,7 +779,7 @@ class Worker:
         # Placeholders are derived from FILE_JOB_KINDS itself: a hand-counted "?,?,?"
         # here once desynced from the tuple and killed the briefloop-worker thread
         # (_queued has no per-iteration guard, so generate/revise/learn all stopped).
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') "
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check','source_extract') "
             "AND kind NOT IN ("+",".join("?"*len(FILE_JOB_KINDS))+") "
             "AND json_extract(payload,'$.inline_owner_job_id') IS NULL ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
@@ -875,6 +898,34 @@ class Worker:
         except Exception:
             return None,row
         return {'template_id':row['id'],'revision':row['revision'],'status':'ready'},row
+
+    def extraction_loop(self):
+        """One bounded extraction slot, separate from reports and ordinary exports."""
+        from .source_extraction import extract_job,sync_terminal_source,record_extraction_warning
+        for jobs in self._queued(3,"SELECT * FROM jobs WHERE status='queued' AND kind='source_extract' ORDER BY rowid LIMIT 1"):
+            if not jobs:continue
+            job=jobs[0]
+            with self._claim_lock:
+                if self.stopping.is_set():break
+                with self.store.tx() as c:
+                    claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",(now(),job['id'])).rowcount
+                    if claimed:c.execute("UPDATE sources SET status='extracting',error=NULL WHERE id=? AND status<>'ready'",(json.loads(job['payload'])['source_id'],))
+                if not claimed:continue
+                self.extraction_current=job['id'];self._extraction_cancelled.clear()
+            try:
+                self.store.event(job['id'],'job_started',{})
+                result=extract_job(self.store,self.store.one('jobs',job['id']),self._extraction_cancelled)
+                self._settle_job(job['id'],'complete',result=result)
+            except InterruptedError as exc:
+                self._settle_job(job['id'],'cancelled',error=str(exc))
+                sync_terminal_source(self.store,job,'cancelled',str(exc))
+            except Exception as exc:
+                settled=self._settle_job(job['id'],'failed',error=str(exc))
+                if settled['status']=='complete':record_extraction_warning(self.store,settled,'after_commit',exc)
+                else:sync_terminal_source(self.store,job,settled['status'],settled.get('error'))
+            finally:
+                with self._claim_lock:self.extraction_current=None
+                self.wake()
 
     def file_loop(self):
         """Produce requested files even while generation or Review is running."""

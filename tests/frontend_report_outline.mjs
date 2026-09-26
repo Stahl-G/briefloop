@@ -5,14 +5,14 @@ import assert from 'node:assert/strict';
 import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const outlineCode=section(source,'function outlineHeadings','function applyOutlineToSetup','frontend/app.js');
-const openCode=section(source,'function openBrief','function changed()','frontend/app.js');
+const openCode=section(source,'function renderVersionSelect(){','function showPendingReport(','frontend/app.js')+'\n'+section(source,'function openBrief','function changed()','frontend/app.js');
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',textContent:'',hidden:false,innerHTML:'',querySelectorAll:()=>[]});return elements.get(id)};
 let editorContent='';
 const report={id:'brief-new',run_id:'run-new',detail:'{}',markdown:'## New heading\nBody',author:'agent'};
 const c=vm.createContext({console,Promise,$:el,dirty:false,saving:false,current:{id:'brief-old',run_id:'run-old',markdown:'## Old heading'},
  parse:s=>JSON.parse(s||'{}'),updateDownloads:()=>{},notice:()=>{},esc:s=>String(s),
- state:{briefs:[report]},report,
+ state:{briefs:[report],jobs:[],runs:[]},report,
  Editor:class{constructor(options){editorContent=options.content}destroy(){}},
  StarterKit:{configure:()=>({})},TableKit:{},ReportImage:{configure:()=>({})},TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
  toEditor:x=>x,editorDocument:x=>x,changed:()=>{},updateFormattingTools:()=>{},

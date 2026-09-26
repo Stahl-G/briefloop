@@ -1,3 +1,4 @@
+import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
 // Exercise actual application functions with controlled save completion order.
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -7,6 +8,7 @@ import {deliveryUI} from '../frontend/delivery.js';
 import {reportExportUI} from '../frontend/report-export.js';
 import {excelExportUI} from '../frontend/excel-export.js';
 import {section} from './source_section.mjs';
+import {esc} from '../frontend/dom.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const saveCode=section(source,'let savePromise=','\nfunction scheduleLearning','frontend/app.js');
 const commentCode=source.split('\n').find(l=>l.startsWith("$('comment-submit').onclick="));
@@ -14,7 +16,7 @@ const progressCode=section(source,'function effectiveReportJobs','let progressRe
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:''});return elements.get(id)};
 let pending=[],calls=[],downloads=[],timers=[];
-const c=vm.createContext({console,Promise,withoutSupersededRetries,syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
+const c=vm.createContext({console,Promise,esc,withoutSupersededRetries,syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
  state:{workspace_id:"test"},dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
  updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},setReportView:()=>{},
  window:{location:{assign:url=>downloads.push(url)}},
@@ -101,7 +103,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  console.log('PASS: progress follows the selected revision and latest check; current failures, active work and learning remain visible');
 }
 // Use the real openBrief and pending logic with minimal editor/DOM fixtures.
-const opening=section(source,'function tryOpenPending','function changed()','frontend/app.js');
+const opening=section(source,'function renderVersionSelect(){','function showPendingReport(','frontend/app.js')+'\n'+section(source,'function tryOpenPending','function changed()','frontend/app.js');
 let editorContent='';
 c.changed=()=>{};
 c.updateFormattingTools=()=>{};
@@ -164,7 +166,7 @@ console.log('PASS: formal release waits for saved corrections; audit package use
 // Provider image input declarations retain three distinct values across the real form handler.
 const providerCode=section(source,"$('provider-form').onsubmit=","$('timeout-minutes').onchange=",'frontend/app.js');
 let providerBodies=[];
-const p=vm.createContext({$:el,providerEndpoint:()=> 'opencode',api:async(route,body)=>{providerBodies.push({...body});return {model:'example/model'}},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},chatActive:()=>true});
+const p=vm.createContext({$:el,providerCapabilities:createProviderCapabilities({$:el}),providerEndpoint:()=> 'opencode',api:async(route,body)=>{providerBodies.push({...body});return {model:'example/model'}},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},chatActive:()=>true});
 vm.runInContext(providerCode,p);
 el('custom-provider').value='example';el('custom-base-url').value='https://example.test/v1';el('custom-model').value='model';
 for(const value of ['', 'true', 'false']){el('custom-supports-images').value=value;el('custom-api-key').value='test-only-key';await el('provider-form').onsubmit({preventDefault(){}});assert.equal(el('custom-api-key').value,'')}

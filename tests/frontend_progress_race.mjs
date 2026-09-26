@@ -71,6 +71,15 @@ console.log('PASS: stopped, resumed and switched reports reject stale progress; 
 
 {
  const {context,node,pending}=fixture();
+ context.state.runs=[{id:'report',initial_source_count:2,source_count:4,requirements:JSON.stringify({target_minutes:10,allow_web:true})}];
+ const refresh=context.refreshProgress();pending.shift().resolve([]);pending.shift().resolve({});await refresh;
+ assert.equal(node('run-progress').textContent,'');
+ assert.match(node('run-progress').innerHTML,/2 份初始来源 · 允许联网/);
+ assert.match(node('run-progress').innerHTML,/目标约 10 分钟/);
+}
+
+{
+ const {context,node,pending}=fixture();
  let opened=null;context.selectChat=id=>{opened=id};
  const refresh=context.refreshProgress();
  pending.shift().resolve([{kind:'runtime_started',data:'{"session_id":"bound-report-session"}'}]);

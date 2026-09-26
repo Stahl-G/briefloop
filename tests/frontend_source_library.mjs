@@ -1,3 +1,4 @@
+import {sourceStatusLabel} from '../frontend/uploads.js';
 import * as time from '../frontend/time.js';
 import {createSourceLibrarySearch} from '../frontend/source-library-search.js';
 // A failed source keeps no usable original: the detail drawer must not show a
@@ -19,7 +20,7 @@ function makeContext(record,response){
  const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,makeNode());return nodes.get(id)};
  const overview={innerHTML:'',querySelectorAll:()=>[]},usage={innerHTML:'',querySelectorAll:()=>[]};
  const document={querySelector:sel=>sel.includes('"overview"')?overview:sel.includes('"usage"')?usage:null,createElement:()=>makeNode(),createTextNode:text=>({textContent:text})};
- const c=vm.createContext({...time,createSourceLibrarySearch,$:$,esc:String,parse:JSON.parse,document,URL,Map,
+ const c=vm.createContext({...time,sourceStatusLabel,reportBrowsing:{sourceUsage(){}},createSourceLibrarySearch,$:$,esc:String,parse:JSON.parse,document,URL,Map,
   state:{sources:[record],runs:[],briefs:[]},
   api:async()=>response,action:async fn=>fn(),notice:()=>{},openBrief:()=>{},page:()=>{}});
  vm.runInContext(code,c);return c;

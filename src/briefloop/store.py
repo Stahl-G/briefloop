@@ -117,6 +117,7 @@ class Store:
         self.db = self.root/"briefloop.db"
         with self.tx() as c:
             c.executescript(SCHEMA)
+            c.executescript("CREATE INDEX IF NOT EXISTS briefs_run ON briefs(run_id); CREATE INDEX IF NOT EXISTS assessments_version ON assessments(version_id); CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind);")
             from .schedules import SCHEMA as SCHEDULE_SCHEMA
             c.executescript(SCHEDULE_SCHEMA)
             from .evidence import SCHEMA as EVIDENCE_SCHEMA
@@ -233,6 +234,51 @@ class Store:
             source = dict(c.execute('SELECT * FROM sources WHERE id=?', (sid,)).fetchone())
         return source
 
+    def accept_source_upload(self, source_id, name, metadata):
+        """Admit a preserved upload and its extraction job in one transaction."""
+        if Path(source_id).name!=source_id or not source_id:raise ValueError('Invalid source id')
+        path=self.root/'sources'/(source_id+'.txt')
+        jid=uid('job');created=now()
+        with self.tx() as c:
+            if c.execute('SELECT id FROM sources WHERE id=?',(source_id,)).fetchone():raise Conflict('Source already exists')
+            path.write_text('',encoding='utf-8')
+            metadata={**(metadata or {}),'extraction_status':'queued','extraction_job_id':jid}
+            sidecar=self.root/'sources'/(source_id+'.provenance.json');temporary=sidecar.with_suffix('.pending.json');temporary.write_text(dump(metadata),encoding='utf-8');temporary.replace(sidecar)
+            c.execute('INSERT INTO sources VALUES(?,?,?,?,?,?,?,?)',(source_id,name,str(path.relative_to(self.root)),None,'queued',None,content_hash(''),created))
+            c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'source_extract','queued',dump({'source_id':source_id}),None,None,created,created))
+            result=dict(c.execute('SELECT * FROM sources WHERE id=?',(source_id,)).fetchone())
+        self.wake_jobs()
+        return {**result,'extraction_job_id':jid}
+
+    def finish_source_extraction(self, source_id, job_id, text, metadata, *, status='ready', error=None):
+        """Settle only the owning attempt; stopped jobs cannot publish late text."""
+        if status not in ('ready','failed','cancelled','interrupted'):raise ValueError('Invalid extraction status')
+        terminal='complete' if status=='ready' else status
+        with self.tx() as c:
+            job=c.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+            source=c.execute('SELECT * FROM sources WHERE id=?',(source_id,)).fetchone()
+            if not job or not source or job['kind']!='source_extract' or json.loads(job['payload']).get('source_id')!=source_id:return False
+            if source['status']=='ready':return False
+            if status=='ready' and job['status']!='running':return False
+            if status!='ready' and job['status'] not in ('queued','running',terminal):return False
+            path=self.root/source['path']
+            sidecar=self.root/'sources'/(source_id+'.provenance.json')
+            if metadata is None:
+                try:metadata=json.loads(sidecar.read_text(encoding='utf-8'))
+                except (OSError,ValueError):metadata={}
+            if status=='ready':
+                text=str(text or '')
+                extracted=self.root/'sources'/(source_id+'.extracted.txt')
+                temporary=extracted.with_suffix('.pending.txt');temporary.write_text(text,encoding='utf-8');temporary.replace(extracted)
+                c.execute('UPDATE sources SET status=?,error=?,hash=?,path=? WHERE id=?',(status,error,content_hash(text),str(extracted.relative_to(self.root)),source_id))
+            else:c.execute('UPDATE sources SET status=?,error=? WHERE id=?',(status,error,source_id))
+            metadata={**metadata,'extraction_status':status,'extraction_job_id':job_id}
+            if error:metadata['error']=error
+            else:metadata.pop('error',None)
+            temporary=sidecar.with_suffix('.pending.json');temporary.write_text(dump(metadata),encoding='utf-8');temporary.replace(sidecar)
+            c.execute('UPDATE jobs SET status=?,result=?,error=?,updated=? WHERE id=?',(terminal,dump({'source_id':source_id}),error,now(),job_id))
+        return True
+
     def source_text(self, sid, *, max_bytes=None):
         r = self.one("sources", sid)
         path = (self.root/r["path"]).resolve()
@@ -313,11 +359,15 @@ class Store:
             req.workflow_snapshot=validated_workflow(req.workflow_snapshot)
         else:req.workflow_snapshot = freeze_workflow(selection)
         for sid in req.reference_source_ids:
-            self.one("sources", sid)
+            source=self.one("sources", sid)
+            if source['status'] in ('queued','extracting','cancelled','interrupted'):
+                raise ValueError('参考材料尚未读取完成，请等待或重新读取：'+source['name'])
         if set(source_ids) & set(req.reference_source_ids):
             raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
-            self.one("sources", sid)
+            source=self.one("sources", sid)
+            if source['status'] in ('queued','extracting','cancelled','interrupted'):
+                raise ValueError('来源尚未读取完成，请等待或重新读取：'+source['name'])
         if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
         rid = uid("run")
@@ -698,6 +748,10 @@ class Store:
         # Historical requirements are not retroactively assigned a new budget.
         req=json.loads(self.one('runs',brief['run_id'])['requirements'])
         brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
+        from .report_browsing import context
+        brief['context']=context(self,version_id)
+        brief['latest_version_id']=brief['context']['latest']['id']
+        brief['position']=self.rows('SELECT rowid AS position FROM briefs WHERE id=?',(version_id,))[0]['position']
         return brief
 
     def search_briefs(self, text):
@@ -727,7 +781,7 @@ class Store:
     def deleted_reports(self):
         return {r['key'].removeprefix('deleted_report:') for r in self.rows("SELECT key FROM meta WHERE key LIKE 'deleted_report:%'")}
 
-    def snapshot(self):
+    def snapshot(self, *, run_id="", version_id="", pending_run=""):
         clock = datetime.now().astimezone()
         from .notifications import snapshot as notification_snapshot
         from .document_workflows import list_workflows, template_workflow_hint, template_language_hint
@@ -736,22 +790,14 @@ class Store:
         jobs=self.rows("SELECT * FROM jobs WHERE status IN ('queued','running') OR rowid IN "
                        "(SELECT rowid FROM jobs WHERE status NOT IN ('queued','running') ORDER BY rowid DESC LIMIT 30) "
                        "ORDER BY rowid DESC")
-        for j in jobs:
-            events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
-            j['progress']=json.loads(events[0]['data']) if events else None
-        runs=self.rows("SELECT * FROM runs ORDER BY created DESC")
-        acquired={}
-        for row in self.rows("SELECT run_id,source_id FROM run_sources ORDER BY rowid"):
-            acquired.setdefault(row['run_id'],[]).append(row['source_id'])
-        for run in runs:
-            ids=list(dict.fromkeys(json.loads(run['source_ids'])+acquired.get(run['id'],[])))
-            run['all_source_ids']=ids
-            run['source_count']=len(ids)
-        deleted=self.deleted_reports()
-        # Polled state lists versions only; bodies and length come from brief_view on demand.
-        briefs=self.rows("SELECT b.id,b.run_id,b.parent_id,b.author,b.hash,b.detail,b.created,substr(b.markdown,1,400) AS excerpt "
-                         "FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
-        briefs=[b for b in briefs if b['run_id'] not in deleted]
+        # One indexed query for progress regardless of the job window size.
+        if jobs:
+            progress=self.rows("SELECT e.job_id,e.data FROM events e WHERE e.seq=(SELECT max(seq) FROM events WHERE job_id=e.job_id AND kind='learning_progress') AND e.job_id IN ("+','.join('?' for _ in jobs)+")",[j['id'] for j in jobs])
+            progress={row['job_id']:json.loads(row['data']) for row in progress}
+        else:progress={}
+        for job in jobs:job['progress']=progress.get(job['id'])
+        from .report_browsing import hot_state
+        browsing=hot_state(self,jobs,run_id=run_id,version_id=version_id,pending_run=pending_run)
         from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
@@ -767,9 +813,7 @@ class Store:
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
-                "runs": [r for r in runs if r['id'] not in deleted],
-                "briefs": briefs,
-                "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),
+                **browsing,
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
                 "jobs": jobs,
                 "task_labels": reported_labels(),
