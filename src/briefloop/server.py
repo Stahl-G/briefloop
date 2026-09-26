@@ -219,6 +219,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 if u.path=='/api/state':
                     snapshot=store.snapshot()
                     snapshot['demo']=store.meta('demo')
+                    # The page polls this snapshot and reads only each template's
+                    # section outline; Word styles and preparation data stay here.
+                    for template in snapshot['templates']:
+                        try:template['spec']=json.dumps({'sections':json.loads(template['spec']).get('sections',[])},ensure_ascii=False)
+                        except (TypeError,ValueError,AttributeError):pass
                     for source in snapshot['sources']:
                         sidecar=store.root/'sources'/(source['id']+'.provenance.json')
                         if sidecar.is_file():

@@ -23,7 +23,7 @@ test('opening another version immediately refreshes scored and unscored headers 
   $,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
-  api:async()=>state,syncPendingReport:()=>{},renderWordExports:()=>{},render:()=>renders++,refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},delivery:{refreshReleaseState:async()=>{}}});
+  api:async()=>state,syncPendingReport:()=>{},renderWordExports:()=>{},render:()=>renders++,renderTasks:()=>{},renderTaskBanner:()=>{},refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},delivery:{refreshReleaseState:async()=>{}}});
  // Run the real app entry point and renderers; only editor/DOM plumbing is stubbed.
  vm.runInContext([
   section(source,'function renderWordExports(){','\n}','frontend/app.js')+'\n}',
