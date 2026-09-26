@@ -730,7 +730,7 @@ class Store:
     def snapshot(self):
         clock = datetime.now().astimezone()
         from .notifications import snapshot as notification_snapshot
-        from .document_workflows import list_workflows, template_workflow_hint
+        from .document_workflows import list_workflows, template_workflow_hint, template_language_hint
         jobs=self.rows("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 30")
         for j in jobs:
             events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
@@ -758,7 +758,7 @@ class Store:
                 "office": office_cli.snapshot_hint(self),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
-                "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
+                "templates":[{**row, 'workflow_hint':template_workflow_hint(row), 'language_hint':template_language_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),

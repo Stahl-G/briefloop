@@ -30,6 +30,17 @@ OFFICE_SUFFIXES = ('.docx', '.xlsx', '.pptx')
 # check must not do any of that on the user's behalf.
 QUIET_ENV = {'OFFICECLI_SKIP_UPDATE': '1', 'OFFICECLI_NO_AUTO_INSTALL': '1'}
 
+# officecli fires these punctuation/spacing findings on normal prose (full-width
+# CJK punctuation, aligned spacing). They carry no report-level signal, so the
+# issues step filters them out; raw and post-filter counts are both kept.
+PUNCTUATION_NOISE_MESSAGES = frozenset({'Duplicate punctuation', 'Consecutive spaces'})
+# Shared marker for "no subprocess was started: the request budget ran out".
+BUDGET_EXHAUSTED = '请求时间预算用尽'
+
+
+class BudgetExhausted(ValueError):
+    """A render step was skipped because the shared request budget ran out."""
+
 
 def _env():
     return {**os.environ, **QUIET_ENV}
@@ -42,6 +53,11 @@ MIN_STEP_SECONDS = 5
 VALIDATE_TIMEOUT = 120
 ISSUES_TIMEOUT = 120
 SCREENSHOT_TIMEOUT = 180
+# One workbook enhancement shares the per-request budget; standalone `batch` is
+# a single open/apply/save cycle, and the trailing `close` only matters if a
+# resident process was left behind.
+ENHANCE_BATCH_TIMEOUT = 150
+ENHANCE_CLOSE_TIMEOUT = 30
 VERSION_TIMEOUT = 5
 VERSION_TTL_SECONDS = 600
 HINT_TTL_SECONDS = 30
@@ -102,6 +118,12 @@ def _enabled(store):
     return store.settings().get('officecli_enabled') is True
 
 
+def enhancement_ready(store):
+    """Can an export be enhanced right now? Frozen into export fingerprints, so
+    flipping the switch changes the identity instead of reusing a base file."""
+    return _enabled(store) and find() is not None
+
+
 def require_enabled(store):
     """Shared 400-message gate for the explicit check and preview entry points."""
     if not _enabled(store) or not find():
@@ -137,7 +159,7 @@ def run_json(args, *, timeout, deadline=None):
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= MIN_STEP_SECONDS:
-            return {'ok': False, 'data': None, 'reason': '请求时间预算用尽'}
+            return {'ok': False, 'data': None, 'reason': BUDGET_EXHAUSTED}
         timeout = min(timeout, remaining)
     try:
         command = platform_support.cli_command([str(item) for item in args])
@@ -190,12 +212,20 @@ def _record_check(store, kind, target, digest, outcome, job_id, version_id, tool
         else:
             count = data.get('count') if isinstance(data, dict) else None
             items = data.get('issues') if isinstance(data, dict) else None
-            count = count if type(count) is int and count >= 0 else 0
-            items = [item for item in items if isinstance(item, dict)][:MAX_ISSUE_ITEMS] if isinstance(items, list) else []
-            found = count or len(items)
-            status = 'issues' if found else 'ok'
-            summary = f'{found} 项质检发现' if found else '未发现质检问题'
-            payload = {'count': count, 'issues': items}
+            count = count if type(count) is int and count >= 0 else None
+            listed = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+            total = count if count is not None else len(listed)
+            noise = sum(1 for item in listed if item.get('message') in PUNCTUATION_NOISE_MESSAGES)
+            items = [item for item in listed if item.get('message') not in PUNCTUATION_NOISE_MESSAGES][:MAX_ISSUE_ITEMS]
+            found = total - noise
+            # Neutral observation wording: findings are worth reading, not an
+            # alarm; pure punctuation noise stays visible only as a count.
+            status = 'observed' if found else 'ok'
+            if found:
+                summary = f'观察 {found} 项' + (f'（另过滤 {noise} 项纯标点类噪音）' if noise else '')
+            else:
+                summary = '未发现质检问题' + (f'（过滤 {noise} 项纯标点类噪音）' if noise else '')
+            payload = {'count': found, 'total': total, 'noise_filtered': noise, 'issues': items}
     else:
         status, summary, payload = 'error', outcome['reason'], {'reason': outcome['reason']}
     with store.tx() as c:
@@ -209,7 +239,8 @@ def _record_check(store, kind, target, digest, outcome, job_id, version_id, tool
     elif kind == 'validate':
         view['summary'] = summary
     else:
-        view.update(count=payload['count'], items=list(payload['issues']))
+        view.update(count=payload['count'], total=payload['total'],
+                    noise_filtered=payload['noise_filtered'], items=list(payload['issues']))
     return view
 
 
@@ -223,14 +254,19 @@ def _row_view(row):
     else:
         view.update(count=int(data.get('count') or 0),
                     items=list(data.get('issues') or [])[:MAX_ISSUE_ITEMS])
+        for key in ('total', 'noise_filtered'):
+            if type(data.get(key)) is int:
+                view[key] = data[key]
     return view
 
 
-def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
+def check_file(store, path, *, job_id=None, version_id=None, deadline=None, cancelled=None):
     """Best-effort validate + issues for one exported file; never raises.
 
     Silent no-op unless the switch is on, the suffix is an Office format and
-    the binary is found: no subprocess, no rows, no events.
+    the binary is found: no subprocess, no rows, no events. `cancelled` is an
+    optional event checked between the sub-steps: a stop request never waits
+    out the remaining subprocess budget, it just leaves the gate unfinished.
     """
     try:
         target = Path(path)
@@ -245,10 +281,13 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
         tool_version = version(binary)
         steps = (('validate', [binary, 'validate', str(target), '--json'], VALIDATE_TIMEOUT),
                  ('issues', [binary, 'view', str(target), 'issues', '--json'], ISSUES_TIMEOUT))
-        views = {kind: _record_check(store, kind, target, digest,
-                                     run_json(args, timeout=limit, deadline=deadline),
-                                     job_id, version_id, tool_version)
-                 for kind, args, limit in steps}
+        views = {}
+        for kind, args, limit in steps:
+            if cancelled is not None and cancelled.is_set():
+                return None
+            views[kind] = _record_check(store, kind, target, digest,
+                                        run_json(args, timeout=limit, deadline=deadline),
+                                        job_id, version_id, tool_version)
         summary = {'tool': BINARY, 'tool_version': tool_version,
                    'validate': views['validate'], 'issues': views['issues']}
         if job_id:
@@ -256,6 +295,50 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
         return summary
     except Exception:
         return None
+
+
+def enhance_workbook(store, path, plan, *, cancelled=None):
+    """Apply one planned batch of workbook enhancements on a staging copy.
+
+    The whole plan goes out as a single standalone `batch` command — that form
+    is one open/save cycle, so the file is on disk the moment officecli exits
+    (verified against 1.0.152: openpyxl reads formulas, cached values and
+    number formats immediately). Splitting it into per-cell `set` calls would
+    take the resident delayed-flush path instead and leave edits invisible.
+    The defensive `close` afterwards is idempotent ("already saved to disk;
+    nothing to close") and covers a resident that some other tool left behind.
+
+    A failed batch step is reported through the summary; officecli writes data
+    bars as an x14 extension, which openpyxl drops on re-save — callers verify
+    read-only and never re-save an enhanced workbook. Like check_file this
+    keeps the base artifact on any failure. Cancellation is cooperative at
+    command boundaries (the current bounded subprocess finishes first).
+    """
+    try:
+        if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
+        commands = (plan or {}).get('commands') or []
+        if not commands:
+            return {'applied': False, 'reason': None}
+        if not _enabled(store) or not find():
+            return {'applied': False, 'reason': '未检测到 OfficeCLI 或未开启'}
+        binary = find()
+        deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
+        outcome = run_json([binary, 'batch', str(path), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
+                           timeout=ENHANCE_BATCH_TIMEOUT, deadline=deadline)
+        if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
+        if not outcome['ok']:
+            return {'applied': False, 'reason': outcome['reason']}
+        summary = (outcome['data'] or {}).get('summary') if isinstance(outcome['data'], dict) else None
+        failed = summary.get('failed') if isinstance(summary, dict) else None
+        if type(failed) is int and failed > 0:
+            return {'applied': False, 'reason': f'officecli batch 有 {failed} 条命令未成功'}
+        run_json([binary, 'close', str(path)], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
+        if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
+        return {'applied': True, 'reason': None}
+    except InterruptedError:
+        raise
+    except Exception as exc:
+        return {'applied': False, 'reason': '无法运行 officecli：' + type(exc).__name__}
 
 
 def _view_for_digest(store, digest):
@@ -276,7 +359,13 @@ def _view_for_digest(store, digest):
 
 
 def version_office_view(store, version_id):
-    """Check view for the newest complete export/release artifact of a version."""
+    """Check view for the newest complete export/release artifact of a version.
+
+    Deliberately still Word-only: this view feeds /api/version-checks and the
+    review status, both of which describe the formal Word deliverable. An
+    Excel export (a working artifact, checkable from its own task card and
+    POST /api/office-check) must not take over those delivery-bound surfaces.
+    """
     rows = store.rows("SELECT result FROM jobs WHERE kind IN ('export_docx','release') AND status='complete' "
                       "AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC", (version_id,))
     for row in rows:
@@ -294,8 +383,8 @@ def run_check_for_job(store, job_id):
     if not isinstance(job_id, str) or not job_id.strip():
         raise ValueError('缺少任务编号')
     job = store.one('jobs', job_id)
-    if job['kind'] not in ('export_docx', 'release'):
-        raise ValueError('只能对 Word 导出或正式交付任务运行 OfficeCLI 质检')
+    if job['kind'] not in ('export_docx', 'export_xlsx', 'release'):
+        raise ValueError('只能对 Word/Excel 导出或正式交付任务运行 OfficeCLI 质检')
     if job['status'] != 'complete':
         raise ValueError('任务尚未完成，无法质检')
     result = json.loads(job['result'] or '{}')
@@ -339,20 +428,31 @@ def _render_directory(store, digest):
 
 
 def _atomic_bytes(path, data):
-    temporary = path.with_name(path.name + '.tmp')
-    temporary.write_bytes(data)
-    os.replace(temporary, path)
+    temporary = path.with_name(path.name + '.' + uid('write') + '.tmp')
+    try:
+        temporary.write_bytes(data)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _cached_render(directory, digest, page):
     path = directory / f'page-{page:04d}.png'
     record = path.with_suffix('.json')
-    if not path.is_file() or not record.is_file():
+    if not record.is_file():
         return None
     try:
         metadata = json.loads(record.read_text(encoding='utf-8'))
         if not isinstance(metadata, dict) or metadata.get('source_sha256') != digest or metadata.get('page') != page:
             return None
+        if 'image_file' in metadata:
+            image_hash = metadata.get('image_sha256')
+            if not isinstance(image_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', image_hash):
+                return None
+            name = f'page-{page:04d}-{image_hash}.png'
+            if metadata['image_file'] != name:
+                return None
+            path = directory / name
         payload = path.read_bytes()
         if hashlib.sha256(payload).hexdigest() != metadata.get('image_sha256'):
             return None
@@ -381,23 +481,31 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
     cached = _cached_render(directory, digest, page)
     if cached:
         return cached
-    staging = directory / f'.render-{page}.tmp.png'
+    # Per-request staging name: concurrent renders of the same page must not
+    # write into (or clean up) each other's temporary file.
+    staging = directory / f'.render-{page:04d}-{uid("render")}.tmp.png'
     try:
         outcome = run_json([binary, 'view', str(target), 'screenshot', '--page', str(page),
                             '-o', str(staging), '--json'], timeout=timeout, deadline=deadline)
         if not outcome['ok']:
+            if outcome['reason'] == BUDGET_EXHAUSTED:
+                raise BudgetExhausted('预览失败：' + BUDGET_EXHAUSTED)
             raise ValueError('预览失败，不影响文件本身：' + str(outcome['reason']))
         payload = staging.read_bytes()
         width, height = _png_size(payload)
-        destination = directory / f'page-{page:04d}.png'
+        image_hash = hashlib.sha256(payload).hexdigest()
+        # Publish immutable image bytes first, then atomically replace the page
+        # manifest. Concurrent readers/writers never see another image paired
+        # with this metadata, including across separate server processes.
+        destination = directory / f'page-{page:04d}-{image_hash}.png'
         os.replace(staging, destination)
     finally:
         if staging.exists():
             staging.unlink()
     metadata = {'source_sha256': digest, 'page': page,
-                'image_sha256': hashlib.sha256(payload).hexdigest(),
+                'image_sha256': image_hash, 'image_file': destination.name,
                 'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height}
-    _atomic_bytes(destination.with_suffix('.json'), json.dumps(metadata, sort_keys=True).encode())
+    _atomic_bytes(directory / f'page-{page:04d}.json', json.dumps(metadata, sort_keys=True).encode())
     return {'page': page, 'path': str(destination), 'width': width, 'height': height,
             'image_sha256': metadata['image_sha256'], 'digest': digest,
             'tool_version': metadata['tool_version'], 'cached': False}
@@ -414,8 +522,8 @@ def _resolve_target(store, kind, identity):
         return {'kind': 'source', 'id': source['id'], 'name': source['name'], 'path': original}
     if kind == 'job_id':
         job = store.one('jobs', identity)
-        if job['kind'] not in ('export_docx', 'release'):
-            raise ValueError('不是 Word 导出或正式交付任务')
+        if job['kind'] not in ('export_docx', 'export_xlsx', 'release'):
+            raise ValueError('不是 Word/Excel 导出或正式交付任务')
         if job['status'] != 'complete':
             raise ValueError('任务尚未完成，无法预览')
         result = json.loads(job['result'] or '{}')
@@ -451,9 +559,14 @@ def render_preview(store, body):
     for page in pages:
         try:
             found = render_page(store, target['path'], page, deadline=deadline)
+        except BudgetExhausted:
+            incomplete, reason = True, BUDGET_EXHAUSTED + '，仅返回已完成页面'
+            break
         except ValueError as exc:
-            if deadline - time.monotonic() <= MIN_STEP_SECONDS:
-                incomplete, reason = True, '请求时间预算用尽，仅返回已完成页面'
+            if rendered and deadline - time.monotonic() <= MIN_STEP_SECONDS:
+                # A real page failure is not budget exhaustion: name the actual
+                # cause even when the shared budget is spent at the same time.
+                incomplete, reason = True, f'第 {page} 页渲染失败（{exc}），请求时间预算也已用尽，仅返回已完成页面'
                 break
             raise
         cached_all = cached_all and found['cached']

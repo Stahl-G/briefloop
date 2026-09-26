@@ -9,8 +9,8 @@ from decimal import Decimal, InvalidOperation
 
 REF_RE = re.compile(r'\\?\[@(src\\?_[a-zA-Z0-9]+)\\?\]')
 ESCAPED_BOLD_RE = re.compile(r'\\\*\\\*')
-_SCALES = {'': 1, 'thousand': 1000, 'million': 1000000, 'billion': 1000000000,
-           '万': 10000, '百万': 1000000, '千万': 10000000, '亿': 100000000, '十亿': 1000000000}
+_SCALES = {'': 1, 'thousand': 1000, 'million': 1000000, 'billion': 1000000000, 'trillion': 1000000000000,
+           '万': 10000, '百万': 1000000, '千万': 10000000, '亿': 100000000, '十亿': 1000000000, '万亿': 1000000000000}
 _CAPACITY = {'w': 1, '瓦': 1, 'kw': 1000, '千瓦': 1000, 'mw': 1000000,
              '兆瓦': 1000000, 'gw': 1000000000, '吉瓦': 1000000000}
 
@@ -28,7 +28,7 @@ def normalized(value, unit):
         return number, 'percent'
     # Percentage POINTS are a change in a percent-valued metric, not a ratio:
     # a matched 百分点 must not be interchangeable with a percent figure.
-    if unit in ('百分点', '个百分点', 'percentage point', 'pp'):
+    if unit in ('百分点', '个百分点', 'percentage point', 'percentage points', 'pp'):
         return number, 'percentage_point'
     if unit in _CAPACITY:
         return number * _CAPACITY[unit], 'power'
@@ -44,20 +44,28 @@ def normalized(value, unit):
         return number, 'ratio'
     if unit in ('个', '项', '次', '人', '家', '条', 'count', 'items'):
         return number, 'count'
+    # Unit counts with a scale: an English report restating 52.6万辆 as
+    # 526,000 units must still compare with the Chinese source.
+    counted = re.fullmatch(r'(?:(thousand|millions?|billions?) )?(?:units?|vehicles?|cars?)', unit)
+    if counted:
+        return number * _SCALES[(counted[1] or '').rstrip('s')], 'count'
+    counted = re.fullmatch(r'(万亿|亿|万)?(?:辆|台)', unit)
+    if counted:
+        return number * _SCALES[counted[1] or ''], 'count'
     if unit == '':
         return number, 'scalar'
     if unit in ('$', 'usd', '美元'):
         return number, 'USD'
     if unit in ('cny', 'rmb', '人民币', '元', '元人民币'):
         return number, 'CNY'
-    money = re.fullmatch(r'(thousand|millions?|billions?) (usd|cny|rmb)', unit)
+    money = re.fullmatch(r'(thousand|millions?|billions?|trillions?) (usd|cny|rmb)', unit)
     if not money:
-        reverse = re.fullmatch(r'(usd|cny|rmb) (thousand|millions?|billions?)', unit)
+        reverse = re.fullmatch(r'(usd|cny|rmb) (thousand|millions?|billions?|trillions?)', unit)
         if reverse:
             money = re.fullmatch(r'(\w+) (\w+)', reverse[2] + ' ' + reverse[1])
     if money:
         return number * _SCALES[money[1].rstrip('s')], 'USD' if money[2] == 'usd' else 'CNY'
-    chinese = re.fullmatch(r'(十亿|千万|百万|亿|万)(美元|元人民币|人民币|元)', unit)
+    chinese = re.fullmatch(r'(万亿|十亿|千万|百万|亿|万)(美元|元人民币|人民币|元)', unit)
     if chinese:
         return number * _SCALES[chinese[1]], 'USD' if chinese[2] == '美元' else 'CNY'
     return None
@@ -66,12 +74,13 @@ def normalized(value, unit):
 # Full numeric tokens, including sign, thousands separators and scientific form.
 # Prefix/suffix currency conflicts or compound dimensions remain unsupported.
 _NUM = r'[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
-_UNIT = (r'(?:thousand|millions?|billions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
-         r'|(?:USD|CNY|RMB|EUR|GBP)(?:\s+(?:thousand|millions?|billions?))?'
-         r'|(?:十亿|千万|百万|亿|万)?(?:美元|元人民币|人民币|元)'
-         r'|百分点|百分之|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股'
+_UNIT = (r'(?:thousand|millions?|billions?)\s+(?:units?|vehicles?|cars?)|units?|vehicles?|cars?|(?:万亿|亿|万)?(?:辆|台)'
+         r'|(?:thousand|millions?|billions?|trillions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
+         r'|(?:USD|CNY|RMB|EUR|GBP)(?:\s+(?:thousand|millions?|billions?|trillions?))?'
+         r'|(?:万亿|十亿|千万|百万|亿|万)?(?:美元|元人民币|人民币|元)'
+         r'|百分点|百分之|percentage points?|pp|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股'
          r'|年|倍|个百分点|个(?!百分点|月)|项|次|人|家|条')
-_QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−])(?P<prefix>\$|USD\s+|CNY\s+|RMB\s+|百分之)?'
+_QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−])(?P<prefix>US\$|\$|USD\s+|CNY\s+|RMB\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
                        r'(?P<denom>\s*/\s*[\w]+|每[\w]+)?', re.I)
 
@@ -89,8 +98,8 @@ def quantities(text):
         if end < len(text) and (text[end].isascii() and (text[end].isalnum() or text[end] == '_')):
             continue
         if prefix:
-            currency = 'USD' if prefix == '$' else prefix
-            if unit.lower() in ('thousand', 'million', 'millions', 'billion', 'billions'):
+            currency = 'USD' if prefix in ('$', 'US$') else prefix
+            if unit.lower() in ('thousand', 'million', 'millions', 'billion', 'billions', 'trillion', 'trillions'):
                 unit += ' ' + currency
             elif not unit:
                 unit = currency
@@ -201,6 +210,14 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
         if not candidates:
             row['reason'] = '正文数值不是完整的受支持数值与单位，未检查'
             continue
+        if candidates[0][1] == 'scalar' and expected[1] != 'scalar':
+            # Table cells and restated figures often leave the unit to the
+            # header or the sentence. The same bare number is not a mismatch;
+            # its unit simply was not checked mechanically.
+            bare = normalized(item.get('value'), '')
+            if bare is not None and candidates[0][0] == bare[0]:
+                row['reason'] = '正文数值未带单位（单位在表头或上下文），数值与绑定值一致；单位未机械核对'
+                continue
         row['checked'] = True
         row['found'] = candidates[0] == expected
         if row['found'] and row.get('dimensionless'):

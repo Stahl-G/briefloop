@@ -68,6 +68,12 @@ def resolve(requirements, template=None, *, reader_contract=None):
             'interpretation_rule': 'objective及requirement_items保留用户原始要求；reader_contract是待对照原文核查的执行解释，不得降级或替换明确要求。'}
     if requirements.get('target_minutes') is not None:
         spec['target_minutes'] = requirements['target_minutes']
+    # Chinese keeps the spec byte-identical to runs saved before the language
+    # enum. Language stays out of the reader-contract fingerprint (it is frozen
+    # per run), and review validation ignores it for packets saved without it.
+    from .models import report_language
+    if report_language(requirements.get('language')) == 'en':
+        spec['language'] = 'en'
     if requirements.get('workflow_snapshot'):
         spec['workflow_snapshot'] = deepcopy(requirements['workflow_snapshot'])
     if reader_contract is not None:
@@ -76,7 +82,7 @@ def resolve(requirements, template=None, *, reader_contract=None):
 
 
 def _source_fingerprint(spec):
-    source = {key: value for key, value in spec.items() if key != 'reader_contract'}
+    source = {key: value for key, value in spec.items() if key not in ('reader_contract', 'language')}
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -170,6 +176,11 @@ def instructions(spec, role='analyst', *, include_spec=True):
     if role in ('analyst', 'revision'):
         from .writing_guidance import ANALYST_GUIDE
         parts.append(ANALYST_GUIDE)
+    if spec.get('language') == 'en':
+        from .writing_guidance import ENGLISH_REPORT_GUIDE, ENGLISH_RESEARCH_NOTE
+        parts.append(ENGLISH_RESEARCH_NOTE if role == 'scout' else
+                     ('被审报告的正文语言为英文；按以下规范核对表达和格式，发现与理由仍用中文写。\n' + ENGLISH_REPORT_GUIDE
+                      if role in ('evaluator', 'reviewer') else ENGLISH_REPORT_GUIDE))
     if role in ('orchestrator', 'analyst', 'revision'):
         from .execution_timing import instructions as timing_instructions
         parts.append(timing_instructions(spec.get('target_minutes')))

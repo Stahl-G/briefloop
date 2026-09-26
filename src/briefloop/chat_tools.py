@@ -103,8 +103,8 @@ def workspace_action(store, request):
         from .document_workflows import list_workflows
         return {'workflows':list_workflows()}
     if action=='templates':
-        from .document_workflows import template_workflow_hint
-        return {'templates':[{**row,'workflow_hint':template_workflow_hint(row)} for row in store.rows('SELECT * FROM templates ORDER BY created DESC')]}
+        from .document_workflows import template_workflow_hint, template_language_hint
+        return {'templates':[{**row,'workflow_hint':template_workflow_hint(row),'language_hint':template_language_hint(row)} for row in store.rows('SELECT * FROM templates ORDER BY created DESC')]}
     if action=='template_rebuild':
         from .templates import rebuild_template_version
         return rebuild_template_version(store,request['template_id'])
@@ -311,7 +311,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON、引用和已存正文的 length_stats；revise_document 回执也给出保存后的确定性计数。按 count/rule 核对原始要求、读者约定及当前反馈，不估算字数；over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。可选 citations 完整替换引用列表（source_id/locator/excerpt，schema 见 capabilities），省略则保留；只修改引用也保存新版本，定位描述不表示已独立核验。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
-- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
+- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"zh|en","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。language 是报告正文语言（默认 zh）；用户要英文报告时写 en，不传 target_words 时篇幅按英文词数默认。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。

@@ -1,10 +1,17 @@
 """Build the bundled built-in report templates (docx + preparation specs).
 
 Run from the repo root:
-    .venv/bin/python scripts/build_builtin_template.py
+    .venv/bin/python scripts/build_builtin_template.py --only general-report-en
 
-The built-in set contains 36 templates: seven genres with five themes each,
-plus one government layout with a fixed theme. The model separates
+DOCX packages embed save times, so a rebuild changes every file's bytes and an
+existing workspace would register the unchanged layouts a second time (built-in
+rows are keyed by content hash). Build only the genres you add or change with
+--only; a full rebuild without it replaces every shipped asset.
+
+The built-in set contains 46 templates: nine genres with five themes each,
+plus one government layout with a fixed theme. Two genres are English: their
+chapter anchors, contents label, page footer and samples are English, and they
+tell the setup form to write the report in English. The model separates
 "template defines structure, theme defines tokens". Theme supplies the primary
 color, heading font and body font/size; genre supplies structure (cover
 composition, chapter anchors, table borders, page-number format). Two
@@ -90,7 +97,33 @@ GENRES = (
                   ('forecast', '盈利预测与估值', '预测与估值'), ('risks', '风险提示', '会改变判断的具体风险与观察指标')),
      'cover': 'research', 'table': {'kind': 'horizontal', 'header_fill': 'EEF2F9'}, 'footer': 'page',
      'header': True, 'toc': False, 'title_size': 20},
+    # English layouts: headings are English; purposes stay Chinese like the rest
+    # of the setup form, which shows them next to each chapter.
+    {'stem': 'general-report-en', 'label': '英文通用报告', 'lang': 'en',
+     'sections': (('summary', 'Executive Summary', '本期核心结论'), ('background', 'Background', '事件与背景'),
+                  ('analysis', 'Analysis', '影响推演'), ('conclusion', 'Conclusions', '判断与建议'),
+                  ('risks', 'Risks', '不确定性')),
+     'cover': 'standard', 'table': {'kind': 'three_line'}, 'footer': 'page', 'header': True, 'toc': True},
+    {'stem': 'stock-research-en', 'label': '英文研报', 'lang': 'en',
+     'sections': (('views', 'Key Takeaways', '核心判断'), ('events', 'Recent Developments', '触发事件'),
+                  ('forecast', 'Earnings Forecast and Valuation', '预测与估值'),
+                  ('risks', 'Key Risks', '会改变判断的具体风险与观察指标')),
+     'cover': 'research', 'table': {'kind': 'horizontal', 'header_fill': 'EEF2F9'}, 'footer': 'page',
+     'header': True, 'toc': False, 'title_size': 20},
 )
+
+# Reader-facing words the layouts print. The body sample doubles as the anchor
+# prepare() uses to pick the body style.
+TEXT = {
+    'zh': {'contents': '目录', 'contents_pending': '目录将在打开文档时自动生成',
+           'page': ('第 ', ' 页'), 'of_pages': None, 'sample_cell': '示例{}-{}',
+           'body': '这是一段正文样式示例：BriefLoop 会把该段的字体、字号、行距与格式作为报告正文样式。'
+                   'Numbers like 1,234.56 keep Arial while 汉字落到中文字体。'},
+    'en': {'contents': 'Contents', 'contents_pending': 'The table of contents is generated when the document is opened.',
+           'page': ('Page ', ''), 'of_pages': ' of ', 'sample_cell': 'Sample {}-{}',
+           'body': 'This is a body style sample: BriefLoop uses the font, size, spacing and format of this '
+                   'paragraph for the report body. Numbers like 1,234.56 and names such as 比亚迪 keep their fonts.'},
+}
 
 
 def merge(genre, theme):
@@ -177,12 +210,12 @@ HORIZONTAL = (('top', 'single', '8'), ('bottom', 'single', '8'),
               ('insideH', 'single', '4'), ('insideV', 'none', '0'))
 
 
-def add_sample_table(doc, *, kind, header_fill=None, rows=3, cols=3):
+def add_sample_table(doc, *, kind, header_fill=None, rows=3, cols=3, lang='zh'):
     table = doc.add_table(rows=rows, cols=cols)
     table_borders(table, {'three_line': THREE_LINE, 'full': FULL_BORDER, 'horizontal': HORIZONTAL}[kind])
     for r, row in enumerate(table.rows):
         for c, cell in enumerate(row.cells):
-            cell.paragraphs[0].add_run(f'示例{r+1}-{c+1}')
+            cell.paragraphs[0].add_run(TEXT[lang]['sample_cell'].format(r + 1, c + 1))
             if r == 0:
                 cell.paragraphs[0].runs[0].font.bold = True
                 if header_fill:
@@ -192,7 +225,7 @@ def add_sample_table(doc, *, kind, header_fill=None, rows=3, cols=3):
     return table
 
 
-def add_page_number(section, mode):
+def add_page_number(section, mode, lang='zh'):
     section.different_first_page_header_footer = True
     section.first_page_footer.paragraphs[0].text = ''
     section.first_page_header.paragraphs[0].text = ''
@@ -206,14 +239,19 @@ def add_page_number(section, mode):
     if mode == 'gov':
         footer.add_run('— '); footer._p.append(field); footer.add_run(' —')
     elif mode == 'total':
-        footer.add_run('第 '); footer._p.append(field)
+        words = TEXT[lang]
+        footer.add_run(words['page'][0]); footer._p.append(field)
+        if words['of_pages']: footer.add_run(words['of_pages'])
         total = OxmlElement('w:fldSimple')
         total.set(qn('w:instr'), ' NUMPAGES ')
         inner2 = OxmlElement('w:r'); text2 = OxmlElement('w:t'); text2.text = '1'
         inner2.append(text2); total.append(inner2)
-        footer._p.append(total); footer.add_run(' 页')
+        footer._p.append(total)
+        if words['page'][1]: footer.add_run(words['page'][1])
     else:
-        footer.add_run('第 '); footer._p.append(field); footer.add_run(' 页')
+        before, after = TEXT[lang]['page']
+        footer.add_run(before); footer._p.append(field)
+        if after: footer.add_run(after)
     for run in footer.runs: run.font.size = Pt(9)
 
 
@@ -227,18 +265,18 @@ def add_title_header(section, text, color):
     bottom_border(header, color='DEDFD8', sz='4')
 
 
-def add_toc_block(doc, color):
+def add_toc_block(doc, color, lang='zh'):
     label = doc.add_paragraph()
     label.paragraph_format.space_before = Pt(6)
     label.paragraph_format.space_after = Pt(10)
-    run = label.add_run('目录')
+    run = label.add_run(TEXT[lang]['contents'])
     run_props(run, size=15, bold=True, color=color, east='黑体')
     holder = doc.add_paragraph()
     field = OxmlElement('w:fldSimple')
     field.set(qn('w:instr'), ' TOC \\o "1-3" \\h \\z \\u ')
     placeholder = OxmlElement('w:r')
     placeholder_text = OxmlElement('w:t')
-    placeholder_text.text = '目录将在打开文档时自动生成'
+    placeholder_text.text = TEXT[lang]['contents_pending']
     placeholder.append(placeholder_text)
     field.append(placeholder)
     holder._p.append(field)
@@ -279,10 +317,8 @@ def centered(doc, text, *, size, bold=False, color=INK, east='宋体', space_bef
     return paragraph
 
 
-def body_sample(doc):
-    return doc.add_paragraph(
-        '这是一段正文样式示例：BriefLoop 会把该段的字体、字号、行距与格式作为报告正文样式。'
-        'Numbers like 1,234.56 keep Arial while 汉字落到中文字体。')
+def body_sample(doc, lang='zh'):
+    return doc.add_paragraph(TEXT[lang]['body'])
 
 
 def key_value_table(doc, rows):
@@ -352,21 +388,22 @@ COVERS = {'standard': cover_standard, 'gov': cover_gov, 'contract': cover_contra
 
 def build_one(genre, theme):
     cfg = merge(genre, theme)
+    lang = cfg.get('lang', 'zh')
     doc = Document()
     customize(doc, cfg)
-    add_page_number(doc.sections[0], cfg['footer'])
+    add_page_number(doc.sections[0], cfg['footer'], lang)
     if cfg.get('header'):
         add_title_header(doc.sections[0], '{{title}}', MUTED)
     COVERS[cfg['cover']](doc, cfg)
     if cfg.get('toc'):
         page_break(doc)
-        add_toc_block(doc, cfg['accent'])
+        add_toc_block(doc, cfg['accent'], lang)
     if cfg['cover'] != 'minutes':
         page_break(doc)
     for _, title, _ in cfg['sections']:
         chapter(doc, title, {**cfg['headings'][1], 'level': 1})
-    body_sample(doc)
-    add_sample_table(doc, **cfg['table'])
+    body_sample(doc, lang)
+    add_sample_table(doc, **cfg['table'], lang=lang)
 
     blocks = list(doc.element.body)
     def index_of(predicate, label):
@@ -385,7 +422,7 @@ def build_one(genre, theme):
     spec = {
         'sections': sections,
         'keep_blocks': keep_blocks,
-        'paragraph_index': index_of(lambda t: t.startswith('这是一段正文样式示例'), '正文样例'),
+        'paragraph_index': index_of(lambda t: t == TEXT[lang]['body'], '正文样例'),
         'fields': [
             {'old': '{{title}}', 'field': 'title'},
             {'old': '{{organization}}', 'field': 'organization'},
@@ -407,14 +444,24 @@ def builtin_variants():
             for theme in ((THEMES[3],) if genre['stem'] == 'government-doc-zh' else THEMES)]
 
 
-def main():
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description='Build bundled built-in templates.')
+    parser.add_argument('--only', nargs='+', metavar='STEM',
+                        help='build only these genre stems (e.g. general-report-en); other assets keep their bytes')
+    args = parser.parse_args(argv)
+    stems = {genre['stem'] for genre in GENRES}
+    if args.only and set(args.only) - stems:
+        raise SystemExit('未知文体：' + ', '.join(sorted(set(args.only) - stems)))
     ASSETS.mkdir(parents=True, exist_ok=True)
-    for stale in list(ASSETS.glob('*.docx')) + list(ASSETS.glob('*.spec.json')):
-        stale.unlink()
+    if not args.only:
+        for stale in list(ASSETS.glob('*.docx')) + list(ASSETS.glob('*.spec.json')):
+            stale.unlink()
     # The government layout is theme-fixed by GB/T 9704 (red head, 仿宋 body,
     # black headings): across themes its bytes are identical, so it ships
     # only in its canonical theme instead of five dummy variants.
-    summary = [build_one(genre, theme) for genre, theme in builtin_variants()]
+    summary = [build_one(genre, theme) for genre, theme in builtin_variants()
+               if not args.only or genre['stem'] in args.only]
     print(json.dumps({'templates': len(summary), 'genres': len(GENRES),
                       'themes': len(THEMES), 'fixed_theme_genres': ['government-doc-zh']}, ensure_ascii=False))
 

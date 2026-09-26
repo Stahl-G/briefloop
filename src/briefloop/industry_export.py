@@ -30,7 +30,7 @@ def _paragraph_after(paragraph, *, style=None):
     return result
 
 
-def append_figure(paragraph, figure_id, figure, alt, *, max_width, max_height):
+def append_figure(paragraph, figure_id, figure, alt, *, max_width, max_height, language=None):
     """Use only already-authorized in-memory bytes, never an MD path or URL."""
     from io import BytesIO
     from PIL import Image
@@ -59,7 +59,10 @@ def append_figure(paragraph, figure_id, figure, alt, *, max_width, max_height):
         if value and str(value).strip() not in labels:labels.append(str(value).strip())
     sources=figure.get('source_labels') or []
     if isinstance(sources,str):sources=[sources]
-    if sources:labels.append('来源：'+'；'.join(str(value) for value in sources if value))
+    if sources:
+        from .document_export import reader_labels
+        words=reader_labels(language)
+        labels.append(words['figure_source']+words['separator'].join(str(value) for value in sources if value))
     if labels:
         caption=_paragraph_after(paragraph,style='Caption')
         caption.paragraph_format.line_spacing=1.0
@@ -72,7 +75,7 @@ def append_figure(paragraph, figure_id, figure, alt, *, max_width, max_height):
     return paragraph
 
 
-def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150), max_figure_height=Mm(180)):
+def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150), max_figure_height=Mm(180), language=None):
     """Preserve normal inline content; registered figures occupy their MD position."""
     from docx.opc.constants import RELATIONSHIP_TYPE
     bold=italic=False;link=None;after_figure=False
@@ -94,7 +97,7 @@ def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150)
             figure_id=child.attrGet('src').split(':',1)[1]
             if figure_id not in (figures or {}):raise ValueError('图表 '+figure_id+' 未提供已授权的导出资源')
             paragraph=append_figure(paragraph,figure_id,figures[figure_id],child.content,
-                                    max_width=max_figure_width,max_height=max_figure_height)
+                                    max_width=max_figure_width,max_height=max_figure_height,language=language)
             after_figure=True;link=None
         elif child.type in ('text','code_inline','softbreak','hardbreak','image'):
             content='\n' if child.type in ('softbreak','hardbreak') else child.content
@@ -108,7 +111,10 @@ def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150)
     return paragraph
 
 
-def configure_document(doc, *, title='', report_date='', organization='', period='', industry=''):
+def configure_document(doc, *, title='', report_date='', organization='', period='', industry='', language=None):
+    from .document_export import reader_labels
+    words = reader_labels(language)
+    kind = industry + words['industry_joiner'] + words['industry_report'] if industry else words['industry_report']
     section = doc.sections[0]
     section.page_width, section.page_height = Mm(210), Mm(297)
     section.top_margin = section.bottom_margin = Mm(20)
@@ -131,36 +137,38 @@ def configure_document(doc, *, title='', report_date='', organization='', period
         style.paragraph_format.space_before = Pt(16)
         style.paragraph_format.space_after = Pt(10)
     header = section.header.paragraphs[0]
-    header.text = ' · '.join(filter(None, [organization, (industry + '行业定期报告') if industry else '行业定期报告', report_date]))
+    header.text = ' · '.join(filter(None, [organization, kind, report_date]))
     header.style = doc.styles['Caption']
     header.runs[0].font.color.rgb = RGBColor.from_string(BLUE)
     borders = _element(header._p.get_or_add_pPr(), 'pBdr')
     _element(borders, 'bottom', val='single', sz=6, color=BLUE, space=6)
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    footer.add_run((organization + '  ' if organization else '') + '第 ')
+    footer.add_run((organization + '  ' if organization else '') + words['page'][0])
     _element(footer._p, 'fldSimple', instr='PAGE')
-    footer.add_run(' 页')
+    if words['page'][1]: footer.add_run(words['page'][1])
     for run in footer.runs: run.font.size = Pt(9)
     cover = doc.add_paragraph(style='Title')
     cover.paragraph_format.space_before = Pt(100)
-    cover.add_run(title or ((industry + '行业定期报告') if industry else '行业定期报告'))
+    cover.add_run(title or kind)
     if organization: doc.add_paragraph(organization, style='Subtitle')
     if report_date: doc.add_paragraph(report_date)
-    if period: doc.add_paragraph('覆盖期间：' + period)
+    if period: doc.add_paragraph(words['period'] + period)
     doc.add_page_break()
 
 
-def insert_table_of_contents(doc):
+def insert_table_of_contents(doc, language=None):
     """Append a 目录 block (label + TOC field + page break) at the current position.
 
     The TOC field collects styled headings on open; callers must enable field
     updates (enable_update_fields) so Word/WPS fills it in.
     """
+    from .document_export import reader_labels
+    words = reader_labels(language)
     label = doc.add_paragraph()
     label.paragraph_format.space_before = Pt(12)
     label.paragraph_format.space_after = Pt(10)
-    run = label.add_run('目录')
+    run = label.add_run(words['contents'])
     run.bold = True
     run.font.size = Pt(15)
     run.font.name = WESTERN_FONT
@@ -171,14 +179,14 @@ def insert_table_of_contents(doc):
     field.set(qn('w:instr'), ' TOC \\o "1-3" \\h \\z \\u ')
     placeholder = OxmlElement('w:r')
     placeholder_text = OxmlElement('w:t')
-    placeholder_text.text = '目录将在打开文档时自动生成'
+    placeholder_text.text = words['contents_pending']
     placeholder.append(placeholder_text)
     field.append(placeholder)
     holder._p.append(field)
     doc.add_page_break()
 
 
-def populate_table_of_contents(doc):
+def populate_table_of_contents(doc, empty_label='暂无可列入目录的标题'):
     """Cache linked headings in a complex TOC field that Word and WPS display."""
     fields = [field for field in doc.element.xpath('.//w:fldSimple')
               if ' TOC ' in (field.get(qn('w:instr')) or '')]
@@ -210,7 +218,7 @@ def populate_table_of_contents(doc):
             run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = title
             run.append(text);link.append(run);holder.append(link)
         if not headings:
-            run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = '暂无可列入目录的标题'
+            run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = empty_label
             run.append(text);holder.append(run)
         marker('end')
 
@@ -266,7 +274,7 @@ def style_table(table):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 
-def append_data_chart(doc, report_data):
+def append_data_chart(doc, report_data, language=None):
     """Draw one explicitly comparable forecast series; never fabricate missing periods."""
     from collections import defaultdict
     from datetime import date
@@ -316,8 +324,10 @@ def append_data_chart(doc, report_data):
         if index % stride == 0 or index == len(points)-1:
             draw.text((x-45, 448), day.isoformat(), fill='#40505E', font_size=17)
             draw.text((x-20, y-28), f'{value:g}', fill='#17466B', font_size=19)
-    doc.add_heading('数据图表', level=2)
-    caption = doc.add_paragraph(' · '.join(filter(None, key[:-1])) + '（预测值，截至 ' + key[-1] + '）')
+    from .document_export import reader_labels
+    words = reader_labels(language)
+    doc.add_heading(words['data_charts'], level=2)
+    caption = doc.add_paragraph(' · '.join(filter(None, key[:-1])) + words['forecast_as_of'].format(key[-1]))
     caption.paragraph_format.keep_with_next = True
     output = BytesIO(); image.save(output, format='PNG'); output.seek(0)
     picture = doc.add_paragraph()
@@ -328,7 +338,7 @@ def append_data_chart(doc, report_data):
     for _, _, record in points:
         sid = str(record.get('source_id', ''))
         if sid not in source_ids: source_ids.append(sid)
-        label = str(record.get('source_label') or '').strip() or f'来源{source_ids.index(sid) + 1}'
+        label = str(record.get('source_label') or '').strip() or words['source_n'].format(source_ids.index(sid) + 1)
         text = ' · '.join(filter(None, [label, str(record.get('locator') or '')]))
         if text not in source_labels: source_labels.append(text)
-    doc.add_paragraph('数据依据：' + '；'.join(filter(None, source_labels)))
+    doc.add_paragraph(words['data_basis'] + words['separator'].join(filter(None, source_labels)))

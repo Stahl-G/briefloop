@@ -14,7 +14,7 @@ from .store import Conflict, dump, now
 from .skills import bind_context
 from .agent_commands import tool_command, quote_path
 
-FILE_JOB_KINDS = ('export_docx', 'release', 'audit_bundle')
+FILE_JOB_KINDS = ('export_docx', 'export_xlsx', 'release', 'audit_bundle')
 
 # Product starting value, not a tuned split. The share the Worker reserves from
 # the task budget when admitting the fact-check stage; real runs decide the
@@ -753,7 +753,12 @@ class Worker:
         # main-lane jobs share one serial task thread (and the shared runtime), so a
         # long learning or revision turn never keeps free report slots idle.
         # A trial generation owned by a learning job is executed by that job, never here.
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) AND json_extract(payload,'$.inline_owner_job_id') IS NULL ORDER BY rowid",FILE_JOB_KINDS):
+        # Placeholders are derived from FILE_JOB_KINDS itself: a hand-counted "?,?,?"
+        # here once desynced from the tuple and killed the briefloop-worker thread
+        # (_queued has no per-iteration guard, so generate/revise/learn all stopped).
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') "
+            "AND kind NOT IN ("+",".join("?"*len(FILE_JOB_KINDS))+") "
+            "AND json_extract(payload,'$.inline_owner_job_id') IS NULL ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
                 from .learning_budget import automatic_allowed
                 if automatic_allowed(self.store.settings()) and not self.opened_paused:
@@ -873,7 +878,8 @@ class Worker:
 
     def file_loop(self):
         """Produce requested files even while generation or Review is running."""
-        for jobs in self._queued(2,"SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
+        # Same single-source placeholder rule as loop(): the tuple length decides.
+        for jobs in self._queued(2,"SELECT * FROM jobs WHERE status='queued' AND kind IN ("+",".join("?"*len(FILE_JOB_KINDS))+") ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
             if not jobs:continue
             job=jobs[0]
             with self._claim_lock:
@@ -891,6 +897,9 @@ class Worker:
                 if job['kind']=='export_docx':
                     from .export_jobs import generate_word
                     result=generate_word(self.store,job,self._file_cancelled)
+                elif job['kind']=='export_xlsx':
+                    from .xlsx_export import generate_xlsx
+                    result=generate_xlsx(self.store,job,self._file_cancelled)
                 elif job['kind']=='release':
                     from .release import generate_release
                     result=generate_release(self.store,job,self._file_cancelled)

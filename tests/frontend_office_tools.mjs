@@ -128,14 +128,22 @@ test('word export rows add office summary and preview only when enabled',()=>{
  assert.doesNotMatch(plain.html,/OfficeCLI|data-office-preview/);
  assert.equal(plain.box.children.length,0,'no enablement hint without the state key');
 
- // Enabled: summary line, preview button and its binding appear.
+ // Enabled: summary line, preview button and its binding appear. Audit bundles
+ // have a download but no preview button: /api/office-preview rejects their
+ // job kind, so the row must not offer the 400ing control.
  const opened=[];
- const enabled=setup({state:{jobs:[job],office:{installed:true,enabled:true}},current:{id:'v1',run_id:'r1'},
+ const auditJob={id:'job_audit',kind:'audit_bundle',status:'complete',payload:JSON.stringify({version_id:'v1',run_id:'r1'}),result:JSON.stringify({path:'jobs/job_audit/report-audit.zip'})};
+ const excelJob={...job,id:'job_excel',kind:'export_xlsx',result:JSON.stringify({download_url:'/saved.xlsx'})};
+ const enabled=setup({state:{jobs:[job,auditJob,excelJob],office:{installed:true,enabled:true}},current:{id:'v1',run_id:'r1'},
   buttons:[{dataset:{officePreview:'job_1'},onclick:null}],
   office:{officeEnabled:()=>true,officeCheckSummary:()=>'OfficeCLI 质检通过',openPreview:target=>opened.push(target)}});
  vm.runInContext('renderWordExports()',enabled.c);
  assert.match(enabled.html,/OfficeCLI 质检通过/);
  assert.match(enabled.html,/data-office-preview="job_1"/);
+ assert.doesNotMatch(enabled.html,/data-office-preview="job_audit"/);
+ assert.match(enabled.html,/data-office-preview="job_excel"/);
+ assert.match(enabled.html,/下载工作稿 Excel/);
+ assert.match(enabled.html,/下载审计包/);
  const bound=enabled.box.querySelectorAll()[0];
  assert.equal(typeof bound.onclick,'function');
  bound.onclick();
@@ -154,6 +162,42 @@ test('word export rows add office summary and preview only when enabled',()=>{
  assert.equal(hint.removed,true);
  vm.runInContext('renderWordExports()',hintContext.c);
  assert.equal(hintContext.box.children.length,1,'dismissed hint never comes back in this session');
+});
+
+test('office summary trusts the stored status and falls back to the item count',()=>{
+ // "质检通过" needs the stored ok status; a found status with a missing count
+ // shows the observed items instead of claiming a pass.
+ const {tools}=makeTools({installed:true,enabled:true});
+ const withIssues=issues=>tools.officeCheckSummary({validate:{status:'ok'},issues});
+ assert.equal(withIssues({status:'ok',count:0,items:[]}),'OfficeCLI 质检通过');
+ assert.match(withIssues({status:'issues',items:[{message:'表格行列不平衡'}]}),/OfficeCLI 观察 1 项/);
+ assert.doesNotMatch(withIssues({status:'issues',items:[{message:'表格行列不平衡'}]}),/质检通过/);
+ assert.match(withIssues({status:'observed',items:[{},{},{}]}),/OfficeCLI 观察 3 项/);
+ assert.match(withIssues({status:'observed',count:2,noise_filtered:4,items:[{},{}]}),/OfficeCLI 观察 2 项（已过滤纯标点类噪音 4 项）/);
+ assert.match(withIssues({status:'ok',count:0,noise_filtered:2,items:[]}),/OfficeCLI 质检通过（已过滤纯标点类噪音 2 项）/);
+ assert.match(tools.officeCheckSummary({validate:{status:'ok'},issues:{status:'error',reason:'officecli 执行超时（120 秒）'}}),/质检未完成：officecli 执行超时/);
+});
+
+test('settings card and preview wording disclose the renderer network calls',()=>{
+ const {tools,dom}=makeTools({installed:true,enabled:true});
+ tools.renderSettingsCapability({installed:true,version:'1.0.152',enabled:true});
+ const status=dom.$('settings-officecli-status').textContent;
+ assert.match(status,/本地渲染/);
+ assert.match(status,/d\.officecli\.ai/);
+ assert.match(status,/KaTeX/);
+ assert.match(status,/字体名发给它的字体代理/);
+ // The dialog opens with the same disclosure next to the page input.
+ tools.openPreview({job_id:'job_1'});
+ const note=dom.$('office-preview-note').textContent;
+ assert.match(note,/d\.officecli\.ai/);
+ assert.match(note,/KaTeX/);
+ assert.match(note,/字体/);
+ // The static card and dialog copy carry it too, for the pre-JS view.
+ const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
+ const block=html.slice(html.indexOf('settings-officecli-block'),html.indexOf('settings-view-learning'));
+ assert.match(block,/d\.officecli\.ai/);assert.match(block,/KaTeX/);assert.match(block,/字体代理/);
+ const dialog=html.slice(html.indexOf('office-preview-dialog'),html.indexOf('source-updates-dialog'));
+ assert.match(dialog,/d\.officecli\.ai/);assert.match(dialog,/KaTeX/);assert.match(dialog,/字体代理/);
 });
 
 test('audit dialog resets the render checkbox and sends the explicit choice',async()=>{
@@ -212,13 +256,20 @@ test('delivery checks show office tool output as observation, or nothing',async(
  assert.doesNotMatch(await render(undefined),/OfficeCLI/);
  // Tool failure is an observation, never a gate.
  assert.match(await render({validate:{status:'error',reason:'officecli 执行超时（120 秒）'},issues:{status:'error',reason:'请求时间预算用尽'}}),/tag error">OfficeCLI：质检未完成：officecli 执行超时（120 秒）；不影响导出/);
- // Found issues list a bounded summary.
- const issuesHTML=await render({validate:{status:'ok',summary:'Validation passed: no errors found.'},issues:{status:'issues',count:2,items:[{message:'标题样式不一致 <b>'},{message:'表格宽度溢出'},{message:'第三条不应显示为被截断计数'}]}});
- assert.match(issuesHTML,/OfficeCLI：质检发现 2 项/);
+ // Found issues are neutral observations: no red tag, list stays bounded.
+ const issuesHTML=await render({validate:{status:'ok',summary:'Validation passed: no errors found.'},issues:{status:'observed',count:2,noise_filtered:1,items:[{message:'标题样式不一致 <b>'},{message:'表格宽度溢出'},{message:'第三条不应显示为被截断计数'}]}});
+ assert.match(issuesHTML,/tag">OfficeCLI：观察 2 项（已过滤纯标点类噪音 1 项）</);
+ assert.doesNotMatch(issuesHTML,/tag error">OfficeCLI：观察/);
  assert.match(issuesHTML,/标题样式不一致 &lt;b&gt;/);
+ assert.match(issuesHTML,/查看观察记录/);
  assert.match(issuesHTML,/不阻断交付/);
- // All clear states it is tool output only.
+ // Legacy rows keep rendering as observations even without the new fields.
+ const legacyHTML=await render({validate:{status:'ok'},issues:{status:'issues',items:[{message:'空段落'}]}});
+ assert.match(legacyHTML,/OfficeCLI：观察 1 项/);
+ assert.doesNotMatch(legacyHTML,/tag error">OfficeCLI：观察/);
+ // All clear states it is tool output only; filtered noise stays countable.
  assert.match(await render({validate:{status:'ok',summary:'Validation passed: no errors found.'},issues:{status:'ok',count:0,items:[]}}),/OfficeCLI：结构校验与质检通过（工具输出，不阻断交付）</);
+ assert.match(await render({validate:{status:'ok'},issues:{status:'ok',count:0,noise_filtered:3,items:[]}}),/结构校验与质检通过（已过滤纯标点类噪音 3 项）/);
  // Unknown issue shapes degrade to a placeholder, never crash.
  assert.equal(officeIssueLine({}), '未提供摘要');
 });

@@ -57,11 +57,12 @@ export function createAssessmentPanel(deps){
   // Optional OfficeCLI tool output, composed by the server outside brief_checks.
   // Observation only: it never gates delivery and is absent when never run.
   if(c.office){
-   const o=c.office,validate=o.validate||{},issues=o.issues||{},found=Number(issues.count)||0,items=issues.items||[];
+   const o=c.office,validate=o.validate||{},issues=o.issues||{},items=Array.isArray(issues.items)?issues.items:[];
+   const found=Number(issues.count)||items.length,filtered=Number(issues.noise_filtered)||0,filteredNote=filtered?`（已过滤纯标点类噪音 ${filtered} 项）`:'';
    if(validate.status==='error'||issues.status==='error')parts.push(`<span class="tag error">OfficeCLI：质检未完成${(validate.reason||issues.reason)?'：'+esc(validate.reason||issues.reason):''}；不影响导出</span>`);
    else if(validate.status!=='ok')parts.push(`<span class="tag error">OfficeCLI：校验未通过${validate.summary?'：'+esc(validate.summary):''}</span>`);
-   else if(found)parts.push(`<span class="tag error">OfficeCLI：质检发现 ${found} 项</span><details class="help"><summary>查看质检发现</summary><ul>${items.slice(0,10).map(item=>`<li>${esc(officeIssueLine(item))}</li>`).join('')}</ul>${items.length>10?'<p>仅显示前 10 条。</p>':''}<p>工具输出，观察性质检，不阻断交付。</p></details>`);
-   else parts.push('<span class="tag">OfficeCLI：结构校验与质检通过（工具输出，不阻断交付）</span>');
+   else if(issues.status==='ok'&&!found)parts.push(`<span class="tag">OfficeCLI：结构校验与质检通过${filteredNote}（工具输出，不阻断交付）</span>`);
+   else parts.push(`<span class="tag">OfficeCLI：观察 ${found} 项${filteredNote}</span><details class="help"><summary>查看观察记录</summary><ul>${items.slice(0,10).map(item=>`<li>${esc(officeIssueLine(item))}</li>`).join('')}</ul>${items.length>10?'<p>仅显示前 10 条。</p>':''}<p>工具输出，观察性质检，不阻断交付。</p></details>`);
   }
   if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
   updatePanel(box,'<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>');
