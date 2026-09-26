@@ -11,29 +11,57 @@ REF_RE = re.compile(r'\\?\[@(src\\?_[a-zA-Z0-9]+)\\?\]')
 ESCAPED_BOLD_RE = re.compile(r'\\\*\\\*')
 _SCALES = {'': 1, 'thousand': 1000, 'million': 1000000, 'billion': 1000000000, 'trillion': 1000000000000,
            '万': 10000, '百万': 1000000, '千万': 10000000, '亿': 100000000, '十亿': 1000000000, '万亿': 1000000000000}
-_CAPACITY = {'w': 1, '瓦': 1, 'kw': 1000, '千瓦': 1000, 'mw': 1000000,
-             '兆瓦': 1000000, 'gw': 1000000000, '吉瓦': 1000000000}
+_CAPACITY = {'W': 1, '瓦': 1, 'kW': 1000, '千瓦': 1000, 'MW': 1000000,
+             '兆瓦': 1000000, 'GW': 1000000000, '吉瓦': 1000000000}
+_ENERGY = {'Wh': 1, '瓦时': 1, 'kWh': 1000, '千瓦时': 1000, 'MWh': 1000000,
+           '兆瓦时': 1000000, 'GWh': 1000000000, '吉瓦时': 1000000000}
+_CURRENCIES = {'$': 'USD', 'us$': 'USD', 'usd': 'USD', '美元': 'USD',
+               'cny': 'CNY', 'rmb': 'CNY', '人民币': 'CNY', '元': 'CNY', '元人民币': 'CNY',
+               'eur': 'EUR', '€': 'EUR', '欧元': 'EUR', 'gbp': 'GBP', '£': 'GBP', '英镑': 'GBP'}
+# Only registered units have scale conversion. "ton" is deliberately absent:
+# without "metric", it can mean a US short ton or an imperial long ton.
+_SCALED_UNITS = {**{name: (currency, 1) for name, currency in _CURRENCIES.items()},
+                 **{name: ('shares', 1) for name in ('股', 'share', 'shares')},
+                 **{name: ('count', 1) for name in ('个', '项', '次', '人', '家', '条', 'count', 'item',
+                     'items', 'unit', 'units', 'vehicle', 'vehicles', 'car', 'cars', '辆', '台')},
+                 **{name: ('mass', 1) for name in ('kg', 'kilogram', 'kilograms', '千克', '公斤')},
+                 **{name: ('mass', 1000) for name in ('t', '吨', 'tonne', 'tonnes', 'metric ton', 'metric tons')}}
+_EN_SCALE = r'thousand|millions?|billions?|trillions?'
+_ZH_SCALE = r'万亿|十亿|千万|百万|亿|万'
+_NUM = r'[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
+
+
+def _unit_choices(names):
+    # Longest first so e.g. MWh is never swallowed as MW, nor 元人民币 as 元.
+    return '(?:' + '|'.join(re.escape(name) + ('(?!百分点|月)' if name == '个' else '')
+                           for name in sorted(names, key=len, reverse=True)) + ')'
 
 
 def normalized(value, unit):
     """Exact supported units only. Currency and dimension never disappear."""
+    value = str(value).strip()
+    if not re.fullmatch(_NUM, value):
+        return None
     try:
-        number = Decimal(str(value).replace(',', '').replace('−', '-'))
+        number = Decimal(value.replace(',', '').replace('−', '-'))
     except InvalidOperation:
         return None
     if not number.is_finite():
         return None
-    unit = re.sub(r'\s+', ' ', unit.strip().lower())
+    raw_unit = re.sub(r'\s+', ' ', unit.strip())
+    # SI symbols are case-sensitive: milli and mega differ by 10^9. Never
+    # turn an unsupported spelling into a supported unit by lowercasing it.
+    if raw_unit in _CAPACITY:
+        return number * _CAPACITY[raw_unit], 'power'
+    if raw_unit in _ENERGY:
+        return number * _ENERGY[raw_unit], 'energy'
+    unit = raw_unit.lower()
     if unit in ('%', '％', 'percent', '百分之'):
         return number, 'percent'
     # Percentage POINTS are a change in a percent-valued metric, not a ratio:
     # a matched 百分点 must not be interchangeable with a percent figure.
     if unit in ('百分点', '个百分点', 'percentage point', 'percentage points', 'pp'):
         return number, 'percentage_point'
-    if unit in _CAPACITY:
-        return number * _CAPACITY[unit], 'power'
-    if unit in ('股', 'shares'):
-        return number, 'shares'
     # Bare scalars — years, multipliers, counts — carry conclusions too
     # (OfficeQA evidence: years/ratios escaped both the binding trigger and
     # the checker).  Supported so a broadened binding actually checks
@@ -42,47 +70,42 @@ def normalized(value, unit):
         return number, 'year'
     if unit in ('倍', 'x', '×'):
         return number, 'ratio'
-    if unit in ('个', '项', '次', '人', '家', '条', 'count', 'items'):
-        return number, 'count'
-    # Unit counts with a scale: an English report restating 52.6万辆 as
-    # 526,000 units must still compare with the Chinese source.
-    counted = re.fullmatch(r'(?:(thousand|millions?|billions?) )?(?:units?|vehicles?|cars?)', unit)
-    if counted:
-        return number * _SCALES[(counted[1] or '').rstrip('s')], 'count'
-    counted = re.fullmatch(r'(万亿|亿|万)?(?:辆|台)', unit)
-    if counted:
-        return number * _SCALES[counted[1] or ''], 'count'
     if unit == '':
         return number, 'scalar'
-    if unit in ('$', 'usd', '美元'):
-        return number, 'USD'
-    if unit in ('cny', 'rmb', '人民币', '元', '元人民币'):
-        return number, 'CNY'
-    money = re.fullmatch(r'(thousand|millions?|billions?|trillions?) (usd|cny|rmb)', unit)
-    if not money:
-        reverse = re.fullmatch(r'(usd|cny|rmb) (thousand|millions?|billions?|trillions?)', unit)
-        if reverse:
-            money = re.fullmatch(r'(\w+) (\w+)', reverse[2] + ' ' + reverse[1])
-    if money:
-        return number * _SCALES[money[1].rstrip('s')], 'USD' if money[2] == 'usd' else 'CNY'
-    chinese = re.fullmatch(r'(万亿|十亿|千万|百万|亿|万)(美元|元人民币|人民币|元)', unit)
-    if chinese:
-        return number * _SCALES[chinese[1]], 'USD' if chinese[2] == '美元' else 'CNY'
+    scale, base = 1, raw_unit
+    english = re.fullmatch(r'(' + _EN_SCALE + r') (.+)', raw_unit, re.I)
+    chinese = re.fullmatch(r'(' + _ZH_SCALE + r')(.+)', raw_unit)
+    reverse = re.fullmatch(r'(usd|cny|rmb|eur|gbp) (' + _EN_SCALE + r')', raw_unit, re.I)
+    if english:
+        scale, base = _SCALES[english[1].lower().rstrip('s')], english[2]
+    elif chinese:
+        scale, base = _SCALES[chinese[1]], chinese[2]
+    elif reverse:
+        scale, base = _SCALES[reverse[2].lower().rstrip('s')], reverse[1]
+    if base.lower() in ('kg', 't') and base not in ('kg', 't'):
+        return None
+    base = base.lower()
+    if base in _SCALED_UNITS:
+        dimension, factor = _SCALED_UNITS[base]
+        return number * scale * factor, dimension
     return None
 
 
 # Full numeric tokens, including sign, thousands separators and scientific form.
 # Prefix/suffix currency conflicts or compound dimensions remain unsupported.
-_NUM = r'[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
-_UNIT = (r'(?:thousand|millions?|billions?)\s+(?:units?|vehicles?|cars?)|units?|vehicles?|cars?|(?:万亿|亿|万)?(?:辆|台)'
-         r'|(?:thousand|millions?|billions?|trillions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
-         r'|(?:USD|CNY|RMB|EUR|GBP)(?:\s+(?:thousand|millions?|billions?|trillions?))?'
-         r'|(?:万亿|十亿|千万|百万|亿|万)?(?:美元|元人民币|人民币|元)'
-         r'|百分点|百分之|percentage points?|pp|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股'
-         r'|年|倍|个百分点|个(?!百分点|月)|项|次|人|家|条')
-_QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−])(?P<prefix>US\$|\$|USD\s+|CNY\s+|RMB\s+|百分之)?'
+_UNIT = '|'.join((
+    r'(?:USD|CNY|RMB|EUR|GBP)\s+(?:' + _EN_SCALE + r')',
+    r'(?:' + _EN_SCALE + r')\s+' + _unit_choices(_SCALED_UNITS),
+    r'(?:' + _ZH_SCALE + r')' + _unit_choices(name for name in _SCALED_UNITS if not name.isascii()),
+    r'个百分点|百分点|百分之|percentage points?|pp|percent|％|%',
+    r'(?:' + _EN_SCALE + r')',
+    _unit_choices({**_CAPACITY, **_ENERGY}),
+    _unit_choices(name for name in _SCALED_UNITS if name != '个'),
+    r'个(?!百分点|月)|年|倍',
+))
+_QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−$€£])(?P<prefix>US\$|\$|€|£|USD\s+|CNY\s+|RMB\s+|EUR\s+|GBP\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
-                       r'(?P<denom>\s*/\s*[\w]+|每[\w]+)?', re.I)
+                       r'(?P<denom>\s*[/／·⋅*×]\s*[\w%]+|每[\w%]+)?', re.I)
 
 
 def quantities(text):
@@ -93,12 +116,14 @@ def quantities(text):
         prefix = (match['prefix'] or '').strip()
         if match['denom']:
             continue
-        # Do not accept a supported prefix of an unknown unit (e.g. MWh).
+        # Do not accept a supported prefix of an unknown unit or malformed number.
         end = match.end()
         if end < len(text) and (text[end].isascii() and (text[end].isalnum() or text[end] == '_')):
             continue
+        if re.match(r'[.,]\d', text[end:]):
+            continue
         if prefix:
-            currency = 'USD' if prefix in ('$', 'US$') else prefix
+            currency = _CURRENCIES.get(prefix.lower(), prefix)
             if unit.lower() in ('thousand', 'million', 'millions', 'billion', 'billions', 'trillion', 'trillions'):
                 unit += ' ' + currency
             elif not unit:

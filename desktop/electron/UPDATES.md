@@ -39,7 +39,7 @@ DTO 字段：
 
 ## 当前 macOS 路径
 
-当前 macOS 构建未签名/公证，因此默认 `installMode: 'dmg'`。Electron 官方要求 macOS App 签名后才能自动更新；此路径只查询发布、下载并打开安装镜像，不声称原地升级。[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)
+macOS 当前默认使用 `installMode: 'dmg'` 的手动替换通道，并优先选择 ZIP 更新载荷：下载、校验、解压后打开 Finder，由用户替换 App；首次安装仍用 DMG。模式名沿用历史接口，不表示只下载 DMG。当前发行未做 Developer ID 签名或 Apple 公证，不声称原地自动升级。[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)
 
 0.20 发行须上传与版本一致的真实 DMG，文件名为 `BriefLoop-0.20.0-arm64.dmg`；公开发行是否完成以实际 Release 及其资产为准。本地测试源不代表公开发行。
 

@@ -8,11 +8,11 @@
 
 运行时设置显示本地图标、简介、实际版本与模型信息；未安装工具按卡片浏览。首页仅保留宿主选择器，更新失败会区分检查、下载和安装阶段。见 [运行时选择与检测](docs/运行时选择与检测.md)。
 
-## 0.23：统一工作台与运行时控制
+## 0.25：英文报告、Excel 与审阅模式
 
-统一首页、报告、模板与设置的视觉和交互，报告可比较历史改动并直接下载 Word。增加 ZCode 原生无界面适配，默认使用构建模式；Opencode 的推理档位会传入实际请求。任务状态、首次定时计划入口与公共显示格式同步修复。
+报告可选中文或英文，英文写作规范、词数和导出版式贯穿写稿与审阅；新增 Excel 报表导出，未安装 OfficeCLI 也能使用。OpenCode 1.x 与 2.x 同时支持，普通审阅和严格审阅分别展示实际能力，重大事实错误与证据缺口仍阻止正式交付。
 
-安装包仍未签名或公证；支持的权限和模型能力取决于宿主，ZCode 无界面运行没有逐项批准通道。完整变更见 [CHANGELOG](CHANGELOG.md)。
+本轮提供 macOS Apple Silicon、Python/CLI/PyPI 与 GitHub 源码；Windows 安装包沿用既有稳定版，待原生验收后单独更新。本轮 Mac 包未做 Developer ID 签名或 Apple 公证，平台验证与工件哈希见发行页。完整变更见 [CHANGELOG](CHANGELOG.md)。
 
 新工作区默认优先 Tavily，同时允许宿主自带搜索补查；可主动启用博查、智谱搜索或 DuckDuckGo，按跨市场覆盖或具体缺口补查。受控渠道共用本轮预算，搜索失败、实际发现渠道与原文分别保留。Tavily 需要 API Key，额度以服务账号为准；宿主自带搜索取决于实际工具与权限。
 
@@ -50,7 +50,7 @@ briefloop start --workspace /path/to/workspace
 实际生成前需要：
 
 - macOS 或 Windows，以及 Python 3.11 或更新版本。
-- 至少一个已安装并完成认证的执行宿主：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix、MiMo Code 或 CodeBuddy Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入；WebUI 安装需要 Node.js 20+，桌面 App 使用 Electron 内置 Node。
+- 配置 BriefLoop Agent 的模型提供商，或至少一个已安装并完成认证的 Agent CLI：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix、MiMo Code 或 CodeBuddy Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入；WebUI 安装需要 Node.js 20+，桌面 App 使用 Electron 内置 Node。
 - 首次安装依赖需要网络。使用 Tavily、博查或智谱搜索时，另行配置对应服务的 Key。
 
 也可指定目录、端口和后端：
@@ -108,7 +108,7 @@ Windows 也可不安装桌面 App，直接启动同一套 Python 服务与网页
 | MiMo | bridge（JSON 事件流） | 原生 `models --verbose` |
 | CodeBuddy Code | bridge（原生 `--acp`） | ACP 原生模型目录；支持手输模型 ID |
 
-开发分支还提供 **BriefLoop 内置引擎**（需要 Node.js 22.19+）：在“设置 → 模型与提供商”选择它，在“API 提供商”选择用于内置引擎，保存接口地址、API Key 和模型 ID。它直接执行对话、并行 Scout、Analyst 写稿及独立评价，复用同一套报告任务、来源、稿件、一次自动修订和导出。已完成一次真实模型公开周报的生成、评分、修订及失败恢复，并通过网页验证只读权限、版本保存与 Word 下载。原生桌面验收仍待完成，尚未正式发布；一次流程完成不证明报告事实全部正确。
+开发分支还提供 **BriefLoop 内置引擎**（需要 Node.js 22.19+）：在“设置 → 模型与提供商”选择它，在“API 提供商”选择用于内置引擎，保存接口地址、API Key 和模型 ID。它直接执行对话、并行 Scout、Analyst 写稿及独立评价，复用同一套报告任务、来源、稿件、一次自动修订和导出。已完成一次真实模型公开周报的生成、评分、修订及失败恢复，并通过网页验证只读权限、版本保存与 Word 下载。内置引擎已随 0.24.0 发布；具体平台及新版本验收范围见发行记录，一次流程完成不证明报告事实全部正确。
 
 内置引擎的 API Key 保存在本机 `~/.config/briefloop/native-engine/providers.json`，文件仅当前用户可读写，不放进工作区或核查包。模型请求仍会把本次实际读取的材料发送给所选模型服务商；受控检索遵循本报告已冻结的渠道与共享预算。它没有其他 CLI 的自带搜索或任意 shell，Reviewer 只拥有核查包内的读取工具。详见[内置引擎](docs/内置引擎.md)。
 

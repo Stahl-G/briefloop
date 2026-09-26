@@ -731,7 +731,11 @@ class Store:
         clock = datetime.now().astimezone()
         from .notifications import snapshot as notification_snapshot
         from .document_workflows import list_workflows, template_workflow_hint, template_language_hint
-        jobs=self.rows("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 30")
+        # Active work must remain visible even after newer jobs fill the recent
+        # history window. Bound only inactive history, preserving one row per job.
+        jobs=self.rows("SELECT * FROM jobs WHERE status IN ('queued','running') OR rowid IN "
+                       "(SELECT rowid FROM jobs WHERE status NOT IN ('queued','running') ORDER BY rowid DESC LIMIT 30) "
+                       "ORDER BY rowid DESC")
         for j in jobs:
             events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
             j['progress']=json.loads(events[0]['data']) if events else None
