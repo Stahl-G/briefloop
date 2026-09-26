@@ -194,6 +194,34 @@ def test_v2_catalog_keeps_variants_and_rejects_config_writes_before_any_request(
     assert api.calls == []
 
 
+@pytest.mark.parametrize('stabilizes', [True, False])
+def test_v2_catalog_reloads_both_cold_start_snapshots_once(tmp_path, stabilizes):
+    c, api = client(tmp_path)
+    counts = {'provider': 0, 'model': 0}
+
+    def cold_catalog(method, path, body=None):
+        value = api(method, path, body)
+        endpoint = urlsplit(path).path.rsplit('/', 1)[-1]
+        counts[endpoint] += 1
+        if endpoint == 'provider' and (counts[endpoint] == 1 or not stabilizes):
+            value['data'] = []
+        if endpoint == 'model' and counts[endpoint] == 1:
+            value['data'].append({**value['data'][0], 'id': 'stale-before-initialization'})
+        return value
+
+    c._request = cold_catalog
+    if stabilizes:
+        catalog = c.providers(tmp_path)
+        models = catalog['providers'][0]['models']
+        assert list(models) == ['tiny'], 'retry must discard the first model snapshot too'
+        assert models['tiny']['variants'] == ['high']
+    else:
+        with pytest.raises(OpencodeError, match='目录不一致'):
+            c.providers(tmp_path)
+    assert counts == {'provider': 2, 'model': 2}, 'persistent mismatch must not loop or hide models'
+    assert all(method == 'GET' for method, _, _ in api.calls)
+
+
 def test_v2_ordinary_read_only_denies_shell_edit_and_unknown_rule_fails(tmp_path):
     rules = permission_rules(_permission_rules({'permission':'read-only'},False,tmp_path))
     assert {'action':'shell','resource':'*','effect':'deny'} in rules

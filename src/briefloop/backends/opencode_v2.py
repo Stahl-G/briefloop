@@ -238,15 +238,22 @@ class V2:
 
     def providers(self, directory=None):
         query = _query({'location[directory]': str(directory)}) if directory is not None else ''
-        providers = _data(self.request('GET', '/api/provider' + query), list)
-        models = _data(self.request('GET', '/api/model' + query), list)
+        for attempt in range(2):
+            providers = _data(self.request('GET', '/api/provider' + query), list)
+            models = _data(self.request('GET', '/api/model' + query), list)
+            provider_ids = {p['id'] for p in providers}
+            if all(m['providerID'] in provider_ids for m in models if m.get('enabled', False)):
+                break
+            # v2 cold-start model materialization can update the provider catalog
+            # after our first read. Refresh both snapshots, not just provider names:
+            # enabled models/variants can change during the same initialization.
+            if attempt:
+                raise _error('OpenCode v2 模型目录与 Provider 目录不一致；请刷新')
         result = {p['id']: {'id': p['id'], 'name': p.get('name', p['id']), 'models': {}} for p in providers}
         for m in models:
             if not m.get('enabled', False):
                 continue
             pid = m['providerID']
-            if pid not in result:
-                raise _error('OpenCode v2 模型目录与 Provider 目录不一致；请刷新')
             capabilities = m.get('capabilities') or {}
             result[pid]['models'][m['id']] = {'name': m.get('name', m['id']), 'limit': m.get('limit') or {},
                 'capabilities': capabilities, 'attachment': 'image' in capabilities.get('input', []),
