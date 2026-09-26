@@ -269,7 +269,7 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None):
         return None
 
 
-def enhance_workbook(store, path, plan):
+def enhance_workbook(store, path, plan, *, cancelled=None):
     """Apply one planned batch of workbook enhancements on a staging copy.
 
     The whole plan goes out as a single standalone `batch` command — that form
@@ -283,9 +283,11 @@ def enhance_workbook(store, path, plan):
     A failed batch step is reported through the summary; officecli writes data
     bars as an x14 extension, which openpyxl drops on re-save — callers verify
     read-only and never re-save an enhanced workbook. Like check_file this
-    never raises: the caller keeps the base artifact on any failure.
+    keeps the base artifact on any failure. Cancellation is cooperative at
+    command boundaries (the current bounded subprocess finishes first).
     """
     try:
+        if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         commands = (plan or {}).get('commands') or []
         if not commands:
             return {'applied': False, 'reason': None}
@@ -295,6 +297,7 @@ def enhance_workbook(store, path, plan):
         deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
         outcome = run_json([binary, 'batch', str(path), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
                            timeout=ENHANCE_BATCH_TIMEOUT, deadline=deadline)
+        if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         if not outcome['ok']:
             return {'applied': False, 'reason': outcome['reason']}
         summary = (outcome['data'] or {}).get('summary') if isinstance(outcome['data'], dict) else None
@@ -302,7 +305,10 @@ def enhance_workbook(store, path, plan):
         if type(failed) is int and failed > 0:
             return {'applied': False, 'reason': f'officecli batch 有 {failed} 条命令未成功'}
         run_json([binary, 'close', str(path)], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
+        if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         return {'applied': True, 'reason': None}
+    except InterruptedError:
+        raise
     except Exception as exc:
         return {'applied': False, 'reason': '无法运行 officecli：' + type(exc).__name__}
 

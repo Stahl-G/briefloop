@@ -16,7 +16,7 @@ from .store import dump, now, uid
 from .document_model import brief_document, table_layout
 
 LAYOUTS = ('sheets', 'single')
-XLSX_RENDERER_VERSION = 1
+XLSX_RENDERER_VERSION = 2
 NO_TABLES_MESSAGE = '报告没有可导出的表格，无需生成 Excel'
 INDEX_SHEET_TITLE = '目录'
 # openpyxl rejects ':\\/?*[]' and control characters in sheet titles, silently
@@ -177,11 +177,11 @@ def _dedupe_sheet_names(raw_names):
     result = []
     for raw in raw_names:
         name, attempt = raw, 1
-        while name in issued:
+        while name.casefold() in issued:
             suffix = f'-{attempt + 1}'
             name = raw[:_SHEET_MAX - len(suffix)] + suffix
             attempt += 1
-        issued.add(name)
+        issued.add(name.casefold())
         result.append(name)
     return result
 
@@ -201,7 +201,8 @@ def _layout(document, layout_id, *, report_title=''):
             rows[r][c] = cell
             if rs > 1 or cs > 1:
                 spans.append((r + 1, c + 1, r + rs, c + cs))
-        header = bool(rows[0]) and all(cell.get('type') == 'tableHeader' for cell in rows[0])
+        first_cells = [cell for cell in rows[0] if cell is not None]
+        header = bool(first_cells) and all(cell.get('type') == 'tableHeader' for cell in first_cells)
         texts = [[_cell_text(cell) for cell in row] for row in rows]
         models.append({'title': title, 'rows': rows, 'texts': texts, 'width': nc, 'height': nr,
                        'spans': spans, 'header': header, 'index': index})
@@ -363,6 +364,13 @@ def _border():
 _BORDER = None
 
 
+def _literal_text(target, text):
+    """Report text is never an Excel formula, including headings and index rows."""
+    target.value = text
+    target.data_type = 's'
+    return target
+
+
 def _paint_cell(target, text, cell, *, header_row):
     from openpyxl.styles import Alignment, Font, PatternFill
     attrs = cell.get('attrs', {}) if cell else {}
@@ -370,7 +378,7 @@ def _paint_cell(target, text, cell, *, header_row):
     if number is not None:
         target.value = number
     elif text:
-        target.value = text
+        _literal_text(target, text)
     target.border = _BORDER
     fill = attrs.get('backgroundColor')
     if fill:
@@ -419,24 +427,24 @@ def xlsx_bytes(document, detail, requirements, layout_id):
     if layout_id == 'single':
         sheet = workbook.create_sheet(models[0]['sheet'] if models else _sheet_base(title) or '报表')
         for model in models:
-            cell = sheet.cell(row=model['title_row'], column=1, value=model['title'])
+            cell = _literal_text(sheet.cell(row=model['title_row'], column=1), model['title'])
             cell.font = Font(bold=True)
             _paint_table(sheet, model, model['title_row'] + 1)
     else:
         index = workbook.create_sheet(_dedupe_sheet_names([_sheet_base(INDEX_SHEET_TITLE)])[0])
-        index.cell(row=1, column=1, value=title).font = Font(bold=True)
+        _literal_text(index.cell(row=1, column=1), title).font = Font(bold=True)
         if report_date:
-            index.cell(row=2, column=1, value=report_date)
+            _literal_text(index.cell(row=2, column=1), report_date)
         for column, label in enumerate(('序号', '表格标题', '工作表'), 1):
             cell = index.cell(row=3, column=column, value=label)
             cell.font = Font(bold=True)
         for row, model in enumerate(models, 4):
             index.cell(row=row, column=1, value=row - 3)
-            index.cell(row=row, column=2, value=model['title'][:_TITLE_INDEX_MAX])
-            index.cell(row=row, column=3, value=model['sheet'])
+            _literal_text(index.cell(row=row, column=2), model['title'][:_TITLE_INDEX_MAX])
+            _literal_text(index.cell(row=row, column=3), model['sheet'])
         for model in models:
             sheet = workbook.create_sheet(model['sheet'])
-            sheet.cell(row=1, column=1, value=model['title']).font = Font(bold=True)
+            _literal_text(sheet.cell(row=1, column=1), model['title']).font = Font(bold=True)
             _paint_table(sheet, model, 2)
             # Freeze below the header row (title row 1 + header row 2 → A3); a
             # worksheet has one frozen pane, so 'single' freezes nothing at all.
@@ -446,27 +454,57 @@ def xlsx_bytes(document, detail, requirements, layout_id):
     return buffer.getvalue()
 
 
-def _enhanced_mismatches(staging, formulas):
-    """Read-only formula-cache check; never a reason to fail the job."""
-    if not formulas:
-        return []
+def _enhanced_mismatches(staging, plan, base_blob):
+    """Read without re-saving: validate every workbook, then formula caches.
+
+    Only the planned value/formula changes may alter report content. A valid
+    ZIP alone is insufficient: a renderer may drop a sheet or overwrite text.
+    """
     import warnings
     from openpyxl import load_workbook
     with warnings.catch_warnings():
         # officecli writes data bars as an x14 extension; openpyxl warns on read.
         warnings.simplefilter('ignore')
-        workbook = load_workbook(staging, data_only=True, read_only=True)
+        opened = []
         try:
+            base = load_workbook(BytesIO(base_blob))
+            opened.append(base)
+            enhanced = load_workbook(staging)
+            opened.append(enhanced)
+            if enhanced.sheetnames != base.sheetnames:
+                raise ValueError('增强工作簿的工作表与基础件不一致')
+            changes = {item['path']: item['props'] for item in plan['commands'] if item['command'] == 'set'}
+            for sheet in base:
+                actual = enhanced[sheet.title]
+                if ((actual.max_row, actual.max_column) != (sheet.max_row, sheet.max_column)
+                        or set(actual.merged_cells.ranges) != set(sheet.merged_cells.ranges)):
+                    raise ValueError('增强工作簿的表格结构与基础件不一致')
+                for row in sheet.iter_rows():
+                    for cell in row:
+                        props = changes.get(f'/{sheet.title}/{cell.coordinate}', {})
+                        found = actual[cell.coordinate]
+                        if 'formula' in props:
+                            matches = found.data_type == 'f' and found.value == '=' + props['formula']
+                        elif 'value' in props:
+                            matches = type(found.value) in (int, float) and math.isclose(
+                                found.value, props['value'], rel_tol=1e-9, abs_tol=1e-9)
+                        else:
+                            matches = found.value == cell.value and found.data_type == cell.data_type
+                        if not matches:
+                            raise ValueError(f'增强工作簿改变了未授权内容或遗漏增强：{sheet.title}!{cell.coordinate}')
+            workbook = load_workbook(staging, data_only=True, read_only=True)
+            opened.append(workbook)
             mismatched = []
-            for item in formulas:
+            for item in plan['formulas']:
                 found = workbook[item['sheet']][item['cell']].value
-                if not isinstance(found, (int, float)) or not math.isclose(
+                if type(found) not in (int, float) or not math.isclose(
                         found, item['expected'], rel_tol=1e-9, abs_tol=1e-9):
                     mismatched.append({'sheet': item['sheet'], 'cell': item['cell'],
                                        'expected': item['expected'], 'found': found})
             return mismatched
         finally:
-            workbook.close()
+            for workbook in opened:
+                workbook.close()
 
 
 def generate_xlsx(store, job, cancelled):
@@ -508,20 +546,31 @@ def generate_xlsx(store, job, cancelled):
         try:
             if plan['commands']:
                 shutil.copyfile(destination, staging)
-                outcome = office_cli.enhance_workbook(store, staging, plan)
+                outcome = office_cli.enhance_workbook(store, staging, plan, cancelled=cancelled)
+                if cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
                 if not outcome['applied']:
                     enhanced, reason = False, outcome['reason'] or 'OfficeCLI 增强未执行'
                 else:
-                    mismatched = _enhanced_mismatches(staging, plan['formulas'])
+                    mismatched = _enhanced_mismatches(staging, plan, blob)
                     if mismatched:
                         enhanced, reason = False, '公式结果与报告数值不一致'
                         store.event(job['id'], 'export_xlsx_formula_mismatch', {'cells': mismatched})
                     else:
+                        if cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
                         os.replace(staging, destination)  # enhanced bytes become the artifact
             else:
                 enhanced, reason = False, None  # nothing to enhance in this report
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            enhanced, reason = False, 'OfficeCLI 增强未通过，已保留基础件：' + type(exc).__name__
         finally:
-            if staging.exists(): staging.unlink()
+            try:
+                staging.unlink(missing_ok=True)
+            except OSError:
+                # A renderer/Windows reader may still hold its staging file;
+                # cleanup failure must not hide the intact downloadable base.
+                store.event(job['id'], 'export_xlsx_staging_retained', {'path': str(staging.relative_to(store.root))})
         if not enhanced and reason and reason != '公式结果与报告数值不一致':
             store.event(job['id'], 'export_xlsx_enhancement_failed', {'reason': reason})
     stage(4, 'Excel 已生成，可以下载')
@@ -535,9 +584,12 @@ def generate_xlsx(store, job, cancelled):
     # recorded check result; this hook swallows everything itself as a second guard.
     try:
         office = office_cli.check_file(store, destination, job_id=job['id'],
-                                       version_id=payload.get('version_id'))
+                                       version_id=payload.get('version_id'), cancelled=cancelled)
+    except InterruptedError:
+        raise
     except Exception:
         office = None
     if office is not None:
         result['office'] = office
+    if cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
     return result

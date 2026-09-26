@@ -154,6 +154,55 @@ def test_report_date_lands_in_the_index(tmp_path):
     assert _open(tmp_path, result)['目录']['A2'].value == '2026-09-01'
 
 
+@pytest.mark.parametrize('layout', ['sheets', 'single'])
+def test_colspan_and_mixed_header_merges_export_in_both_layouts(tmp_path, layout):
+    store = _store(tmp_path)
+    document = [_heading('横向表头'),
+                _table(_row(_cell('指标', 'tableHeader', colspan=2)),
+                       _row(_cell('a'), _cell('1'))),
+                _heading('混合表头'),
+                _table(_row(_cell('地区', 'tableHeader', rowspan=2), _cell('指标', 'tableHeader', colspan=2)),
+                       _row(_cell('量', 'tableHeader'), _cell('额', 'tableHeader')),
+                       _row(_cell('华东'), _cell('2'), _cell('3')))]
+    result = _generate(store, _queued_xlsx(store, _brief(store, document), layout))
+    workbook = _open(tmp_path, result)
+    first = workbook['横向表头'] if layout == 'sheets' else workbook['示例报告']
+    mixed = workbook['混合表头'] if layout == 'sheets' else first
+    assert 'A2:B2' in {str(span) for span in first.merged_cells.ranges}
+    top = 2 if layout == 'sheets' else 6
+    assert {f'A{top}:A{top+1}', f'B{top}:C{top}'} <= {str(span) for span in mixed.merged_cells.ranges}
+    assert first['A2'].value == '指标' and first['A2'].font.bold
+    assert mixed.cell(top, 2).value == '指标' and mixed.cell(top, 2).fill.fill_type == 'solid'
+    assert mixed.cell(top+2, 3).value == 3
+
+
+@pytest.mark.parametrize('layout', ['sheets', 'single'])
+def test_equals_prefixed_report_text_is_not_an_excel_formula(tmp_path, layout):
+    store = _store(tmp_path)
+    document = [_heading('=Data'), _table(_row(_cell('=Header', 'tableHeader')),
+                                        _row(_cell('=1+1')), _row(_cell('#N/A')))]
+    result = _generate(store, _queued_xlsx(store, _brief(store, document, title='=Report'), layout))
+    workbook = _open(tmp_path, result)
+    sheet = workbook['=Data'] if layout == 'sheets' else workbook['=Report']
+    for coordinate, text in [('A1', '=Data'), ('A2', '=Header'), ('A3', '=1+1'), ('A4', '#N/A')]:
+        assert sheet[coordinate].value == text and sheet[coordinate].data_type == 's'
+    if layout == 'sheets':
+        for coordinate, text in [('A1', '=Report'), ('B4', '=Data'), ('C4', '=Data')]:
+            assert workbook['目录'][coordinate].value == text and workbook['目录'][coordinate].data_type == 's'
+
+
+def test_sheet_name_case_collisions_match_index_and_enhancement_paths(tmp_path):
+    store = _store(tmp_path)
+    table = _table(_row(_cell('值', 'tableHeader')), _row(_cell('1,234')))
+    document = [_heading('Sales'), table, _heading('sales'), table, _heading('SALES-2'), table]
+    result = _generate(store, _queued_xlsx(store, _brief(store, document)))
+    workbook = _open(tmp_path, result)
+    assert workbook.sheetnames == ['目录', 'Sales', 'sales-2', 'SALES-2-2']
+    assert [workbook['目录'].cell(row, 3).value for row in range(4, 7)] == workbook.sheetnames[1:]
+    plan = xlsx_export.plan_enhancements(xlsx_export._layout({'type':'doc','content':document}, 'sheets'))
+    assert {item['path'].split('/')[1] for item in plan['commands']} == set(workbook.sheetnames[1:])
+
+
 def test_freeze_panes_follow_the_layout(tmp_path):
     store = _store(tmp_path)
     header_table = _table(_row(_cell('a', 'tableHeader')), _row(_cell('1')))
@@ -291,6 +340,154 @@ def test_enhancement_and_check_degrade_when_officecli_cannot_run(tmp_path, monke
     assert [row['kind'] for row in store.rows(
         "SELECT kind FROM events WHERE job_id=? AND kind='export_xlsx_enhancement_failed'", (outage_job['id'],))] \
         == ['export_xlsx_enhancement_failed']
+
+
+def _apply_planned_sets(path, plan):
+    """Controlled replacement for the optional CLI; real XLSX read/write."""
+    from openpyxl import load_workbook
+    workbook = load_workbook(path)
+    for item in plan['commands']:
+        if item['command'] != 'set': continue
+        sheet, coordinate = item['path'].strip('/').split('/')
+        cell, props = workbook[sheet][coordinate], item['props']
+        if 'value' in props: cell.value = props['value']
+        if 'formula' in props: cell.value = '=' + props['formula']
+        if 'numberformat' in props: cell.number_format = props['numberformat']
+    workbook.save(path)
+    workbook.close()
+
+
+@pytest.mark.parametrize('failure,with_formulas', [
+    ('exception', False), ('corrupt', False), ('corrupt', True),
+    ('missing_sheet', False), ('changed_text', False), ('replace_locked', False),
+])
+def test_invalid_enhancement_preserves_complete_downloadable_base(tmp_path, monkeypatch, failure, with_formulas):
+    from openpyxl import load_workbook
+    store = _store(tmp_path)
+    document = _sales_document() if with_formulas else [
+        _heading('比例'), _table(_row(_cell('类别', 'tableHeader'), _cell('值', 'tableHeader')),
+                              _row(_cell('甲'), _cell('25%')))]
+    monkeypatch.setattr(office_cli, 'enhancement_ready', lambda _: True)
+    job = _queued_xlsx(store, _brief(store, document))
+    captured = {}
+
+    def enhance(_store, path, plan, **kwargs):
+        captured['base'] = path.read_bytes()
+        assert bool(plan['formulas']) == with_formulas
+        if failure == 'exception': raise OSError('controlled renderer failure')
+        if failure == 'corrupt': path.write_bytes(b'not a workbook')
+        else:
+            _apply_planned_sets(path, plan)
+            workbook = load_workbook(path)
+            if failure == 'missing_sheet': workbook.remove(workbook[workbook.sheetnames[-1]])
+            if failure == 'changed_text': workbook[workbook.sheetnames[-1]]['A3'] = 'unauthorized rewrite'
+            workbook.save(path)
+            workbook.close()
+        return {'applied': True, 'reason': None}
+
+    monkeypatch.setattr(office_cli, 'enhance_workbook', enhance)
+    real_replace = xlsx_export.os.replace
+    def replace(src, dst):
+        if failure == 'replace_locked' and str(src).endswith('.staging.xlsx'):
+            raise PermissionError('controlled file lock')
+        return real_replace(src, dst)
+    monkeypatch.setattr(xlsx_export.os, 'replace', replace)
+    result = _generate(store, job)
+    assert result['enhanced'] is False and result['enhance_reason']
+    assert store.one('jobs', job['id'])['status'] == 'complete'
+    path = store.root / result['path']
+    assert path.read_bytes() == captured['base']
+    assert _open(tmp_path, result).sheetnames == (['目录', '销售明细'] if with_formulas else ['目录', '比例'])
+    assert not path.with_name('report.staging.xlsx').exists()
+    assert store.rows("SELECT * FROM events WHERE job_id=? AND kind='export_xlsx_enhancement_failed'", (job['id'],))
+
+
+def test_valid_enhancement_without_formulas_is_verified_and_published(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    document = [_heading('比例'), _table(_row(_cell('类别', 'tableHeader'), _cell('值', 'tableHeader')),
+                                      _row(_cell('甲'), _cell('25%')))]
+    monkeypatch.setattr(office_cli, 'enhancement_ready', lambda _: True)
+    def enhance(_store, path, plan, **kwargs):
+        assert plan['formulas'] == []
+        _apply_planned_sets(path, plan)
+        return {'applied': True, 'reason': None}
+    monkeypatch.setattr(office_cli, 'enhance_workbook', enhance)
+    result = _generate(store, _queued_xlsx(store, _brief(store, document)))
+    assert result['enhanced'] is True
+    cell = _open(tmp_path, result)['比例']['B3']
+    assert cell.value == .25 and cell.number_format == '0%'
+
+
+@pytest.mark.parametrize('wrong_cache', [False, True])
+def test_planned_formula_and_cached_result_are_both_checked(tmp_path, monkeypatch, wrong_cache):
+    from io import BytesIO
+    from zipfile import ZipFile
+    import xml.etree.ElementTree as ET
+    store = _store(tmp_path)
+    document = [_heading('合计检查'),
+                _table(_row(_cell('项目', 'tableHeader'), _cell('量', 'tableHeader'), _cell('额', 'tableHeader')),
+                       _row(_cell('甲'), _cell('10'), _cell('100')),
+                       _row(_cell('乙'), _cell('20'), _cell('200')),
+                       _row(_cell('合计'), _cell('30'), _cell('300')))]
+    monkeypatch.setattr(office_cli, 'enhancement_ready', lambda _: True)
+    captured = {}
+    def enhance(_store, path, plan, **kwargs):
+        captured['base'] = path.read_bytes()
+        _apply_planned_sets(path, plan)
+        # openpyxl deliberately does not evaluate formulas. Populate the two
+        # known synthetic sums in OOXML, as a renderer would, without changing
+        # formulas; the bad fixture changes one cached value only.
+        src, dst = BytesIO(path.read_bytes()), BytesIO()
+        ns = {'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+        with ZipFile(src) as zin, ZipFile(dst, 'w') as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == 'xl/worksheets/sheet2.xml':
+                    tree = ET.fromstring(data)
+                    for address, value in [('B5', 31 if wrong_cache else 30), ('C5', 300)]:
+                        cell = tree.find(f'.//s:c[@r="{address}"]', ns)
+                        assert cell.find('s:f', ns) is not None
+                        cell.find('s:v', ns).text = str(value)
+                    data = ET.tostring(tree)
+                zout.writestr(item, data)
+        path.write_bytes(dst.getvalue())
+        return {'applied': True, 'reason': None}
+    monkeypatch.setattr(office_cli, 'enhance_workbook', enhance)
+    job = _queued_xlsx(store, _brief(store, document))
+    result = _generate(store, job)
+    assert result['enhanced'] is not wrong_cache
+    if wrong_cache:
+        assert result['enhance_reason'] == '公式结果与报告数值不一致'
+        assert (store.root/result['path']).read_bytes() == captured['base']
+        assert store.rows("SELECT * FROM events WHERE job_id=? AND kind='export_xlsx_formula_mismatch'", (job['id'],))
+    else:
+        assert _open(tmp_path, result)['合计检查']['B5'].value == '=SUM(B3:B4)'
+        assert _open(tmp_path, result, data_only=True)['合计检查']['B5'].value == 30
+
+
+def test_excel_cancellation_is_preserved_during_enhancement_and_quality_check(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    store.update_settings({'officecli_enabled': True})
+    cancelled, calls = threading.Event(), []
+    monkeypatch.setattr(office_cli, 'find', lambda: 'synthetic-officecli')
+    def run(args, **kwargs):
+        calls.append(args[1])
+        cancelled.set()
+        return {'ok': True, 'data': {'summary': {'failed': 0}}, 'reason': None}
+    monkeypatch.setattr(office_cli, 'run_json', run)
+    with pytest.raises(InterruptedError):
+        office_cli.enhance_workbook(store, tmp_path/'staging.xlsx', {'commands':[{'command':'set'}]}, cancelled=cancelled)
+    assert calls == ['batch']  # do not start close or silently accept cancellation
+
+    cancelled.clear()
+    monkeypatch.setattr(office_cli, 'enhancement_ready', lambda _: False)
+    def check(_store, _path, **kwargs):
+        assert kwargs['cancelled'] is cancelled
+        cancelled.set()
+        return None
+    monkeypatch.setattr(office_cli, 'check_file', check)
+    with pytest.raises(InterruptedError):
+        xlsx_export.generate_xlsx(store, _queued_xlsx(store, _brief(store, _sales_document())), cancelled)
 
 
 def test_labels_and_notifications_cover_the_new_kind(tmp_path):
