@@ -80,12 +80,20 @@ def _template_hints():
     hints = {}
     for filename, _, _ in BUILTIN_TEMPLATES:
         family = next((name for name in ('business-report', 'general-report', 'meeting-minutes', 'stock-research') if filename.startswith(name)), None)
-        if family:
-            hints[hashlib.sha256((root / filename).read_bytes()).hexdigest()] = family.replace('-', '_')
+        hints[hashlib.sha256((root / filename).read_bytes()).hexdigest()] = {
+            'workflow': family.replace('-', '_') if family else None,
+            'language': 'en' if '-en-' in filename else 'zh'}
     return hints
 
 
 def template_workflow_hint(template):
     if not template or template.get('origin') != 'builtin':
         return None
-    return _template_hints().get(template.get('source_hash'))
+    return (_template_hints().get(template.get('source_hash')) or {}).get('workflow')
+
+
+def template_language_hint(template):
+    """Body language a built-in layout was written for; uploads carry no hint."""
+    if not template or template.get('origin') != 'builtin':
+        return None
+    return (_template_hints().get(template.get('source_hash')) or {}).get('language')

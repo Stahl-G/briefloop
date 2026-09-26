@@ -215,6 +215,10 @@ def validate_applicable_review(store,review_id,version_id=None):
         annotations=store.rows('SELECT source_id FROM source_snapshot_metadata')
         if any(row['source_id'] in source_ids for row in annotations):
             raise ValueError('旧核查未覆盖已登记的来源时间注释，请对当前证据重新审阅')
+    if 'language' not in target['requirements']:
+        # Packets saved before the spec carried the report language reviewed the
+        # same artifact; the new projection field is not a changed input.
+        current['requirements'].pop('language',None)
     if target.get('snapshot_version',3)<4:
         current['requirements']={key:current['requirements'].get(key) for key in target['requirements']}
         current['requirements']['schema_version']=target['requirements'].get('schema_version',1)
