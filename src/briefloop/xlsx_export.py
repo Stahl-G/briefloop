@@ -17,7 +17,7 @@ from .store import dump, now, uid
 from .document_model import brief_document, table_layout
 
 LAYOUTS = ('sheets', 'single')
-XLSX_RENDERER_VERSION = 3
+XLSX_RENDERER_VERSION = 4
 NO_TABLES_MESSAGE = '报告没有可导出的表格，无需生成 Excel'
 INDEX_SHEET_TITLE = '目录'
 # openpyxl rejects ':\\/?*[]' and control characters in sheet titles, silently
@@ -471,6 +471,11 @@ def _fit_sheet(ws, models=(), *, contents=False):
             if title:
                 width = max(width, sum(ws.column_dimensions[get_column_letter(col)].width for col in range(1, ws.max_column + 1)) - 2)
             text = str(cell.value)
+            # Native readers use different default font metrics. Leave a small
+            # wrapping margin so a final CJK glyph is not hidden on a second
+            # line. Numeric cells and overflowing title rows do not wrap.
+            if isinstance(cell.value, str) and not title:
+                width = max(1, width * 0.9)
             lines = sum(max(1, math.ceil(_display_width(line) / width)) for line in text.split('\n'))
             if isinstance(cell.value, str) and not title:
                 alignment = copy(cell.alignment)

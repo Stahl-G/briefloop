@@ -158,13 +158,14 @@ def test_report_date_lands_in_the_index(tmp_path):
 def test_base_export_fits_cjk_and_wraps_prose_without_changing_cells(tmp_path, layout):
     store = _store(tmp_path)
     prose = '本季度收入同比增长，仍需结合回款与客户结构判断增长质量。' * 5
-    document = [_heading('业务变化与下一步核查'),
+    title = '合成经营简报：指标与后续观察'
+    document = [_heading(title),
                 _table(_row(_cell('业务指标', 'tableHeader'), _cell('观察说明', 'tableHeader')),
                        _row(_cell('经营活动现金流量净额'), _cell(prose)),
                        _row(_cell('手动宽度', colwidth=[140]), _cell('第一行\n第二行')))]
     result = _generate(store, _queued_xlsx(store, _brief(store, document), layout))
     workbook = _open(tmp_path, result)
-    sheet = workbook['业务变化与下一步核查'] if layout == 'sheets' else workbook['示例报告']
+    sheet = workbook[title.replace('：', '-')] if layout == 'sheets' else workbook['示例报告']
     assert sheet['A3'].value == '经营活动现金流量净额'
     assert sheet['B3'].value == prose
     assert sheet.column_dimensions['A'].width == 20  # authored width retained
@@ -172,7 +173,10 @@ def test_base_export_fits_cjk_and_wraps_prose_without_changing_cells(tmp_path, l
     assert sheet['B3'].alignment.wrap_text and sheet.row_dimensions[3].height > 30
     assert sheet['B4'].value == '第一行\n第二行' and sheet.row_dimensions[4].height >= 34
     if layout == 'sheets':
-        assert workbook['目录'].column_dimensions['B'].width >= 20
+        index = workbook['目录']
+        assert index['B4'].value == title and index['B4'].alignment.wrap_text
+        assert index.column_dimensions['B'].width == 30
+        assert index.row_dimensions[4].height >= 34  # WPS wraps the last CJK glyph
 
 
 @pytest.mark.parametrize('layout', ['sheets', 'single'])
