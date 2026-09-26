@@ -41,8 +41,19 @@ def extend_schema(base, value):
         if isinstance(node, dict):
             if '$id' in node or '$dynamicRef' in node:
                 raise ValueError('比较契约不支持 $id 或 $dynamicRef')
-            if '$ref' in node and (not isinstance(node['$ref'], str) or not node['$ref'].startswith('#')):
-                raise ValueError('比较契约只允许本地 JSON Schema 引用')
+            if '$ref' in node:
+                ref = node['$ref']
+                if not isinstance(ref, str) or (ref != '#' and not ref.startswith('#/')):
+                    raise ValueError('比较契约只允许本地 JSON Schema 指针引用')
+                target = schema
+                try:
+                    for part in ref[2:].split('/') if ref != '#' else []:
+                        key = part.replace('~1', '/').replace('~0', '~')
+                        target = target[int(key)] if isinstance(target, list) else target[key]
+                    if not isinstance(target, (dict, bool)):
+                        raise KeyError(ref)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    raise ValueError('比较契约引用不存在或不是 schema：' + ref) from None
             for child in node.values():
                 local_refs(child)
         elif isinstance(node, list):
@@ -51,6 +62,17 @@ def extend_schema(base, value):
     local_refs(schema)
     Draft7Validator.check_schema(schema)
     return schema
+
+
+def validate_cases(value, comparisons):
+    """Reject caller configuration errors before asking a model to fix them."""
+    for binding in Contract.model_validate(value).bindings:
+        for case in comparisons:
+            node = case
+            for key in binding.case_path:
+                if not isinstance(node, dict) or key not in node:
+                    raise ValueError('比较契约指定的输入绑定不存在：' + '/'.join(binding.case_path))
+                node = node[key]
 
 
 def frozen_contract(config):

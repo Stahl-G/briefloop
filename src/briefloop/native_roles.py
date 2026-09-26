@@ -344,8 +344,9 @@ def comparison_packet(store, comparisons, folder, *, submission_contract=None):
     packet = Path(folder) / 'packet'
     packet.mkdir(parents=True, exist_ok=True)
     if submission_contract is not None:
-        from .comparison_contract import extend_schema
+        from .comparison_contract import extend_schema, validate_cases
         extend_schema(COMPARISON_TOOLS[0]['parameters'], submission_contract)
+        validate_cases(submission_contract, comparisons)
         (packet / 'submission-contract.json').write_text(json.dumps(submission_contract, ensure_ascii=False), encoding='utf-8')
     (packet / 'input.json').write_text(json.dumps(comparisons, ensure_ascii=False, indent=1), encoding='utf-8')
     sources = set()
@@ -729,9 +730,10 @@ def _tools(role, mode=None, config=None):
             tools = [with_revision_base(t) for t in tools]
         return tools
     if role == 'evaluator' and mode == 'pairwise':
-        from .comparison_contract import extend_schema, frozen_contract
+        from .comparison_contract import extend_schema, frozen_contract, validate_cases
         contract = frozen_contract(config or {})
         if contract is not None:
+            validate_cases(contract, json.loads((Path(config['packet_root']) / 'input.json').read_text(encoding='utf-8')))
             tool = COMPARISON_TOOLS[0]
             fields = '、'.join(contract['pair_fields'])
             return [{**tool, 'parameters': extend_schema(tool['parameters'], contract),

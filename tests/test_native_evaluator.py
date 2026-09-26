@@ -220,6 +220,13 @@ def test_comparison_extension_cannot_weaken_base_or_resolve_network_schema():
     from briefloop.comparison_contract import extend_schema
     base = runner_tool_specs('evaluator', 'pairwise')[0]['parameters']
     for contract, message in (({'pair_fields': {'reason': {'type': 'number'}}}, '覆盖'),
-                              ({'pair_fields': {'audit': {'$ref': 'https://example.invalid/schema'}}}, '本地')):
+                              ({'pair_fields': {'audit': {'$ref': 'https://example.invalid/schema'}}}, '本地'),
+                              ({'pair_fields': {'audit': {'$ref': '#/$defs/missing'}}}, '不存在')):
         with pytest.raises(ValueError, match=message):
             extend_schema(base, contract)
+
+    from briefloop.comparison_contract import validate_cases
+    with pytest.raises(ValueError, match='candidate/hash'):
+        validate_cases({'pair_fields': {}, 'bindings': [
+            {'result_path': ['audit', 'hash'], 'case_path': ['candidate', 'hash']}]},
+            [{'case_id': 'one', 'candidate': {}}])
