@@ -367,20 +367,31 @@ def _render_directory(store, digest):
 
 
 def _atomic_bytes(path, data):
-    temporary = path.with_name(path.name + '.tmp')
-    temporary.write_bytes(data)
-    os.replace(temporary, path)
+    temporary = path.with_name(path.name + '.' + uid('write') + '.tmp')
+    try:
+        temporary.write_bytes(data)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _cached_render(directory, digest, page):
     path = directory / f'page-{page:04d}.png'
     record = path.with_suffix('.json')
-    if not path.is_file() or not record.is_file():
+    if not record.is_file():
         return None
     try:
         metadata = json.loads(record.read_text(encoding='utf-8'))
         if not isinstance(metadata, dict) or metadata.get('source_sha256') != digest or metadata.get('page') != page:
             return None
+        if 'image_file' in metadata:
+            image_hash = metadata.get('image_sha256')
+            if not isinstance(image_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', image_hash):
+                return None
+            name = f'page-{page:04d}-{image_hash}.png'
+            if metadata['image_file'] != name:
+                return None
+            path = directory / name
         payload = path.read_bytes()
         if hashlib.sha256(payload).hexdigest() != metadata.get('image_sha256'):
             return None
@@ -421,15 +432,19 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
             raise ValueError('预览失败，不影响文件本身：' + str(outcome['reason']))
         payload = staging.read_bytes()
         width, height = _png_size(payload)
-        destination = directory / f'page-{page:04d}.png'
+        image_hash = hashlib.sha256(payload).hexdigest()
+        # Publish immutable image bytes first, then atomically replace the page
+        # manifest. Concurrent readers/writers never see another image paired
+        # with this metadata, including across separate server processes.
+        destination = directory / f'page-{page:04d}-{image_hash}.png'
         os.replace(staging, destination)
     finally:
         if staging.exists():
             staging.unlink()
     metadata = {'source_sha256': digest, 'page': page,
-                'image_sha256': hashlib.sha256(payload).hexdigest(),
+                'image_sha256': image_hash, 'image_file': destination.name,
                 'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height}
-    _atomic_bytes(destination.with_suffix('.json'), json.dumps(metadata, sort_keys=True).encode())
+    _atomic_bytes(directory / f'page-{page:04d}.json', json.dumps(metadata, sort_keys=True).encode())
     return {'page': page, 'path': str(destination), 'width': width, 'height': height,
             'image_sha256': metadata['image_sha256'], 'digest': digest,
             'tool_version': metadata['tool_version'], 'cached': False}

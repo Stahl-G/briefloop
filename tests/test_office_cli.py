@@ -436,8 +436,7 @@ def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypat
     assert office_cli.office_image(store, digest, 2) == _png_bytes()
     repeat = office_cli.render_preview(store, {'source_id': source['id'], 'pages': [1, 2]})
     assert repeat['cached'] is True and len(stub_calls(tmp_path)) == 2
-    # Concurrent renders of the same page stage into per-request temp files:
-    # two different files, page 1 each, must receive distinct -o targets…
+    # Different sources also stage into separate per-request files.
     def distinct_docx(name, marker):
         from docx import Document
         path = tmp_path / name
@@ -475,6 +474,59 @@ def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypat
     note = store.add_source('note.txt', 'plain text only')
     with pytest.raises(ValueError):  # no renderable Office original at all
         office_cli.render_preview(store, {'source_id': note['id']})
+
+
+def test_same_page_concurrent_publication_keeps_each_image_bound(tmp_path, monkeypatch):
+    """Force two renders and both manifest publications to overlap, with
+    different valid PNGs so a mixed image/metadata pair cannot pass by chance."""
+    from concurrent.futures import ThreadPoolExecutor
+    import hashlib
+    from PIL import Image
+
+    store = _workspace(tmp_path)
+    target = tmp_path / 'same.docx'
+    target.write_bytes(b'one frozen source')
+    render_barrier, publish_barrier = threading.Barrier(2), threading.Barrier(2)
+    payloads = []
+    for color in ('red', 'blue'):
+        buf = BytesIO()
+        Image.new('RGB', (12, 6), color).save(buf, format='PNG')
+        payloads.append(buf.getvalue())
+    assignments, assignment_lock, manifests = [], threading.Lock(), []
+    real_replace = os.replace
+
+    def render(args, **kwargs):
+        with assignment_lock:
+            payload = payloads[len(assignments)]
+            assignments.append(args[args.index('-o') + 1])
+        Path(args[args.index('-o') + 1]).write_bytes(payload)
+        render_barrier.wait(timeout=5)
+        return {'ok': True, 'data': {}, 'reason': None}
+
+    def replace(src, dst):
+        if str(dst).endswith('.json'):
+            manifests.append(str(src))
+            publish_barrier.wait(timeout=5)
+        real_replace(src, dst)
+        if str(dst).endswith('.json'):
+            # Even while another request publishes, the visible manifest must
+            # refer to complete immutable bytes, never a half-updated pair.
+            assert office_cli._cached_render(Path(dst).parent, digest, 1)
+
+    monkeypatch.setattr(office_cli, 'find', lambda: 'synthetic-renderer')
+    monkeypatch.setattr(office_cli, 'version', lambda *_: 'synthetic')
+    monkeypatch.setattr(office_cli, 'run_json', render)
+    monkeypatch.setattr(office_cli.os, 'replace', replace)
+    digest = office_cli._file_sha256(target)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(office_cli.render_page, store, target, 1) for _ in range(2)]
+        results = [future.result(timeout=10) for future in futures]
+    assert len(set(assignments)) == len(set(manifests)) == 2
+    assert {row['image_sha256'] for row in results} == {hashlib.sha256(p).hexdigest() for p in payloads}
+    for row in results:
+        assert hashlib.sha256(Path(row['path']).read_bytes()).hexdigest() == row['image_sha256']
+    assert office_cli.office_image(store, digest, 1) in payloads
+    assert not list(Path(results[0]['path']).parent.glob('*.tmp'))
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
