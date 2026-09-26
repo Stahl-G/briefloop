@@ -338,11 +338,15 @@ PROPOSER_TOOLS = [
 
 # -- pairwise Evaluator (learning's gate) -----------------------------------
 
-def comparison_packet(store, comparisons, folder):
+def comparison_packet(store, comparisons, folder, *, submission_contract=None):
     """Freeze a learning comparison: the input as written for every host, each
     case's two drafts as plain text, and the text of the sources the cases use."""
     packet = Path(folder) / 'packet'
     packet.mkdir(parents=True, exist_ok=True)
+    if submission_contract is not None:
+        from .comparison_contract import extend_schema
+        extend_schema(COMPARISON_TOOLS[0]['parameters'], submission_contract)
+        (packet / 'submission-contract.json').write_text(json.dumps(submission_contract, ensure_ascii=False), encoding='utf-8')
     (packet / 'input.json').write_text(json.dumps(comparisons, ensure_ascii=False, indent=1), encoding='utf-8')
     sources = set()
     for case in comparisons:
@@ -368,6 +372,10 @@ def submit_comparison(store, config, args):
     error = comparison_errors(result, comparisons)
     if error:
         raise ToolError('比较结果未通过校验，修正后重新提交：' + error)
+    from .comparison_contract import frozen_contract, validate_result
+    contract = frozen_contract(config)
+    if contract is not None:
+        validate_result(COMPARISON_TOOLS[0]['parameters'], contract, result, comparisons)
     _atomic(packet.parent / 'comparison.json', json.dumps(result, ensure_ascii=False, indent=1))
     return {'content': [{'type': 'text', 'text': '比较结果已通过校验并保存，本次比较结束。'}], 'settle': json.dumps(result, ensure_ascii=False)}
 
@@ -721,6 +729,14 @@ def _tools(role, mode=None, config=None):
             tools = [with_revision_base(t) for t in tools]
         return tools
     if role == 'evaluator' and mode == 'pairwise':
+        from .comparison_contract import extend_schema, frozen_contract
+        contract = frozen_contract(config or {})
+        if contract is not None:
+            tool = COMPARISON_TOOLS[0]
+            fields = '、'.join(contract['pair_fields'])
+            return [{**tool, 'parameters': extend_schema(tool['parameters'], contract),
+                     'description': tool['description'] + f' 本任务每个案例还必须提交完整的 {fields}，不能用试填或占位结果结束。',
+                     'guide': tool['guide'] + f' 必填扩展字段：{fields}；结构和输入绑定不完整时不会结束。'}]
         return COMPARISON_TOOLS
     if role == 'scout':
         return _scout_tools(config or {})

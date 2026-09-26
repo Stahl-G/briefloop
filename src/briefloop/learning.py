@@ -342,7 +342,7 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
 '''
 
 
-def compare(store,runtime,job,comparisons,folder,backend):
+def compare(store,runtime,job,comparisons,folder,backend,*,submission_contract=None):
     """Pairwise Evaluator over trial drafts; returns the saved comparison."""
     folder.mkdir(parents=True,exist_ok=True)
     (folder/'input.json').write_text(dump(comparisons))
@@ -350,8 +350,11 @@ def compare(store,runtime,job,comparisons,folder,backend):
     if backend=='briefloop-native':
         # A frozen packet and a validated submit instead of a written file.
         from .native_roles import comparison_packet
-        comparison_packet(store,comparisons,folder)
-        staged={**staged,'native_packet':{'role':'evaluator','evaluation_mode':'pairwise'}}
+        comparison_packet(store,comparisons,folder,submission_contract=submission_contract)
+        staged={**staged,'native_packet':{'role':'evaluator','evaluation_mode':'pairwise',
+                 **({'comparison_contract':submission_contract} if submission_contract is not None else {})}}
+    elif submission_contract is not None:
+        raise ValueError('当前宿主尚不支持比较扩展契约的提交前校验')
     prompt=comparison_prompt(store,folder,backend)
     # This pairwise mode is BriefLoop's feedback policy, not an extra paper role.
     # Trial drafts skip single evaluation; this comparison is their sole judge.

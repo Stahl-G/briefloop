@@ -39,6 +39,16 @@ class EvidenceInput(BaseModel):
     temporal_claims: list[TimeInput] | None = Field(default=None, max_length=120)
 
 
+class AssemblyErrors(ValueError):
+    """All invalid record locations from one atomic assembly attempt."""
+    def __init__(self, errors):
+        self.errors = errors
+        details = '\n'.join(f"{e['field']}[{e['index']}]: {e['message'][:180]}" for e in errors[:12])
+        remainder = f'\n另有 {len(errors)-12} 项错误；先修上述项目后重试。' if len(errors) > 12 else ''
+        super().__init__(f'证据批次有 {len(errors)} 项错误，本批未保存：\n{details}{remainder}\n'
+                         '修正对应索引后用原 base_revision 重交证据；不要重交正文。')
+
+
 def locate_excerpt(text, excerpt, locator=''):
     """Resolve exact text, never fuzzy-match or silently choose the first hit.
 
@@ -79,13 +89,14 @@ def assemble(config, evidence, markdown, prior_citations=()):
     """
     root = Path(config['packet_root']).resolve()
     index = {s['source_id']: s for s in json.loads((root/'source-index.json').read_text(encoding='utf-8'))['sources']}
-    cache, result = {}, {}
+    cache, result, errors = {}, {}, []
     for field in ('citations', 'number_bindings', 'temporal_claims'):
         if field not in evidence.model_fields_set:
             continue
         items = getattr(evidence, field)
         if items is None:
-            raise ValueError(f'{field}: 清空请传 []，不要传 null')
+            errors.append({'field': field, 'index': '*', 'message': '清空请传 []，不要传 null'})
+            continue
         records = []
         for i, item in enumerate(items):
             try:
@@ -113,8 +124,10 @@ def assemble(config, evidence, markdown, prior_citations=()):
                 if value not in records:
                     records.append(value)
             except (ValueError, OSError) as exc:
-                raise ValueError(f'{field}[{i}]: {exc}') from None
+                errors.append({'field': field, 'index': i, 'message': str(exc)})
         result[field] = records
+    if errors:
+        raise AssemblyErrors(errors)
     # A supplied source excerpt is sufficient to construct a location record,
     # but never to insert a citation into an arbitrary body sentence.
     supporting = list(result.get('citations', prior_citations))

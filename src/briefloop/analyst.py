@@ -326,7 +326,7 @@ def section_schema():
                             'description': 'editor_document.content 中的富文本块；可包含章节标题、段落、列表、表格。'},
                 'expected_hash': {'type': 'string', 'description': '精确改字时必填：最新章节保存回执的 hash 或 read_draft 的 section_hash。'},
                 'text_replacements': {'type': 'array', 'minItems': 1, 'maxItems': 24,
-                    'description': '改字或缩写优先使用，无需重抄整章；old_text 须在当前章节单个文字节点中唯一命中。空 new_text 删除该段文字，格式和 citation 节点保留。',
+                    'description': '改字或缩写优先使用，无需重抄整章；old_text 须在同段连续文字内唯一命中，可跨加粗等样式，不能跨引用或换行。保留未改文字样式，新增文字沿用改动起点样式；空 new_text 删除匹配文字。',
                     'items': {'type': 'object', 'required': ['old_text', 'new_text'], 'additionalProperties': False,
                               'properties': {'old_text': {'type': 'string', 'minLength': 1}, 'new_text': {'type': 'string'}}}},
                 'citations': {'type': 'array', 'items': Citation.model_json_schema()}}}

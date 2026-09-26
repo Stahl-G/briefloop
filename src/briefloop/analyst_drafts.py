@@ -25,23 +25,60 @@ def replace_section_text(section, replacements, expected_hash):
     if not isinstance(replacements, list) or not 1 <= len(replacements) <= 24:
         raise ValueError('text_replacements 需要 1–24 项精确文字替换')
     value = deepcopy(section)
-    def text_nodes(node):
-        if node.get('type') == 'text':
-            yield node
+    def text_runs(node):
+        # Adjacent text may be split by marks. A citation, hard break or block
+        # boundary is not plain text and must never be silently crossed.
+        run = []
         for child in node.get('content', []):
-            yield from text_nodes(child)
+            if child.get('type') == 'text':
+                run.append(child)
+            else:
+                if run:
+                    yield run
+                    run = []
+                yield from text_runs(child)
+        if run:
+            yield run
     for edit in replacements:
         if (not isinstance(edit, dict) or set(edit) != {'old_text', 'new_text'}
                 or not isinstance(edit['old_text'], str) or not edit['old_text']
                 or not isinstance(edit['new_text'], str)):
             raise ValueError('替换项需要非空 old_text 和字符串 new_text')
-        nodes = list(text_nodes(value['editor_document']))
-        matches = sum(node['text'].count(edit['old_text']) for node in nodes)
-        if matches != 1:
-            raise ValueError(f'old_text 在当前章节命中 {matches} 处；须在单个文字节点内唯一匹配，本批修改未保存')
-        for node in nodes:
-            if edit['old_text'] in node['text']:
-                node['text'] = node['text'].replace(edit['old_text'], edit['new_text'], 1)
+        matches = []
+        for nodes in text_runs(value['editor_document']):
+            text = ''.join(node['text'] for node in nodes)
+            start = text.find(edit['old_text'])
+            while start >= 0:
+                matches.append((nodes, start))
+                start = text.find(edit['old_text'], start + 1)
+        if len(matches) != 1:
+            raise ValueError(f'old_text 在当前章节命中 {len(matches)} 处；须在同一段连续文字内唯一匹配，'
+                             '不要跨引用、换行或段落。本批修改未保存；read_draft 后缩小改字范围或增加原文上下文')
+        nodes, start = matches[0]
+        old, new = edit['old_text'], edit['new_text']
+        # Keep unchanged context (and its marks) intact, even if the matching
+        # context spans several nodes. Inserted text inherits its start style.
+        prefix = 0
+        while prefix < min(len(old), len(new)) and old[prefix] == new[prefix]:
+            prefix += 1
+        old, new = old[prefix:], new[prefix:]
+        start += prefix
+        suffix = 0
+        while suffix < min(len(old), len(new)) and old[-suffix-1] == new[-suffix-1]:
+            suffix += 1
+        if suffix:
+            old, new = old[:-suffix], new[:-suffix]
+        if not old and not new:
+            continue
+        end, offset, inserted = start + len(old), 0, False
+        for index, node in enumerate(nodes):
+            text = node['text']; stop = offset + len(text)
+            if not inserted and (start < stop or index == len(nodes)-1):
+                node['text'] = text[:start-offset] + new + text[max(0, end-offset):]
+                inserted = True
+            elif inserted and offset < end:
+                node['text'] = text[max(0, end-offset):]
+            offset = stop
     def remove_empty_text(node):
         if 'content' in node:
             node['content'] = [child for child in node['content']
