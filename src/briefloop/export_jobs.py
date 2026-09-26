@@ -25,7 +25,7 @@ def export_input(store, brief, template_override=None):
     rendered_ids = dict.fromkeys(source_ids({'type': 'doc', 'content': blocks}) + indexed)
     rendered_sources = {sid: {'name': run_sources[sid]['name'], 'url': run_sources[sid]['url'] or ''}
                         if sid in run_sources else None for sid in rendered_ids}
-    identity = {'renderer': 28 if requirements.get('template_id') else 29, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+    identity = {'renderer': 30 if requirements.get('template_id') else 31, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': document, 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
                 'sources': rendered_sources,

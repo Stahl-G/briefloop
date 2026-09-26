@@ -23,6 +23,12 @@ form.restore('English');
 assert.equal(node('report-language').value,'en');
 assert.equal(node('max-words-label').textContent,'词数上限');
 assert.deepEqual(changes,[],'restoring saved requirements must not reset the saved lengths');
+for(const template of [undefined,null,{}, {language_hint:null},{language_hint:''},{language_hint:' '},{language_hint:'日本語'}]){
+ form.syncTemplate(template);
+ assert.equal(node('report-language').value,'en','uploads and cleared or unknown layouts must preserve English');
+ assert.deepEqual(changes,[],'a missing language preference must not reset lengths');
+ assert.deepEqual(notices,[],'unchanged language must not display a switch notice');
+}
 form.syncTemplate({language_hint:'zh'});
 assert.equal(node('report-language').value,'zh');
 assert.deepEqual(changes,['zh']);

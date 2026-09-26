@@ -45,6 +45,9 @@ export function reportLanguageUI({notice,onChange}){
  function restore(value){const el=select();if(!el)return;el.value=reportLanguage(value)||'zh';render()}
  // A built-in layout is written for one language; picking it sets the report language.
  function syncTemplate(template){
+  // An upload or cleared selection has no language preference. Saved runs still
+  // use reportLanguage's Chinese fallback, but an absent hint must not reset a choice.
+  if(!String(template?.language_hint??'').trim())return;
   const hint=reportLanguage(template?.language_hint);
   if(!hint||!select()||hint===current())return;
   select().value=hint;changed();

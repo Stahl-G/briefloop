@@ -155,6 +155,7 @@ def test_unicode_upload_and_original_survive_workspace_reopen(tmp_path):
 
 def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):
     from briefloop.workspaces import _request_shutdown, _read_api
+    from briefloop.templates import BUILTIN_TEMPLATES
     root=tmp_path/'中文 fresh workspace'
     marker=root/'server.json'
     entry=Path(sys.executable).with_name('briefloop.exe')
@@ -168,7 +169,13 @@ def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):
         assert len(info['launch_id'])==32
         assert int((root/'server.pid').read_text())==info['pid']
         assert _read_api(info['url'],'/api/runtime')['server_pid']==info['pid']
-        assert len(_read_api(info['url'],'/api/state')['templates'])==36
+        templates=_read_api(info['url'],'/api/state')['templates']
+        expected_names={label for _,_,label in BUILTIN_TEMPLATES}
+        assert len(templates)==len(BUILTIN_TEMPLATES)
+        assert {row['name'] for row in templates}==expected_names
+        english_names={label for filename,_,label in BUILTIN_TEMPLATES if '-en-' in filename}
+        assert english_names
+        assert {row['name'] for row in templates if row['language_hint']=='en'}==english_names
         # A valid session token alone must not stop a different service identity.
         for pid, workspace_id in ((0, info['workspace_id']), (info['pid'], 'wrong-workspace')):
             with pytest.raises(OSError, match='拒绝停止'):
