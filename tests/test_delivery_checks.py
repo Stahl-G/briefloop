@@ -30,13 +30,106 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         row = check_numbers(quote, [bound(store, quote, token, value, unit, excerpt)], store)[0]
         assert row['checked'], row
         assert row['found'] is found, (quote, row)
-    for unit in ('USD/MWh', 'B USD', 'million EUR', '兆'):
+    for unit in ('USD/MWh', 'B USD', 'kilo EUR', '兆'):
         assert normalized(5, unit) is None
-    for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh', '5MWh')]:
+    for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh/年', '5MWh/年')]:
         item = bound(store, quote, token, 5, 'USD', '$5')
         assert not check_numbers(quote, [item], store)[0]['checked']
     assert normalized(10, '万美元') == normalized(100000, 'USD')
     assert normalized(1, 'thousand USD') == normalized(1000, 'USD')
+
+
+@pytest.mark.parametrize('token,value,unit,source', [
+    ('10亿欧元', 1, 'billion EUR', '1 billion EUR'),
+    ('120万英镑', '1.2', 'million GBP', '£1.2 million'),
+    ('1,250,000欧元', '1.25e6', 'EUR', 'EUR 1.25e6'),
+    ('100 million shares', 1, '亿股', '1亿股'),
+    ('20,000 tonnes', 2, '万吨', '2万吨'),
+    ('1,500 kg', '1.5', 'tonnes', '1.5 metric tons'),
+    ('−1.5e3千克', '-1.5', 'tonnes', '-1.5 tonnes'),
+    ('1000 MWh', 1, 'GWh', '1 GWh'),
+    ('1000千瓦时', 1, '兆瓦时', '1兆瓦时'),
+    ('10,000 vehicles', 1, '万辆', '1万辆'),
+])
+def test_registered_units_keep_source_and_exact_body_binding(tmp_path, token, value, unit, source):
+    store = Store(tmp_path)
+    quote = f'本期数值：{token}。'
+    item = bound(store, quote, token, value, unit, source)
+    row = check_numbers(quote, [item], store, {item['source_id']})[0]
+    assert row['checked'] and row['found'], row
+    # Adding units never bypasses identity, location or unique body binding.
+    for changes in ({'locator': 'line 99'}, {'source_excerpt': source + ' not in source'},
+                    {'source_id': 'src_missing'}, {'report_quote': quote + ' altered'}):
+        rejected = check_numbers(quote, [dict(item, **changes)], store)[0]
+        assert not rejected['checked'] and not rejected['found'], rejected
+    assert not check_numbers(quote * 2, [item], store)[0]['checked']
+    assert not check_numbers(quote, [item], store, set())[0]['checked']
+
+
+@pytest.mark.parametrize('token,value,unit,source', [
+    ('11亿欧元', 1, 'billion EUR', '1 billion EUR'),
+    ('1200万英镑', '1.2', 'million GBP', '£1.2 million'),
+    ('1 billion shares', 1, '亿股', '1亿股'),
+    ('1 MWh', 1, 'MW', '1 MW'),
+    ('1 MW', 1, 'MWh', '1 MWh'),
+    ('1个百分点', 1, '%', '1%'),
+    ('1 EUR', 1, 'USD', '$1'),
+    ('1 GBP', 1, 'EUR', '€1'),
+    ('1吨', 1, '股', '1股'),
+])
+def test_registered_units_never_hide_magnitude_currency_or_dimension_mismatch(tmp_path, token, value, unit, source):
+    store = Store(tmp_path)
+    quote = f'本期数值：{token}。'
+    row = check_numbers(quote, [bound(store, quote, token, value, unit, source)], store)[0]
+    assert row['checked'] and not row['found'], row
+
+
+@pytest.mark.parametrize('text', [
+    '5 MWhx', '5 EURfoo', '5 million EURfoo', '5 tonnesCO2',
+    'XYZ5 EUR', 'b5 MWh', '$€5',
+    '$5 EUR', 'EUR 5 USD', '5 MW·h', '5 MWh/年', '5万元/吨', '5万欧元每年',
+    '1,23 EUR', '1.2.3 EUR', '1e+ EUR',
+])
+def test_partial_unknown_or_compound_units_are_not_accepted(text):
+    from briefloop.delivery_checks import quantities
+    assert list(quantities(text)) == []
+
+
+def test_unknown_units_stay_unchecked_in_binding_denominator(tmp_path):
+    store = Store(tmp_path)
+    quote = '本期数值：1亿欧元。'
+    supported = bound(store, quote, '1亿欧元', 100, 'million EUR', '100 million EUR')
+    for unit in ('kEUR', 'ton', 'TWh', 'EUR per share', 'USD/MWh'):
+        assert normalized(1, unit) is None
+    assert normalized('1,23', 'EUR') is None
+    unsupported = dict(supported, unit='EUR per share')
+    run = store.create_run({'title': '单位核验', 'objective': '合成边界验收'}, [supported['source_id']])
+    saved = store.publish(run['id'], {'title': '单位核验', 'markdown': quote,
+                                     'number_bindings': [supported, unsupported]})
+    numbers = brief_checks(store, saved['id'])['numbers']
+    assert (numbers['total'], numbers['checked'], numbers['matched'], numbers['status']) == (2, 1, 1, 'partial')
+    assert len(numbers['skipped']) == 1 and '不支持' in numbers['skipped'][0]['reason']
+    assert not numbers['unmatched']
+
+
+@pytest.mark.parametrize('supported,unsupported', [('MWh', 'mWh'), ('MW', 'mW'), ('t', 'T'), ('kg', 'KG')])
+def test_unit_symbols_keep_case_and_never_turn_milli_into_mega(tmp_path, supported, unsupported):
+    from briefloop.delivery_checks import quantities
+    store = Store(tmp_path)
+    quote = f'本期数值：1 {unsupported}。'
+    source = f'1 {supported}'
+    item = bound(store, quote, f'1 {unsupported}', 1, supported, source)
+    row = check_numbers(quote, [item], store)[0]
+    assert not row['checked'] and not row['found'], row
+    assert normalized(1, unsupported) is None
+    assert list(quantities(f'1 {unsupported}')) == []
+    # A correctly cased report cannot borrow a quantity from the unsupported
+    # spelling in its source either.
+    reverse = bound(store, source, source, 1, supported, f'1 {unsupported}')
+    assert not check_numbers(source, [reverse], store)[0]['checked']
+    assert normalized(1, 'Million EUR') == normalized(1, 'million eur')
+    assert normalized(1, 'TONNES') == normalized(1, 'tonnes')
+    assert normalized(1, 'million T') is None
 
 
 def test_binding_cannot_borrow_other_fact_or_unread_source(tmp_path):
@@ -249,5 +342,6 @@ def test_percentage_point_and_count_units_do_not_collide():
     assert ('percentage_point',) not in [(d,) for _, d in months]
     assert (Decimal('12'), 'percent') in months
     assert (Decimal('3'), 'count') not in months   # 3个月 is a period, not a count
+    assert (Decimal('50000'), 'count') not in [v for _, _, v in quantities('5万个月')]
     counts = [(v, d) for _, _, (v, d) in quantities('新增 5 家机构')]
     assert counts == [(Decimal('5'), 'count')]

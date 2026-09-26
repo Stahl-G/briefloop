@@ -116,3 +116,27 @@ def test_polled_state_lists_versions_without_bodies(tmp_path):
     assert view['markdown']==original['markdown'] and view['length_stats']['over_limit'] is True
     # Full-text report search still reaches historical bodies, without sending them.
     assert store.search_briefs('alphacanary')==[run['id']] and store.search_briefs('absent')==[]
+
+
+def test_polled_state_keeps_old_active_jobs_and_bounds_inactive_history(tmp_path):
+    store=Store(tmp_path)
+    old_queued=store.enqueue('source_refresh',{})
+    old_running=store.enqueue('source_refresh',{})
+    store.update_job(old_running['id'],'running')
+    store.event(old_running['id'],'learning_progress',{'phase':'synthetic-running'})
+    history=[]
+    for index in range(35):
+        job=store.enqueue('source_refresh',{})
+        store.update_job(job['id'],('complete','failed','cancelled','interrupted')[index%4])
+        history.append(job)
+    newest=store.enqueue('source_refresh',{})
+
+    jobs=store.snapshot()['jobs']
+    expected=[newest['id'],*[job['id'] for job in reversed(history[-30:])],old_running['id'],old_queued['id']]
+    assert [job['id'] for job in jobs]==expected
+    assert len({job['id'] for job in jobs})==len(jobs)
+    assert next(job for job in jobs if job['id']==old_running['id'])['progress']=={'phase':'synthetic-running'}
+
+    # A finished old task returns to the bounded history; no permanent pinning.
+    store.update_job(old_running['id'],'complete')
+    assert old_running['id'] not in {job['id'] for job in store.snapshot()['jobs']}
