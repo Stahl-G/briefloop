@@ -50,9 +50,13 @@ def save(body):
         output = int(body['output_limit']) if body.get('output_limit') else None
         if (context is not None and not 1024 <= context <= 2000000) or (output is not None and not 256 <= output <= (context or 2000000)):
             raise ValueError('上下文和输出上限不在有效范围内')
+        reasoning = body.get('supports_reasoning', previous.get('supports_reasoning'))
+        if reasoning is not None and type(reasoning) is not bool:
+            raise ValueError('模型推理能力必须为 true、false 或 null')
         rows[provider + '/' + model] = {'provider': provider, 'model': model, 'name': str(body.get('name') or provider),
             'protocol': protocol, 'api': PROTOCOLS[protocol], 'base_url': url, 'api_key': key, 'context_limit': context, 'output_limit': output,
-            'supports_images': body.get('supports_images') if type(body.get('supports_images')) is bool else None}
+            'supports_images': body.get('supports_images') if type(body.get('supports_images')) is bool else None,
+            'supports_reasoning': reasoning}
         # One endpoint/key per provider, matching engine provider scope.
         for row in rows.values():
             if row['provider'] == provider:

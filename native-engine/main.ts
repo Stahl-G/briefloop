@@ -221,7 +221,8 @@ async function buildRuntime(raw: string): Promise<RuntimeSnapshot> {
         // no previous UI override can become the fallback for a cleared one.
         const known = registry.find(provider, r.model);
         return { id: r.model, name: known?.name || r.model, api: api as any,
-          reasoning: known?.reasoning ?? false, input: r.supports_images == null ? (known?.input || ["text"]) : r.supports_images ? ["text", "image"] : ["text"],
+          reasoning: typeof r.supports_reasoning === "boolean" ? r.supports_reasoning : (known?.reasoning ?? false),
+          input: r.supports_images == null ? (known?.input || ["text"]) : r.supports_images ? ["text", "image"] : ["text"],
           cost: known?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: contextOverrides.get(`${r.provider}/${r.model}`) ?? DEFAULT_CONTEXT_WINDOW,
           maxTokens: r.output_limit || known?.maxTokens || 8192,

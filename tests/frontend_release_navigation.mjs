@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {deliveryUI} from '../frontend/delivery.js';
 import {section as sectionOf} from './source_section.mjs';
+import {esc} from '../frontend/dom.js';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const line=name=>source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
@@ -16,8 +17,8 @@ function fixture(){
  const a={...brief('A'),markdown:'Report A'},b=brief('B'),c=brief('C');
  const buttons=[b,c].map(brief=>({dataset:{reportRelease:brief.id}}));
  const configurable={configure:()=>({})};
- const context=vm.createContext({$,state:{briefs:[a,b,c],jobs:[]},current:a,dirty:false,saving:false,savePromise:null,saveTimer:null,lastSaveError:null,pendingRun:null,editor:null,highlightQuotes:[],
-  parse:JSON.parse,notice:message=>notices.push(message),page:name=>pages.push(name),clearTimeout(){},
+ const context=vm.createContext({$,state:{briefs:[a,b,c],jobs:[],runs:[]},current:a,dirty:false,saving:false,savePromise:null,saveTimer:null,lastSaveError:null,pendingRun:null,editor:null,highlightQuotes:[],
+  parse:JSON.parse,esc,notice:message=>notices.push(message),page:name=>pages.push(name),clearTimeout(){},
   Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},ReportTrailingParagraph:{},
   editorDocument:value=>value,toEditor:value=>value,changed(){},updateFormattingTools(){},assessment(){},citations(){},renderBriefLength(){},setReportView(){},renderReportStatus(){},renderAssistantSummary(){},syncPendingReport(){},renderWordExports(){},updateDownloads(){},
   box:{querySelectorAll:()=>buttons},
@@ -26,7 +27,7 @@ function fixture(){
  context.action=async fn=>{try{return await fn()}catch(error){notices.push(error.message)}};
  context.save=async()=>{context.current={...context.current,id:context.current.id+'-saved'};context.dirty=false};
  vm.runInContext([
-  line('loadBrief'),line('openBrief'),
+  section('function renderVersionSelect(){','function showPendingReport('),line('loadBrief'),line('openBrief'),
   section('async function savedVersion(){','const reportExport=reportExportUI('),
  ].join('\n'),context);
  const original=context.savedVersion;
@@ -37,7 +38,9 @@ function fixture(){
  globalThis.document={getElementById:$};
  delivery.init();
  context.delivery=delivery;
- vm.runInContext(source.split('\n').find(row=>row.trim().startsWith("box.querySelectorAll('[data-report-release]')")),context);
+ context.rows=context.state.briefs;context.openRelease=b=>context.action(()=>delivery.openReleaseDialog(b));
+ const browsing=fs.readFileSync(new URL('../frontend/report-browsing.js',import.meta.url),'utf8');
+ vm.runInContext(browsing.split('\n').find(row=>row.trim().startsWith("box.querySelectorAll('[data-report-release]')")),context);
  const resolve=id=>pending.get(id).resolve({...context.state.briefs.find(b=>b.id===id),markdown:'Report '+id});
  return {context,delivery,$,calls,notices,saved,pages,buttons,resolve,reject:(id)=>pending.get(id).reject(Error('Body unavailable'))};
 }

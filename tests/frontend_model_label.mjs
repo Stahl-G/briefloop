@@ -1,3 +1,4 @@
+import {jobExecutionLabel,jobResumeLabel} from '../frontend/job-presentation.js';
 import * as time from '../frontend/time.js';
 // Settings and frozen job payloads use different backend field names.
 import fs from 'node:fs';
@@ -7,7 +8,7 @@ import {withoutSupersededRetries} from '../frontend/review-status.js';
 import {section} from './source_section.mjs';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const code=['friendlyModel','runtimeName','modelLabel','jobModelLabel'].map(name=>source.split('\n').find(line=>line.startsWith('function '+name+'('))).join('\n');
-const view=vm.createContext({...time,withoutSupersededRetries,parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
+const view=vm.createContext({...time,jobExecutionLabel,jobResumeLabel,withoutSupersededRetries,parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
 vm.runInContext(code,view);
 const model='opencode/muse-spark-1.3-contributor-free';
 for(const variant of [undefined,null,'','high']){

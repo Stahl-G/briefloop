@@ -10,13 +10,14 @@ import math
 import os
 import re
 import shutil
+import unicodedata
 from io import BytesIO
 
 from .store import dump, now, uid
 from .document_model import brief_document, table_layout
 
 LAYOUTS = ('sheets', 'single')
-XLSX_RENDERER_VERSION = 2
+XLSX_RENDERER_VERSION = 3
 NO_TABLES_MESSAGE = '报告没有可导出的表格，无需生成 Excel'
 INDEX_SHEET_TITLE = '目录'
 # openpyxl rejects ':\\/?*[]' and control characters in sheet titles, silently
@@ -398,7 +399,7 @@ def _paint_cell(target, text, cell, *, header_row):
         target.fill = PatternFill(start_color=_HEADER_FILL, end_color=_HEADER_FILL, fill_type='solid')
     alignment = {'vertical': 'top'}
     if attrs.get('textAlign'): alignment['horizontal'] = attrs['textAlign']
-    if '\n' in text: alignment['wrap_text'] = True
+    if number is None and text: alignment['wrap_text'] = True
     target.alignment = Alignment(**alignment)
     if cell is not None and cell.get('type') == 'tableHeader':
         target.font = Font(bold=True)
@@ -424,6 +425,64 @@ def _paint_table(ws, model, top):
                                                          round(widths[0] / 7, 2))
 
 
+def _display_width(text):
+    """Approximate Excel character widths; CJK glyphs need two Latin columns."""
+    return sum(0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+               for ch in str(text))
+
+
+def _fit_sheet(ws, models=(), *, contents=False):
+    """Fit the base export without requiring an OfficeCLI autofit pass.
+
+    Respect authored column widths. Bound automatic widths and wrap prose,
+    using row heights as a portable approximation for readers that do not
+    auto-fit wrapped or merged cells on opening.
+    """
+    from copy import copy
+    from openpyxl.utils import get_column_letter
+    explicit, natural = {}, {}
+    for model in models:
+        for row in model['rows']:
+            for column, node in enumerate(row, 1):
+                if node is None: continue
+                attrs = node.get('attrs') or {}
+                span = int(attrs.get('colspan') or 1)
+                for offset, pixels in enumerate(attrs.get('colwidth') or []):
+                    if isinstance(pixels, (float, int)) and pixels > 0 and offset < span:
+                        explicit[column + offset] = max(explicit.get(column + offset, 0), round(pixels / 7, 2))
+                width = max((_display_width(line) for line in _cell_text(node).split('\n')), default=0) / span + 2
+                for offset in range(span):
+                    natural[column + offset] = max(natural.get(column + offset, 12), min(60, width))
+    if contents:
+        for row in ws.iter_rows(min_row=3):
+            for cell in row:
+                natural[cell.column] = max(natural.get(cell.column, 12), min(60, _display_width(cell.value or '') + 2))
+    for column in range(1, ws.max_column + 1):
+        ws.column_dimensions[get_column_letter(column)].width = explicit.get(column, natural.get(column, 12))
+    spans = {(merged.min_row, merged.min_col): merged for merged in ws.merged_cells.ranges}
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value is None: continue
+            span = spans.get((cell.row, cell.column))
+            end = span.max_col if span else cell.column
+            width = max(1, sum(ws.column_dimensions[get_column_letter(col)].width for col in range(cell.column, end + 1)) - 2)
+            # Standalone table/index titles can occupy their otherwise empty row.
+            title = cell.column == 1 and (cell.row in {m['title_row'] for m in models} or contents and cell.row <= 2)
+            if title:
+                width = max(width, sum(ws.column_dimensions[get_column_letter(col)].width for col in range(1, ws.max_column + 1)) - 2)
+            text = str(cell.value)
+            lines = sum(max(1, math.ceil(_display_width(line) / width)) for line in text.split('\n'))
+            if isinstance(cell.value, str) and not title:
+                alignment = copy(cell.alignment)
+                alignment.wrap_text = True
+                alignment.vertical = 'top'
+                cell.alignment = alignment
+            rows = range(cell.row, (span.max_row if span else cell.row) + 1)
+            height = min(409, max(18, (lines * 15 + 4) / len(rows)))
+            for number in rows:
+                ws.row_dimensions[number].height = max(ws.row_dimensions[number].height or 0, height)
+
+
 def xlsx_bytes(document, detail, requirements, layout_id):
     """Deterministic openpyxl rendering; the base artifact needs no OfficeCLI."""
     from openpyxl import Workbook
@@ -443,6 +502,7 @@ def xlsx_bytes(document, detail, requirements, layout_id):
             cell = _literal_text(sheet.cell(row=model['title_row'], column=1), model['title'])
             cell.font = Font(bold=True)
             _paint_table(sheet, model, model['title_row'] + 1)
+        _fit_sheet(sheet, models)
     else:
         index = workbook.create_sheet(_sheet_base(labels['contents']))
         _literal_text(index.cell(row=1, column=1), title).font = Font(bold=True)
@@ -455,10 +515,12 @@ def xlsx_bytes(document, detail, requirements, layout_id):
             index.cell(row=row, column=1, value=row - 3)
             _literal_text(index.cell(row=row, column=2), model['title'][:_TITLE_INDEX_MAX])
             _literal_text(index.cell(row=row, column=3), model['sheet'])
+        _fit_sheet(index, contents=True)
         for model in models:
             sheet = workbook.create_sheet(model['sheet'])
             _literal_text(sheet.cell(row=1, column=1), model['title']).font = Font(bold=True)
             _paint_table(sheet, model, 2)
+            _fit_sheet(sheet, [model])
             # Freeze below the header row (title row 1 + header row 2 → A3); a
             # worksheet has one frozen pane, so 'single' freezes nothing at all.
             sheet.freeze_panes = f'A{model["title_row"] + (1 if model["header"] else 0) + 1}'

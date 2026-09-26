@@ -181,7 +181,9 @@ class HarnessManager:
         attachments=[]
         for sid in dict.fromkeys(source_ids):
             attachment=source_attachment(self.store,sid)
-            if attachment.get('status')=='failed':
+            if attachment.get('status') in ('queued','extracting','cancelled','interrupted'):
+                raise ValueError('附件 '+attachment.get('name',sid)+' 尚未读取完成，请等待完成或在数据源中重试')
+            if attachment.get('status')!='ready':
                 raise ValueError('附件 '+attachment.get('name',sid)+' 无法读取：'+str(attachment.get('error') or '来源文件不可用'))
             image_path=attachment.get('image_path')
             if (attachment.get('media_type') or '').startswith('image/') and not image_path:

@@ -282,6 +282,7 @@ def test_shutdown_interrupts_partial_bodies_without_committing_them(service, mon
 
 def test_body_idle_timeout_allows_progressing_uploads(service, monkeypatch):
     server,request=service
+    server.worker.start()
     monkeypatch.setattr(server.RequestHandlerClass,'timeout',.5)
     token=request('/api/session')[1]['token']
     address=('127.0.0.1',server.server_port)
@@ -310,9 +311,13 @@ def test_body_idle_timeout_allows_progressing_uploads(service, monkeypatch):
             connection.sendall(chunk)
         response=http.client.HTTPResponse(connection);response.begin()
         source=json.loads(response.read())
-        assert response.status==200 and source['status']=='ready'
+        assert response.status==202 and source['status']=='queued'
+    deadline=time.monotonic()+5
+    while time.monotonic()<deadline and server.store.one('sources',source['id'])['status'] not in ('ready','failed'):time.sleep(.05)
+    assert server.store.one('sources',source['id'])['status']=='ready'
     assert server.store.source_text(source['id'])==(chunk*5).decode()
     assert request('/api/settings',{'max_reports':3})[0]==200
+    server.worker.close()
 
 
 def test_corrupt_connector_config_preserves_workspace_and_recovers_after_repair(tmp_path):

@@ -4,6 +4,21 @@ import time
 from briefloop.store import Store
 from briefloop.harness import HarnessManager
 
+
+def test_unread_attachments_cannot_be_sent_to_model(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import pytest
+    from briefloop import media
+    manager = SimpleNamespace(store=Store(tmp_path/'unread'))
+    for status in ('queued','extracting','cancelled','interrupted'):
+        monkeypatch.setattr(media, 'source_attachment', lambda store, sid, status=status:
+                            {'source_id':sid, 'name':'合成年报.pdf', 'status':status})
+        with pytest.raises(ValueError, match='尚未读取完成'):
+            HarnessManager._attachments(manager, ['source'])
+    monkeypatch.setattr(media, 'source_attachment', lambda store, sid:
+                        {'source_id':sid, 'name':'合成年报.pdf', 'status':'ready', 'media_type':'application/pdf'})
+    assert HarnessManager._attachments(manager, ['source'])[0]['status']=='ready'
+
 class RPC:
     def __init__(self,*args,**kwargs):
         assert not kwargs  # transport construction never binds a model/provider

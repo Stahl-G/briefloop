@@ -55,7 +55,7 @@ const p=vm.createContext({
  chat:{id:null},
  state:{settings:{model:'gpt-5.6-luna',model_selection_required:true}},activity:null,
  $:el,notice:(s)=>notices.push(s),document:{querySelectorAll:()=>[],body:{classList:{contains:()=>false,remove:()=>{}}}},
- renderTasks:()=>{},renderTaskGraph:()=>{},refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSearchInline:()=>{},applyPendingSetupFields:()=>{},
+ renderTasks:()=>{},renderTaskGraph:()=>{},renderReports:()=>{},refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSearchInline:()=>{},applyPendingSetupFields:()=>{},
 });
 el('welcome').hidden=false;
 vm.runInContext(pageCode,p);vm.runInContext("page('chat')",p);

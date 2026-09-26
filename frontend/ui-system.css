@@ -151,3 +151,8 @@ dialog .section-title h2{font-size:var(--text-xl)}
 .source-search-footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:12px}
 .source-search-footer details p{font-size:var(--text-xs);overflow-wrap:anywhere}
 .source-search-hit{background:var(--color-surface-soft);color:inherit;outline:1px solid var(--color-warn)}
+.source-upload-progress{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2) var(--space-3);margin-block:var(--space-3);padding:var(--space-4)}
+.source-upload-progress>strong,.source-upload-progress>.help{overflow-wrap:anywhere;margin:0;min-width:0}
+.source-upload-progress>strong,.source-upload-progress>.help,.source-upload-progress>progress{grid-column:1}
+.source-upload-progress>button{grid-column:2;grid-row:1 / span 3;align-self:center}
+.source-upload-progress>progress{width:100%;accent-color:var(--color-primary)}

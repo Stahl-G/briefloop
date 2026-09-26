@@ -217,7 +217,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     if (origins and origins!=[expected]) or (sites and sites not in (['same-origin'],['none'])):
                         self.send(403,{'error':'请从本地工作区页面查看或下载文件','code':'cross_origin_read_denied'});return
                 if u.path=='/api/state':
-                    snapshot=store.snapshot()
+                    snapshot=store.snapshot(run_id=q.get('run_id',[''])[0],version_id=q.get('version_id',[''])[0],pending_run=q.get('pending_run',[''])[0])
                     snapshot['demo']=store.meta('demo')
                     # The page polls this snapshot and reads only each template's
                     # section outline; Word styles and preparation data stay here.
@@ -234,6 +234,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,snapshot)
                 elif u.path=='/api/brief':
                     self.send(200,store.brief_view(q['id'][0]))
+                elif u.path=='/api/reports':
+                    from .report_browsing import reports
+                    self.send(200,reports(store,**{key:q[key][0] for key in ('cursor','limit','q','status','days','sources','source_id') if key in q}))
+                elif u.path=='/api/report-history':
+                    from .report_browsing import versions
+                    self.send(200,versions(store,q['run_id'][0],**{key:q[key][0] for key in ('cursor','limit','before') if key in q}))
+                elif u.path=='/api/report-context':
+                    from .report_browsing import context
+                    self.send(200,context(store,q['version_id'][0]))
                 elif u.path=='/api/report-search':
                     self.send(200,{'run_ids':store.search_briefs(q.get('q',[''])[0])})
                 elif u.path=='/api/source-search':
@@ -269,6 +278,19 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     if selected and selected not in active and selected not in reviews and selected!=worker.current:observed=None
                     proc=observed.process if observed else None
                     self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active or selected in reviews else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                elif u.path=='/api/source-status':
+                    source=store.one('sources',q['id'][0])
+                    # Status polling reads only bounded metadata, never the original or extracted body.
+                    sidecar=store.root/'sources'/(source['id']+'.provenance.json')
+                    try:
+                        metadata=json.loads(sidecar.read_text(encoding='utf-8')) if sidecar.stat().st_size<=128_000 else {}
+                        if isinstance(metadata,dict):
+                            source.update({key:metadata[key] for key in ('needs_visual','pages','media_type') if key in metadata})
+                    except (OSError,ValueError):pass
+                    jobs=store.rows("SELECT * FROM jobs WHERE kind='source_extract' AND json_extract(payload,'$.source_id')=? ORDER BY rowid DESC LIMIT 1",(source['id'],))
+                    job=jobs[0] if jobs else None
+                    events=store.rows("SELECT data FROM events WHERE job_id=? AND kind='source_extraction_progress' ORDER BY seq DESC LIMIT 1",(job['id'],)) if job else []
+                    self.send(200,{'source':source,'job':job,'progress':json.loads(events[0]['data']) if events else None})
                 elif u.path=='/api/source':
                     from .projections import source_details
                     sid=q['id'][0];source,provenance,original=source_details(store,sid)
@@ -485,7 +507,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
-        def _read_body(self,n,*,upload=False):
+        def _read_body(self,n,*,upload=False,sink=None):
             self._body_interrupted=False
             with self.server._admission:
                 if self.server.draining and not self._control_post:
@@ -509,7 +531,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         if not select.select([self.connection],[],[],min(.25,idle))[0]:continue
                         chunk=self.rfile.read1(min(remaining,65536))
                         if not chunk:break
-                    chunks.append(chunk);remaining-=len(chunk)
+                    if sink is None:chunks.append(chunk)
+                    else:sink.write(chunk)
+                    remaining-=len(chunk)
                     deadline=time.monotonic()+self.timeout
             finally:
                 self.connection.settimeout(timeout)
@@ -532,8 +556,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 self.send(413 if name and n>limit else 400,{'error':(f'{name} 超过单文件 {limit//1048576} MiB 限制，请压缩或拆分后重试' if name and n>limit
                                                                      else '上传请求缺少文件名或文件为空'),'code':'request_too_large' if name and n>limit else 'invalid_upload'})
                 return
-            data=self._read_body(n,upload=True)
-            self.send(200,sources.upload(store,name,data))
+            from .source_ingestion import receive_upload
+            source=receive_upload(store,name,n,lambda sink:self._read_body(n,upload=True,sink=sink))
+            self.send(202,source)
         def do_POST(self):
             path=urlsplit(self.path).path
             control=path in ('/api/service-stop','/api/stop','/api/harness/cancel','/api/connectors/task-revoke')
@@ -663,7 +688,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     data=_upload_data(body)
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'],allow_private=True)
-                elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
+                elif path=='/api/retry-source':
+                    with worker._claim_lock:
+                        active=worker.extraction_current
+                        if active and json.loads(store.one('jobs',active)['payload']).get('source_id')==body['source_id']:
+                            raise ValueError('原读取任务仍在停止，请稍后重新读取')
+                        result=sources.retry_source(store,body['source_id'])
                 elif path=='/api/source-pages':
                     from .media import render_source_pages
                     result=render_source_pages(store,body['source_id'],body['pages'])

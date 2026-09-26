@@ -256,6 +256,11 @@ def source_attachment(store, sid):
               'image_path':None,'width':None,'height':None,'pages':None,'needs_visual':False,
               'status':source['status'],'error':source.get('error'),'rendered_pages':[]}
     if original is None:return result
+    if source['status'] in ('queued','extracting','cancelled','interrupted'):
+        # Original receipt is not successful extraction. Detail/attachment reads
+        # must not start a second parser or turn an interrupted source into ready.
+        result['raw_sha256']=metadata.get('raw_sha256')
+        return result
     recorded=_recorded_pdf(metadata)
     if recorded:
         # source_files verified raw_sha256; do not reread and reparse a large PDF.

@@ -15,7 +15,7 @@ export function activityCenter({api,getState,page,openBrief,showSettings,setting
   const state=getState();
   if(item.category==='reports'){
    const target=item.target||{};
-   const brief=state.briefs.find(b=>b.id===target.version_id)||state.briefs.find(b=>target.run_id&&b.run_id===target.run_id);
+   const brief=state.briefs.find(b=>b.id===target.version_id)||state.briefs.find(b=>target.run_id&&b.run_id===target.run_id)||(target.version_id?{id:target.version_id}:null);
    if(brief){if(!openBrief(brief,{follow:false}))return;page('report')}else page('reports');
   }else if(item.category==='updates'){showSettings();settingsView('updates')}
   else page(item.category);

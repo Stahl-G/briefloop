@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {reviewPending} from '../frontend/review-status.js';
+import {createReportBrowsing} from '../frontend/report-browsing.js';
 import {section} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
@@ -29,7 +30,7 @@ test('opening another version immediately refreshes scored and unscored headers 
   section(source,'function renderWordExports(){','\n}','frontend/app.js')+'\n}',
   functionBefore('renderReportStatus','renderAssistantSummary'),
   functionBefore('renderAssistantSummary','sendReportQuestion'),
-  oneLine('openBrief'),oneLine('refresh'),oneLine('refreshState')
+  functionBefore('renderVersionSelect','showPendingReport'),oneLine('openBrief'),oneLine('refresh'),oneLine('refreshState')
  ].join('\n'),context);
  vm.runInContext('refresh.signature=JSON.stringify(state);renderReportStatus()',context);
  const signature=JSON.stringify(state);
@@ -55,11 +56,11 @@ test('polled version summaries load their body once and a later choice wins',asy
  const configurable={configure:()=>({})};
  const requests=[];let resolveBody;
  const context=vm.createContext({state,current:null,dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],pendingRun:null,
-  $,parse:JSON.parse,notice:()=>{},updateDownloads:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
+  $,parse:JSON.parse,esc:String,notice:()=>{},updateDownloads:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
   api:route=>{requests.push(route);return new Promise(resolve=>{resolveBody=resolve})},encodeURIComponent});
- vm.runInContext(functionBefore('syncPendingReport','tryOpenPending')+'\n'+oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
+ vm.runInContext(functionBefore('renderVersionSelect','showPendingReport')+'\n'+functionBefore('syncPendingReport','tryOpenPending')+'\n'+oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
  $('empty').hidden=false;
  assert.equal(vm.runInContext("openBrief(state.briefs[1])",context),true);
  vm.runInContext("openBrief(state.briefs[1])",context);
@@ -90,11 +91,11 @@ test('a loading body never overrides a later pending report or the report being 
   const $=id=>{if(!nodes.has(id))nodes.set(id,{dataset:{},value:'',hidden:false,textContent:'',querySelectorAll:()=>[]});return nodes.get(id)};
   const configurable={configure:()=>({})};
   const context=vm.createContext({state:{briefs,sources:[],runs:[],jobs:[]},current:null,pendingRun:null,dirty:false,saving:false,followUpdates:true,editor:null,highlightQuotes:[],$,
-   parse:s=>JSON.parse(s||'{}'),notice:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},updateDownloads:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
+   parse:s=>JSON.parse(s||'{}'),esc:String,notice:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},updateDownloads:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
    Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
    editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
    api:route=>{requests.push(route);return new Promise(resolve=>resolvers.set(route,resolve))},encodeURIComponent});
-  vm.runInContext([oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>section(source,`function ${name}(`,'\n}','frontend/app.js')+'\n}')].join('\n'),context);
+  vm.runInContext([functionBefore('renderVersionSelect','showPendingReport'),oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>section(source,`function ${name}(`,'\n}','frontend/app.js')+'\n}')].join('\n'),context);
   return {context,requests,resolve:brief=>resolvers.get('brief?id='+brief.id)({...brief,markdown:'Body for '+brief.id})};
  };
  // Choosing a generating report invalidates a body still loading for another version.
@@ -108,4 +109,31 @@ test('a loading body never overrides a later pending report or the report being 
  assert.deepEqual(f.requests,['brief?id=version-A']);assert.equal(f.context.pendingRun,'run-A');
  f.resolve(a);await tick();
  assert.equal(f.context.current.id,'version-A');assert.equal(f.context.pendingRun,null);
+});
+
+test('opening an older report or middle snapshot immediately rebuilds the version choices without polling',()=>{
+ const nodes=new Map(),configs=[];
+ const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',dataset:{},querySelectorAll:()=>[]});return nodes.get(id)};
+ globalThis.document={getElementById:$};
+ const row=(id,position,author='user')=>({id,run_id:'old-run',position,author,detail:JSON.stringify({title:id}),hash:id,created:'2026-09-26'});
+ const original=row('original',1,'agent'),middle=row('middle',2),latest=row('latest',3);
+ const state={briefs:[{...row('hot',50),run_id:'hot-run'}],runs:[],assessments:[],jobs:[]};
+ const configurable={configure:()=>({})};
+ const ctx=vm.createContext({state,current:null,dirty:false,saving:false,followUpdates:false,pendingRun:null,editor:null,highlightQuotes:[],$,parse:JSON.parse,esc:String,
+  notice(){},updateDownloads(){},syncPendingReport(){},renderWordExports(){},renderReportStatus(){},renderAssistantSummary(){},
+  Editor:class{constructor(config){configs.push(config)}destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
+  editorDocument:x=>x,toEditor:x=>x,changed(){},updateFormattingTools(){},assessment(){},citations(){},renderBriefLength(){},setReportView(){}});
+ ctx.reportBrowsing=createReportBrowsing({api:()=>{throw Error('must not wait for a poll')},getState:()=>state,getCurrent:()=>ctx.current});
+ vm.runInContext(functionBefore('renderVersionSelect','showPendingReport')+'\n'+oneLine('openBrief'),ctx);
+ $('version-select').innerHTML='<option value="hot">Hot report</option>';
+ for(const target of [latest,middle]){
+  ctx.target={...target,markdown:'Full body',context:{run:{id:'old-run',source_count:0},latest,original,assessments:[]}};
+  vm.runInContext('openBrief(target)',ctx);
+  assert.match($('version-select').innerHTML,new RegExp('value="'+target.id+'"'));
+  assert.equal($('version-select').value,target.id);
+  assert.equal(configs.at(-1).editable,target.id==='latest');
+ }
+ const selected=state.briefs.find(b=>b.id==='middle');
+ assert.ok(selected,'selected middle snapshot is in the bounded summaries');
+ assert.equal('markdown' in selected,false,'the selector must not copy historical bodies into polled state');
 });

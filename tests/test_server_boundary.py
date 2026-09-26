@@ -146,7 +146,7 @@ def test_runtime_status_reports_the_selected_review_job(tmp_path):
 
 
 def test_raw_source_upload_allows_larger_pdfs_and_rejects_before_creating_sources(tmp_path,monkeypatch):
-    import io,socket
+    import io,socket,time
     from urllib.parse import quote
     from pypdf import PdfWriter
     from briefloop import server as module
@@ -154,6 +154,7 @@ def test_raw_source_upload_allows_larger_pdfs_and_rejects_before_creating_source
     monkeypatch.setattr(module,'MAX_UPLOAD_BYTES',3)
     monkeypatch.setattr(module,'MAX_PDF_UPLOAD_BYTES',len(pdf))
     server=make_server(tmp_path/'workspace',port=0,paused=True)
+    server.worker.start()
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     def post(name,body,headers=None):
         conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
@@ -172,6 +173,11 @@ def test_raw_source_upload_allows_larger_pdfs_and_rejects_before_creating_source
         raw.shutdown(socket.SHUT_WR);assert b' 400 ' in raw.recv(4096).split(b'\r\n',1)[0]+b' ';raw.close()
         assert not server.store.rows('SELECT * FROM sources')
         status,source=post('../年报.pdf',pdf)
-        assert status==200 and source['name']=='年报.pdf' and source['status']=='ready'
-        assert post('ok.txt',b'abc')[1]['status']=='ready'
+        assert status==202 and source['name']=='年报.pdf' and source['status']=='queued'
+        text=post('ok.txt',b'abc')[1]
+        assert text['status']=='queued'
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline and server.store.one('sources',text['id'])['status'] not in ('ready','failed'):time.sleep(.05)
+        assert server.store.one('sources',source['id'])['status']=='ready'
+        assert server.store.source_text(text['id'])=='abc'
     finally:server.shutdown();thread.join();module._close_service(server)

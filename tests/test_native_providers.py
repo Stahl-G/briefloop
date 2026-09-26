@@ -45,3 +45,27 @@ def test_native_credential_permission_failure_keeps_saved_config_and_closes_temp
         providers.save({**body, 'api_key': 'synthetic-new-key'})
     assert path.read_bytes() == previous
     assert not list(path.parent.glob('.save-*'))
+
+
+def test_reasoning_capability_is_explicit_tristate_and_per_model(tmp_path, monkeypatch):
+    path = tmp_path / 'private' / 'providers.json'
+    monkeypatch.setattr(providers, 'config_path', lambda: path)
+    base = {'provider': 'synthetic', 'model': 'first', 'protocol': 'chat-completions',
+            'api_key': 'fixture-only', 'base_url': 'https://example.invalid/v1'}
+    providers.save(base)
+    assert providers.configurations()[0]['supports_reasoning'] is None
+    providers.save({**base, 'supports_reasoning': True})
+    # Older clients omit the new field; updating the same model must retain it.
+    providers.save({**base, 'api_key': '', 'name': 'renamed'})
+    providers.save({**base, 'model': 'second', 'supports_reasoning': False})
+    rows = {r['model']: r for r in providers.configurations()}
+    assert rows['first']['supports_reasoning'] is True
+    assert rows['second']['supports_reasoning'] is False
+    assert all('api_key' not in row for row in rows.values())
+    providers.save({**base, 'api_key': '', 'supports_reasoning': None})
+    assert providers.configurations()[0]['supports_reasoning'] is None
+    before = path.read_bytes()
+    for invalid in ('true', 'false', 1, 0, []):
+        with pytest.raises(ValueError, match='推理能力'):
+            providers.save({**base, 'supports_reasoning': invalid})
+        assert path.read_bytes() == before

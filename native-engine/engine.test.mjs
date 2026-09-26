@@ -946,6 +946,37 @@ test('provider edits freeze active turns and replace endpoint, protocol, key and
   }
 });
 
+test('explicit custom-model reasoning reaches High requests and clearing restores conservative defaults', async () => {
+  const dir=join(root,'home','.config','briefloop','native-engine');mkdirSync(dir,{recursive:true});
+  const path=join(dir,'providers.json');
+  const original=existsSync(path)?readFileSync(path,'utf8'):null;
+  const record={provider:'declared',model:'model',name:'Reasoning declaration fixture',protocol:'chat-completions',
+    base_url:`http://127.0.0.1:${server.address().port}/v1`,api_key:'fixture-only-key',
+    context_limit:128000,output_limit:32768};
+  const save=value=>writeFileSync(path,JSON.stringify({...JSON.parse(original||'{}'),
+    'declared/model':{...record,...(value===undefined?{}:{supports_reasoning:value})}}));
+  try {
+    save(undefined);
+    const unknown=await reviewer({role:'chat',model:'declared/model',thinking:'high'});
+    assert.equal(unknown.thinking,'off');
+    save(true);
+    const enabled=await reviewer({role:'chat',model:'declared/model',thinking:'high'});
+    assert.equal(enabled.thinking,'high');
+    assert.equal(enabled.runtime_policy.thinking,'high');
+    script(reply.text('Synthetic provider accepted a High request'));
+    const result=await turn(enabled.session_id,'declared-reasoning-high',{expect_json:false,require_submit:false});
+    assert.equal(ends(result)[0].status,'completed');
+    assert.equal(provider.requests[0].reasoning_effort,'high');
+    for(const value of [false,null]){
+      save(value);
+      const disabled=await reviewer({role:'chat',model:'declared/model',thinking:'high'});
+      assert.equal(disabled.thinking,'off');
+    }
+  } finally {
+    if(original===null)rmSync(path,{force:true});else writeFileSync(path,original);
+  }
+});
+
 test('clearing local overrides restores shipped model capabilities rather than previous overrides', async () => {
   const dir = join(root, 'home', '.config', 'briefloop', 'native-engine');
   mkdirSync(dir, { recursive: true });

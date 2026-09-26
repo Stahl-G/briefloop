@@ -33,14 +33,16 @@ assert.equal(vm.runInContext("taskSnapshots.get('j').error",c),true);
 assert.doesNotMatch(vm.runInContext("JSON.stringify(taskSnapshots.get('j'))",c),/private provider/);
 
 // Empty list refreshes when the first report starts, despite unchanged draft IDs.
-const nodes=new Map();const el=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',querySelectorAll:()=>[]});return nodes.get(id)};
-const emptyContext=vm.createContext({$:el,state:{briefs:[],jobs:[]}});
-vm.runInContext(section(source,'function renderReports(){','function sourceState(','frontend/app.js'),emptyContext);
-emptyContext.renderReports();assert.match(el('reports-list').innerHTML,/还没有报告/);
-emptyContext.state.jobs.push({kind:'generate',status:'running'});
-emptyContext.renderReports();assert.match(el('reports-list').innerHTML,/首份报告正在制作/);
-emptyContext.state.jobs[0].status='cancelled';
-emptyContext.renderReports();assert.doesNotMatch(el('reports-list').innerHTML,/首份报告正在制作/);
+const {createReportBrowsing}=await import('../frontend/report-browsing.js');
+const nodes=new Map();const el=id=>{if(!nodes.has(id))nodes.set(id,{value:'',hidden:true,innerHTML:'',replaceChildren(){},querySelectorAll:()=>[]});return nodes.get(id)};
+globalThis.document={getElementById:el,createElement:()=>({dataset:{}}),querySelectorAll:()=>[]};
+const emptyState={briefs:[],jobs:[]};
+const browsing=createReportBrowsing({getState:()=>emptyState});
+browsing.render();assert.match(el('reports-list').innerHTML,/还没有报告/);
+emptyState.jobs.push({kind:'generate',status:'running'});
+browsing.render();assert.match(el('reports-list').innerHTML,/首份报告正在制作/);
+emptyState.jobs[0].status='cancelled';
+browsing.render();assert.doesNotMatch(el('reports-list').innerHTML,/首份报告正在制作/);
 
 // The module used to alias its own copy as `const e=escape`. With the copy
 // gone that name resolves to the legacy global escape(), which percent-encodes

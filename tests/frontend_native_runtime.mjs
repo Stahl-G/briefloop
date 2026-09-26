@@ -1,3 +1,4 @@
+import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
@@ -6,7 +7,7 @@ import {section} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',dataset:{}});return elements.get(id)};
 const calls=[];
-const ctx=vm.createContext({$:el,state:{settings:{model_variant:'low'}},chat:{},chatBackendChoice:()=> 'briefloop-native',
+const ctx=vm.createContext({$:el,providerCapabilities:createProviderCapabilities({$:el}),state:{settings:{model_variant:'low'}},chat:{},chatBackendChoice:()=> 'briefloop-native',
  api:async(route,body)=>{calls.push({route,body:{...body}});return {model:'custom/model',models:[],status:'reachable'}},
  esc:x=>x,action:fn=>fn(),selectChat:async()=>{},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},backendValue:()=> 'opencode',chatActive:()=>false,renderChatRuntimePermissions:()=>{},rememberDraft:()=>{},updateComposer:()=>{}});
 vm.runInContext(section(source,'function runtimeChoice(){','function messageTime(','frontend/app.js'),ctx);
@@ -17,9 +18,10 @@ vm.runInContext(section(source,'function providerEndpoint(){',"$('provider-engin
 vm.runInContext(section(source,"$('provider-form').onsubmit=","$('timeout-minutes').onchange=",'frontend/app.js'),ctx);
 el('provider-engine').value='briefloop-native';el('custom-provider').value='custom';el('custom-model').value='model';
 el('custom-base-url').value='https://example.test/v1';el('custom-protocol').value='chat-completions';
-el('custom-api-key').value='test-only-secret';el('custom-supports-images').value='';
+el('custom-api-key').value='test-only-secret';el('custom-supports-images').value='';el('custom-supports-reasoning').value='true';
 await el('provider-form').onsubmit({preventDefault(){}});
 assert.equal(calls[0].route,'native/provider');assert.equal(calls[0].body.api_key,'test-only-secret');
+assert.equal(calls[0].body.supports_reasoning,true);
 assert.equal(el('custom-api-key').value,'');assert.equal(calls[1].route,'native/provider-catalog');
 await el('provider-use').onclick();assert.equal(ctx.chat.nextBackend,'briefloop-native');assert.equal(el('agent-backend').value,'briefloop-native');
 await el('provider-test-model').onclick();assert.equal(calls.at(-1).route,'runtime-test');

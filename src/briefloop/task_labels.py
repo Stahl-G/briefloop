@@ -23,6 +23,7 @@ LABELS = {
     'release': '制作正式 Word',
     'audit_bundle': '制作审计包',
     'source_refresh': '复查来源',
+    'source_extract': '读取文件',
     'prepare_template': '准备模板',
     # A staged step inside a generation session, not a queued task of its own.
     'company_review': '维护企业背景',
@@ -31,7 +32,7 @@ LABELS = {
 STEPS = ('company_review',)
 REPORTED = ('generate', 'assess', 'review', 'revise', 'fact_check', 'learn',
             'export_docx', 'export_xlsx', 'release', 'audit_bundle',
-            'source_refresh', 'prepare_template')
+            'source_refresh', 'source_extract', 'prepare_template')
 
 
 def label(kind, default='报告任务'):

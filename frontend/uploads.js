@@ -24,3 +24,23 @@ export function preflightSources(files, limits) {
    throw Error(`${file.name}（${(file.size/1048576).toFixed(1)} MiB，${file.size.toLocaleString()} 字节）超过${pdf?' PDF ':''}单文件 ${limit/1048576} MiB 限制。本次 ${list.length} 个文件合计 ${(total/1048576).toFixed(1)} MiB，尚未上传；请压缩或拆分文件后重试。`);
  }
 }
+
+// XMLHttpRequest exposes bytes actually handed to the upload transport; fetch
+// has no upload-progress event and a timer must not masquerade as byte progress.
+export function sendSourceFile(file,{token,onProgress=()=>{},signal,xhrFactory=()=>new XMLHttpRequest()}={}) {
+ return new Promise((resolve,reject)=>{
+  const xhr=xhrFactory(),abort=()=>xhr.abort();
+  const done=()=>signal?.removeEventListener('abort',abort);
+  xhr.open('POST','/api/upload-file?name='+encodeURIComponent(file.name));
+  xhr.setRequestHeader('Content-Type','application/octet-stream');
+  xhr.setRequestHeader('X-BriefLoop-Token',token||'');
+  xhr.upload.onprogress=e=>onProgress({phase:'uploading',bytes_sent:e.loaded,bytes_total:e.lengthComputable?e.total:file.size});
+  xhr.onload=()=>{done();try{resolve({status:xhr.status,body:JSON.parse(xhr.responseText)})}catch{reject(Error('上传响应无法读取；请到来源库确认是否已保存原件'))}};
+  xhr.onerror=()=>{done();reject(Error('上传连接中断；请到来源库确认是否已保存，未保存时可重新上传'))};
+  xhr.onabort=()=>{done();reject(new DOMException('上传已取消；已接纳的原件可在来源库查看','AbortError'))};
+  if(signal?.aborted){reject(new DOMException('上传已取消','AbortError'));return}
+  signal?.addEventListener('abort',abort,{once:true});xhr.send(file);
+ });
+}
+
+export const sourceStatusLabel=source=>({queued:'已保存原件，等待读取',extracting:'正在读取',failed:'读取失败',cancelled:'读取已取消',interrupted:'读取已中断',ready:source.needs_visual?'需视觉读取':'可读取'}[source.status]||'读取状态待确认');
