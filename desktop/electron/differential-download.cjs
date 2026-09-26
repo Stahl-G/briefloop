@@ -52,7 +52,10 @@ async function saveCache(directory, file, size, sha256, map, previous = null) {
   // plus rename makes interrupted writes leave the previous baseline usable.
   const temporary = path.join(directory, `cache-${crypto.randomUUID()}.part`);
   try {
-    await fs.writeFile(temporary, JSON.stringify({file: path.relative(directory, file), size, sha256, map}), {flag: 'wx', mode: 0o600});
+    // The cache index uses forward slashes on every host; readCache validates
+    // this form, while path.relative emits backslashes on Windows.
+    const relative = path.relative(directory, file).split(path.sep).join('/');
+    await fs.writeFile(temporary, JSON.stringify({file: relative, size, sha256, map}), {flag: 'wx', mode: 0o600});
     await fs.rename(temporary, path.join(directory, 'differential-cache.json'));
     if (previous && previous.file !== file) {
       // Remove only the verified previous baseline, never scan unrelated downloads.

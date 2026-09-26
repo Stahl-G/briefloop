@@ -11,6 +11,11 @@ export function officeIssueLine(item){
  return (text||item.type||'未提供摘要')+(typeof item.location==='string'&&item.location?' · '+item.location:'');
 }
 
+// Honest rendering disclosure: pages render locally, but the renderer makes
+// two kinds of request to the vendor host d.officecli.ai — KaTeX assets for
+// formulas, and font names to its font proxy when a font is missing locally.
+const RENDER_DISCLOSURE='渲染在本机完成，但会请求 d.officecli.ai 的两类外部资源：页面公式加载它提供的 KaTeX，本机缺少字体时会把字体名发给它的字体代理。';
+
 export function createOfficeTools(deps){
  const {api,action,$,esc,parse,getState,notice}=deps;
 
@@ -38,7 +43,7 @@ export function createOfficeTools(deps){
    return;
   }
   status.textContent=`已检测到本机 OfficeCLI${cap.version?' · 版本 '+cap.version:''}；${cap.enabled
-   ?'开关已开启：导出 Word 后自动运行结构校验与质检，Word/Excel/PowerPoint 文件可用本地渲染查看页面；质检失败只记录结果，不影响导出。'
+   ?`开关已开启：导出 Word 后自动运行结构校验与质检，Word/Excel/PowerPoint 文件可用本地渲染查看页面；${RENDER_DISCLOSURE}质检失败只记录结果，不影响导出。`
    :'开关当前关闭：不运行质检，也不显示页面预览。'}检测只确认二进制存在，不代表质检已经运行或可用。`;
  }
 
@@ -71,7 +76,7 @@ export function createOfficeTools(deps){
   const images=$('office-preview-images'),note=$('office-preview-note'),render=$('office-preview-render'),pages=$('office-preview-pages');
   if(images)images.replaceChildren();
   if(pages)pages.value='1';
-  if(note)note.textContent='输入 1–4 个页码；本地渲染，不调用模型，预览失败不影响文件本身。';
+  if(note)note.textContent='输入 1–4 个页码；本地渲染，不调用模型，预览失败不影响文件本身。'+RENDER_DISCLOSURE;
   if(!dialog.open)dialog.showModal();
   if(!render)return;
   render.onclick=()=>action(async()=>{
@@ -96,9 +101,15 @@ export function createOfficeTools(deps){
   if(!record)return '';
   const validate=record.validate||{},issues=record.issues||{};
   if(validate.status==='error'||issues.status==='error')return 'OfficeCLI 质检未完成：'+(validate.reason||issues.reason||'原因未记录')+'（不影响导出）';
-  const found=Number(issues.count)||0;
   if(validate.status!=='ok')return 'OfficeCLI 校验未通过：'+(validate.summary||validate.reason||'无摘要');
-  return found?'OfficeCLI 质检发现 '+found+' 项':'OfficeCLI 质检通过';
+  const items=Array.isArray(issues.items)?issues.items:[];
+  // The stored status decides; the count falls back to the item list so a
+  // missing count can never turn real findings into “质检通过”.
+  const found=Number(issues.count)||items.length,filtered=Number(issues.noise_filtered)||0;
+  const filteredNote=filtered?`（已过滤纯标点类噪音 ${filtered} 项）`:'';
+  if(issues.status==='ok'&&!found)return 'OfficeCLI 质检通过'+filteredNote;
+  return found?'OfficeCLI 观察 '+found+' 项'+filteredNote
+   :'OfficeCLI 质检结果异常：'+(issues.status||'状态未记录');
  }
 
  return {officeEnabled,syncSettingsToggle,renderSettingsCapability,openPreview,previewSourceInto,officeCheckSummary};

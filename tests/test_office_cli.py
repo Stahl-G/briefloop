@@ -63,14 +63,25 @@ if argv[2] == "issues":
         raise SystemExit(0)
     if mode in ("view_fail", "all_fail"):
         fail("view failed", "view_failed")
-    found = [] if mode != "issues" else [
-        {"type": "structure", "message": "表格行列不平衡", "path": "/body/table[1]"},
-        {"type": "content", "message": "空段落", "path": "/body/paragraph[3]"}]
+    found = [] if mode not in ("issues", "issues_noise", "issues_punct") else [
+        {"type": 1, "message": "表格行列不平衡", "path": "/body/table[1]"},
+        {"type": 1, "message": "空段落", "path": "/body/paragraph[3]"}]
+    if mode == "issues_noise":  # punctuation noise mixed with a real finding
+        found = [
+            {"type": 1, "message": "Duplicate punctuation", "path": "/body/p[1]"},
+            {"type": 1, "message": "Consecutive spaces", "path": "/body/p[2]"},
+            {"type": 1, "message": "表格行列不平衡", "path": "/body/table[1]"}]
+    if mode == "issues_punct":  # nothing but punctuation noise
+        found = [
+            {"type": 1, "message": "Duplicate punctuation", "path": "/body/p[1]"},
+            {"type": 1, "message": "Consecutive spaces", "path": "/body/p[2]"}]
     emit({"success": True, "data": {"count": len(found), "issues": found}})
 # view <file> screenshot --page N -o out.png --json is the only render form.
 rest = argv[3:]
 if "--page" not in rest or "-o" not in rest or "--json" not in rest:
     fail("screenshot requires --page, -o and --json", "invalid_usage")
+if mode == "screenshot_fail":
+    fail("render failed", "render_failed")
 target = Path(rest[rest.index("-o") + 1])
 target.parent.mkdir(parents=True, exist_ok=True)
 target.write_bytes(PNG)
@@ -219,6 +230,35 @@ def test_check_file_uses_the_real_command_grammar(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
+def test_punctuation_noise_is_filtered_and_keeps_both_counts(tmp_path, monkeypatch):
+    """Findings are neutral observations, and pure punctuation noise (duplicate
+    punctuation, consecutive spaces — normal in CJK prose) only survives as a
+    count, never as red rows."""
+    install_stub(tmp_path, monkeypatch, mode='issues_noise')
+    store = _workspace(tmp_path)
+    store.update_settings({'officecli_enabled': True})
+    docx = _tiny_docx(tmp_path)
+    summary = office_cli.check_file(store, docx)
+    issues = summary['issues']
+    assert issues['status'] == 'observed'  # neutral observation label, not an alarm state
+    assert [item['message'] for item in issues['items']] == ['表格行列不平衡']
+    assert issues['total'] == 3 and issues['count'] == 1 and issues['noise_filtered'] == 2
+    row = store.rows("SELECT * FROM office_checks WHERE kind='issues'")[0]
+    assert row['status'] == 'observed' and row['summary'] == '观察 1 项（另过滤 2 项纯标点类噪音）'
+    # The stored row reads back with the same before/after counts.
+    view = office_cli._view_for_digest(store, office_cli._file_sha256(docx))
+    assert view['issues']['count'] == 1 and view['issues']['noise_filtered'] == 2 and view['issues']['total'] == 3
+
+    monkeypatch.setenv(STUB_MODE_VARIABLE, 'issues_punct')  # noise only
+    summary = office_cli.check_file(store, docx)
+    assert summary['issues']['status'] == 'ok'
+    assert summary['issues']['count'] == 0 and summary['issues']['noise_filtered'] == 2
+    assert summary['issues']['total'] == 2 and summary['issues']['items'] == []
+    assert store.rows("SELECT summary FROM office_checks WHERE kind='issues'")[0]['summary'] \
+        == '未发现质检问题（过滤 2 项纯标点类噪音）'
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_wrong_command_forms_fail_against_real_grammar(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     docx = _tiny_docx(tmp_path)
@@ -236,7 +276,7 @@ def test_check_file_records_every_failure_branch_without_raising(tmp_path, monke
     store = _workspace(tmp_path)
     store.update_settings({'officecli_enabled': True})
     docx = _tiny_docx(tmp_path)
-    branches = (('issues', {'validate': 'ok', 'issues': 'issues'}),
+    branches = (('issues', {'validate': 'ok', 'issues': 'observed'}),
                 ('validate_fail', {'validate': 'error', 'issues': 'ok'}),
                 ('bad_json', {'validate': 'error', 'issues': 'error'}),
                 ('view_fail', {'validate': 'ok', 'issues': 'error'}),
@@ -346,6 +386,34 @@ def test_run_check_for_job_validates_then_reruns(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
+def test_generate_word_check_stage_stops_between_substeps_when_cancelled(tmp_path, monkeypatch):
+    """A stop request during the post-export quality gate lands the job as
+    cancelled between the two sub-steps instead of blocking on the second
+    subprocess for its full budget."""
+    install_stub(tmp_path, monkeypatch)
+    store = _workspace(tmp_path)
+    store.update_settings({'officecli_enabled': True})
+    brief = _published_brief(store)
+    from briefloop.export_jobs import enqueue_export, generate_word
+    job = store.one('jobs', enqueue_export(store, brief['id'])['id'])
+    cancelled = threading.Event()
+    real_run_json = office_cli.run_json
+
+    def run_json_then_cancel(args, **kwargs):
+        outcome = real_run_json(args, **kwargs)
+        cancelled.set()  # the stop arrives while the gate is running
+        return outcome
+
+    monkeypatch.setattr(office_cli, 'run_json', run_json_then_cancel)
+    with pytest.raises(InterruptedError):
+        generate_word(store, job, cancelled)
+    # validate completed; the issues subprocess never started.
+    assert [call[0] for call in stub_calls(tmp_path)] == ['validate']
+    assert {row['kind'] for row in store.rows('SELECT kind FROM office_checks')} == {'validate'}
+    assert not store.rows("SELECT * FROM events WHERE kind='office_check'")
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -368,6 +436,37 @@ def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypat
     assert office_cli.office_image(store, digest, 2) == _png_bytes()
     repeat = office_cli.render_preview(store, {'source_id': source['id'], 'pages': [1, 2]})
     assert repeat['cached'] is True and len(stub_calls(tmp_path)) == 2
+    # Different sources also stage into separate per-request files.
+    def distinct_docx(name, marker):
+        from docx import Document
+        path = tmp_path / name
+        document = Document()
+        document.add_heading('Probe ' + marker, 0)
+        document.save(path)
+        return path
+
+    probe_a = distinct_docx('probe-a.docx', 'A')
+    probe_b = distinct_docx('probe-b.docx', 'B')
+    office_cli.render_page(store, probe_a, 1)
+    office_cli.render_page(store, probe_b, 1)
+    shots = [call for call in stub_calls(tmp_path)
+             if call[0] == 'view' and 'screenshot' in call
+             and (str(probe_a) in call or str(probe_b) in call)]
+    assert len(shots) == 2, 'one fresh render per probe file'
+    outs = {call[call.index('-o') + 1] for call in shots}
+    assert len(outs) == 2, 'the same page rendered twice must not share one staging file'
+    # …and a failed render only removes its own staging file, never another
+    # request's. The decoy is what the old shared name would have deleted.
+    monkeypatch.setenv(STUB_MODE_VARIABLE, 'screenshot_fail')
+    probe_c = distinct_docx('probe-c.docx', 'C')
+    digest_c = office_cli._file_sha256(probe_c)
+    directory = office_cli._render_directory(store, digest_c)
+    decoy = directory / '.render-1.tmp.png'  # the pre-fix shared staging name
+    decoy.write_bytes(b'another request in flight')
+    with pytest.raises(ValueError, match='预览失败'):
+        office_cli.render_page(store, probe_c, 1)
+    assert decoy.is_file(), 'cleanup must only delete this request\'s staging file'
+    assert list(directory.glob('.render-*.tmp.png')) == [decoy]
     with pytest.raises(ValueError):
         office_cli.office_image(store, 'zz' * 32, 1)  # not a 64-hex digest
     with pytest.raises(ValueError):
@@ -375,6 +474,95 @@ def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypat
     note = store.add_source('note.txt', 'plain text only')
     with pytest.raises(ValueError):  # no renderable Office original at all
         office_cli.render_preview(store, {'source_id': note['id']})
+
+
+def test_same_page_concurrent_publication_keeps_each_image_bound(tmp_path, monkeypatch):
+    """Force two renders and both manifest publications to overlap, with
+    different valid PNGs so a mixed image/metadata pair cannot pass by chance."""
+    from concurrent.futures import ThreadPoolExecutor
+    import hashlib
+    from PIL import Image
+
+    store = _workspace(tmp_path)
+    target = tmp_path / 'same.docx'
+    target.write_bytes(b'one frozen source')
+    render_barrier, publish_barrier = threading.Barrier(2), threading.Barrier(2)
+    payloads = []
+    for color in ('red', 'blue'):
+        buf = BytesIO()
+        Image.new('RGB', (12, 6), color).save(buf, format='PNG')
+        payloads.append(buf.getvalue())
+    assignments, assignment_lock, manifests = [], threading.Lock(), []
+    real_replace = os.replace
+
+    def render(args, **kwargs):
+        with assignment_lock:
+            payload = payloads[len(assignments)]
+            assignments.append(args[args.index('-o') + 1])
+        Path(args[args.index('-o') + 1]).write_bytes(payload)
+        render_barrier.wait(timeout=5)
+        return {'ok': True, 'data': {}, 'reason': None}
+
+    def replace(src, dst):
+        if str(dst).endswith('.json'):
+            manifests.append(str(src))
+            publish_barrier.wait(timeout=5)
+        real_replace(src, dst)
+        if str(dst).endswith('.json'):
+            # Even while another request publishes, the visible manifest must
+            # refer to complete immutable bytes, never a half-updated pair.
+            assert office_cli._cached_render(Path(dst).parent, digest, 1)
+
+    monkeypatch.setattr(office_cli, 'find', lambda: 'synthetic-renderer')
+    monkeypatch.setattr(office_cli, 'version', lambda *_: 'synthetic')
+    monkeypatch.setattr(office_cli, 'run_json', render)
+    monkeypatch.setattr(office_cli.os, 'replace', replace)
+    digest = office_cli._file_sha256(target)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(office_cli.render_page, store, target, 1) for _ in range(2)]
+        results = [future.result(timeout=10) for future in futures]
+    assert len(set(assignments)) == len(set(manifests)) == 2
+    assert {row['image_sha256'] for row in results} == {hashlib.sha256(p).hexdigest() for p in payloads}
+    for row in results:
+        assert hashlib.sha256(Path(row['path']).read_bytes()).hexdigest() == row['image_sha256']
+    assert office_cli.office_image(store, digest, 1) in payloads
+    assert not list(Path(results[0]['path']).parent.glob('*.tmp'))
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
+def test_partial_preview_names_real_failure_apart_from_budget(tmp_path, monkeypatch):
+    """A page that actually failed while the budget was also spent must be
+    reported as a render failure, not relabelled as budget exhaustion."""
+    install_stub(tmp_path, monkeypatch)
+    store = _workspace(tmp_path)
+    store.update_settings({'officecli_enabled': True})
+    from briefloop.sources import upload
+    source = upload(store, 'sample.docx', _tiny_docx(tmp_path, 'upload.docx').read_bytes())
+
+    def render_page1_then_fail(args, *, timeout, deadline=None):
+        # Page 1 succeeds (written straight to the staging path); page 2 dies
+        # with a real timeout while the shared budget is already gone.
+        if args[args.index('--page') + 1] == '2':
+            return {'ok': False, 'data': None, 'reason': 'officecli 执行超时（180 秒）'}
+        Path(args[args.index('-o') + 1]).write_bytes(_png_bytes())
+        return {'ok': True, 'data': 'ok', 'reason': None}
+
+    monkeypatch.setattr(office_cli, 'run_json', render_page1_then_fail)
+    monkeypatch.setattr(office_cli, 'REQUEST_BUDGET_SECONDS', -1)  # budget already spent
+    result = office_cli.render_preview(store, {'source_id': source['id'], 'pages': [1, 2]})
+    assert result['incomplete'] is True
+    assert [page['page'] for page in result['pages']] == [1]
+    assert '渲染失败' in result['reason'] and 'officecli 执行超时' in result['reason']
+    assert result['reason'] != '请求时间预算用尽，仅返回已完成页面'
+
+    def budget_skips_every_page(args, *, timeout, deadline=None):
+        return {'ok': False, 'data': None, 'reason': '请求时间预算用尽'}
+
+    monkeypatch.setattr(office_cli, 'run_json', budget_skips_every_page)
+    monkeypatch.setattr(office_cli, 'REQUEST_BUDGET_SECONDS', 180)
+    result = office_cli.render_preview(store, {'source_id': source['id'], 'pages': [3, 4]})
+    assert result['incomplete'] is True and result['pages'] == []
+    assert result['reason'] == '请求时间预算用尽，仅返回已完成页面'
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
