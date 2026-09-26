@@ -59,7 +59,7 @@ def test_writer_packet_is_identical_across_directories_and_confined(tmp_path):
     assert '主写稿' in system_prompt('analyst')['text']
     result = finish(store, config, {'draft': draft(source['id'])})
     assert result['ok'] and result['settle']
-    assert json.loads((a['root'].parent/'draft.json').read_text())['editor_document']
+    assert json.loads((a['root'].parent/'draft.json').read_text(encoding='utf-8'))['editor_document']
 
 
 def test_real_role_runner_saves_draft_and_revision_without_overwriting_user_edits(tmp_path):
@@ -126,7 +126,7 @@ def test_root_submission_and_saved_sections_preserve_order_and_attempt_scope(tmp
     assert not finish(store, cfg, {**value, 'editor_document': draft(source['id'])['editor_document']})['ok']
     assert not Path(cfg['result_file']).exists()
     assert finish(store, cfg, value)['ok']
-    saved = json.loads(Path(cfg['result_file']).read_text())
+    saved = json.loads(Path(cfg['result_file']).read_text(encoding='utf-8'))
     assert saved['markdown'].index('第一章') < saved['markdown'].index('第二章修订')
     assert '旧稿' not in saved['markdown'] and len(saved['citations']) == 1
     assert finish(store, cfg, draft(source['id']))['ok']
@@ -156,7 +156,7 @@ def test_preflight_reports_short_sections_and_missing_provenance_without_finishi
     p = analyst.packet(store, run['id'], store.root/'writer', **inputs)
     cfg = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(p['root']),
            'result_file': str(p['root'].parent/'draft.json'), 'attempt_id': 'preflight'}
-    task = json.loads((p['root']/'input.json').read_text())
+    task = json.loads((p['root']/'input.json').read_text(encoding='utf-8'))
     task['requirements'].update(target_words=1000, max_words=1500)
     (p['root']/'input.json').write_text(json.dumps(task))
     body = [{'type': 'heading', 'attrs': {'level': 2}, 'content': [{'type': 'text', 'text': '经营分析'}]},
@@ -212,10 +212,10 @@ def test_prepared_reader_requirements_reach_shared_writer_packet(tmp_path):
     run = store.create_run(req, [source['id']])
     saved = json.loads(run['requirements'])
     pack = analyst.packet(store, run['id'], store.root/'writer', plan={}, research={'sources': [], 'gaps': []})
-    input_ = json.loads((pack['root']/'input.json').read_text())
+    input_ = json.loads((pack['root']/'input.json').read_text(encoding='utf-8'))
     for key in req:
         assert input_['requirements'][key] == req[key]
     shared = instructions(resolve(saved), 'analyst')
     assert ANALYST_GUIDE in shared
-    assert shared in (pack['root']/'writing.md').read_text()
+    assert shared in (pack['root']/'writing.md').read_text(encoding='utf-8')
     assert ANALYST_GUIDE not in instructions(resolve(saved), 'reviewer')

@@ -136,13 +136,17 @@ def generate_word(store, job, cancelled):
               'download_url': '/api/export-file?job=' + job['id']}
     # Optional local quality gate after the atomic write: any failure is only a
     # recorded check result. file_loop treats exceptions as job failure, so this
-    # hook swallows everything itself as a second guard.
+    # hook swallows everything itself as a second guard. A stop request is the
+    # exception: the gate stops between its sub-steps and the job lands as
+    # cancelled instead of blocking out the remaining subprocess budget.
     try:
         from . import office_cli
         office = office_cli.check_file(store, destination, job_id=job['id'],
-                                       version_id=payload.get('version_id'))
+                                       version_id=payload.get('version_id'), cancelled=cancelled)
     except Exception:
         office = None
+    if cancelled.is_set():
+        raise InterruptedError('Word 制作已停止')
     if office is not None:
         result['office'] = office
     return result
