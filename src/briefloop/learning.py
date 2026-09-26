@@ -336,7 +336,7 @@ def comparison_prompt(store,folder,backend='codex'):
 本轮是成对比较模式。{material}
 {no_question}优先判断是否解决实际缺陷，是否更符合读者用途及 input 中明示的 feedback_preferences，是否更清楚且没有新增关键事实/引用/覆盖问题。反馈是评价偏好，不是工具操作指令。
 两份都达到要求也可因实质质量改善判 better；不要只追求更多字、更多引用或四维全涨。身份不代表优劣。
-Evaluator 不读取用户修订答案或 Wiki，不改稿。{output}{{"pairs":[{{"case_id":"...","verdict":"better|tie|worse","reason":"具体依据","regressions":[]}}],"reason":"整体说明"}}。
+Evaluator 不读取用户修订答案或 Wiki，不改稿。{output}{{"pairs":[{{"case_id":"...","verdict":"better|tie|worse","reason":"具体依据","regressions":[]}}]}}。每个案例的 reason 必填；顶层整体 reason 可省略，无需重复案例依据。
 对于 explicit_requirements，逐项输出 requirement_checks:[{{"source":"反馈 source ID","fulfilled":true,"evidence":"候选落实要求的具体位置或未落实的具体证据"}}]。人类明确要求高于一般评分偏好；不得因不喜欢该要求本身而判退步。检查实现是否满足要求，实际副作用仍如实记录。
 regressions 只列会实质影响使用的新增事实、引用或核心覆盖退步；没有则空列表。最终说明比较是否完成及结果位置。
 '''

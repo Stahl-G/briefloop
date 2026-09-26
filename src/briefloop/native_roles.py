@@ -374,11 +374,17 @@ def submit_comparison(store, config, args):
 
 COMPARISON_TOOLS = [
     {'name': 'submit_comparison', 'label': '提交比较结果', 'settles': True,
-     'description': '提交成对比较结果：pairs 对每个案例各一条（case_id、verdict=better/tie/worse、reason、regressions 列表，有明确要求时加 requirement_checks），reason 为整体说明。运行器当场校验，通过即保存并结束。',
-     'guide': '提交比较结果 {pairs:[{case_id, verdict, reason, regressions, requirement_checks?}], reason}；当场校验，通过即结束本次比较。',
-     'parameters': {'type': 'object', 'required': ['pairs', 'reason'], 'additionalProperties': False,
-                    'properties': {'pairs': {'type': 'array', 'items': {'type': 'object'}},
-                                   'reason': {'type': 'string'}}},
+     'description': '提交成对比较结果：pairs 对每个案例各一条，填写 case_id、verdict（候选相对基线的 better/tie/worse）、reason（具体依据）和 regressions（新增实质退步，没有则 []）。有明确要求时加 requirement_checks。无需再重复整体理由；当场校验，通过即保存并结束。',
+     'guide': '提交 {pairs:[{case_id, verdict, reason, regressions, requirement_checks?}]}；每对须有具体依据，顶层 reason 可省略。通过即结束本次比较。',
+     'parameters': {'type': 'object', 'required': ['pairs'], 'additionalProperties': False,
+                    'properties': {'pairs': {'type': 'array', 'items': {
+                        'type': 'object', 'required': ['case_id', 'verdict', 'reason', 'regressions'],
+                        'properties': {'case_id': {'type': 'string'},
+                                       'verdict': {'type': 'string', 'enum': ['better', 'tie', 'worse']},
+                                       'reason': {'type': 'string', 'description': '本案例的具体比较依据'},
+                                       'regressions': {'type': 'array', 'items': {}, 'description': '新增实质退步；没有则 []'},
+                                       'requirement_checks': {'type': 'array', 'items': {}, 'description': '对明确要求逐项给出 source、fulfilled 和 evidence'}}}},
+                                   'reason': {'type': 'string', 'description': '可选整体说明；不必重复各案例依据'}}},
      'handler': submit_comparison},
 ]
 
