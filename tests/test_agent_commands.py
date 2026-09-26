@@ -173,16 +173,23 @@ def test_opencode_owned_server_gets_same_shell_as_prompt(tmp_path, monkeypatch, 
     monkeypatch.setenv('SHELL', shell[0])
     selected = agent_commands.opencode_shell()
     captured = {}
+    probed = []
+    def version(executable, environment=None):
+        probed.append((executable, environment))
+        return '1.18.30'
     class Process:
         def __init__(self, args, **kwargs):
             captured.update(kwargs)
         def close_tree(self, **kwargs):
             pass
     monkeypatch.setattr(host_bins, 'find', lambda name: 'test-opencode.exe')
+    monkeypatch.setattr(opencode_server, 'executable_version', version)
     monkeypatch.setattr(opencode_server, 'OwnedProcess', Process)
     monkeypatch.setattr(opencode_server.OpencodeServerClient, '_wait_ready', lambda self: '1.18.30')
     client = opencode_server.OpencodeServerClient(tmp_path, port=4096)
     try:
+        assert probed == [('test-opencode.exe', None)]
+        assert client.cli_version == '1.18.30'
         assert captured['env']['SHELL'] == selected == client.shell
         command = agent_commands.agent_command('briefloop', ['--version'], backend='opencode')
         assert _execute(command, shell, tmp_path).startswith('BriefLoop ')
