@@ -19,3 +19,6 @@ def _scripted_host_can_review(request, monkeypatch):
         return
     from briefloop import backends
     monkeypatch.setitem(backends.CAPABILITIES, 'codex', backends.CAPABILITIES['codex'] | {'restricted_review'})
+    # Scripted OpenCode transports model the verified v1 contract, regardless
+    # of the developer machine's installed CLI. Version-gate tests opt out.
+    monkeypatch.setattr('briefloop.review_capability._opencode_major', lambda: 1)

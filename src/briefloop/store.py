@@ -293,7 +293,8 @@ class Store:
             # Checked before the run exists: callers pass the backend they will enqueue with.
             from .review_capability import require_for_fact_check
             require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'),
-                                   options.get('review_runtime',self.settings().get('review_runtime')))
+                                   options.get('review_runtime',self.settings().get('review_runtime')),
+                                   options.get('review_mode',self.settings().get('review_mode','standard')))
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
@@ -614,19 +615,20 @@ class Store:
             if kind!='review':require_main_chain(backend)
             runtime=runtime_fields(payload['runtime'] if 'runtime' in payload else self.runtime_config(),backend)
             # Refuse before queueing, not after a paid turn: a fact-checked run and a
-            # Review always need the restricted Reviewer (#726).
-            from .review_capability import require_for_fact_check,require_for_review
+            # Review always need the selected independent review mode.
+            from .review_capability import require_for_fact_check,require_for_review,normalize_mode
             # The Reviewer route is frozen with the job like the main runtime; a
             # review job itself already carries the resolved backend.
             review_runtime=None if kind=='review' else payload.get('review_runtime',self.settings().get('review_runtime'))
-            if kind=='review':require_for_review(backend)
+            review_mode=normalize_mode(payload.get('review_mode',self.settings().get('review_mode','standard')))
+            if kind=='review':require_for_review(backend,review_mode)
             elif kind in ('generate','assess','fact_check') and payload.get('single_evaluation') is not False:
                 run_id=payload.get('run_id')
                 if not run_id and payload.get('version_id'):
                     found=self.rows('SELECT run_id FROM briefs WHERE id=?',(payload['version_id'],))
                     run_id=found[0]['run_id'] if found else None
                 found=self.rows('SELECT requirements FROM runs WHERE id=?',(run_id,)) if run_id else []
-                if found and json.loads(found[0]['requirements']).get('fact_check') is True:require_for_fact_check(backend,review_runtime)
+                if found and json.loads(found[0]['requirements']).get('fact_check') is True:require_for_fact_check(backend,review_runtime,review_mode)
             # Freeze inherited defaults too; later settings never mutate queued jobs.
             overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
             provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
@@ -642,7 +644,7 @@ class Store:
                 policy=resolve_search_policy({**policy,'primary_provider':provider})
             provider=policy['primary_provider']
             payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,'search_policy':policy,
-                     'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
+                     'review_mode':review_mode,'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
             if kind!='review':payload['review_runtime']=review_runtime
             if kind=='generate':
                 payload.setdefault('auto_revision',self.settings()['auto_revision'])

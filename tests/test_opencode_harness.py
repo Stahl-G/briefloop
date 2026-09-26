@@ -202,7 +202,7 @@ def test_list_models_flattens_sorts_and_caches(tmp_path):
     manager = OpencodeHarness(Store(tmp_path), FakeClient)
     first = manager.list_models()
     assert [m['id'] for m in first] == ['a-prov/m0', 'b-prov/m1', 'b-prov/m2']
-    assert first[0] == {'id': 'a-prov/m0', 'provider': 'a-prov', 'name': 'M Zero'}
+    assert first[0] == {'id': 'a-prov/m0', 'provider': 'a-prov', 'name': 'M Zero', 'variants': None}
     assert first[1]['name'] == 'm1'
     assert manager.client.provider_calls == 1
     manager.list_models()

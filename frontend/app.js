@@ -5,6 +5,8 @@ import {api,uploadSource,setToken,getUploadLimits} from './api.js';
 import {createSourceLibrarySearch} from './source-library-search.js';
 const reasoning=reasoningControls({api});
 import {createAssessmentPanel} from './assessment-panel.js';
+import {createReviewControls} from './review-controls.js';
+import {reviewResultHTML} from './review-results.js';
 import {renderVersionDiff} from './version-diff.js';
 import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
@@ -487,43 +489,9 @@ const assessmentPanel=createAssessmentPanel({
 const {assessment,citations,renderDeliveryChecks,renderReportIssues,renderFactChecks}=assessmentPanel;
 $('close-source').onclick=()=>$('source-dialog').close();
 $('requirements').addEventListener('reset',()=>{writingPreferencesOverride=[];syncFactCheckControl()});
-// The server lists backends with a verified restricted Reviewer; the page keeps no list (#726).
-function reviewBackends(){return state?.review_capability?.restricted_review}
-function reviewRuntime(){return state?.settings?.review_runtime||null}
-function syncFactCheckControl(){
- const form=$('requirements'),box=form.elements.fact_check,listed=reviewBackends(),backend=backendValue();
- // A Reviewer chosen apart from the main chain is a route to independent review too.
- const reviewer=!!reviewRuntime()||!listed||listed.some(b=>b.id===backend);
- box.disabled=!form.elements.allow_web.checked||!reviewer;if(box.disabled)box.checked=false;
- const note=$('review-capability-note');if(!note)return;
- note.hidden=reviewer;if(reviewer){note.textContent='';return}
- const label=$('agent-backend')?.selectedOptions?.[0]?.textContent||backend,alternatives=listed.map(b=>b.label).join('、')||'暂无已验证的执行后端';
- note.textContent=`${label} 尚未验证受限独立审阅，不能开启事实核查。`+(form.elements.writing_mode.value==='internal_report'?'企业内部报告仍可生成，评分为普通评分（不是独立审阅），正式交付需要先完成独立审阅。':'')+`需要时可在“独立审阅执行后端”单独选择审阅后端，或在“执行后端”改用 ${alternatives}。`;
-}
-function renderReviewRuntime(){
- const select=$('review-backend');if(!select)return;
- const choices=state?.review_capability?.review_choices||[],current=reviewRuntime();
- select.innerHTML='<option value="">跟随执行后端</option>'+choices.map(c=>`<option value="${esc(c.id)}">${esc(c.label)}${c.experimental?'（实验）':''}</option>`).join('');
- select.value=current?.backend||'';$('review-model').value=current?.model||'';$('review-variant').value=current?.model_variant||'';
- $('review-model').disabled=$('review-variant').disabled=!select.value;
- renderReviewRuntimeSummary();
-}
-function renderReviewRuntimeSummary(){
- const current=reviewRuntime(),choice=(state?.review_capability?.review_choices||[]).find(c=>c.id===current?.backend);
- $('review-runtime-summary').textContent=current?`${choice?.label||current.backend} · ${friendlyModel(current.model)}${current.model_variant?' / '+current.model_variant:''}`:'跟随执行后端';
-}
-async function saveReviewRuntime(){
- const backend=$('review-backend').value,model=$('review-model').value.trim(),status=$('review-runtime-status');
- $('review-model').disabled=$('review-variant').disabled=!backend;
- if(backend&&!model){status.textContent='输入审阅模型（provider/model）后保存。';return}
- const review_runtime=backend?{backend,model,model_variant:$('review-variant').value.trim()||null}:null;
- status.textContent='保存中…';
- try{const saved=await api('settings',{review_runtime});state.settings.review_runtime=saved.review_runtime??null;renderReviewRuntimeSummary();syncFactCheckControl();status.textContent='已保存，之后新建的任务使用这个审阅设置；已排队的任务不变。'}
- catch(e){status.textContent='未保存：'+e.message}
-}
-$('review-backend').addEventListener('change',()=>action(saveReviewRuntime));
-$('review-model').addEventListener('change',()=>action(saveReviewRuntime));
-$('review-variant').addEventListener('change',()=>action(saveReviewRuntime));
+const reviewControls=createReviewControls({api,action,$,getState:()=>state,backendValue,friendlyModel,savedVersion,notice,runtimeName});
+const {syncFactCheckControl,renderReviewRuntime}=reviewControls;
+reviewControls.init();
 $('requirements').elements.allow_web.addEventListener('change',syncFactCheckControl);
 $('requirements').elements.writing_mode.addEventListener('change',syncFactCheckControl);
 $('agent-backend').addEventListener('change',syncFactCheckControl);
@@ -2108,12 +2076,12 @@ function evidenceLocation(locator){
  return locator.region?'图像指定区域':'图像原件';
 }
 
-$('review-start').onclick=()=>action(async()=>{const version=await savedVersion();if(version)await api('review',{version_id:version})},'已提交独立只读审阅');
+$('review-start').onclick=()=>action(reviewControls.startReview);
 $('review-close').onclick=()=>$('review-dialog').close();
 $('review-open').onclick=()=>action(async()=>{
  const version=await savedVersion();if(!version)return;const data=await api('review-status?version='+encodeURIComponent(version));
  const states={queued:'等待审阅',running:'审阅中',complete:'已返回审阅结果',incomplete:'审阅未完成',cancelled:'已停止',open:'待处理',addressed_pending_review:'已回应，待复核',resolved:'已复核解决',dismissed_with_evidence:'有依据排除'};
- $('review-list').innerHTML=(data.conflicts||[]).filter(c=>c.status!=='resolved').map(c=>`<article class="evidence-card"><span class="tag error">来源分歧 · ${esc(states[c.status]||c.status)}</span><p>${esc(c.data.description)}</p><p>已提醒不等于已解决，需由独立Reviewer核对双方依据。</p></article>`).join('')+(data.reviews||[]).map(r=>reviewResultHTML(r,states)).join('')+(data.reviews.length?'':'<p>当前版本尚未审阅，不能视为已通过。</p>')+data.findings.map(f=>`<article class="evidence-card"><span class="tag">${esc(states[f.status]||f.status)} · ${f.data.severity==='major'?'重要问题':'一般问题'}</span><h3>${esc(f.data.description)}</h3><blockquote>${esc(f.data.report_quote)}</blockquote><p>依据：${esc(f.data.evidence)}</p><p>${esc(f.data.suggested_action)}</p><p class="help">目标版本：${esc(f.version_id)}</p>${['open','addressed_pending_review'].includes(f.status)?`<form data-finding-response="${f.id}"><select name="action"><option value="corrected">已修改当前稿</option><option value="removed">已移除相关主张</option><option value="disagree">提出有依据的异议</option></select><textarea name="reason" required placeholder="说明修改位置或异议依据"></textarea><button type="submit">提交处理说明，等待复核</button></form>`:''}</article>`).join('');
+ $('review-list').innerHTML=(data.conflicts||[]).filter(c=>c.status!=='resolved').map(c=>`<article class="evidence-card"><span class="tag error">来源分歧 · ${esc(states[c.status]||c.status)}</span><p>${esc(c.data.description)}</p><p>已提醒不等于已解决，需由独立Reviewer核对双方依据。</p></article>`).join('')+(data.reviews||[]).map(r=>reviewResultHTML(r,states,{backendLabel:reviewControls.backendLabel})).join('')+(data.reviews.length?'':'<p>当前版本尚未审阅，不能视为已通过。</p>')+data.findings.map(f=>`<article class="evidence-card"><span class="tag">${esc(states[f.status]||f.status)} · ${f.data.severity==='major'?'重要问题':'一般问题'}</span><h3>${esc(f.data.description)}</h3><blockquote>${esc(f.data.report_quote)}</blockquote><p>依据：${esc(f.data.evidence)}</p><p>${esc(f.data.suggested_action)}</p><p class="help">目标版本：${esc(f.version_id)}</p>${['open','addressed_pending_review'].includes(f.status)?`<form data-finding-response="${f.id}"><select name="action"><option value="corrected">已修改当前稿</option><option value="removed">已移除相关主张</option><option value="disagree">提出有依据的异议</option></select><textarea name="reason" required placeholder="说明修改位置或异议依据"></textarea><button type="submit">提交处理说明，等待复核</button></form>`:''}</article>`).join('');
  $('review-list').querySelectorAll('[data-finding-response]').forEach(form=>form.onsubmit=e=>{e.preventDefault();action(async()=>{const target=await savedVersion();await api('review-response',{finding_id:form.dataset.findingResponse,version_id:target,action:form.elements.action.value,reason:form.elements.reason.value});$('review-dialog').close()},'处理说明已保存；只有独立复核才能关闭问题')});
  $('review-dialog').showModal();
 });
@@ -2144,22 +2112,6 @@ $('source-updates-open').onclick=()=>action(async()=>{
  $('source-updates-dialog').showModal();
 });
 
-function reviewResultHTML(review,states){
- const result=review.result||{},items=review.requirement_items||[],clauses=review.clause_items||[];
- const labels={covered:'已完成',manual:'用户安排人工填写',partial:'部分完成',missing:'未完成',unverified:'未核验',not_applicable:'不适用'};
- const kinds={reader_content:'读者内容',research_method:'研究方法',writing_preference:'写作偏好',manual_assignment:'人工安排',objective:'目标',question:'必答问题',writing:'写作偏好',manual:'人工填写'};
- const clauseChecks=result.clause_checks||[],requirementChecks=result.requirement_checks||[];
- const clauseHTML=clauseChecks.map(check=>{
-  const item=clauses.find(item=>item.clause_id===check.clause_id);
-  return `<li><strong>${esc(labels[check.status]||check.status)}</strong> · ${item?`<span class="tag">${esc(kinds[item.kind]||item.kind)}</span><p>${esc(item.source_quote)}</p>${item.instruction&&item.instruction!==item.source_quote?`<p>执行要求：${esc(item.instruction)}</p>`:''}`:`未知条款 ID：${esc(check.clause_id)}`}<p>理由：${esc(check.reason)}</p>${check.basis?.length?`<p>依据：</p><ul>${check.basis.map(text=>`<li>${esc(text)}</li>`).join('')}</ul>`:''}</li>`;
- }).join('');
- const requirementHTML=requirementChecks.map(check=>{
-  const item=items.find(item=>item.requirement_id===check.requirement_id);
-  return `<li><strong>${esc(labels[check.status]||check.status)}</strong> · ${item?`${item.kind?`<span class="tag">${esc(kinds[item.kind]||item.kind)}</span> `:''}${esc(item.text)}`:`未知要求 ID：${esc(check.requirement_id)}`}<p>理由：${esc(check.reason)}</p></li>`;
- }).join('');
- const unchecked=[...(result.unchecked_items||[]),...(result.unchecked||[]).map(description=>({description,importance:'unknown'}))];
- return `<article class="review-version"><strong>${esc(states[review.status]||review.status)}</strong><p>${esc(result.summary||'当前没有完整审阅结果')}</p><p class="help">${result.coverage_scan_complete?'已检查正文是否遗漏重要主张绑定':'重要主张覆盖尚未完成检查'}；审阅完成不代表全部要求已满足，正式交付另按当前版本的条件判断。</p>${review.requirement_index_error?`<p class="help">${esc(review.requirement_index_error)}</p>`:''}${unchecked.length?`<details class="review-checks" open><summary>尚未核验 · ${unchecked.length} 项</summary><ul>${unchecked.map(item=>`<li><span class="tag">${item.importance==='core'?'核心事项':item.importance==='supporting'?'非核心事项':'重要性未确定'}</span> ${esc(item.description)}</li>`).join('')}</ul></details>`:''}${clauseChecks.length?`<details class="review-checks" open><summary>条款核查结果 · ${clauseChecks.length} 项</summary><ul>${clauseHTML}</ul></details>`:''}${requirementChecks.length?`<details class="review-checks" open><summary>原始要求核查结果 · ${requirementChecks.length} 项</summary><ul>${requirementHTML}</ul></details>`:''}${!clauseChecks.length&&!requirementChecks.length?'<p class="help">尚无逐项要求核查结果。</p>':''}</article>`;
-}
 
 $('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=>{
  const source=$('source-refresh-source').value,cutoff=$('source-refresh-cutoff').value;

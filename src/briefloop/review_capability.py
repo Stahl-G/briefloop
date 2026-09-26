@@ -1,20 +1,10 @@
-"""Whether the chosen backend can run the restricted independent Reviewer (#726).
+"""Admission for independent standard review and packet-confined strict review.
 
-The declaration lives in backends.CAPABILITIES. Report creation, queued jobs,
-schedules, scoring and the delivery gate all ask this module, so an unsupported
-combination is explained before the first model call instead of after a draft.
-
-- A fact check needs the Reviewer to admit its candidates: without it the paid
-  searches cannot reach the report, so the task does not start.
-- An internal report can still be written and scored. The score is recorded as
-  ordinary assessment, never shown as an independent review, and formal
-  delivery stays blocked until a supported backend completes the review.
-
-The Reviewer may run on its own backend (settings.review_runtime, frozen into
-each job as review_runtime). Checks therefore take the main backend together
-with that choice; review_route() is the single place that resolves them.
+Both use the same version/evidence/findings validation. Mode describes execution
+isolation, not whether an accepted semantic review is valid for delivery.
 """
 from .backends import BACKENDS, BACKEND_LABELS, REVIEW_ONLY_BACKENDS, supports, validate_backend
+from .opencode_version import installed_major as _opencode_major
 
 CODE = 'review_backend_unsupported'
 
@@ -23,80 +13,93 @@ class ReviewBackendUnsupported(ValueError):
     code = CODE
 
 
+def normalize_mode(mode):
+    if mode not in ('standard', 'strict'):
+        raise ValueError('审阅模式必须为 standard 或 strict')
+    return mode
+
+
 def restricted_review(backend):
+    """Strict isolation must be verified, not inferred from a major version."""
     return supports(validate_backend(backend), 'restricted_review')
 
 
-def review_route(backend, review_runtime=None):
-    """(backend, runtime) the Reviewer runs on, or None when no route exists.
+def standard_review(backend):
+    backend = validate_backend(backend)
+    return supports(backend, 'standard_review') and (backend != 'opencode' or _opencode_major() in (1, 2))
 
-    runtime is None when the Reviewer follows the main chain, which then keeps
-    using its own Evaluator model configuration."""
+
+def supports_review(backend, review_mode='standard'):
+    return restricted_review(backend) if normalize_mode(review_mode) == 'strict' else standard_review(backend)
+
+
+def review_route(backend, review_runtime=None, review_mode='standard'):
+    """Resolve only the requested route; never replace an unsupported choice."""
+    normalize_mode(review_mode)
     if review_runtime:
         from .models import ReviewRuntime, runtime_fields
         chosen = ReviewRuntime.model_validate(review_runtime)
-        if not restricted_review(chosen.backend):
+        if not supports_review(chosen.backend, review_mode):
             return None
         return chosen.backend, runtime_fields(chosen.model_dump(exclude_none=True), chosen.backend)
-    if restricted_review(backend):
+    if supports_review(backend, review_mode):
         return validate_backend(backend), None
     return None
 
 
-def review_available(backend, review_runtime=None):
-    return review_route(backend, review_runtime) is not None
+def review_available(backend, review_runtime=None, review_mode='standard'):
+    return review_route(backend, review_runtime, review_mode) is not None
 
 
-def review_choices():
-    """Every backend the Reviewer can be pinned to, including review-only ones."""
-    return [{'id': name, 'label': BACKEND_LABELS[name], 'experimental': name in REVIEW_ONLY_BACKENDS}
-            for name in BACKENDS if supports(name, 'restricted_review')]
+def review_choices(review_mode='standard'):
+    return [{'id': name, 'label': BACKEND_LABELS[name], 'experimental': name in REVIEW_ONLY_BACKENDS,
+             'review_modes': [mode for mode in ('standard', 'strict') if supports_review(name, mode)]}
+            for name in BACKENDS if supports_review(name, review_mode)]
 
 
-def review_backends():
-    """Backends a user can switch the main chain to and still get the Reviewer.
-
-    A review-only engine may run a pinned review job, but suggesting it as the
-    “执行后端” to change to would point at a choice the page does not offer."""
-    return [name for name in BACKENDS
-            if supports(name, 'restricted_review') and name not in REVIEW_ONLY_BACKENDS]
+def review_backends(review_mode='standard'):
+    return [name for name in BACKENDS if supports_review(name, review_mode) and name not in REVIEW_ONLY_BACKENDS]
 
 
 def summary():
-    """Shown to the page, which keeps no list of its own."""
-    return {'restricted_review': [{'id': name, 'label': BACKEND_LABELS[name]} for name in review_backends()],
-            'review_choices': review_choices()}
+    choices = review_choices()
+    strict = [{'id': c['id'], 'label': c['label']} for c in review_choices('strict')]
+    return {'restricted_review': strict, 'strict_review': strict,
+            'standard_review': [{'id': c['id'], 'label': c['label']} for c in choices],
+            'review_modes': ['standard', 'strict'], 'review_choices': choices,
+            'unavailable_reviewers': [{'id': name, 'label': BACKEND_LABELS[name],
+                'review_mode': mode, 'reason': _limitation(name, mode)}
+                for name in ('codex', 'opencode', 'briefloop-native') for mode in ('standard', 'strict')
+                if not supports_review(name, mode)]}
 
 
-def _alternatives():
-    return '、'.join(BACKEND_LABELS[name] for name in review_backends()) or '暂无已验证的执行后端'
+def _remedy(mode):
+    names = '、'.join(c['label'] for c in review_choices(mode)) or '暂无已验证的执行后端'
+    return f'请在设置的“独立审阅执行后端”中选择支持该模式的 {names}；不会自动更换模式或执行后端'
 
 
-def _remedy():
-    return f'可在设置的“独立审阅执行后端”中单独选择 {"、".join(c["label"] for c in review_choices())}，或把执行后端改为 {_alternatives()}'
+def _limitation(backend, mode='standard'):
+    label = BACKEND_LABELS.get(backend, str(backend))
+    if mode == 'strict':
+        return f'{label} 尚未验证核查包隔离，不能执行严格审阅；可显式改选普通独立审阅，或选择支持严格审阅的执行后端'
+    if backend == 'opencode':
+        return '未检测到受支持的 OpenCode 1.x / 2.x，无法执行普通独立审阅'
+    return f'{label} 尚未接入实际只读的独立审阅通道'
 
 
-def _label(backend):
-    return BACKEND_LABELS.get(backend, str(backend))
+def require_for_fact_check(backend, review_runtime=None, review_mode='standard'):
+    if not review_available(backend, review_runtime, review_mode):
+        reviewer = (review_runtime or {}).get('backend', backend)
+        raise ReviewBackendUnsupported(f'{_limitation(reviewer, review_mode)}。联网事实核查的结果仍需独立审阅，所以没有开始。{_remedy(review_mode)}。')
 
 
-def require_for_fact_check(backend, review_runtime=None):
-    if not review_available(backend, review_runtime):
-        raise ReviewBackendUnsupported(
-            f'{_label(backend)} 尚未验证受限独立审阅，联网事实核查的结果必须由独立审阅复核，所以没有开始。'
-            f'{_remedy()}，或关闭事实核查后生成。')
+def require_for_review(backend, review_mode='standard'):
+    if not supports_review(backend, review_mode):
+        raise ReviewBackendUnsupported(f'{_limitation(backend, review_mode)}。{_remedy(review_mode)}；已有稿件、编辑和普通下载不受影响。')
 
 
-def require_for_review(backend):
-    if not restricted_review(backend):
-        raise ReviewBackendUnsupported(
-            f'{_label(backend)} 尚未验证受限独立审阅，不能运行独立审阅，也不会退回普通写权限。'
-            f'可改用 {_alternatives()} 后重新审阅；已有稿件、编辑和普通下载不受影响。')
-
-
-def delivery_blocker(backend, review_runtime=None):
-    """None when the configured route could complete the missing review."""
-    if review_available(backend, review_runtime):
+def delivery_blocker(backend, review_runtime=None, review_mode='standard'):
+    if review_available(backend, review_runtime, review_mode):
         return None
-    return {'code': CODE, 'message': f'当前执行后端 {_label(backend)} 尚未验证受限独立审阅；'
-                                     f'正式交付需要先完成独立审阅。{_remedy()}。'}
+    reviewer = (review_runtime or {}).get('backend', backend)
+    return {'code': CODE, 'message': f'{_limitation(reviewer, review_mode)}；本版本仍需完成独立审阅。{_remedy(review_mode)}。'}

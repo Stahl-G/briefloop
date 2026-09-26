@@ -272,7 +272,8 @@ def eligibility(store, version_id):
     result = {'version_id': version_id, 'eligible': False, 'blockers': [], 'notices': []}
     # Say why a review cannot be started here, instead of offering one that fails.
     from .review_capability import delivery_blocker
-    unsupported = delivery_blocker(store.settings().get('agent_backend', 'codex'), store.settings().get('review_runtime'))
+    unsupported = delivery_blocker(store.settings().get('agent_backend', 'codex'), store.settings().get('review_runtime'),
+                                   store.settings().get('review_mode','standard'))
     if not candidates:
         result['blockers'].append({'code': 'review_missing', 'message': '本版本尚未完成独立核查'})
         if unsupported:
@@ -312,6 +313,7 @@ def eligibility(store, version_id):
                   'brief_hash': brief['hash'], 'export_input': identity,
                   'export_fingerprint': sha(dump(identity).encode()),
                   'review_id': review['id'], 'review_fingerprint': review['fingerprint'],
+                  **{key:review['data'][key] for key in ('review_mode','review_backend') if key in review['data']},
                   'review_protocol': (review.get('data') or {}).get('protocol', 'legacy'),
                   'review_clauses': clause_items(snapshot['requirements']),
                   'review_result': review['result'], 'review_files': review['data']['files'],

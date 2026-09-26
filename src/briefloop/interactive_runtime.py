@@ -167,8 +167,9 @@ class InteractiveRuntime:
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
         if job.get('readonly_output'):
             from .review_capability import require_for_review
-            require_for_review(backend)
-            runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
+            review_mode=payload.get('review_mode','standard')
+            require_for_review(backend,review_mode)
+            runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()),review_mode=review_mode)
             if job.get('review_id'):runtime['review_id']=job['review_id']
         if backend == 'briefloop-native' and not job.get('native_packet') and not job.get('readonly_output'):
             from .native_orchestrator import prepare
@@ -207,6 +208,12 @@ class InteractiveRuntime:
                 raise ValueError('恢复会话的任务、后端或模型已改变；请使用新的任务目录')
             if binding['runtime'] != runtime:
                 legacy = {key: value for key, value in runtime.items() if key != 'review_id'}
+                if 'review_mode' not in payload:
+                    legacy.pop('review_mode',None)
+                    # Old bindings may already have a review id, but never an
+                    # isolation label. Preserve that id while restoring the job.
+                    if 'review_id' in binding['runtime'] and 'review_id' in runtime:
+                        legacy['review_id']=runtime['review_id']
                 if (job.get('readonly_output') != 'review.json' or not runtime.get('review_id')
                         or binding['runtime'] != legacy):
                     raise ValueError('恢复会话的任务、后端或模型已改变；请使用新的任务目录')
@@ -332,9 +339,19 @@ class InteractiveRuntime:
                     if status=='completed' and job.get('readonly_output'):
                         name=job['readonly_output']
                         if name not in ('review.json','permission-probe.json'):raise ValueError('无效只读输出文件名')
-                        final='\n\n'.join(assistant).strip()
-                        if final.startswith('```'):
-                            final='\n'.join(final.splitlines()[1:-1])
+                        # A turn can contain public progress messages as well as
+                        # its final reply. Keep all of them in last-message.txt,
+                        # but never prepend progress to the structured result or
+                        # recover an earlier JSON object after a broken final.
+                        replies=[m for m in snapshot['messages']
+                                 if m['role']=='assistant' and m.get('turn_id')==message.get('turn_id')
+                                 and isinstance(m.get('text'),str) and m['text'].strip()]
+                        explicit=[m for m in replies if m.get('phase')=='final_answer' or m.get('channel')=='final']
+                        final=(explicit or replies)[-1]['text'].strip() if replies else ''
+                        lines=final.splitlines()
+                        if (len(lines)>=3 and lines[0].strip() in ('```json','```')
+                                and lines[-1].strip()=='```'):
+                            final='\n'.join(lines[1:-1])
                         data=json.loads(final)
                         if not isinstance(data,dict):raise ValueError('Reviewer 未返回 JSON 对象')
                         _write(folder/name,data)

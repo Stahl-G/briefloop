@@ -83,7 +83,8 @@ def validate(store, body):
     if req['fact_check']:
         # Each firing would stop at the same check; refuse the schedule when saved.
         from .review_capability import require_for_fact_check
-        require_for_fact_check(store.settings().get('agent_backend','codex'),store.settings().get('review_runtime'))
+        require_for_fact_check(store.settings().get('agent_backend','codex'),store.settings().get('review_runtime'),
+                               store.settings().get('review_mode','standard'))
     ids = config.get('source_ids',[])
     if not isinstance(ids,list) or not all(isinstance(s,str) for s in ids):raise ValueError('请选择材料')
     for sid in ids:store.one('sources',sid)

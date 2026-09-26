@@ -1,4 +1,4 @@
-"""Unsupported Reviewer combinations are explained before any model call (#726)."""
+"""Unsupported strict Reviewer combinations fail before any model call (#726)."""
 import http.client
 import json
 import threading
@@ -9,6 +9,19 @@ from briefloop.review_capability import CODE, ReviewBackendUnsupported, restrict
 from briefloop.store import Store
 
 pytestmark = pytest.mark.real_review_capabilities
+
+
+@pytest.fixture(autouse=True)
+def verified_opencode_v1(monkeypatch):
+    # These controller fixtures implement v1; installed host version is tested
+    # separately and must not change their admission expectations.
+    monkeypatch.setattr('briefloop.review_capability._opencode_major', lambda: 1)
+
+
+def strict_store(path):
+    store=Store(path)
+    store.update_settings({'review_mode':'strict'})
+    return store
 
 
 def _source(store):
@@ -25,12 +38,12 @@ def _backend(store, name):
 
 def test_one_declaration_and_unknown_backends_never_claim_the_reviewer():
     from briefloop.backends import BRIDGE_BACKENDS
-    assert restricted_review('opencode') is True
+    assert restricted_review('briefloop-native') is True
     assert restricted_review('codex') is False
     assert not any(restricted_review(name) for name in BRIDGE_BACKENDS)
     with pytest.raises(ValueError):
         restricted_review('made-up-host')
-    assert summary()['restricted_review'] == [{'id': 'opencode', 'label': 'Opencode CLI'}, {'id':'briefloop-native', 'label':'BriefLoop Agent'}]
+    assert summary()['restricted_review'] == [{'id':'briefloop-native', 'label':'BriefLoop Agent'}]
 
 
 def test_a_separately_chosen_reviewer_unblocks_a_main_chain_without_one(tmp_path):
@@ -38,26 +51,26 @@ def test_a_separately_chosen_reviewer_unblocks_a_main_chain_without_one(tmp_path
     from briefloop.models import Settings
     from briefloop.release import eligibility
     from briefloop.review import enqueue_review
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
     store.set_meta('settings', {**store.settings(), 'model_selection_required': False, 'company_context_enabled': False})
     with pytest.raises(ReviewBackendUnsupported) as refused:
         store.create_run(_web(fact_check=True), [source['id']])
     assert '独立审阅执行后端' in str(refused.value)
 
-    reviewer = {'backend': 'opencode', 'model': 'opencode-go/deepseek-v4.1-flash', 'model_variant': 'high'}
+    reviewer = {'backend': 'briefloop-native', 'model': 'opencode-go/deepseek-v4.1-flash', 'model_variant': 'high'}
     store.set_meta('settings', {**store.settings(), 'review_runtime': reviewer})
     run = store.create_run(_web(fact_check=True), [source['id']])
     job = store.enqueue('generate', {'run_id': run['id']})
     payload = json.loads(job['payload'])
-    assert payload['agent_backend'] == 'codex' and payload['review_runtime'] == reviewer
+    assert payload['agent_backend'] == 'codex' and {k:payload['review_runtime'][k] for k in reviewer} == reviewer
 
     brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
     assert not [b for b in eligibility(store, brief['id'])['blockers'] if b['code'] == CODE]
     # The route frozen with the parent job wins over later settings.
     store.set_meta('settings', {**store.settings(), 'review_runtime': None})
     review = json.loads(enqueue_review(store, brief['id'], payload={**payload, 'parent_job_id': job['id']})['payload'])
-    assert review['agent_backend'] == 'opencode'
+    assert review['agent_backend'] == 'briefloop-native'
     assert review['runtime'] == {'model': 'opencode-go/deepseek-v4.1-flash', 'model_variant': 'high'}
     assert review['role_models']['evaluator'] == review['runtime']
     assert 'review_runtime' not in review
@@ -66,18 +79,18 @@ def test_a_separately_chosen_reviewer_unblocks_a_main_chain_without_one(tmp_path
     with pytest.raises(ReviewBackendUnsupported):
         enqueue_review(store, brief['id'])
 
-    for bad in ({'backend': 'codex', 'model': 'gpt-5.6-luna'}, {'backend': 'opencode', 'model': 'no-provider'},
+    for bad in ({'backend': 'pi', 'model': 'gpt-5.6-luna'}, {'backend': 'briefloop-native', 'model': 'no-provider'},
                 {'backend': 'briefloop-native', 'model': ' '}):
         with pytest.raises(ValidationError):
             Settings.model_validate({'review_runtime': bad})
 
 
 def test_fact_check_is_refused_before_the_run_exists_and_ordinary_work_continues(tmp_path):
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
     with pytest.raises(ReviewBackendUnsupported) as refused:
         store.create_run(_web(fact_check=True), [source['id']])
-    assert refused.value.code == CODE and 'Opencode CLI' in str(refused.value)
+    assert refused.value.code == CODE and 'BriefLoop Agent' in str(refused.value)
     assert store.rows('SELECT * FROM runs') == []
     # Ordinary and internal reports on the same backend still start.
     store.set_meta('settings', {**store.settings(), 'company_context_enabled': False})
@@ -87,13 +100,14 @@ def test_fact_check_is_refused_before_the_run_exists_and_ordinary_work_continues
     store.set_meta('settings', {**store.settings(), 'fact_checker': True})
     with pytest.raises(ReviewBackendUnsupported):
         store.create_run(_web(), [source['id']])
-    _backend(store, 'opencode')
+    _backend(store, 'briefloop-native')
     assert json.loads(store.create_run(_web(), [source['id']])['requirements'])['fact_check'] is True
 
 
 def test_web_generate_returns_the_structured_code_and_creates_nothing(tmp_path):
     from briefloop.server import make_server, _close_service
     server = make_server(tmp_path / 'workspace', port=0, paused=True)
+    server.store.update_settings({'review_mode':'strict'})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     authority = f'127.0.0.1:{server.server_port}'
@@ -118,21 +132,21 @@ def test_web_generate_returns_the_structured_code_and_creates_nothing(tmp_path):
 
 def test_agent_generate_checks_the_backend_it_will_actually_use(tmp_path):
     from briefloop.chat_tools import workspace_action
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
-    _backend(store, 'opencode')
+    _backend(store, 'briefloop-native')
     request = {'action': 'generate', 'requirements': _web(fact_check=True), 'source_ids': [source['id']]}
     with pytest.raises(ReviewBackendUnsupported):
         workspace_action(store, {**request, 'runtime': {'agent_backend': 'codex', 'model': 'gpt-5.6-luna'}})
     assert store.rows('SELECT * FROM runs') == []
-    queued = workspace_action(store, {**request, 'runtime': {'agent_backend': 'opencode', 'model': 'synthetic/model'}})
-    assert json.loads(store.one('jobs', queued['job_id'])['payload'])['agent_backend'] == 'opencode'
+    queued = workspace_action(store, {**request, 'runtime': {'agent_backend': 'briefloop-native', 'model': 'synthetic/model'}})
+    assert json.loads(store.one('jobs', queued['job_id'])['payload'])['agent_backend'] == 'briefloop-native'
 
 
 def test_queue_refuses_reviews_and_fact_checked_work_on_unsupported_backends(tmp_path):
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
-    _backend(store, 'opencode')
+    _backend(store, 'briefloop-native')
     store.set_meta('settings', {**store.settings(), 'model': 'synthetic/model', 'model_selection_required': False})
     checked = store.create_run(_web(fact_check=True), [source['id']])
     brief = store.publish(checked['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
@@ -167,11 +181,11 @@ class RecordingRuntime:
 def test_a_legacy_queued_fact_check_stops_before_any_model_turn(tmp_path):
     from briefloop.runtime import Worker
     from briefloop.store import dump, now
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
-    _backend(store, 'opencode')
+    _backend(store, 'briefloop-native')
     run = store.create_run(_web(fact_check=True), [source['id']])
-    job = store.enqueue('generate', {'run_id': run['id'], 'agent_backend': 'opencode', 'runtime': {'model': 'synthetic/model'}})
+    job = store.enqueue('generate', {'run_id': run['id'], 'agent_backend': 'briefloop-native', 'runtime': {'model': 'synthetic/model'}})
     # Simulate a job frozen before the check existed, under a backend without the Reviewer.
     payload = {**json.loads(job['payload']), 'agent_backend': 'codex', 'runtime': {'model': 'gpt-5.6-luna'}}
     with store.tx() as c:
@@ -184,7 +198,7 @@ def test_a_legacy_queued_fact_check_stops_before_any_model_turn(tmp_path):
 
 def test_internal_report_without_the_reviewer_is_scored_as_ordinary_assessment(tmp_path):
     from briefloop.runtime import Worker, stage_job
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     store.set_meta('settings', {**store.settings(), 'company_context_enabled': False})
     source = _source(store)
     run = store.create_run(_web(writing_mode='internal_report'), [source['id']])
@@ -203,12 +217,12 @@ def test_internal_report_without_the_reviewer_is_scored_as_ordinary_assessment(t
     from briefloop.release import eligibility
     blockers = [b['code'] for b in eligibility(store, brief['id'])['blockers']]
     assert blockers == ['review_missing', CODE]
-    _backend(store, 'opencode')
+    _backend(store, 'briefloop-native')
     assert [b['code'] for b in eligibility(store, brief['id'])['blockers']] == ['review_missing']
 
 
 def test_the_model_cannot_label_its_own_assessment_and_the_basis_is_closed(tmp_path):
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
     run = store.create_run(_web(), [source['id']])
     brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
@@ -223,7 +237,7 @@ def test_the_model_cannot_label_its_own_assessment_and_the_basis_is_closed(tmp_p
 def test_schedules_and_the_runtime_gate_use_the_same_declaration(tmp_path):
     from briefloop import schedules
     from briefloop.interactive_runtime import InteractiveRuntime
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     source = _source(store)
     body = {'name': 'Weekly', 'config': {'frequency': 'daily', 'start': '2026-09-16T09:00', 'timezone': 'UTC',
                                          'requirements': _web(fact_check=True), 'source_ids': [source['id']]}}
@@ -237,7 +251,7 @@ def test_schedules_and_the_runtime_gate_use_the_same_declaration(tmp_path):
     folder = store.root / 'jobs' / 'review-gate'
     folder.mkdir(parents=True)
     job = {'id': 'job_review_gate', 'kind': 'review', 'readonly_output': 'review.json',
-           'payload': json.dumps({'agent_backend': 'codex', 'runtime': {'model': 'gpt-5.6-luna'}})}
+           'payload': json.dumps({'agent_backend': 'codex', 'runtime': {'model': 'gpt-5.6-luna'},'review_mode':'strict'})}
     with pytest.raises(ReviewBackendUnsupported):
         runtime.execute(job, 'prompt', folder)
 
@@ -247,7 +261,7 @@ def test_a_long_internal_report_starts_no_checkpoint_review_without_the_reviewer
     import threading
     from briefloop import runtime as runtime_module
     from briefloop.runtime import Worker
-    store = Store(tmp_path)
+    store = strict_store(tmp_path)
     store.set_meta('settings', {**store.settings(), 'company_context_enabled': False, 'auto_learn': False})
     source = _source(store)
     run = store.create_run({'title': '内部周报', 'objective': 'o', 'allow_web': False, 'writing_mode': 'internal_report'}, [source['id']])

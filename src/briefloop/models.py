@@ -201,11 +201,11 @@ def runtime_fields(value, backend='codex'):
     return selected
 
 
-class ReviewRuntime(Model):
+class ReviewRuntime(RoleModel):
     """The backend and model the independent Reviewer runs on, chosen apart
-    from the main chain so a host without restricted review can still reach
-    formal delivery. Only backends declaring restricted_review are accepted."""
-    backend: Literal['opencode', 'briefloop-native']
+    from the main chain. Mode-specific capability admission decides whether
+    this backend can provide standard or strict review."""
+    backend: Literal['codex', 'opencode', 'briefloop-native']
     model: str = Field(min_length=1, max_length=100)
     model_variant: str | None = Field(default=None, min_length=1, max_length=100)
 
@@ -239,6 +239,7 @@ class Settings(RoleModel):
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     # None: the Reviewer follows agent_backend and the Evaluator model.
     review_runtime: ReviewRuntime | None = None
+    review_mode: Literal['standard', 'strict'] = 'standard'
     chat_allow_web: bool = True
     search_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'tavily'
     search_policy: SearchPolicy | None = None
