@@ -1,6 +1,6 @@
 """Interactive + job conversations driven by a BriefLoop-managed opencode serve.
 
-Drives the v1 message surface (the same one ``opencode run --attach`` uses),
+Drives the versioned message adapter (v1 run/attach or the v2 API),
 journals into the same ChatStore tables as the Codex harness with the same
 normalized event kinds, so the web UI and progress projection work unchanged.
 ``chat_sessions.thread_id`` stores the opencode session id; ``turn_id`` stores
@@ -29,6 +29,7 @@ DEFAULT_RUNTIME = {'model': 'opencode/big-pickle', 'variant': None,
 ATTACH_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 _TASK_CHILD = re.compile(r'<task id="(ses_[^"]+)"')
+_SUBAGENT_CHILD = re.compile(r'<subagent sessionID="(ses_[^"]+)"')
 _logger = logging.getLogger(__name__)
 
 
@@ -136,11 +137,17 @@ class OpencodeHarness:
             pid = provider.get('id', '')
             for key, info in (provider.get('models') or {}).items():
                 info = info or {}
+                variants = info.get('variants')
+                variants = list(variants) if isinstance(variants, dict) else variants
+                if not isinstance(variants, list) or not all(isinstance(v, str) for v in variants):
+                    variants = None
                 models.append({'id': f'{pid}/{key}', 'provider': pid,
-                               'name': info.get('name') or key})
+                               'name': info.get('name') or key, 'variants': variants})
         models.sort(key=lambda m: (m['provider'], m['id']))
         with self._lock:
-            self._models_cache, self._models_at = models, now
+            # A v2 location can briefly report an empty catalog while loading.
+            # Do not pin that transient state in the picker for an hour.
+            self._models_cache, self._models_at = (models if models else None), now
         return models
 
     def configure_provider(self, body):
@@ -603,6 +610,8 @@ class OpencodeHarness:
             client = self._client()
             session = self.chat.session(sid)
             config = self._config(message.get('runtime') or session['runtime'])
+            if config.get('review_root') and config.get('review_mode','standard')=='strict':
+                raise OpencodeError('OpenCode 暂不支持严格 Reviewer：原生指令发现仍可能读取包外 AGENTS；请明确选择普通审阅或支持严格审阅的引擎。未发送任务。')
             bound = self._bound_session(sid)
             if bound is None:
                 # The session carries the frozen model; per-prompt overrides
@@ -742,6 +751,9 @@ class OpencodeHarness:
                 if error!=last_error:
                     self.chat.event(sid,'error',{'turnId':mid,'message':error})
                     last_error=error
+                if getattr(client, 'major', 1) == 2 and exc.status == 404:
+                    self._finish(sid, mid, 'failed')
+                    return
                 time.sleep(.2 if process is not None and process.poll() is not None else 2)
                 continue
             last_error=None
@@ -891,11 +903,11 @@ class OpencodeHarness:
         item = {'id': part.get('id', assistant_id), 'type': 'opencode_tool',
                 'tool': name, 'status': state.get('status', 'running')}
         tool_input = state.get('input', part.get('input', {})) or {}
-        if name == 'bash':
+        if name in ('bash', 'shell'):
             item['type'] = 'commandExecution'
             item['command'] = tool_input.get('command', '')
-        elif name == 'task':
-            item['subagent_type'] = tool_input.get('subagent_type', '')
+        elif name in ('task', 'subagent'):
+            item['subagent_type'] = tool_input.get('subagent_type') or tool_input.get('agent', '')
             item['description'] = tool_input.get('description', '')
         if (*key, 'announced') not in seen_tools:
             seen_tools.add((*key, 'announced'))
@@ -1129,6 +1141,10 @@ def _task_children(part):
         if isinstance(content, dict) and content.get('type') == 'text':
             texts.append(content.get('text', ''))
     found = []
+    metadata = state.get('metadata') or {}
+    if isinstance(metadata, dict) and isinstance(metadata.get('sessionID'), str) and metadata['sessionID'].startswith('ses_'):
+        found.append(metadata['sessionID'])
     for text in texts:
         found.extend(_TASK_CHILD.findall(text or ''))
-    return found
+        found.extend(_SUBAGENT_CHILD.findall(text or ''))
+    return list(dict.fromkeys(found))

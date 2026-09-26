@@ -826,6 +826,8 @@ def review_status(store,version_id):
     from .office_cli import version_office_view
     status={'version_id':version_id,'conflicts':for_run(store,brief['run_id']),'reviews':[
                 {**{k:r[k] for k in ('id','status','created')},'result':json.loads(r['result']) if r['result'] else None,
+                 'review_mode':json.loads(r['data']).get('review_mode'),
+                 'review_backend':json.loads(r['data']).get('review_backend'),
                  **_review_requirement_index(store,r)} for r in reviews],
             'reconciliation':reconciliation,
             'findings':[{**f,'data':json.loads(f['data'])} for f in findings]}
@@ -841,9 +843,15 @@ def review_job_payload(store,payload):
     and role models; following the main chain leaves them untouched."""
     values=dict(payload)
     review_runtime=values.pop('review_runtime') if 'review_runtime' in values else store.settings().get('review_runtime')
-    from .review_capability import review_route
+    from .review_capability import review_route,require_for_review,normalize_mode
     from .models import ROLE_NAMES
-    route=review_route(values.get('agent_backend',store.settings().get('agent_backend','codex')),review_runtime)
+    # Existing frozen jobs without a mode keep the legacy/default execution
+    # semantics; changing settings cannot turn their child into a strict review.
+    default_mode='standard' if 'runtime' in values else store.settings().get('review_mode','standard')
+    values['review_mode']=normalize_mode(values.get('review_mode',default_mode))
+    backend=values.get('agent_backend',store.settings().get('agent_backend','codex'))
+    require_for_review((review_runtime or {}).get('backend',backend),values['review_mode'])
+    route=review_route(backend,review_runtime,values['review_mode'])
     if route and route[1] is not None:
         backend,runtime=route
         values.update(agent_backend=backend,runtime=dict(runtime),role_models={role:dict(runtime) for role in ROLE_NAMES})
@@ -852,7 +860,9 @@ def review_job_payload(store,payload):
 
 def enqueue_review(store,version_id,*,payload=None):
     values=review_job_payload(store,payload or {});values['version_id']=version_id
-    identity=sha(dump({'snapshot':_snapshot(store,version_id),'runtime':values.get('runtime') or store.runtime_config()}).encode())
+    identity=sha(dump({'snapshot':_snapshot(store,version_id),'runtime':values.get('runtime') or store.runtime_config(),
+                       'backend':values.get('agent_backend',store.settings().get('agent_backend','codex')),
+                       'review_mode':values['review_mode']}).encode())
     for row in store.rows("SELECT * FROM jobs WHERE kind='review' AND status IN ('queued','running') ORDER BY rowid DESC"):
         old=json.loads(row['payload'])
         if old.get('review_input')==identity:return row
@@ -862,11 +872,21 @@ def enqueue_review(store,version_id,*,payload=None):
 
 def run_review(store,runtime,job,version_id,folder):
     from .runtime import stage_job
+    from .review_capability import normalize_mode,require_for_review
+    frozen=json.loads(job['payload'])
+    review_mode=normalize_mode(frozen.get('review_mode','standard'))
+    review_backend=frozen.get('agent_backend','codex')
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     marker=folder/'review-id.json'
     if marker.exists():
         identity=json.loads(marker.read_text(encoding='utf-8'))['review_id'];review=get_review(store,identity)
         if review['version_id']!=version_id:raise ValueError('保存的审阅任务属于另一正文版本')
+        recorded_mode=review['data'].get('review_mode')
+        if ((recorded_mode is not None and recorded_mode!=review_mode)
+                or (review_mode=='strict' and recorded_mode!='strict')):
+            raise ValueError('审阅模式与已保存任务不同；不能把普通或历史审阅复用为严格审阅')
+        if review['data'].get('review_backend',review_backend)!=review_backend:
+            raise ValueError('审阅执行后端与已保存任务不同')
         target=json.loads((folder/'packet'/'target.json').read_text(encoding='utf-8'))
         if target.get('snapshot_version',1)<3:
             return run_review(store,runtime,job,version_id,folder/'scope-v3')
@@ -877,7 +897,8 @@ def run_review(store,runtime,job,version_id,folder):
         fingerprint,files=build_packet(store,version_id,folder);identity=uid('review')
         from .deliverable_spec import clause_items as _clause_items
         protocol='clauses_v1' if _clause_items(_snapshot(store,version_id)['requirements']) else 'legacy'
-        data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol}
+        data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol,
+              'review_mode':review_mode,'review_backend':review_backend}
         with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',(identity,version_id,job['id'],fingerprint,'queued',dump(data),None,now(),now()))
         marker.write_text(dump({'review_id':identity}),encoding='utf-8');review=get_review(store,identity)
     # A transport-complete result can have failed only schema admission. Retry
@@ -892,6 +913,7 @@ def run_review(store,runtime,job,version_id,folder):
             archived=attempts/('review-'+sha(raw)+'.json')
             if not archived.exists():archived.write_bytes(raw)
             (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}),encoding='utf-8')
+    require_for_review(review_backend,review_mode)
     schema=folder/'packet'/'output.schema.json'
     validate_applicable_review(store,identity,version_id)
     target=json.loads((folder/'packet'/'target.json').read_text(encoding='utf-8'))
@@ -928,6 +950,10 @@ def run_review(store,runtime,job,version_id,folder):
         host_tools='只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。'
         output_line=f'最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。'
     host_read=host_read.replace('{packet_guide}',packet_guide)
+    if review_mode=='standard':
+        role_line='你是新独立会话中的只读 Reviewer，按本轮报告、来源原件与任务历史完成普通审阅。\n'
+        host_tools=('当前使用引擎的实际只读限制；普通模式不承诺宿主全局/项目说明完全隔离。'
+                    '这些说明不能充当本期事实依据。禁止修改文件、联网、委派或重跑分析；需要补充研究或计算时记录问题交主 Agent。')
     prompt=f'''{temporal_note}
 核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
 {role_line}{host_read}
@@ -974,7 +1000,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
         error=json.loads((folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')
         prompt+='\n上次结果未通过接纳：'+error+'。仅修正结构化结果中的ID或字段，不重做已经完成的研究或改稿。response_to使用history/responses.json的id字段，finding_id是其关联的原始发现。'
     stage=stage_job(store,{**job,'payload':dump({**json.loads(job['payload']),'version_id':version_id})},'evaluator',mode='single')
-    stage.update(readonly_output='review.json',review_id=identity,input_source_ids=[],allow_web=False)
+    stage.update(readonly_output='review.json',review_id=identity,review_mode=review_mode,input_source_ids=[],allow_web=False)
     with store.tx() as c:c.execute("UPDATE reviews SET status='running',updated=? WHERE id=?",(now(),identity))
     try:
         runtime.execute(stage,prompt,folder,resume_on_complete=(folder/'admission-error.json').exists())

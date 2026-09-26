@@ -14,9 +14,9 @@ from briefloop.native_harness import NativeHarness
 from briefloop.store import Store
 
 
-def _review_prompt(world, backend):
+def _review_prompt(world, backend, review_mode="standard"):
     store, brief = world['store'], world['brief']
-    job = store.enqueue('review', {'version_id': brief['id'], 'agent_backend': backend,
+    job = store.enqueue('review', {'version_id': brief['id'], 'agent_backend': backend, 'review_mode': review_mode,
                                    'runtime': {'model': 'deepseek/deepseek-v4-flash'}})
     folder = store.root / 'jobs' / job['id']
     captured = {}
@@ -37,11 +37,12 @@ def _review_prompt(world, backend):
 def test_hosts_get_their_own_instructions_over_one_review_contract(tmp_path):
     world = checked(tmp_path)
     external, folder, _ = _review_prompt(world, 'opencode')
-    assert '只有read工具可用' in external['prompt']
+    assert '普通模式不承诺宿主全局/项目说明完全隔离' in external['prompt']
+    assert '当前使用引擎的实际只读限制' in external['prompt']
     assert str(folder / 'packet' / 'index.json') in external['prompt']
     assert '最终回复一个符合' in external['prompt'] and 'submit_review' not in external['prompt']
 
-    native, native_folder, _ = _review_prompt(checked(tmp_path / 'native'), 'briefloop-native')
+    native, native_folder, _ = _review_prompt(checked(tmp_path / 'native'), 'briefloop-native', 'strict')
     text = native['prompt']
     # Nothing the engine cannot do: no read-only-tool claim, no absolute paths,
     # no promise that figures are always attached, no JSON-in-the-reply rule.

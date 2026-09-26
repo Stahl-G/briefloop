@@ -8,6 +8,11 @@ from briefloop.runtime import generation_prompt
 from briefloop.store import Store
 
 
+@pytest.fixture(autouse=True)
+def _v1_search_contract(monkeypatch):
+    monkeypatch.setattr('briefloop.opencode_version.installed_major',lambda:1)
+
+
 def test_opencode_frozen_tavily_reaches_both_coordinator_and_scout(tmp_path):
     store=Store(tmp_path/'workspace')
     store.set_meta('settings',{**store.settings(),'agent_backend':'opencode',

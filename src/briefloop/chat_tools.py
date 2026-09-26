@@ -255,6 +255,11 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
         runtime_label=runtime.get('variant') or '不指定（provider 默认）'
         provider_label='Opencode 模型（provider/model）'
         subagent_note='必要时使用 task 工具调用子 agent；不要启动嵌套模型 CLI。宿主 question 工具不可用；需要澄清时直接在聊天回复中提问，用户下一条消息会继续本任务。'
+        if backend=='opencode':
+            from .runtime import opencode_subagent_tool, OPENCODE_V2_SUBAGENT
+            if opencode_subagent_tool()=='subagent':
+                subagent_note=(OPENCODE_V2_SUBAGENT+'优先不传 model override，继承当前已冻结模型和推理档位；不要启动嵌套模型 CLI。'
+                    '宿主 question 工具不可用；需要澄清时直接在聊天回复中提问，用户下一条消息会继续本任务。')
     else:
         request_runtime={'model':runtime['model'],'reasoning_effort':runtime.get('effort'),
                          'model_provider':runtime.get('model_provider')}

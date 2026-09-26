@@ -158,9 +158,9 @@ def main():
         else:raise RuntimeError('服务尚未报告就绪，请查看 '+str(root/'server.log'))
     elif a.command=='status':print(json.dumps(Store(a.workspace).snapshot(),ensure_ascii=False,indent=2))
     elif a.command=='doctor':
-        from .backends.opencode_server import EXPECTED_MAJOR
+        from .backends.opencode_server import SUPPORTED_MAJORS
         from .host_bins import find as _find_host_bin
-        print(json.dumps({'codex':_find_host_bin('codex'),'opencode':_find_host_bin('opencode'),'opencode_expected_major':EXPECTED_MAJOR,'pdftotext':_find_host_bin('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；未启动模型、未验证登录'},ensure_ascii=False,indent=2))
+        print(json.dumps({'codex':_find_host_bin('codex'),'opencode':_find_host_bin('opencode'),'opencode_supported_majors':list(SUPPORTED_MAJORS),'pdftotext':_find_host_bin('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；支持版本为适配范围，未验证本机协议、登录或模型'},ensure_ascii=False,indent=2))
     elif a.command=='tool':
         store=Store(a.workspace)
         if a.tool=='normalize-document':

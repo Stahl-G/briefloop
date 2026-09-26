@@ -3,6 +3,7 @@ import {beginPanel as beginPanelDefault,updatePanel as updatePanelDefault} from 
 import {reviewPending as reviewPendingDefault,factCheckHTML as factCheckHTMLDefault} from './review-status.js';
 import {createFactCheckGrants} from './fact-check-grants.js';
 import {officeIssueLine} from './office-tools.js';
+import {reviewModeLabel} from './review-controls.js';
 
 const RELATION_LABELS={compatible:'可合并',different_scope:'口径不同',temporal_sequence:'时间演进',correction:'明确更正',supersession:'替代',republication:'转载',attributed_difference:'归属分歧',contradiction:'实质矛盾',unknown:'无法判断'};
 
@@ -96,6 +97,8 @@ export function createAssessmentPanel(deps){
    }
   }
   const notes=[];
+  const latestReview=data.reviews?.[0];
+  if(latestReview)notes.push('最近审阅：'+reviewModeLabel(latestReview)+' · '+({queued:'已排队',running:'执行中',complete:'已返回审阅结果',incomplete:'未完成',cancelled:'已取消'}[latestReview.status]||latestReview.status));
   if(reconciliation&&!reconciliation.error&&(reconciliation.relations||[]).length){
    const byLabel={};for(const relation of reconciliation.relations)byLabel[relation.relation]=(byLabel[relation.relation]||0)+1;
    notes.push('写作前对照：'+Object.entries(byLabel).map(([label,count])=>(RELATION_LABELS[label]||label)+' '+count).join('、')+'（只表示关系，不代表已判定真假）');
@@ -165,7 +168,7 @@ export function createAssessmentPanel(deps){
   const highlightKinds=new Map(quotes.map(q=>[String(q.findingIndex),q.kind]));
   applyHighlightState({quotes,findings:highlightFindings,kinds:highlightKinds});
   const toggle=`<label class="finding-toggle help"><input type="checkbox" id="show-suggestions" ${showSuggestionMarks?'checked':''}> 显示建议标记（黄）；必须修正句始终标红</label>`;
-  $('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div>${d.basis==='assessment_without_review'?'<p class="help review-basis">普通评分，不是独立受限审阅：执行后端尚未验证受限 Reviewer。正式交付仍需独立审阅完成。</p>':''}<p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(typeof d.expression==='number'&&d.expression<=2&&d.overall==='达到要求')?'<p class="help">表达分偏低但总体仍判为「达到要求」，两者不一致；系统会按此安排一次修订，实际以正文和独立审阅为准。</p>':''}${findings.length?toggle:''}${findings.map((f,i)=>`<details class="finding" data-finding="${i}"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;
+  $('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div>${d.basis==='assessment_without_review'?'<p class="help review-basis">普通评分，不是独立审阅：当前配置未运行所选模式的 Reviewer。正式交付仍需独立审阅完成。</p>':''}<p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(typeof d.expression==='number'&&d.expression<=2&&d.overall==='达到要求')?'<p class="help">表达分偏低但总体仍判为「达到要求」，两者不一致；系统会按此安排一次修订，实际以正文和独立审阅为准。</p>':''}${findings.length?toggle:''}${findings.map((f,i)=>`<details class="finding" data-finding="${i}"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;
   bindSources();
   const toggleEl=$('show-suggestions');
   if(toggleEl)toggleEl.onchange=()=>{showSuggestionMarks=toggleEl.checked;assessment()};

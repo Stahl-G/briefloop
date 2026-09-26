@@ -52,6 +52,28 @@ COMMON_OPENCODE = '''你在运行 BriefLoop 本地应用。用户已授权本轮
 '''
 
 
+OPENCODE_V2_SUBAGENT = ('用 subagent 工具派发；agent 选择当前实际可用的子 agent 类型，description 写简短任务名，prompt 写完整分工与材料/输出路径。'
+    '新任务不传 sessionID，继续已有子任务才传实际返回的 sessionID；默认前台执行，核对返回的 completed 状态后再读取结果，running 不代表已完成。')
+
+
+def opencode_subagent_tool():
+    from .opencode_version import installed_major
+    # Unknown installations keep the existing prompt dialect. Transport and
+    # capability admission independently reject an unverified executable.
+    return 'subagent' if installed_major() == 2 else 'task'
+
+
+def _opencode_common(tool):
+    if tool != 'subagent':
+        return COMMON_OPENCODE
+    return (COMMON_OPENCODE.replace(
+        '用当前 host 暴露的 task 工具派发原生子 agent（subagent_type 按任务选择，如 general/explore 或项目定制子 agent），每个子 agent 使用新上下文。',
+        OPENCODE_V2_SUBAGENT + '每个新子 agent 使用新上下文。').replace(
+        'task 工具返回后，用其 <task id> 标签与返回状态确认子 agent 真实句柄，',
+        'subagent 工具返回后，用其 sessionID（前台结果的 <subagent sessionID="..." state="completed"> 标签）与返回状态确认子 agent 真实句柄，').replace(
+        'task 结果中的 ses_ 开头 ID', 'subagent 返回的 sessionID，原样保留真实值'))
+
+
 EVALUATOR_CONTEXT = '''你是 BriefLoop 已启动的独立 Evaluator 会话，使用本阶段选定的模型与推理档位。
 本会话独立于研究和写作上下文，由你直接完成指定评价，不创建新的 Evaluator 子会话或子 agent，也不启动嵌套模型 CLI。
 核对任务要求、已保存稿件和相关来源，不依赖作者的自我评价，不改写稿件或来源。
@@ -76,9 +98,11 @@ def runtime_instruction(configuration, backend='codex'):
     if backend == 'opencode':
         variant = configuration.get('model_variant') or configuration.get('reasoning_effort')
         variant_label = variant if variant not in (None, '', 'none') else '不指定（Opencode/provider 默认）'
+        dispatch = (OPENCODE_V2_SUBAGENT + '优先不传 model override，让其继承父会话已冻结的模型和推理配置；'
+                    if opencode_subagent_tool() == 'subagent' else
+                    '需要原生子 agent 时，用 task 工具派发，优先不传 model override，让其继承父会话已冻结的模型和推理配置；')
         return (f"本阶段模型固定为 {configuration['model']}；推理 variant：{variant_label}。\n"
-                '需要原生子 agent 时，用 task 工具派发，优先不传 model override，让其继承父会话已冻结的模型和推理配置；'
-                '不因为子接口模型名单而选择其他模型。底层无法继承或启动时如实记录能力限制，不使用嵌套 CLI 绕过。\n')
+                + dispatch + '不因为子接口模型名单而选择其他模型。底层无法继承或启动时如实记录能力限制，不使用嵌套 CLI 绕过。\n')
     effort=configuration.get('reasoning_effort')
     effort_label=effort if effort not in (None,'','none') else '不指定（Codex/provider 默认）'
     provider=configuration.get('model_provider') or '沿用本机 Codex 配置'
@@ -159,6 +183,7 @@ def _research_handoff(store, run_id, plan):
 
 def generation_prompt(store, run, folder, backend='codex'):
     from .models import normalize_search_provider
+    opencode_tool = opencode_subagent_tool() if backend == 'opencode' else None
     raw_requirements=json.loads(run['requirements'])
     req=Requirements.model_validate(raw_requirements).model_dump()
     from .report_time import instructions as time_instructions
@@ -249,13 +274,13 @@ def generation_prompt(store, run, folder, backend='codex'):
 父会话不必先读取技能全文再复制两份；input.role_skills 中的正文仍可按需使用，但不要重复展开已通过技能路径分配的内容。保存实际 dispatch prompt、子 agent 句柄及真实读取确认，不伪造。
 retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generation input.json 注入 Analyst、Evaluator、Maintainer 或 Proposer。他们只接收相应任务、来源及检索结果。'''
     if backend == 'opencode' and managed:
-        search = search.replace('实际 spawn/delegate 消息优先使用精简任务', '实际 task 工具消息优先使用精简任务')
+        search = search.replace('实际 spawn/delegate 消息优先使用精简任务', f'实际 {opencode_tool} 工具消息优先使用精简任务')
     if req['allow_web']:search+='\n'+search_instructions(policy,tool,run['id'])
     registration = 'add-url 或明确的 Tavily extract' if managed and provider=='tavily' else 'add-url'
     discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
                if not sources and req['allow_web'] else
                '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
-    common = COMMON_OPENCODE if backend == 'opencode' else COMMON
+    common = _opencode_common(opencode_tool) if backend == 'opencode' else COMMON
     if backend != 'codex' and backend != 'opencode':
         common = common.replace(
             '用当前 host 暴露的 spawn/delegate 工具，原生子 agent 使用新上下文（工具支持时 fork_turns=none）。',
@@ -267,8 +292,9 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     if backend == 'briefloop-native':
         payload.update(retrieval_strategy=retrieval_strategy, orchestrator_instructions=instructions(deliverable,role='orchestrator')+'\n'+temporal_note)
         (folder/'input.json').write_text(dump(payload),encoding='utf-8')
-    dispatch_word = {'codex':'spawn/delegate', 'opencode':'task 工具'}.get(backend, '宿主原生子任务接口')
-    id_word = '真实子 agent 会话 ID（task 结果中的 ses_ ID）' if backend == 'opencode' else '宿主实际返回的 agent ID'
+    dispatch_word = {'codex':'spawn/delegate', 'opencode':f'{opencode_tool} 工具'}.get(backend, '宿主原生子任务接口')
+    id_word = ('真实子 agent 会话 ID（subagent 返回的 sessionID）' if opencode_tool == 'subagent' else
+               '真实子 agent 会话 ID（task 结果中的 ses_ ID）') if backend == 'opencode' else '宿主实际返回的 agent ID'
     if managed:
         # The note follows whether the provider is metered, not which one it is:
         # DDG search requests and candidate URLs are reserved in the same
@@ -1041,7 +1067,7 @@ class Worker:
         if score and payload.get('single_evaluation') is not False and json.loads(run['requirements']).get('fact_check'):
             # A job queued before this check, or resumed later, stops before any model turn.
             from .review_capability import require_for_fact_check
-            require_for_fact_check(backend,payload.get('review_runtime'))
+            require_for_fact_check(backend,payload.get('review_runtime'),payload.get('review_mode','standard'))
         run['search_provider']=normalize_search_provider(payload.get('search_provider'))
         if 'max_parallel' in payload:run['max_parallel']=payload['max_parallel']
         if payload.get('previous_job_id'):
@@ -1110,7 +1136,7 @@ class Worker:
                     # The final scoring falls back to an ordinary assessment on a
                     # backend without the restricted Reviewer; a checkpoint review
                     # must use the same capability check instead of failing here.
-                    and review_available(backend,payload.get('review_runtime'))):
+                    and review_available(backend,payload.get('review_runtime'),payload.get('review_mode','standard'))):
                 from .review import enqueue_review
                 with self._claim_lock:
                     if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
@@ -1358,11 +1384,12 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
         from .review_capability import review_available,require_for_fact_check
         review_runtime=json.loads(job['payload']).get('review_runtime')
-        if req.get('fact_check'):require_for_fact_check(backend,review_runtime)
+        review_mode=json.loads(job['payload']).get('review_mode','standard')
+        if req.get('fact_check'):require_for_fact_check(backend,review_runtime,review_mode)
         # An internal report without any route to the restricted Reviewer is still
         # scored, but as ordinary assessment: it is labelled as such and cannot
         # satisfy the delivery gate, which asks for a completed review (#726).
-        without_review=not review_available(backend,review_runtime)
+        without_review=not review_available(backend,review_runtime,review_mode)
         if (req.get('writing_mode')=='internal_report' or req.get('fact_check')) and not without_review:
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
@@ -1394,12 +1421,21 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         for child in self.store.rows("SELECT * FROM jobs WHERE kind='review' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC",(parent['id'],brief['id'])):
             previous=json.loads(child['payload'])
             actual=json.loads(stage_job(self.store,child,'evaluator',mode='single')['payload'])['runtime']
-            if actual!=selected or previous.get('agent_backend','codex')!=effective.get('agent_backend','codex'):continue
+            if (actual!=selected or previous.get('agent_backend','codex')!=effective.get('agent_backend','codex')
+                    or previous.get('review_mode','standard')!=effective.get('review_mode','standard')):continue
             marker=self.store.root/'jobs'/child['id']/'review-id.json'
             try:
-                if marker.exists():validate_applicable_review(self.store,json.loads(marker.read_text(encoding='utf-8'))['review_id'],brief['id'])
+                if marker.exists():
+                    admitted=validate_applicable_review(self.store,json.loads(marker.read_text(encoding='utf-8'))['review_id'],brief['id'])
+                    recorded=admitted['data'].get('review_mode')
+                    if ((recorded is not None and recorded!=effective.get('review_mode','standard'))
+                            or (effective.get('review_mode')=='strict' and recorded!='strict')):continue
+                    if admitted['data'].get('review_backend',effective.get('agent_backend','codex'))!=effective.get('agent_backend','codex'):continue
                 else:
-                    expected=sha(dump({'snapshot':_snapshot(self.store,brief['id']),'runtime':previous['runtime']}).encode())
+                    identity={'snapshot':_snapshot(self.store,brief['id']),'runtime':previous['runtime']}
+                    if 'review_mode' in previous:
+                        identity.update(backend=previous.get('agent_backend','codex'),review_mode=previous['review_mode'])
+                    expected=sha(dump(identity).encode())
                     if previous.get('review_input')!=expected:continue
             except (ValueError,OSError):continue
             with self._claim_lock:

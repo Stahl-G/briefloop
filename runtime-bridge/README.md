@@ -9,7 +9,7 @@ Node 20+ 运行 `node src/briefloop/static/runtime-bridge.mjs`。分发文件已
 stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}` 或 `{id,error:{message}}`。异步消息 `{method:"event",params:{execution_id,kind,...}}`。
 
 - `discover {paths?:{runtime_id:absolute_path}}`：PATH 与常见用户安装目录检测、限时版本探测；不登录、不安装、不推理。返回已安装与未安装 runtime 列表。
-- `list_models {runtime_id,path?,cwd?}`：ACP initialize/session-new 取得宿主目录；MiMo/OpenCode `models`；Claude 仅宿主默认项及明确的 `host_default_only`，支持直接输入模型 ID。不会伪造在线模型列表。
+- `list_models {runtime_id,path?,cwd?}`：ACP initialize/session-new 取得宿主目录；MiMo 使用 `models --verbose`；保留 OpenCode v1 的旧 CLI 目录兼容入口，产品中的 OpenCode 模型及档位查询统一使用 Python 管理的 provider API（v2 已移除 `models --verbose`）；Claude 仅宿主默认项及明确的 `host_default_only`，支持直接输入模型 ID。不会伪造在线模型列表。
 - `start {execution_id,runtime_id,cwd,prompt,model?,session_id?,images?:[absolute_path],permission:"runtime-native",allow_web:null,path?,timeout_ms?}`：快速应答，随后发送事件。没有成功结果的退出判为失败。
 - `cancel {execution_id}`：发送 ACP cancel 并终止该执行拥有的进程组。
 - `answer {execution_id,request_id,option_id?}`：回应 ACP 权限请求。只接受宿主列出的 optionId；不传代表取消，不自动批准。
@@ -61,3 +61,7 @@ Pi 的 input 不含 cacheRead/cacheWrite；上下文显示把三者合计为本�
 ## 推理强度
 
 `reasoning_options` 只读取模型元数据，不提交模型提示，并在读取后关闭所启动的 CLI。`start.effort` 映射到 Claude / CodeBuddy / Antigravity 的 `--effort`、MiMo 的 `--variant`、Pi 的 `set_thinking_level`，或 ACP 的 `thought_level` 配置；ACP 与 Pi 校验宿主返回值。档位与宿主支持能力以 `src/briefloop/static/runtime-reasoning.json` 和宿主元数据为准。未公开独立档位的宿主保留原生默认值，不用提示词模拟。
+
+OpenCode 的产品模型和档位目录共用既有受管理服务与缓存，不额外运行 CLI 模型探针或连接常驻后台服务。按所选 provider/model 返回它实际公开的 variant；模型缺失、目录读取失败与没有公开档位分别处理，不用固定的 low/high 列表替代真实能力。`briefloop doctor` 的 `opencode_supported_majors` 仅声明适配范围，不表示已验证本机协议、登录或模型可调用。
+
+OpenCode 1.x / 2.x 都支持普通独立审阅，不把工具只读等同于核查包上下文完全隔离。严格审阅目前使用 BriefLoop Agent 专用核查工具；明确选择严格模式时不自动降级。模式与实际后端保存在新审阅记录中，历史缺字段保留未知。版本探针按可执行文件身份与有界有效期缓存，不随页面轮询反复启动。

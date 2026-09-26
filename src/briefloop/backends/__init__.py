@@ -44,12 +44,12 @@ BACKEND_LABELS = {
 # backend whose tool policy was verified for that contract may declare it; an
 # OS read-only sandbox alone is not enough. Unlisted backends never claim it.
 CAPABILITIES = {
-    'codex': frozenset({'steer', 'cancel', 'questions', 'subagents', 'native_search'}),
-    'opencode': frozenset({'cancel', 'subagents', 'native_search', 'restricted_review'}),
+    'codex': frozenset({'steer', 'cancel', 'questions', 'subagents', 'native_search', 'standard_review'}),
+    'opencode': frozenset({'cancel', 'subagents', 'native_search', 'standard_review'}),
     # Reviewer isolation here is our own tool proxy (packet-only reads, no
     # built-in tools at all), verified in native-engine/engine.test.mjs and the
     # phase-1 acceptance, not delegated to a host's permission UI.
-    'briefloop-native': frozenset({'cancel', 'restricted_review', 'subagents'}),
+    'briefloop-native': frozenset({'cancel', 'restricted_review', 'standard_review', 'subagents'}),
 }
 
 

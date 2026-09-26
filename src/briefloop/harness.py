@@ -154,7 +154,7 @@ class HarnessManager:
         message.pop("prompt",None)
         return message
     def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,allow_web=False,message_id=None,search_provider=None,search_policy=None,source_ids=None):
-        runtime={**(runtime or {}),'permission':'workspace-write'}
+        runtime={'permission':'workspace-write',**(runtime or {})}
         if search_policy is not None:runtime['search_policy']=search_policy
         if search_provider is not None:
             from .models import normalize_search_provider

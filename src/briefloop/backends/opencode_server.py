@@ -1,8 +1,8 @@
 """Opencode backend transport, managed by BriefLoop.
 
-Spawns ``opencode serve`` as a child process (loopback only) and drives the
-v1 message surface — the same surface the official ``opencode run --attach``
-client uses:
+Spawns ``opencode serve`` as a child process (loopback only), selects the
+versioned protocol, and preserves the existing conversation port. The v1
+surface is the same surface the official ``opencode run --attach`` uses:
 
 * ``POST /session?directory=...`` with ``{title, agent, model, permission}``
 * ``POST /session/{id}/prompt_async`` with ``{model, agent, system, parts}``
@@ -23,6 +23,8 @@ Shapes verified against opencode 1.18.20 (spec embedded in ``GET /doc``):
 * a turn spans many assistant messages; intermediate ones complete with
   ``finish='tool-calls'``. Only ``finish='stop'`` ends the turn.
 
+The v2 adapter in ``opencode_v2`` uses the separate /api routes and verifies
+stored model, effort, directory and permissions before sending a prompt.
 Only the standard library is used.
 """
 import base64
@@ -39,10 +41,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from ..platform_support import OwnedProcess
+from ..platform_support import OwnedProcess, cli_command
 
 
-EXPECTED_MAJOR = 1
+SUPPORTED_MAJORS = (1, 2)
+EXPECTED_MAJOR = 1  # Legacy consumers; new discovery uses SUPPORTED_MAJORS.
+
+def executable_version(executable, environment=None):
+    import re
+    env = dict(os.environ if environment is None else environment)
+    env.pop('ELECTRON_RUN_AS_NODE', None)
+    result = subprocess.run(cli_command([executable, "--version"]), stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, env=env)
+    match = re.search(r"(?:^|\s)v?(\d+\.\d+\.\d+(?:[-+][^\s]+)?)", result.stdout.strip())
+    if result.returncode or not match:
+        raise OpencodeError("无法确认 OpenCode CLI 版本；未启动服务")
+    version = match.group(1)
+    if int(version.split(".", 1)[0]) not in SUPPORTED_MAJORS:
+        raise OpencodeError(f"OpenCode {version} 未验证，仅支持 1.x / 2.x")
+    return version
 
 
 class OpencodeError(RuntimeError):
@@ -84,18 +101,21 @@ def _free_port():
 
 
 class OpencodeServerClient:
-    def __init__(self, log_directory, *, port=0, password=None, timeout=20):
+    def __init__(self, log_directory, *, port=0, password=None, timeout=20, executable=None, environment=None):
         root = Path(log_directory)
         root.mkdir(parents=True, exist_ok=True)
         from ..host_bins import SEARCH_HINT, find as _find_host_bin
-        executable = _find_host_bin('opencode')
+        executable = executable or _find_host_bin('opencode')
         if not executable:
             raise RuntimeError('未找到 Opencode CLI；'+SEARCH_HINT)
         self.executable = executable
+        self.cli_version = executable_version(executable, environment)
+        self.major = int(self.cli_version.split(".", 1)[0])
         self.timeout = timeout
         self.port = port or _free_port()
         self.password = password or secrets.token_urlsafe(24)
-        env = {**os.environ, 'OPENCODE_SERVER_PASSWORD': self.password}
+        env = {**(os.environ if environment is None else environment), 'OPENCODE_SERVER_PASSWORD': self.password,
+               'OPENCODE_PASSWORD': self.password}
         from ..agent_commands import opencode_shell
         self.shell = opencode_shell()
         if self.shell:
@@ -107,7 +127,8 @@ class OpencodeServerClient:
             # This HTTP server needs no stdin; sharing that pipe can stall its
             # startup on Windows while the ownership watcher is reading it.
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=self._stderr, env=env, parent_death=True)
+            stderr=self._stderr, env=env, parent_death=True,
+            **({'cwd': str(root)} if self.major == 2 else {}))
         self._lock = threading.Lock()
         try:
             self.version = self._wait_ready()
@@ -150,23 +171,34 @@ class OpencodeServerClient:
                 raise RuntimeError('opencode serve 已退出')
             try:
                 # /global/health requires auth once a server password is set.
-                request = urllib.request.Request(self.base_url + '/global/health',
+                path = '/api/info' if self.major == 2 else '/global/health'
+                request = urllib.request.Request(self.base_url + path,
                                                  headers=self._headers())
                 with urllib.request.urlopen(request, timeout=2) as response:
                     info = json.loads(response.read())
-                if info.get('healthy'):
+                if isinstance(info, dict) and (self.major == 2 or info.get('healthy')):
                     version = str(info.get('version', ''))
-                    if not version.startswith(str(EXPECTED_MAJOR) + '.'):
-                        raise RuntimeError(f'opencode 主版本 {version} 未验证，仅支持 1.x')
+                    if not version.startswith(str(self.major) + '.'):
+                        raise RuntimeError(f'OpenCode CLI 与服务版本不一致：{self.cli_version} / {version}')
                     return version
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 last = exc
             time.sleep(.3)
         raise RuntimeError(f'opencode serve 未就绪: {last}')
 
+    def _v2(self):
+        if getattr(self, 'major', 1) != 2:
+            return None
+        if not hasattr(self, '_v2_adapter'):
+            from .opencode_v2 import V2
+            self._v2_adapter = V2(self)
+        return self._v2_adapter
+
     # -- v1 session surface -------------------------------------------------
 
     def create_session(self, title, *, agent='build', model=None, permission=None, directory=None, require_permissions=False):
+        if api := OpencodeServerClient._v2(self):
+            return api.create_session(title, agent=agent, model=model, permission=permission, directory=directory, require_permissions=require_permissions)
         body = {'title': title}
         if agent:
             body['agent'] = agent
@@ -198,6 +230,8 @@ class OpencodeServerClient:
         return path
 
     def prompt_async(self, session_id, text, *, model=None, variant=None, agent='build', files=None, system=None, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.prompt_async(session_id, text, model=model, variant=variant, agent=agent, files=files, system=system, directory=directory)
         parts=[{'type':'text','text':text}]
         for item in files or []:
             parts.append({'type':'file','mime':item['mime'],'filename':item.get('filename','image'),
@@ -218,29 +252,43 @@ class OpencodeServerClient:
         self._request('POST', self._session_path(session_id, 'prompt_async', directory), body)
 
     def messages(self, session_id, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.messages(session_id, directory=directory)
         return self._request('GET', self._session_path(session_id, 'message', directory))
 
     def session_status(self, session_id, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.session_status(session_id, directory=directory)
         path = '/session/status'
         if directory is not None:
             path += '?directory=' + urllib.parse.quote(str(directory), safe='')
         return (self._request('GET', path) or {}).get(session_id, {})
 
     def abort(self, session_id, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.abort(session_id, directory=directory)
         return self._request('POST', self._session_path(session_id, 'abort', directory))
 
     def children(self, session_id, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.children(session_id, directory=directory)
         return self._request('GET', self._session_path(session_id, 'children', directory))
 
     def paths(self,directory):
+        if api := OpencodeServerClient._v2(self):
+            return api.paths(directory)
         return self._request('GET','/path?directory='+urllib.parse.quote(str(directory),safe=''))
 
     def providers(self, directory=None):
         """Provider catalog with models (for the model picker, not inference)."""
+        if api := OpencodeServerClient._v2(self):
+            return api.providers(directory)
         return self._request('GET', '/config/providers' + ('?directory=' + urllib.parse.quote(str(directory), safe='') if directory else ''))
 
     def provider_settings(self):
         """Project only editable public fields; native config may contain secrets."""
+        if api := OpencodeServerClient._v2(self):
+            return api.provider_settings()
         data=self._request('GET','/global/config')
         protocols={'@ai-sdk/openai-compatible':'chat-completions',
                    '@ai-sdk/openai':'responses','@ai-sdk/anthropic':'anthropic-messages'}
@@ -261,6 +309,8 @@ class OpencodeServerClient:
 
     def probe_provider_catalog(self, provider):
         """Read directory only; inference/tool success is tested separately."""
+        if api := OpencodeServerClient._v2(self):
+            raise ValueError('OpenCode v2 仅提供运行时模型目录；不读取旧凭据直接探测 Provider，请在 OpenCode 中测试连接')
         configs=self.provider_settings()
         config=next((c for c in configs if c['provider']==provider),None)
         if config is None:raise ValueError('请先保存 Provider')
@@ -305,6 +355,8 @@ class OpencodeServerClient:
 
     def configure_provider(self, directory, provider, model, base_url, api_key=None, supports_images=None, protocol="chat-completions", name=None, context_limit=None, output_limit=None):
         """Use native configuration/auth APIs; never return credentials or config."""
+        if api := OpencodeServerClient._v2(self):
+            raise ValueError('OpenCode v2 尚不支持从 BriefLoop 保存 Provider 配置；请在 OpenCode 中配置后刷新模型目录')
         query = '?directory=' + urllib.parse.quote(str(directory), safe='')
         packages={'chat-completions':'@ai-sdk/openai-compatible',
                   'responses':'@ai-sdk/openai','anthropic-messages':'@ai-sdk/anthropic'}

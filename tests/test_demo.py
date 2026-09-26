@@ -10,7 +10,7 @@ from briefloop.export_jobs import enqueue_export, generate_word, output_path
 
 
 @pytest.mark.real_review_capabilities
-def test_demo_is_saved_editable_unreviewed_and_exports_without_a_model(tmp_path):
+def test_demo_is_saved_editable_unreviewed_and_exports_without_a_model(tmp_path, monkeypatch):
     store = Store(tmp_path)
     result = create_demo(store)
     brief = store.one('briefs', result['version_id'])
@@ -32,11 +32,20 @@ def test_demo_is_saved_editable_unreviewed_and_exports_without_a_model(tmp_path)
     reopened = Store(tmp_path)
     assert reopened.meta('demo')['version_id'] == brief['id']
     assert reopened.one('briefs', edited['id'])['markdown'] == edited['markdown']
-    # Codex has no verified restricted Reviewer: the review is refused before queueing.
+    # Explicit model selection admits ordinary review, but must never imply
+    # strict isolation. Creating the demo itself still schedules no model work.
+    selected = {'version_id': brief['id'],
+                'runtime': {'model': 'explicit-review-model', 'reasoning_effort': 'high'}}
+    ordinary = store.enqueue('review', selected)
+    assert json.loads(ordinary['payload'])['review_mode'] == 'standard'
+    before = len(store.rows('SELECT * FROM jobs'))
     with pytest.raises(ValueError) as refused:
-        store.enqueue('review', {'version_id': brief['id'],
-            'runtime': {'model': 'explicit-review-model', 'reasoning_effort': 'high'}})
+        store.enqueue('review', {**selected, 'review_mode': 'strict'})
     assert refused.value.code == 'review_backend_unsupported'
+    assert len(store.rows('SELECT * FROM jobs')) == before
+    # An installed supported OpenCode is a second ordinary route; this fixture
+    # checks admission only and never starts or authenticates a native CLI.
+    monkeypatch.setattr('briefloop.review_capability._opencode_major', lambda: 1)
     explicit = store.enqueue('review', {'version_id': brief['id'], 'agent_backend': 'opencode',
         'runtime': {'model': 'synthetic/explicit-review-model'}})
     assert json.loads(explicit['payload'])['runtime']['model'] == 'synthetic/explicit-review-model'

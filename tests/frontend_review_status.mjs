@@ -1,16 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import vm from 'node:vm';
 import {reviewPending,withoutSupersededRetries,factCheckHTML,locatorText} from '../frontend/review-status.js';
-import {section} from './source_section.mjs';
-
-const source=readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const renderer=vm.createContext({esc:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))});
-vm.runInContext(section(source,'function reviewResultHTML(','\n}','frontend/app.js')+'\n}',renderer);
+import {reviewResultHTML} from '../frontend/review-results.js';
+const renderer={reviewResultHTML};
 
 test('review results render frozen new and legacy checks, not current run requirements',()=>{
- const review={status:'complete',protocol:'clauses_v1',requirement_items:[{requirement_id:'r1',kind:'objective',text:'Frozen <objective>'}],
+ const review={status:'complete',review_mode:'standard',review_backend:'opencode',protocol:'clauses_v1',requirement_items:[{requirement_id:'r1',kind:'objective',text:'Frozen <objective>'}],
   clause_items:[{clause_id:'c1',kind:'reader_content',source_quote:'Frozen <content>',instruction:'Explain it'},
                 {clause_id:'c2',kind:'research_method',source_quote:'Frozen method',instruction:'Check source'}],
   result:{summary:'Saved summary',coverage_scan_complete:true,clause_checks:[
@@ -22,6 +17,7 @@ test('review results render frozen new and legacy checks, not current run requir
                     '未完成','未核验','部分完成','Missing &lt;reason&gt;','&lt;script&gt;basis&lt;/script&gt;','Legacy saved reason'])assert.ok(html.includes(text),text);
  assert.ok(!html.includes('<script>')&&!html.includes('Wrong current mapping')&&!html.includes('尚无逐项要求核查结果'));
  assert.ok(html.includes('已返回审阅结果')&&!html.includes('全部要求已完成'));
+ assert.ok(html.includes('普通审阅')&&html.includes('执行后端：opencode')&&!html.includes('严格审阅'));
  const legacy=renderer.reviewResultHTML({...review,protocol:'legacy',result:{requirement_checks:review.result.requirement_checks}},{});
  assert.ok(legacy.includes('Frozen &lt;objective&gt;')&&legacy.includes('Legacy saved reason'));
 });

@@ -19,6 +19,7 @@ def launch(args, **kwargs):
     return original([sys.executable, '-c',
         'import sys; print("EOF" if not sys.stdin.buffer.read(1) else "SHARED", flush=True)'], **kwargs)
 module.OwnedProcess = launch
+module.executable_version = lambda executable, environment=None: '1.18.31'
 def ready(self):
     output, _ = self.process.communicate(timeout=3)
     assert output.strip() == b'EOF', output
