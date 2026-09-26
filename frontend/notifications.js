@@ -48,7 +48,9 @@ export function activityCenter({api,getState,page,openBrief,showSettings,setting
    if(!dot){dot=document.createElement('span');dot.className='notification-dot';dot.setAttribute('role','img');button.append(dot)}
    const count=value.counts[category]||0;dot.hidden=!count;dot.setAttribute('aria-label',`${count} 条未读${categoryNames[category]}动态`);
   }
-  $('notifications-open').textContent=value.unread?`动态 · ${value.unread} 条未读`:'动态';
+  // The icon rail hides the text, so the accessible name carries the unread count too.
+  const label=value.unread?`动态 · ${value.unread} 条未读`:'动态';
+  $('notifications-open').querySelector('span').textContent=label;$('notifications-open').setAttribute('aria-label',label);
   $('notifications-open').classList.toggle('has-unread',value.unread>0);
   $('notifications-read-all').disabled=!value.unread;
   const next=JSON.stringify(value.items);if(signature!==next){

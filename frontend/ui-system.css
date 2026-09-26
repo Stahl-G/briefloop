@@ -40,6 +40,7 @@ h3{font-size:var(--text-lg);line-height:var(--leading-tight);font-weight:var(--f
 .session-sidebar{background:var(--color-surface-soft);border-color:var(--color-border)}
 .session-sidebar :is(.workspace-switch-label,.session-meta,.session-meta time,.sidebar-empty,.sidebar-connection small,.session-list-actions button){font-size:var(--text-xs);color:var(--color-text-muted);line-height:var(--leading-normal)}
 .session-sidebar #archive-completed,.session-sidebar #connection{font-size:var(--text-xs);line-height:var(--leading-normal)}
+.session-list-controls select,.session-list-controls button:not(:disabled){font-size:var(--text-xs);color:var(--color-text-muted)}
 .session-sidebar nav button{font-size:var(--text-sm);font-weight:var(--fw-medium);border-radius:var(--radius-sm);color:var(--color-text-muted);height:var(--control-h-md)}
 .session-sidebar nav button.active{background:var(--color-primary-soft);color:var(--color-primary)}
 .session-sidebar :is(.session-item.active,.session-item:hover){background:var(--color-primary-soft)}
