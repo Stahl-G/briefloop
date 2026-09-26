@@ -587,6 +587,71 @@ def test_preview_and_check_gates(tmp_path, monkeypatch):
     assert ok['target']['kind'] == 'export' and ok['target']['name'] == 'report.docx'
 
 
+def _published_table_brief(store):
+    def para(text):
+        return {'type': 'paragraph', 'content': [{'type': 'text', 'text': text}]}
+    def row(cells, kind='tableCell'):
+        return {'type': 'tableRow', 'content': [
+            {'type': kind, 'content': [para(str(cell))]} for cell in cells]}
+    document = {'type': 'doc', 'content': [{'type': 'table', 'content': [
+        row(['品名', '销量'], 'tableHeader'), row(['甲', '1']), row(['乙', '2']),
+        row(['合计', '3'])]}]}
+    source = store.add_source('Synthetic', 'Sales figures.')
+    run = store.create_run({'title': 'Sheet probe', 'objective': 'Explain sales', 'allow_web': False},
+                           [source['id']])
+    return store.publish(run['id'], {'title': 'Sheet probe', 'markdown': 'Sales.',
+                                     'editor_document': document})
+
+
+def _completed_xlsx(store, brief):
+    from briefloop.xlsx_export import enqueue_export_xlsx, generate_xlsx
+    queued = enqueue_export_xlsx(store, brief['id'])
+    job = store.one('jobs', queued['id'])
+    result = generate_xlsx(store, job, threading.Event())
+    store.update_job(job['id'], 'complete', result=result)
+    return store.one('jobs', job['id']), result
+
+
+def test_explicit_check_and_preview_admit_xlsx_export_jobs(tmp_path, monkeypatch):
+    install_stub(tmp_path, monkeypatch)
+    store = _workspace(tmp_path)
+    brief = _published_table_brief(store)
+    job, result = _completed_xlsx(store, brief)
+    # Kind gate passed, request stops at the switch/binary gate.
+    monkeypatch.setattr(host_bins, 'EXTRA_DIRS', ())
+    monkeypatch.setenv('PATH', str(tmp_path / 'empty-bin'))
+    office_cli._clear_caches()
+    store.update_settings({'officecli_enabled': True})
+    with pytest.raises(ValueError, match='未检测到 OfficeCLI 或未开启'):
+        office_cli.run_check_for_job(store, job['id'])
+    install_stub(tmp_path, monkeypatch)  # bring the grammar stub back
+    view = office_cli.run_check_for_job(store, job['id'])
+    assert view['job_kind'] == 'export_xlsx' and view['file_sha256'] == result['sha256']
+    assert view['validate']['status'] == 'ok'
+    preview = office_cli.render_preview(store, {'job_id': job['id'], 'pages': [1]})
+    assert preview['target'] == {'kind': 'export', 'id': job['id'], 'name': 'report.xlsx'}
+    # Old kinds keep the rejection, now worded for both formats.
+    with pytest.raises(ValueError, match='只能对 Word/Excel 导出或正式交付任务'):
+        office_cli.run_check_for_job(store, store.enqueue('assess', {'version_id': brief['id']})['id'])
+    with pytest.raises(ValueError, match='不是 Word/Excel 导出或正式交付任务'):
+        office_cli.render_preview(store, {'job_id': store.enqueue('assess', {'version_id': brief['id']})['id']})
+
+
+def test_version_office_view_stays_bound_to_word_and_release_artifacts(tmp_path, monkeypatch):
+    """/api/version-checks and the review status describe the formal Word
+    deliverable; a newer Excel export must not take that view over."""
+    install_stub(tmp_path, monkeypatch)
+    store = _workspace(tmp_path)
+    store.update_settings({'officecli_enabled': True})
+    brief = _published_table_brief(store)
+    word_job, word_result = _completed_export(store, brief)  # switch on: checks recorded
+    xlsx_job, xlsx_result = _completed_xlsx(store, brief)    # newer job, newer checks
+    assert office_cli.run_check_for_job(store, xlsx_job['id'])['file_sha256'] == xlsx_result['sha256']
+    assert xlsx_job['id'] != word_result['sha256']  # two distinct artifacts under one version
+    view = office_cli.version_office_view(store, brief['id'])
+    assert view['job_kind'] == 'export_docx' and view['file_sha256'] == word_result['sha256']
+
+
 def test_preview_requires_the_binary_even_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv('PATH', '/usr/bin:/bin')
     monkeypatch.setattr(host_bins, 'EXTRA_DIRS', ())

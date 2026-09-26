@@ -397,22 +397,29 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,research_record(store,store.one('briefs',q['version'][0])),download_name='research-notes.json' if q.get('download') else None)
                 elif u.path=='/api/export-status':
                     job=store.one('jobs',q['job'][0])
-                    if job['kind']!='export_docx':raise ValueError('不是导出任务')
+                    if job['kind'] not in ('export_docx','export_xlsx'):raise ValueError('不是导出任务')
                     self.send(200,job)
                 elif u.path=='/api/export-file':
                     if q.get('workspace_id',[store.meta('workspace_id')])[0]!=store.meta('workspace_id'):
                         raise Conflict('工作区身份已变化，未下载文件')
                     from .export_jobs import output_path
+                    from .xlsx_export import output_path_xlsx
                     job=store.one('jobs',q['job'][0])
-                    if job['status']!='complete':raise ValueError('Word 尚未制作完成')
-                    data=output_path(store,job).read_bytes()
+                    xlsx=job['kind']=='export_xlsx'
+                    if job['kind'] not in ('export_docx','export_xlsx'):raise ValueError('不是导出任务')
+                    if job['status']!='complete':raise ValueError('Excel 尚未制作完成' if xlsx else 'Word 尚未制作完成')
+                    data=(output_path_xlsx(store,job) if xlsx else output_path(store,job)).read_bytes()
                     import hashlib
-                    if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
+                    if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:
+                        raise ValueError('Excel 文件已变化，请重新生成' if xlsx else 'Word 文件已变化，请重新生成')
                     brief=store.one('briefs',json.loads(job['payload'])['version_id'])
                     title=json.loads(brief['detail']).get('title') or '报告'
                     import re
                     name=re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', title).strip('. ')[:120] or '报告'
-                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name=name+'.docx')
+                    if xlsx:
+                        self.send(200,data,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',download_name=name+'.xlsx')
+                    else:
+                        self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name=name+'.docx')
                 elif u.path=='/api/release-state':
                     from .release import eligibility,list_releases
                     version=q['version'][0];brief=store.one('briefs',version)
@@ -684,6 +691,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))
+                elif path=='/api/export-xlsx':
+                    from .xlsx_export import LAYOUTS, enqueue_export_xlsx
+                    layout=body.get('layout') or 'sheets'
+                    if layout not in LAYOUTS:raise ValueError('未知 Excel 版式')
+                    result=enqueue_export_xlsx(store,body['version_id'],layout)
                 elif path=='/api/demo':
                     from .demo import create_demo
                     result=create_demo(store)

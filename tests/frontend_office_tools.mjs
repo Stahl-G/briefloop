@@ -133,13 +133,16 @@ test('word export rows add office summary and preview only when enabled',()=>{
  // job kind, so the row must not offer the 400ing control.
  const opened=[];
  const auditJob={id:'job_audit',kind:'audit_bundle',status:'complete',payload:JSON.stringify({version_id:'v1',run_id:'r1'}),result:JSON.stringify({path:'jobs/job_audit/report-audit.zip'})};
- const enabled=setup({state:{jobs:[job,auditJob],office:{installed:true,enabled:true}},current:{id:'v1',run_id:'r1'},
+ const excelJob={...job,id:'job_excel',kind:'export_xlsx',result:JSON.stringify({download_url:'/saved.xlsx'})};
+ const enabled=setup({state:{jobs:[job,auditJob,excelJob],office:{installed:true,enabled:true}},current:{id:'v1',run_id:'r1'},
   buttons:[{dataset:{officePreview:'job_1'},onclick:null}],
   office:{officeEnabled:()=>true,officeCheckSummary:()=>'OfficeCLI 质检通过',openPreview:target=>opened.push(target)}});
  vm.runInContext('renderWordExports()',enabled.c);
  assert.match(enabled.html,/OfficeCLI 质检通过/);
  assert.match(enabled.html,/data-office-preview="job_1"/);
  assert.doesNotMatch(enabled.html,/data-office-preview="job_audit"/);
+ assert.match(enabled.html,/data-office-preview="job_excel"/);
+ assert.match(enabled.html,/下载工作稿 Excel/);
  assert.match(enabled.html,/下载审计包/);
  const bound=enabled.box.querySelectorAll()[0];
  assert.equal(typeof bound.onclick,'function');
