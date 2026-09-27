@@ -228,7 +228,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         sidecar=store.root/'sources'/(source['id']+'.provenance.json')
                         if sidecar.is_file():
                             try:
-                                meta=json.loads(sidecar.read_text())
+                                meta=json.loads(sidecar.read_text(encoding='utf-8'))
                                 source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
                             except (ValueError,OSError):pass
                     self.send(200,snapshot)
@@ -403,13 +403,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     for f in sorted(root.glob('round-*/comparison/input.json')):
                         comparison=f.with_name('comparison.json')
                         from .exports import reader_markdown
-                        cases=json.loads(f.read_text())
+                        cases=json.loads(f.read_text(encoding='utf-8'))
                         for case in cases:
                             for side in ('baseline','candidate'):
                                 case[side]['reader_markdown']=reader_markdown(store,case[side])
                                 grades=store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(case[side]['id'],))
                                 case[side]['assessment']=json.loads(grades[0]['data']) if grades else None
-                        rounds.append({'cases':cases,'result':json.loads(comparison.read_text()) if comparison.exists() else None})
+                        rounds.append({'cases':cases,'result':json.loads(comparison.read_text(encoding='utf-8')) if comparison.exists() else None})
                     self.send(200,{'job':job,'rounds':rounds})
                 elif u.path=='/api/company-context':
                     from .company_context import snapshot
