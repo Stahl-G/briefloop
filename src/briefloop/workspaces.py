@@ -30,7 +30,7 @@ _LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 
 def _recent(parent):
     try:
-        value = json.loads((parent / REGISTRY).read_text())
+        value = json.loads((parent / REGISTRY).read_text(encoding='utf-8'))
         return [Path(p).expanduser().resolve() for p in value.get('recent', [])[:20]
                 if isinstance(p, str) and Path(p).expanduser().is_absolute()]
     except (OSError, ValueError, TypeError, AttributeError):
@@ -50,7 +50,7 @@ def _workspace_id(root):
 def _validated_info(root, workspace_id):
     """Read and validate server.json once so callers share one validated pid/url."""
     try:
-        info = json.loads((root / 'server.json').read_text())
+        info = json.loads((root / 'server.json').read_text(encoding='utf-8'))
         pid = info['pid']; url = info['url'].rstrip('/')
         parsed = urlsplit(url)
         if (not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0
