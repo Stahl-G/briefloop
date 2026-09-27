@@ -232,7 +232,7 @@ def generate_bundle(store, job, cancelled):
         blobs[name] = dump(value).encode()
 
     stage('按明确选择收集正式报告、依据和核查记录')
-    source_index = json.loads(safe_file(folder, 'packet/index.json').read_text())['sources']
+    source_index = json.loads(safe_file(folder, 'packet/index.json').read_text(encoding='utf-8'))['sources']
     source_files = {sid: set() for sid in permissions}
     for item in source_index:
         for key in ('text_file', 'readable_text_file', 'original_file', 'cells_file'):
@@ -241,7 +241,7 @@ def generate_bundle(store, job, cancelled):
         for name in item.get('visual_files', []):
             source_files[item['id']].add('packet/' + name)
     all_original = all(item['mode'] == 'original' for item in permissions.values())
-    target = json.loads(safe_file(folder, 'packet/target.json').read_text())
+    target = json.loads(safe_file(folder, 'packet/target.json').read_text(encoding='utf-8'))
     restricted_figure_files = {}
     for figure in target.get('figures', []):
         restricted = [sid for sid in figure['source_ids'] if permissions[sid]['mode'] != 'original']
@@ -291,7 +291,7 @@ def generate_bundle(store, job, cancelled):
             omissions.append({'file': name, 'reason': '存在未授权原件；省略由 target.json 派生的审阅视图，以过滤后的 target.json 为准'})
             continue
         if name.endswith('.json'):
-            value = json.loads(safe_file(folder, name).read_text())
+            value = json.loads(safe_file(folder, name).read_text(encoding='utf-8'))
             if not all_original and not matching and not name.startswith('packet/figures/') and name != 'packet/output.schema.json':
                 json_blob(name, value)
                 continue

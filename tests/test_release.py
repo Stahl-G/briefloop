@@ -336,8 +336,8 @@ def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkey
 
     def register_with_source_copy(store, run_id, image, title, caption, source_ids, data_path, script_path):
         raw = store.source_text(source_ids[0])
-        data_path.write_text(dump({'raw_source_extract': raw, 'plotted_revenue_millions': 12}))
-        script_path.write_text('source_text = ' + repr(raw) + '\nprint(12 * 1000000)')
+        data_path.write_text(dump({'raw_source_extract': raw, 'plotted_revenue_millions': 12}), encoding='utf-8')
+        script_path.write_text('source_text = ' + repr(raw) + '\nprint(12 * 1000000)', encoding='utf-8')
         return original_register(store, run_id, image, title, caption, source_ids, data_path, script_path)
 
     monkeypatch.setattr(figures, 'register_figure', register_with_source_copy)
@@ -345,7 +345,7 @@ def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkey
     release, job = complete_release(store, brief)
     report_bytes = release_file(store, release['id']).read_bytes()
     all_source_ids = [item['id'] for item in release['data']['snapshot']['sources']]
-    packet_index = json.loads((store.root / release['data']['packet_path'] / 'index.json').read_text())
+    packet_index = json.loads((store.root / release['data']['packet_path'] / 'index.json').read_text(encoding='utf-8'))
     private_excerpt=store.source_text(source['id']).splitlines()[1]
     assert private_excerpt in release['data']['review_result']['summary']
     assert private_excerpt in release['data']['review_result']['claim_checks'][0]['reason']
