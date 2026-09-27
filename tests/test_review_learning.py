@@ -16,7 +16,7 @@ def attempt(tmp_path):
     brief=store.publish(run['id'],{'title':'Report','markdown':'Revenue 12 million USD.'},version_id='brief_'+job['id'][4:])
     payload={**json.loads(job['payload']),'skill_id':None}
     folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
-    (folder/'input.json').write_text(dump({'requirements':json.loads(run['requirements'])}))
+    (folder/'input.json').write_text(dump({'requirements':json.loads(run['requirements'])}),encoding='utf-8')
     return store,source,run,job,brief,payload
 
 
@@ -44,12 +44,12 @@ def test_legacy_input_can_only_prove_complete_saved_ids_and_hashes(tmp_path):
     assert _baseline_for_attempt(store,run,payload) is None
     folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
     legacy={'requirements':json.loads(run['requirements']),'sources':[{'id':source['id'],'hash':source['hash'],'original_path':None}]}
-    path=folder/'input.json';path.write_text(dump(legacy))
+    path=folder/'input.json';path.write_text(dump(legacy),encoding='utf-8')
     assert _baseline_for_attempt(store,run,payload)['id']==brief['id']
     later=store.add_source('Supplement','A new metric.')
     store.attach_source(run['id'],later['id'])
     assert _baseline_for_attempt(store,run,payload) is None
-    path.write_text(dump({'sources':legacy['sources']+[{'id':later['id']}]}))
+    path.write_text(dump({'sources':legacy['sources']+[{'id':later['id']}]}),encoding='utf-8')
     assert _baseline_for_attempt(store,run,payload) is None
 
 
@@ -64,7 +64,7 @@ def test_original_hash_change_and_legacy_missing_raw_hash_invalidate_baseline(tm
     original.write_bytes(b'Original input')
     store.update_job(job['id'],'complete',result={'version_id':brief['id'],'learning_conditions':_conditions(store,run,payload)})
     folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
-    (folder/'input.json').write_text(dump({'sources':[{'id':source['id'],'hash':source['hash'],'original_path':str(original)}]}))
+    (folder/'input.json').write_text(dump({'sources':[{'id':source['id'],'hash':source['hash'],'original_path':str(original)}]}),encoding='utf-8')
     assert _baseline_for_attempt(store,run,payload) is None
 
 
@@ -105,7 +105,7 @@ def test_verified_hook_is_idempotent_and_historical_replay_uses_packet_only(tmp_
     assert original['sources'][0]['id']==source['id']
     later=store.add_source('Subsequent event','New quarter changed the outlook.')
     store.attach_source(run['id'],later['id'])
-    (store.root/source['path']).write_text('Later local corruption must not rewrite saved evidence.')
+    (store.root/source['path']).write_text('Later local corruption must not rewrite saved evidence.',encoding='utf-8')
     # Simulate recovery after Review was committed but feedback was not. Reading
     # today's originals would now fail; the accepted packet is still intact.
     with store.tx() as connection:connection.execute('DELETE FROM feedback WHERE id=?',(first[0],))
@@ -126,7 +126,7 @@ def test_unresolved_is_not_success_and_packet_history_tampering_is_rejected(tmp_
     assert not store.rows("SELECT id FROM feedback WHERE kind='review_correction'")
     store,source,run,before,after,response,result=reviewed_response(tmp_path/'resolved')
     path=store.root/'review_after/packet/history/responses.json'
-    path.write_text('[]')
+    path.write_text('[]',encoding='utf-8')
     with pytest.raises(ValueError,match='核查包文件'):
         record_verified_corrections(store,'review_after')
 
@@ -140,7 +140,7 @@ def test_cached_trial_uses_actual_result_version_and_rejects_source_drift(tmp_pa
     snapshot=source_snapshot(store,trial_run['id']);conditions=_conditions(store,case,payload)
     store.update_job(trial['id'],'complete',result={'version_id':final['id'],'source_snapshot':snapshot,'learning_conditions':conditions})
     folder=store.root/'trial-stage';folder.mkdir(exist_ok=True)
-    (folder/'trial.json').write_text(dump({'run_id':trial_run['id'],'job_id':trial['id'],'source_snapshot':snapshot,'conditions':conditions,'skill':None}))
+    (folder/'trial.json').write_text(dump({'run_id':trial_run['id'],'job_id':trial['id'],'source_snapshot':snapshot,'conditions':conditions,'skill':None}),encoding='utf-8')
     result=_generate_trial(store,{'payload':dump(payload),'_runtime':object()},case,None,folder,'baseline')
     assert result['id']==final['id']
     added=store.add_source('New','New facts');store.attach_source(case['id'],added['id'])
