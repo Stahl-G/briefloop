@@ -88,7 +88,7 @@ def _sync_wiki(store,study):
     text+='\n反馈来源：'+', '.join(str(x.get('source'))+' ['+('人类明确要求' if x.get('learning_intent')=='explicit_requirement' else '自动发现' if x.get('origin')=='automatic' else '人类反馈')+']' for x in state['feedback'])+'\n'
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
     destination=store.root/'wiki/index.md'
-    temporary=destination.with_suffix('.tmp');temporary.write_text(text);temporary.replace(destination)
+    temporary=destination.with_suffix('.tmp');temporary.write_text(text,encoding='utf-8');temporary.replace(destination)
     from .notifications import wiki_changed
     wiki_changed(store,text)
 
@@ -114,7 +114,7 @@ def _role(store,runtime,job,study,round_number,phase):
             dispatch=native_agents.dispatch(study,host);handoffs=dispatch.get('handoffs',[])
     if not handoffs:raise RuntimeError('没有可执行的学习任务，请查看 WikiSkill 状态')
     stage=store.root/'jobs'/job['id']/f"{round_number}-{phase}-{handoffs[0]['request_id']}";stage.mkdir(parents=True,exist_ok=True)
-    (stage/'handoffs.json').write_text(dump(dispatch))
+    (stage/'handoffs.json').write_text(dump(dispatch),encoding='utf-8')
     from .backends import validate_backend
     backend=validate_backend(json.loads(job['payload']).get('agent_backend','codex'))
     if backend=='briefloop-native':
@@ -345,7 +345,7 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
 def compare(store,runtime,job,comparisons,folder,backend):
     """Pairwise Evaluator over trial drafts; returns the saved comparison."""
     folder.mkdir(parents=True,exist_ok=True)
-    (folder/'input.json').write_text(dump(comparisons))
+    (folder/'input.json').write_text(dump(comparisons),encoding='utf-8')
     staged=stage_job(store,job,'evaluator',mode='pairwise')
     if backend=='briefloop-native':
         # A frozen packet and a validated submit instead of a written file.
@@ -451,7 +451,7 @@ def learn(store,runtime,job):
     current=store.one('skills',payload['skill_id']) if payload['skill_id'] else None
     skill_path=None
     if current:
-        skill_path=root/'initial-skill.md';skill_path.write_text(current['content'])
+        skill_path=root/'initial-skill.md';skill_path.write_text(current['content'],encoding='utf-8')
     previous=store.meta('last_study')
     if study.exists() and previous and previous not in (str(study),ctx.get('previous_study')):
         raise ValueError('已有后续学习记录，不能直接恢复旧学习任务；请基于当前 Wiki 发起新的反馈学习。旧进度保留。')
