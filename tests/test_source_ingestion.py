@@ -45,7 +45,7 @@ def test_raw_receipt_is_durable_before_real_pdf_extraction_and_progress(tmp_path
     assert store.one('jobs',job_id)['status']=='complete'
     assert store.one('sources',sid)['status']=='ready'
     assert store.source_text(sid)==media.PDF_NOTICE
-    metadata=json.loads((store.root/'sources'/f'{sid}.provenance.json').read_text())
+    metadata=json.loads((store.root/'sources'/f'{sid}.provenance.json').read_text(encoding='utf-8'))
     assert metadata['raw_sha256']==hashlib.sha256(data).hexdigest()
     assert metadata['pages']==3 and metadata['needs_visual'] is True
     events=[json.loads(row['data']) for row in store.rows("SELECT * FROM events WHERE job_id=? AND kind='source_extraction_progress' ORDER BY seq",(job_id,))]
@@ -131,7 +131,7 @@ def test_service_restart_exposes_interrupted_source_and_explicit_resume_reads_or
         assert store.one('jobs',job_id)['status']=='interrupted'
         assert store.one('sources',source['id'])['status']=='interrupted'
         assert store.one('sources',interrupted_settlement['id'])['status']=='failed'
-        metadata=json.loads((store.root/'sources'/f"{source['id']}.provenance.json").read_text())
+        metadata=json.loads((store.root/'sources'/f"{source['id']}.provenance.json").read_text(encoding='utf-8'))
         assert metadata['extraction_status']=='interrupted'
         worker.resume(job_id)
         deadline=time.monotonic()+5
@@ -154,7 +154,7 @@ def test_pdf_fallback_reads_path_without_original_byte_copy(tmp_path,monkeypatch
     result=_extract_pdf(original,output,events.append)
     assert result['extractor']=='pypdf.PdfReader.extract_text'
     assert result['pages']==3 and events[-1]['pages_completed']==3
-    assert output.read_text()==media.PDF_NOTICE
+    assert output.read_text(encoding='utf-8')==media.PDF_NOTICE
 
 
 @pytest.mark.parametrize('phase',['final_progress','process_cleanup','after_commit'])
@@ -215,4 +215,24 @@ def test_source_status_exposes_scanned_pdf_metadata_without_reading_original_or_
         assert result['source']['pages']==3
         assert result['source']['media_type']=='application/pdf'
         assert '未执行 OCR' in result['progress']['message']
+    finally:server.shutdown();server.server_close()
+
+
+def test_state_keeps_chinese_source_metadata_in_windows_legacy_encoding_mode(tmp_path):
+    import http.client
+    from briefloop.server import make_server
+    server=make_server(tmp_path,port=0,paused=True)
+    source=upload(server.store,'扫描材料.pdf',pdf_bytes())
+    job_id=source['extraction_job_id'];server.store.update_job(job_id,'running')
+    extract_job(server.store,server.store.one('jobs',job_id),threading.Event())
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        connection=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        connection.request('GET','/api/state')
+        response=connection.getresponse();result=json.loads(response.read());connection.close()
+        assert response.status==200
+        saved=next(item for item in result['sources'] if item['id']==source['id'])
+        assert saved['name']=='扫描材料.pdf'
+        assert saved['media_type']=='application/pdf'
+        assert saved['needs_visual'] is True
     finally:server.shutdown();server.server_close()
