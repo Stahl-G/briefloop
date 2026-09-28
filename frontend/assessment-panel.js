@@ -6,6 +6,7 @@ import {officeIssueLine} from './office-tools.js';
 import {createAssessmentChecks} from './assessment-checks.js';
 import {createCitationEvidence} from './citation-evidence.js';
 import {reviewModeLabel} from './review-controls.js';
+import {createJevChecks} from './jev-checks.js';
 
 const RELATION_LABELS={compatible:'可合并',different_scope:'口径不同',temporal_sequence:'时间演进',correction:'明确更正',supersession:'替代',republication:'转载',attributed_difference:'归属分歧',contradiction:'实质矛盾',unknown:'无法判断'};
 
@@ -20,6 +21,7 @@ export function createAssessmentPanel(deps){
  const factGrants=deps.factGrants||createFactCheckGrants({api});
  const assessmentChecks=createAssessmentChecks({esc});
  const citationEvidence=createCitationEvidence({esc});
+ const jevChecks=createJevChecks({...deps});
  let showSuggestionMarks=false;
 
  async function renderDeliveryChecks(){
@@ -156,7 +158,7 @@ export function createAssessmentPanel(deps){
   const current=getCurrent();
   if(!current)return;
   deps.renderCompletion?.();
-  queueMicrotask(()=>{renderDeliveryChecks();renderReportIssues();renderFactChecks()});
+  queueMicrotask(()=>{renderDeliveryChecks();renderReportIssues();renderFactChecks();jevChecks.render()});
   const state=getState();
   const editor=getEditor();
   const r=state.assessments.find(a=>a.version_id===current.id);

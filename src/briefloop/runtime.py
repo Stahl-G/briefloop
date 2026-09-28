@@ -862,6 +862,9 @@ class Worker:
                                trigger='manual',allow_private=user_refresh,user_job_id=job['id'] if user_refresh else None)
             elif job['kind']=='generate':result=self.generate(job)
             elif job['kind']=='assess':result=self.assess(job)
+            elif job['kind']=='jev_check':
+                from .jev_checks import run as run_jev_check
+                result=run_jev_check(self.store,job,self.runtime.cancelled)
             elif job['kind']=='revise':
                 brief=self.store.one('briefs',json.loads(job['payload'])['version_id'])
                 result=self.auto_revise(job,brief,self.folder(job))

@@ -4,6 +4,7 @@ const localFiles=new Set(['export_docx','export_xlsx','release','audit_bundle'])
 const parse=value=>{if(value&&typeof value==='object')return value;try{return JSON.parse(value||'{}')}catch{return {}}};
 export const isLocalFileJob=job=>localFiles.has(job?.kind);
 export function jobExecutionLabel(job,formatModel){
+ if(job.kind==='jev_check')return 'TypeSafe · Jev 依据预检';
  if(isLocalFileJob(job))return '本地文件处理';
  if(job.kind==='source_extract')return '本地读取材料';
  if(job.kind==='source_refresh')return '来源工具';

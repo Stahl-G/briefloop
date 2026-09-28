@@ -814,6 +814,10 @@ def _review_requirement_index(store,review):
 def review_status(store,version_id):
     brief=store.one('briefs',version_id)
     reviews=store.rows('SELECT id,version_id,status,created,result,data,fingerprint FROM reviews WHERE version_id=? ORDER BY rowid DESC',(version_id,))
+    # Claims are immutable records; review_status alone changes on later checks.
+    # Display only IDs explicitly checked in this saved review, never promote
+    # the run's remaining claims into this version's verified coverage.
+    claim_text={row['id']:json.loads(row['data']).get('statement','') for row in store.rows('SELECT id,data FROM claims WHERE run_id=?',(brief['run_id'],))}
     findings=store.rows("SELECT f.* FROM review_findings f JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY f.rowid",(brief['run_id'],))
     ancestry=_ancestry(store,version_id)
     findings=[finding for finding in findings if finding['version_id'] in ancestry]
@@ -847,6 +851,8 @@ def review_status(store,version_id):
                 {**{k:r[k] for k in ('id','status','created')},'result':json.loads(r['result']) if r['result'] else None,
                  'review_mode':json.loads(r['data']).get('review_mode'),
                  'review_backend':json.loads(r['data']).get('review_backend'),
+                 'claim_items':[{'claim_id':check['claim_id'],'statement':claim_text.get(check['claim_id'],'')}
+                                for check in (json.loads(r['result']).get('claim_checks',[]) if r['result'] else [])],
                  **_review_requirement_index(store,r)} for r in reviews],
             'reconciliation':reconciliation,
             'findings':[{**f,'data':json.loads(f['data'])} for f in findings]}

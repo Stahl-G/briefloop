@@ -464,6 +464,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/completion-status':
                     from .draft_completion import status
                     self.send(200,status(store,q['version'][0]))
+                elif u.path=='/api/jev-checks':
+                    from .jev_checks import view
+                    self.send(200,view(store,q['version'][0]))
+                elif u.path=='/api/jev':
+                    from .jev import key_status
+                    self.send(200,key_status())
                 elif u.path=='/api/review-status':
                     from .review import review_status
                     self.send(200,review_status(store,q['version'][0]))
@@ -635,6 +641,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/jev':
+                    from .jev import save_key,delete_key
+                    result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/jev-checks':
+                    from .jev_checks import enqueue
+                    result=enqueue(store,body['version_id'],body['fingerprint'],allow_external=body.get('allow_external'))
                 elif path=='/api/connectors/task-bind':
                     result=self.server.connector_tasks.bind(body['job_id'],body['selections'],max_calls=body['max_calls'],max_total_bytes=body['max_total_bytes'])
                 elif path in ('/api/connectors/task-status','/api/connectors/task-access','/api/connectors/task-revoke'):

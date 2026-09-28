@@ -497,7 +497,7 @@ function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.o
 const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc,syncSourceHints:renderWorkflowChoices});
 quickReport.init();
 const assessmentPanel=createAssessmentPanel({
- api,action,notice,$,esc,parse,
+ api,action,notice,$,esc,parse,savedVersion,
  renderCompletion:()=>quickReport.render(),
  getState:()=>state,
  getCurrent:()=>current,

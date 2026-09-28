@@ -720,7 +720,7 @@ class Store:
         if self._job_wakeup is not None:self._job_wakeup()
 
     def enqueue(self, kind, payload, *, before_commit=None):
-        if kind not in ('export_docx','release','audit_bundle','source_refresh'):
+        if kind not in ('export_docx','release','audit_bundle','source_refresh','jev_check'):
             from .backends import require_main_chain,validate_backend
             from .models import normalize_search_provider
             backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
