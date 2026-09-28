@@ -8,4 +8,8 @@
 
 普通 Word/HTML/Markdown 来源列表隐藏网页来源的纯抓取行号（例如 `lines 12–17`）。真实保存的引文、审计原件、本地文件行号及有意义的页码/章节/表格定位保留。该规则不改写作者正文，也不猜测缺少来源类型信息的定位。
 
+Native 主 Agent 的 `write_report` 在 `quality_v1` 下先检查已冻结计划：不能有 active 轮次，最新实际开启轮次必须已 closed 且保存 outcome，随后才启动 Analyst。只有 `plan.json` / `research.json` 文件不代表研究已经收轮。被拒时返回现有 `save_research_handoff`、`finish_research_round` 的下一步；不自动补搜、开轮或增加预算。
+
+open/partial 缺口、预算耗尽、深度计划中尚未开启的 pending 轮次均不阻止明确收轮后写稿。旧 closed outcome 没有新增 closeout 字段或 summary 为空，仍按原收轮记录兼容；legacy 协议沿用旧路径。这个检查证明主 Agent 留下了收尾记录，不证明候选覆盖完整、二手消息已核实或报告事实正确。
+
 本次行为检查覆盖实际阅读输入、任务包篡改拒绝、旧软篇幅快照兼容、研究收尾冻结与来源导出。它们证明信息传递和版本绑定，不证明模型已降低误报、完整补查或提升阅读质量；相关真实模型与人工验收仍需单独记录。已发布版本及旧实验不作追溯修改。
