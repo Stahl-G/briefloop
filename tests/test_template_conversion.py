@@ -163,7 +163,7 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
 
 @pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
                                 'inherited_superscript', 'inherited_hidden', 'wrapped_table_row', 'page_break', 'column_break',
-                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math', 'paragraph_break', 'inherited_paragraph_break', 'numbering_page_break'])
+                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math', 'paragraph_break', 'inherited_paragraph_break', 'numbering_page_break', 'default_paragraph_break'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
     if case == 'control':
@@ -181,7 +181,11 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name = 'source.docx'
         doc = Document()
         p = doc.add_paragraph('可读取正文')
-        if case == 'numbering_page_break':
+        if case == 'default_paragraph_break':
+            defaults = doc.styles.element.find(qn('w:docDefaults'))
+            properties = defaults.find(qn('w:pPrDefault') + '/' + qn('w:pPr'))
+            properties.append(OxmlElement('w:pageBreakBefore'))
+        elif case == 'numbering_page_break':
             p.style = 'List Number'
             numbering = doc.part.numbering_part.element
             identifier = doc.styles['List Number'].element.pPr.numPr.numId.val
@@ -303,5 +307,7 @@ def test_explicitly_disabled_inherited_page_break_can_convert(workspace):
     style.paragraph_format.page_break_before = True
     paragraph = doc.add_paragraph('No authored break here', style)
     paragraph.paragraph_format.page_break_before = False
+    defaults = doc.styles.element.find(qn('w:docDefaults'))
+    defaults.find(qn('w:pPrDefault') + '/' + qn('w:pPr')).append(OxmlElement('w:pageBreakBefore'))
     result = convert_file(store, 'disabled-boundary.docx', word_bytes(doc), template_id)
     assert 'No authored break here' in result['version']['markdown']

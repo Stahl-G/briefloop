@@ -210,6 +210,11 @@ def _word_document(data, notes):
         p = Paragraph(element, doc)
         formats = [p.paragraph_format, *(style.paragraph_format for style in style_chain(p))]
         page_break = next((fmt.page_break_before for fmt in formats if fmt.page_break_before is not None), None)
+        if page_break is None:
+            default_break = doc.styles.element.find('/'.join(qn(name) for name in
+                ('w:docDefaults', 'w:pPrDefault', 'w:pPr', 'w:pageBreakBefore')))
+            if default_break is not None:
+                page_break = default_break.get(qn('w:val'), 'true').lower() not in ('0', 'false', 'off')
         if page_break:
             raise ValueError('Word 段落含段前分页设置，当前不能可靠转换')
         attrs = {}
