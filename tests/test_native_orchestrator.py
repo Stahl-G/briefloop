@@ -337,6 +337,20 @@ def test_revision_metadata_rejects_number_bindings_before_saving(tmp_path):
     assert json.loads((folder/'revision_bindings.json').read_text(encoding='utf-8'))==[]
 
 
+@pytest.mark.parametrize('bad_response', ['not-an-object', {'finding_id':'finding_1','action':'corrected','reason':{'note':'wrong type'}}])
+def test_revision_metadata_rejects_untyped_response_without_saving(tmp_path,bad_response):
+    from briefloop.native_orchestrator import revision_metadata
+    from briefloop.native_roles import ToolError
+    store=Store(tmp_path/'ws');folder=store.root/'jobs/revision';(folder/'packet').mkdir(parents=True)
+    (folder/'input.json').write_text(dump({'review_findings':[{'id':'finding_1'}]}))
+    config={'packet_root':str(folder/'packet'),'run_id':'run-test'}
+    with pytest.raises(ToolError,match='均须为字符串'):
+        revision_metadata(store,config,{'responses':[bad_response],'bindings':[]})
+    assert not (folder/'responses.json').exists() and not (folder/'revision_bindings.json').exists()
+    revision_metadata(store,config,{'responses':[{'finding_id':'finding_1','action':'corrected','reason':'Fixed the actual sentence'}],'bindings':[]})
+    assert json.loads((folder/'responses.json').read_text())==[{'finding_id':'finding_1','action':'corrected','reason':'Fixed the actual sentence'}]
+
+
 def test_metadata_repair_rejects_source_ids_as_claims_before_settling(tmp_path):
     from briefloop.native_orchestrator import metadata_submit
     from briefloop.native_roles import ToolError

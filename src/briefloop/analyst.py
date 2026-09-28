@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .store import dump
 
-from .writing_guidance import DECISION_EVIDENCE_GUIDE
+from .writing_guidance import DECISION_EVIDENCE_GUIDE, NUMBER_UNIT_GUIDE
 from .research_handoff import PLANNING_GUIDE
 
 _DEFAULT_SKILL = object()
@@ -33,7 +33,7 @@ WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报�
 '''
 
 
-WRITING_GUIDE += '\n' + DECISION_EVIDENCE_GUIDE + '\n' + PLANNING_GUIDE
+WRITING_GUIDE += '\n' + NUMBER_UNIT_GUIDE + '\n' + DECISION_EVIDENCE_GUIDE + '\n' + PLANNING_GUIDE
 
 
 def packet(store, run_id, folder, *, plan, research, source_ids=None, support=None,
@@ -129,6 +129,7 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
         'marks': 'text 可带 marks:[{type: "bold"}]；正文不用输出 Markdown 星号',
         'images': 'image.attrs.src 必须是已登记的 briefloop-figure:fig_ID',
         'number_bindings': {
+            'unit_conditions': NUMBER_UNIT_GUIDE,
             'locator': '使用 line 12-14、page 3 或序列化证据定位 JSON；章节名称、文件描述不算可解析定位。',
             'excerpt': '从 source-index 对应原文位置复制连续逐字摘录，保留原始数值和单位；正文片段必须唯一，改稿后更新。',
             'units': '数值检查支持百分比、百分点、W/kW/MW/GW、股数、金额、年份、倍数、计数；复合单位如 USD/W、USD/kg、shares/day 当前未支持，保留原单位并记未检查，不丢掉分母伪造匹配。',

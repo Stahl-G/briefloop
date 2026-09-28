@@ -67,7 +67,7 @@ def test_stop_is_persisted_before_transport_finishes_and_settlement_cannot_overw
 
 
 @pytest.mark.parametrize('edit_during_repair',[False,True])
-@pytest.mark.parametrize('invalid_metadata',['anchor','assessment_response'])
+@pytest.mark.parametrize('invalid_metadata',['anchor','assessment_response','wrapped_arrays'])
 def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_path,edit_during_repair,invalid_metadata):
     from briefloop.evidence import create_span,create_claim,blocks
     from briefloop.document_model import brief_document
@@ -84,17 +84,24 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
                 (folder/'draft.json').write_text(dump({'title':'Synthetic revision','markdown':'Revenue was USD 12 million, as reported.'}),encoding='utf-8')
                 if invalid_metadata=='anchor':
                     (folder/'revision_bindings.json').write_text(dump([{'claim_id':claim['id'],'block_id':'wrong-block','quote':'Revenue was USD 12 million'}]),encoding='utf-8')
-                else:
+                elif invalid_metadata=='assessment_response':
                     (folder/'responses.json').write_text(dump([{'finding_id':'expression_redundant_explanation','action':'removed','reason':'Removed repeated wording'}]),encoding='utf-8')
+                else:
+                    (folder/'revision_bindings.json').write_text(dump({'bindings':[]}),encoding='utf-8')
+                    (folder/'responses.json').write_text(dump({'responses':[]}),encoding='utf-8')
             else:
                 assert job['kind']=='repair_revision_metadata'
                 packet=json.loads((folder/'input.json').read_text(encoding='utf-8'));revision=store.one('briefs',packet['version_id'])
                 if edit_during_repair:store.revise(revision['id'],editor_document=markdown_document('USER EDIT'))
                 bid=next(iter(blocks(brief_document(revision))))
-                (folder/'metadata.json').write_text(dump({'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}),encoding='utf-8')
+                metadata={'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}
+                from jsonschema import validate
+                validate(metadata,json.loads((folder/'metadata.schema.json').read_text(encoding='utf-8')))
+                (folder/'metadata.json').write_text(dump(metadata),encoding='utf-8')
             return {'synthetic':True}
     runtime=RepairRuntime();worker=Worker(store,runtime);folder=worker.folder(job)
-    with pytest.raises(ValueError,match='锚点' if invalid_metadata=='anchor' else 'unexpected.*expression_redundant_explanation'):
+    error={'anchor':'锚点','assessment_response':'unexpected.*expression_redundant_explanation','wrapped_arrays':'顶层必须为数组'}
+    with pytest.raises(ValueError,match=error[invalid_metadata]):
         worker.auto_revise(job,brief,folder)
     revision=store.one('briefs','brief_'+job['id'][4:]+'_r1');original_hash=revision['hash']
     worker.assess_version=lambda job,revised,folder,backend:store.assess(revised['id'],{'brief_hash':revised['hash'],**score})
