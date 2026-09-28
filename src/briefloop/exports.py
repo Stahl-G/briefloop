@@ -6,7 +6,7 @@ from markdown_it import MarkdownIt
 
 
 def reader_markdown(store,brief):
-    from .document_export import reader_labels
+    from .document_export import reader_labels, reader_locator
     text=brief['markdown'];refs=json.loads(brief['detail']).get('citations',[]);used=[]
     try:language=json.loads(store.one('runs',brief['run_id'])['requirements']).get('language')
     except (KeyError,ValueError):language=None  # comparison cases may carry a bare version row
@@ -22,7 +22,8 @@ def reader_markdown(store,brief):
             try:source=store.one('sources',sid)
             except ValueError:
                 text+=f"{i}. {words['unlinked']}\n";continue
-            locators=list(dict.fromkeys(r.get('locator','') for r in refs if r['source_id']==sid and r.get('locator')))
+            locators=list(dict.fromkeys(value for r in refs if r.get('source_id')==sid
+                for value in [reader_locator(r.get('locator'),source)] if value))
             title=source['name']
             if source['url']:title=f'[{title}]({source["url"]})'
             text+=f'{i}. {title}'+(' · '+words['separator'].join(locators) if locators else '')+'\n'

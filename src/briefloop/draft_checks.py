@@ -73,7 +73,8 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
     from .report_time import check as check_time
     draft = BriefDraft.model_validate(value)
     req = requirements or {}
-    length = length_stats(draft.markdown, target_words=req.get('target_words'), max_words=req.get('max_words'))
+    length = length_stats(draft.markdown, target_words=req.get('target_words'), max_words=req.get('max_words'),
+                          length_mode=req.get('length_mode', 'soft'), length_requirement=req.get('length_requirement'))
     length['below_target'] = bool(length['target_words'] and length['count'] < length['target_words'])
     # Count only H2 chapters, keeping nested headings inside their parent.
     sections = []
@@ -103,7 +104,13 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
                       'missing_basis_count': temporal.get('missing_date_count', 0),
                       'out_of_range_count': temporal.get('out_of_range_count', 0)})
     if length['over_limit']:
-        warnings.append({'code': 'over_limit', 'message': '正文超过本轮上限；请保留重点并压缩重复内容。'})
+        if length['strict_exceeded']:
+            warnings.append({'code': 'over_limit', 'kind': 'explicit_requirement',
+                             'over_by': length['over_by'], 'requirement': length['length_requirement'],
+                             'message': f"正文超出明确严格上限 {length['over_by']} 个计数单位；请核对原要求并精简重复。保留必要条件和引用；工作稿仍可提交、编辑与下载。"})
+        else:
+            notes.append({'code': 'over_limit', 'kind': 'advisory', 'over_by': length['over_by'],
+                          'message': f"正文超出建议范围 {length['over_by']} 个计数单位；此项为篇幅建议，不阻断草稿提交。不必仅为消除提示改稿；有必要的事实、引用和采用条件应保留。"})
     if length['below_target']:
         notes.append({'code': 'below_target', 'kind': 'advisory',
                       'message': '目标字数是偏好；核对明确范围与必答内容，不能仅因低于目标就扩写。'})

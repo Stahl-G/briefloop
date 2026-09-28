@@ -215,6 +215,14 @@ def validate_applicable_review(store,review_id,version_id=None):
         annotations=store.rows('SELECT source_id FROM source_snapshot_metadata')
         if any(row['source_id'] in source_ids for row in annotations):
             raise ValueError('旧核查未覆盖已登记的来源时间注释，请对当前证据重新审阅')
+    old_length = target.get('length_stats')
+    if old_length and 'length_mode' not in old_length and current.get('length_stats', {}).get('length_mode') == 'soft':
+        # Legacy v8 froze counts before explicit length policy existed. Preserve
+        # that projection when checking applicability, including its old scope
+        # label; current counts and original requirements still must match.
+        current['length_stats'] = {key: current['length_stats'].get(key) for key in old_length}
+        if 'limit_scope' in old_length:
+            current['length_stats']['limit_scope'] = old_length['limit_scope']
     if 'language' not in target['requirements']:
         # Packets saved before the spec carried the report language reviewed the
         # same artifact; the new projection field is not a changed input.
@@ -312,7 +320,8 @@ def _snapshot(store,version_id,snapshot_version=7):
             **({'source_statements':source_statements,'reconciliation':reconciliation} if snapshot_version>=6 else {}),
             **({'fact_checks':fact_checks} if snapshot_version>=7 else {}),
             **({'length_stats':length_stats(brief['markdown'],target_words=requirements.get('target_words'),
-                                           max_words=requirements.get('max_words'))} if snapshot_version>=8 else {}),
+                                           max_words=requirements.get('max_words'), length_mode=requirements.get('length_mode','soft'),
+                                           length_requirement=requirements.get('length_requirement'))} if snapshot_version>=8 else {}),
             'sources':sources,'conflicts':conflicts,'evidence':inspect_bindings(store,version_id),
             'figures':validate_figures(store,run['id'],brief['markdown'])}
 
@@ -548,6 +557,8 @@ def build_packet(store,version_id,folder):
     brief=store.one('briefs',version_id);versions=store.rows('SELECT id,parent_id,author,markdown,hash,created FROM briefs WHERE run_id=? ORDER BY rowid',(brief['run_id'],))
     save('history/versions.json',pack_dump(versions).encode())
     save('assessment-context.json',pack_dump(store.assessment_context(version_id)).encode())
+    from .evaluation_reading import reading_context
+    save('reading-context.json',pack_dump(reading_context(brief)).encode())
     prior_reviews=store.rows('SELECT r.id,r.version_id,r.status,r.result,r.created FROM reviews r JOIN briefs b ON b.id=r.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/reviews.json',pack_dump([{**r,'result':json.loads(r['result']) if r['result'] else None} for r in prior_reviews]).encode())
     executions=[]
@@ -938,8 +949,11 @@ def run_review(store,runtime,job,version_id,folder):
                   if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
     if (folder/'packet'/'reader-preview.md').exists():
         packet_guide+=' reader-preview.md 是同一稿件通过产品阅读渲染器生成的文本预览，含短编号和自动来源表。report.txt 的 [src_…] 是核查定位标记，不是用户看到的编号；涉及引用展示/来源表的发现须对照预览，不能要求作者重复补写渲染器已生成的内容。预览不证明实际 Word 分页、样式或原生可点击性，这些须另查实际文件。'
+    if (folder/'packet'/'reading-context.json').exists():
+        from .evaluation_reading import GUIDE as READING_GUIDE
+        packet_guide+=' reading-context.json 说明本次实际输入呈现和机器记录范围。\n'+READING_GUIDE
     if target.get('length_stats'):
-        packet_guide+=' target.json 和 requirements.json 的 length_stats 是已存正文的确定性计数，按 count/rule 对照原始要求与读者约定，不估算字数或把核查段落ID、来源表计入正文。over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求或后续反馈。'
+        packet_guide+=' target.json 和 requirements.json 的 length_stats 是已存正文的确定性计数，按 count/rule 对照原始要求与读者约定，不估算字数或把核查段落ID、来源表计入正文。over_limit 只比较结构化 max_words；以 length_mode/length_requirement 及原始要求区分建议与明确严格限制，不仅凭 over_limit 判失败。计数不表示已满足全部篇幅要求或后续反馈。'
     figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
                       if (folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions

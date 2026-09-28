@@ -1,4 +1,5 @@
 """Render saved rich content directly to Word, without a Markdown round trip."""
+import re
 from docx.shared import Mm, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -9,6 +10,18 @@ from .document_model import normalize_document, table_layout, citation_label_tex
 
 ALIGN = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER,
          'right': WD_ALIGN_PARAGRAPH.RIGHT, 'justify': WD_ALIGN_PARAGRAPH.JUSTIFY}
+
+
+def reader_locator(locator, source=None):
+    """Web snapshot line numbers belong to evidence, not public-page navigation.
+
+    Keep local-file locations and authored page/section descriptions. This only
+    changes the automatically appended reader list, never stored citations.
+    """
+    value = locator.strip() if isinstance(locator, str) else ''
+    web = str((source or {}).get('url') or '').startswith(('https://', 'http://'))
+    machine_line = r'(?:lines?\s*[:#]?\s*\d+(?:\s*[-–—]\s*\d+)?|第?\s*\d+(?:\s*[-–—至]\s*\d+)?\s*行)'
+    return '' if web and re.fullmatch(machine_line, value, re.IGNORECASE) else value
 
 
 def reader_labels(language=None):
@@ -91,7 +104,7 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
         if not isinstance(reference, dict):continue
         sid, locator = reference.get('source_id'), reference.get('locator')
         if not isinstance(sid, str) or not isinstance(locator, str):continue
-        locator = locator.strip()
+        locator = reader_locator(locator, sources.get(sid))
         if locator:
             saved = locators.setdefault(sid, [])
             if locator not in saved:saved.append(locator)

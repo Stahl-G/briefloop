@@ -788,7 +788,8 @@ class Store:
         if brief['run_id'] in self.deleted_reports():raise ValueError('报告已删除')
         # Historical requirements are not retroactively assigned a new budget.
         req=json.loads(self.one('runs',brief['run_id'])['requirements'])
-        brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
+        brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'),
+            length_mode=req.get('length_mode','soft'),length_requirement=req.get('length_requirement'))
         from .report_browsing import context
         brief['context']=context(self,version_id)
         brief['latest_version_id']=brief['context']['latest']['id']
