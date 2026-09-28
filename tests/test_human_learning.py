@@ -56,7 +56,7 @@ def test_exhaustion_retains_pending_requirement_in_visible_wiki(tmp_path):
     assert state['phase']=='complete' and state['history'][-1]['requirements_pending']
     assert state['current_skill'] is None
     store.set_meta('last_study',str(root));_sync_wiki(store,root)
-    text=(store.root/'wiki/index.md').read_text()
+    text=(store.root/'wiki/index.md').read_text(encoding='utf-8')
     assert 'Use owner/action/date' in text and '待完善' in text and '人类明确要求' in text
 
 

@@ -70,11 +70,11 @@ def test_all_answer_only_cases_skip_without_model_or_adoption(tmp_path):
     import threading
     store=Store(tmp_path/'workspace');answer=store.add_source('Revision answer','Only a user rewrite')
     case=store.create_run({'title':'Synthetic','objective':'Summarize'},[answer['id']])
-    (store.root/'sources'/(answer['id']+'.provenance.json')).write_text(dump({'usage':'revision_feedback'}))
+    (store.root/'sources'/(answer['id']+'.provenance.json')).write_text(dump({'usage':'revision_feedback'}),encoding='utf-8')
     job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'targets':['analyst'],'k':1,
         'authorization':{'kind':'manual','rounds':2,'fingerprint':'x'*64,'max_trial_generations':12}})
     folder=store.root/'jobs'/job['id'];folder.mkdir()
-    (folder/'context.json').write_text(dump({'feedback':[],'cases':[case['id']]}))
+    (folder/'context.json').write_text(dump({'feedback':[],'cases':[case['id']]}),encoding='utf-8')
     class Runtime:
         cancelled=threading.Event()
         def execute(self,*args,**kwargs):raise AssertionError('All-empty batch called a model')
@@ -164,7 +164,7 @@ def test_saved_learning_conditions_are_not_rewritten_on_drift(tmp_path,drift):
     if drift=='old_fact_check':frozen['requirements']['fact_check']=True
     else:frozen['common_code']['store.py']='0'*64
     record=folder/'conditions.json'
-    record.write_text(dump({'origin_run_id':case['id'],'conditions':frozen}))
+    record.write_text(dump({'origin_run_id':case['id'],'conditions':frozen}),encoding='utf-8')
     before=record.read_bytes();run_count=len(store.rows('SELECT id FROM runs'))
     with pytest.raises(ValueError,match='比较条件已变化'):
         learning._prepare_case(store,{**case,'learning_source_ids':[source['id']]},payload,folder)
@@ -189,3 +189,27 @@ def test_legacy_method_anchors_both_arms_and_condition_drift_rejects(tmp_path,mo
     assert learning._prepare_case(store,case,payload,tmp_path/'case')==prepared
     with pytest.raises(ValueError,match='比较条件已变化'):
         learning._prepare_case(store,case,{**payload,'runtime':{'model':'different'}},tmp_path/'case')
+
+
+def test_learning_projection_reads_skill_markdown_as_utf8_under_legacy_locale(tmp_path,monkeypatch):
+    from briefloop import projections
+    store=Store(tmp_path/'workspace')
+    job=store.enqueue('learn',{'skill_id':None,'targets':['analyst']})
+    study=store.root/'jobs'/job['id']/'study';study.mkdir(parents=True)
+    (study/'config.json').write_text('{}',encoding='utf-8')
+    (study/'candidate.md').write_text('# 审阅技能\n保留来源和数字。\n',encoding='utf-8')
+    monkeypatch.setattr(feedback_loop,'work',lambda root:{'history':[],
+        'candidate':{'skill':{'file':'candidate.md'},'note':'候选待验证'},'round':1,
+        'explicit_requirement_sources':[]})
+    result=projections.learning_candidates(store)
+    assert result['candidates'][0]['markdown']=='# 审阅技能\n保留来源和数字。\n'
+
+
+def test_saved_learning_conditions_round_trip_under_legacy_locale(tmp_path):
+    store=Store(tmp_path/'workspace');source=store.add_source('事实','虚构证据')
+    case=store.create_run({'title':'审阅','objective':'总结'},[source['id']])
+    case['learning_source_ids']=[source['id']]
+    payload={'runtime':store.runtime_config(),'role_models':store.role_model_config(),
+             'agent_backend':'codex'}
+    prepared=learning._prepare_case(store,case,payload,tmp_path/'case')
+    assert learning._prepare_case(store,case,payload,tmp_path/'case')==prepared

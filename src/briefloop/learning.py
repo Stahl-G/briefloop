@@ -88,7 +88,7 @@ def _sync_wiki(store,study):
     text+='\n反馈来源：'+', '.join(str(x.get('source'))+' ['+('人类明确要求' if x.get('learning_intent')=='explicit_requirement' else '自动发现' if x.get('origin')=='automatic' else '人类反馈')+']' for x in state['feedback'])+'\n'
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
     destination=store.root/'wiki/index.md'
-    temporary=destination.with_suffix('.tmp');temporary.write_text(text);temporary.replace(destination)
+    temporary=destination.with_suffix('.tmp');temporary.write_text(text,encoding='utf-8');temporary.replace(destination)
     from .notifications import wiki_changed
     wiki_changed(store,text)
 
@@ -114,7 +114,7 @@ def _role(store,runtime,job,study,round_number,phase):
             dispatch=native_agents.dispatch(study,host);handoffs=dispatch.get('handoffs',[])
     if not handoffs:raise RuntimeError('没有可执行的学习任务，请查看 WikiSkill 状态')
     stage=store.root/'jobs'/job['id']/f"{round_number}-{phase}-{handoffs[0]['request_id']}";stage.mkdir(parents=True,exist_ok=True)
-    (stage/'handoffs.json').write_text(dump(dispatch))
+    (stage/'handoffs.json').write_text(dump(dispatch),encoding='utf-8')
     from .backends import validate_backend
     backend=validate_backend(json.loads(job['payload']).get('agent_backend','codex'))
     if backend=='briefloop-native':
@@ -188,7 +188,7 @@ def _prepare_case(store,case,payload,folder):
     from wikiskill.product import write
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);record=folder/'conditions.json'
     if record.exists():
-        saved=json.loads(record.read_text());origin=store.one('runs',saved['origin_run_id'])
+        saved=json.loads(record.read_text(encoding='utf-8'));origin=store.one('runs',saved['origin_run_id'])
     else:
         origin=store.one('runs',case.get('learning_origin_id',case['id']))
         if not json.loads(origin['requirements']).get('workflow_snapshot'):
@@ -211,7 +211,7 @@ def _eligible_cases(store,ids):
         case=store.one('runs',case_id);evidence=[]
         for sid in store.source_ids(case_id):
             provenance=store.root/'sources'/(sid+'.provenance.json')
-            metadata=json.loads(provenance.read_text()) if provenance.is_file() else {}
+            metadata=json.loads(provenance.read_text(encoding='utf-8')) if provenance.is_file() else {}
             if case_id in metadata.get('revision_for_runs',[]) or metadata.get('usage')=='revision_feedback':continue
             evidence.append(sid)
         if not evidence:
@@ -245,7 +245,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
     folder.mkdir(parents=True,exist_ok=True)
     marker=folder/'trial.json'
     if marker.exists():
-        info=json.loads(marker.read_text())
+        info=json.loads(marker.read_text(encoding='utf-8'))
         if info.get('source_snapshot')!=expected:
             raise ValueError('学习验证的来源快照已变化，旧阶段保留；请基于新材料创建新学习任务')
         if info.get('conditions')!=conditions or info.get('skill')!=skill:
@@ -345,7 +345,7 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
 def compare(store,runtime,job,comparisons,folder,backend):
     """Pairwise Evaluator over trial drafts; returns the saved comparison."""
     folder.mkdir(parents=True,exist_ok=True)
-    (folder/'input.json').write_text(dump(comparisons))
+    (folder/'input.json').write_text(dump(comparisons),encoding='utf-8')
     staged=stage_job(store,job,'evaluator',mode='pairwise')
     if backend=='briefloop-native':
         # A frozen packet and a validated submit instead of a written file.
@@ -356,7 +356,7 @@ def compare(store,runtime,job,comparisons,folder,backend):
     # This pairwise mode is BriefLoop's feedback policy, not an extra paper role.
     # Trial drafts skip single evaluation; this comparison is their sole judge.
     runtime.execute(staged,prompt,folder)
-    return json.loads((folder/'comparison.json').read_text())
+    return json.loads((folder/'comparison.json').read_text(encoding='utf-8'))
 
 
 def _attempt_source_snapshot(store,job,result):
@@ -378,7 +378,7 @@ def _attempt_source_snapshot(store,job,result):
     if (not path.is_file() or path.is_symlink()
             or any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(store.root))
             or not path.resolve().is_relative_to(store.root.resolve())):return None
-    try:value=json.loads(path.read_text())
+    try:value=json.loads(path.read_text(encoding='utf-8'))
     except (OSError,ValueError):return None
     if not isinstance(value,dict):return None
     rows=value.get('sources')
@@ -420,7 +420,7 @@ def _baseline_for_attempt(store, case, learning_payload):
         result=json.loads(job['result'] or '{}');vid=result.get('version_id')
         if result.get('learning_conditions')!=conditions:continue
         input_path=store.root/'jobs'/job['id']/'input.json'
-        try:actual_requirements=json.loads(input_path.read_text())['requirements'];actual=actual_requirements['workflow_snapshot']
+        try:actual_requirements=json.loads(input_path.read_text(encoding='utf-8'))['requirements'];actual=actual_requirements['workflow_snapshot']
         except (OSError,ValueError,KeyError,TypeError):continue
         try:valid=validated_workflow(actual)
         except ValueError:continue
@@ -447,11 +447,11 @@ def learn(store,runtime,job):
         feedback,cases=_experience(store,job)
         from wikiskill.product import write
         write(context,{'feedback':feedback,'cases':cases,'previous_study':store.meta('last_study')},immutable=True)
-    ctx=json.loads(context.read_text())
+    ctx=json.loads(context.read_text(encoding='utf-8'))
     current=store.one('skills',payload['skill_id']) if payload['skill_id'] else None
     skill_path=None
     if current:
-        skill_path=root/'initial-skill.md';skill_path.write_text(current['content'])
+        skill_path=root/'initial-skill.md';skill_path.write_text(current['content'],encoding='utf-8')
     previous=store.meta('last_study')
     if study.exists() and previous and previous not in (str(study),ctx.get('previous_study')):
         raise ValueError('已有后续学习记录，不能直接恢复旧学习任务；请基于当前 Wiki 发起新的反馈学习。旧进度保留。')
@@ -492,7 +492,7 @@ def learn(store,runtime,job):
         candidate=state['candidate']
         if candidate['no_action']:
             state=feedback_loop.finish(study,pairs=[],reason=candidate['note']);continue
-        text=(study/candidate['skill']['file']).read_text()
+        text=(study/candidate['skill']['file']).read_text(encoding='utf-8')
         candidate_skill={'id':'candidate_'+content_hash(text)[:16],'content':text,'targets':dump(payload['targets'])}
         comparisons=[]
         for case in cases:
@@ -518,7 +518,7 @@ def apply_accepted(store,job,study,state):
     accepted=[x for x in state['history'] if x['accepted']]
     if not accepted:return
     decision=accepted[-1];payload=json.loads(job['payload'])
-    text=(Path(study)/decision['skill']['file']).read_text()
+    text=(Path(study)/decision['skill']['file']).read_text(encoding='utf-8')
     # A retained version includes its role binding. Keep legacy rows immutable;
     # target order and duplicate roles do not change the effective binding.
     targets=sorted(set(payload['targets']))
