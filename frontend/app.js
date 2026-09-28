@@ -794,15 +794,17 @@ function modelTargetBackend(target){return target==='chat-model'?chatBackendChoi
 async function fetchModelCatalog(force=false,backend=backendValue()){
  const now=Date.now(),cached=modelCatalogs.get(backend);
  if(!force&&cached&&now-cached.at<3600000){if(backend===backendValue())modelCatalog=cached;return cached.models;}
- const data=await api('models?backend='+encodeURIComponent(backend)+(force?'&refresh=1':''));
- const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;refreshRuntimeModelSummaries();return catalog.models;
+ let data;
+ try{data=await api('models?backend='+encodeURIComponent(backend)+(force?'&refresh=1':''))}
+ catch(error){if(force){const failure={backend,at:0,models:[],diagnostic:error.message||'模型目录读取失败'};modelCatalogs.set(backend,failure);if(backend===backendValue())modelCatalog=failure}throw error}
+ const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||'',note:data.note||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;refreshRuntimeModelSummaries();return catalog.models;
 }
 async function refreshModelSuggestions(force=false){
  if(force)fastCapabilities.clear();renderFastControls();
  const backend=backendValue();$('model-suggestions').innerHTML='';refreshInlineModelPickers();
  try{const models=await fetchModelCatalog(force);if(backend!==backendValue())return;
  $('model-suggestions').innerHTML=models.map(m=>`<option value="${esc(m.id)}" label="${esc(m.name||m.id)}"></option>`).join('');refreshInlineModelPickers();
- if($('runtime-model-status'))$('runtime-model-status').textContent=modelCatalog.diagnostic||`${runtimeName(backend)}：${models.length} 个模型${modelCatalog.source?' · '+({native_config:'本机配置',host:'宿主目录',host_default_only:'宿主未提供目录',builtin_hints:'内置建议',local_routes:'本机路由'}[modelCatalog.source]||modelCatalog.source):''}。可直接输入其他模型 ID。`;
+ if($('runtime-model-status'))$('runtime-model-status').textContent=modelCatalog.diagnostic||`${runtimeName(backend)}：${models.length} ${modelCatalog.source==='builtin_hints'?'项内置建议':'个模型'}${modelCatalog.source?' · '+({native_config:'本机配置',host:'宿主目录',host_default_only:'宿主未提供目录',builtin_hints:'非实时目录',local_routes:'本机路由'}[modelCatalog.source]||modelCatalog.source):''}。${modelCatalog.note||'可直接输入其他模型 ID。'}`;
  }catch(e){if($('runtime-model-status'))$('runtime-model-status').textContent='模型目录读取失败：'+e.message+'；可手动输入模型 ID。'}
 }
 let modelPickerTarget=null;
@@ -810,13 +812,16 @@ async function openModelPicker(targetId){
   modelPickerTarget=targetId;
   $('model-picker-search').value='';
   $('model-picker').showModal();
-  await renderModelPicker();
+  await refreshCurrentModelPicker();
 }
-async function renderModelPicker(){
+function refreshCurrentModelPicker(){return renderModelPicker(true)}
+async function renderModelPicker(force=false){
   const backend=modelTargetBackend(modelPickerTarget);let models,status,error='';
   try{
-    models=await fetchModelCatalog(false,backend);status=`${runtimeName(backend)} · ${models.length} 个模型；可手填模型 ID`;
-  }catch(e){models=[];error=e.message||'模型目录读取失败'}
+    models=await fetchModelCatalog(force,backend);refreshInlineModelPickers();
+    const note=modelCatalogs.get(backend)?.note;
+    status=`${runtimeName(backend)} · ${models.length} ${modelCatalogs.get(backend)?.source==='builtin_hints'?'项内置建议':'个模型'}；${note||'可手填模型 ID'}`;
+  }catch(e){models=[];error=e.message||'模型目录读取失败';refreshInlineModelPickers()}
   const q=$('model-picker-search').value.trim().toLowerCase();
   const shown=models.filter(m=>!q||m.id.toLowerCase().includes(q)||(m.name||'').toLowerCase().includes(q)||(m.provider||'').toLowerCase().includes(q));
   $('model-picker-status').textContent=(error?('读取失败：'+error+'；可直接手填模型 ID'):(models.length?status:emptyCatalogLabel(backend,modelCatalogs.get(backend))))+(q?` · 筛出 ${shown.length} 个`:'');
@@ -840,7 +845,7 @@ function pickModel(id){
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
 $('model-picker-search').onkeydown=event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();const id=event.target.value.trim();if(id&&!/\s/.test(id))pickModel(id)}};
-$('model-picker-refresh').onclick=()=>action(async()=>{await refreshModelSuggestions(true);await renderModelPicker()},'模型目录已刷新');
+$('model-picker-refresh').onclick=()=>action(refreshCurrentModelPicker,'模型目录已刷新');
 $('model-select').onchange=()=>{reasoning.refresh();renderBackend();return action(saveModel,'模型已保存；下一次启动生效')};$('service-tier').onchange=()=>action(saveModel,'速度已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
 $('model-apply-session').onclick=()=>{
  const session=chat.session;

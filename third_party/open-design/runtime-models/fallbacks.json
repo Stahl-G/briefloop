@@ -17,6 +17,10 @@
       "label": "Fable (alias)"
     },
     {
+      "id": "claude-opus-5-5",
+      "label": "Opus 5.5（内置建议）"
+    },
+    {
       "id": "claude-opus-5",
       "label": "claude-opus-5"
     },

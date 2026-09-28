@@ -1297,6 +1297,10 @@ var fallbacks_default = {
       label: "Fable (alias)"
     },
     {
+      id: "claude-opus-5-5",
+      label: "Opus 5.5\uFF08\u5185\u7F6E\u5EFA\u8BAE\uFF09"
+    },
+    {
       id: "claude-opus-5",
       label: "claude-opus-5"
     },
@@ -1677,7 +1681,11 @@ async function listModels(p) {
   }
   if (p.runtime_id === "claude") {
     const routed = await loadMmdRouteModels(env, fallback);
-    return { models: routed || fallback, source: routed ? "local_routes" : "builtin_hints", note: "\u5185\u7F6E\u9009\u9879\u4E0E\u5DF2\u914D\u7F6E\u8DEF\u7531\uFF1B\u53EF\u624B\u52A8\u8F93\u5165\u5176\u4ED6\u6A21\u578B ID\u3002" };
+    return {
+      models: routed || fallback,
+      source: routed ? "local_routes" : "builtin_hints",
+      note: "Claude Code \u672A\u63D0\u4F9B\u53EF\u8BFB\u53D6\u7684\u5B9E\u65F6\u6A21\u578B\u76EE\u5F55\u3002opus / sonnet \u7B49\u522B\u540D\u7531 CLI \u5728\u8FD0\u884C\u65F6\u89E3\u6790\uFF1B\u5177\u4F53\u6A21\u578B ID \u53EF\u624B\u52A8\u8F93\u5165\uFF0C\u5185\u7F6E\u5EFA\u8BAE\u4E0D\u4EE3\u8868\u8D26\u53F7\u53EF\u7528\u3002"
+    };
   }
   try {
     if (p.runtime_id === "codex") {

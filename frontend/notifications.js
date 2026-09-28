@@ -2,7 +2,7 @@ import {$,esc} from './dom.js';
 import {moment} from './time.js';
 // Unread state lives in the workspace, not the browser's transient UI state.
 export function activityCenter({api,getState,page,openBrief,showSettings,settingsView}){
- let signature='',checking=false,checkedWorkspace=null;
+ let signature='';
  const categoryNames={reports:'报告',templates:'模板',learning:'Wiki',updates:'版本'};
  const nav={reports:'[data-page="reports"]',templates:'[data-page="templates"]',learning:'[data-page="learning"]',updates:'#settings-open'};
  const data=()=>getState()?.notifications||{items:[],counts:{},unread:0,through:0};
@@ -21,19 +21,6 @@ export function activityCenter({api,getState,page,openBrief,showSettings,setting
   else page(item.category);
   if(item.category!=='updates'&&$(item.category==='reports'?'reports':item.category)?.hidden&&$('report')?.hidden)return;
   $('notifications-dialog').close();await read(null,item.seq);
- }
- async function checkVersion(){
-  const state=getState();if(!state?.workspace_id||checking||checkedWorkspace===state.workspace_id)return;
-  checking=true;checkedWorkspace=state.workspace_id;
-  try{
-   const desktop=window.briefloopDesktop;
-   if(typeof desktop?.updateStatus==='function'){
-    let value=await desktop.updateStatus();
-    if(['idle','current'].includes(value.state))value=await desktop.checkForUpdates();
-    await desktopVersion(value);
-   }else await api('software-update-check',{});
-  }catch{/* Explicit checks show their errors in Settings; no startup popup. */}
-  finally{checking=false}
  }
  async function desktopVersion(value){
   if(value?.source==='local-test'||value?.state!=='available'||!value.releaseVersion)return;
@@ -58,7 +45,6 @@ export function activityCenter({api,getState,page,openBrief,showSettings,setting
    $('notifications-list').innerHTML=value.items.length?value.items.map(item=>`<article class="notification-item ${item.read_at?'':'unread'} ${item.severity==='error'?'activity-error':''}"><div><strong>${esc(item.title)}</strong><small>${esc(categoryNames[item.category]||'动态')} · ${esc(moment(item.created))}${item.read_at?'':' · 未读'}</small><p>${esc(item.body)}</p></div><button type="button" class="outline" data-activity-open="${item.seq}">查看</button></article>`).join(''):'<p class="help">还没有新动态。报告任务、模板、Wiki 和版本更新会显示在这里。</p>';
    $('notifications-list').querySelectorAll('[data-activity-open]').forEach(button=>button.onclick=()=>open(value.items.find(i=>i.seq===Number(button.dataset.activityOpen))).catch(error=>{$('notifications-error').textContent=error.message}));
   }
-  checkVersion();
  }
  $('notifications-open').onclick=()=>{$('notifications-error').textContent='';render();$('notifications-dialog').showModal()};
  $('notifications-close').onclick=()=>$('notifications-dialog').close();
