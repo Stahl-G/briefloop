@@ -77,6 +77,9 @@ h3{font-size:var(--text-lg);line-height:var(--leading-tight);font-weight:var(--f
 #settings-dialog :is(.settings-page-header button,.settings-content button){font-size:var(--text-sm)}
 #settings-dialog .runtime-uninstalled{border-radius:var(--radius);padding:var(--space-4)}
 /* Report identity gets its own row; long action sets cannot squeeze the title. */
+/* Keep sticky report controls and their menus in the report's stacking context.
+   The conversation/source drawers must cover the whole report, including its header. */
+#report{isolation:isolate}
 .report-topbar{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);padding:var(--space-3) 0;min-height:0;z-index:var(--z-sticky)}
 .report-crumbs{display:flex;flex-wrap:wrap;align-items:baseline;min-width:0;gap:var(--space-2)}
 .report-crumbs h1{flex:1 1 auto;min-width:0;max-width:none;white-space:normal;overflow-wrap:anywhere;font-size:var(--text-xl);line-height:var(--leading-tight);font-weight:var(--fw-semibold)}
@@ -166,3 +169,33 @@ dialog .section-title h2{font-size:var(--text-xl)}
 .source-upload-progress>strong,.source-upload-progress>.help,.source-upload-progress>progress{grid-column:1}
 .source-upload-progress>button{grid-column:2;grid-row:1 / span 3;align-self:center}
 .source-upload-progress>progress{width:100%;accent-color:var(--color-primary)}
+/* Template-first Word output shares the gallery, form and dialog tokens. */
+.tpl-select{padding:0;text-align:left;min-height:var(--control-h-sm);font-weight:var(--fw-semibold)}
+.tpl-select:hover{background:transparent;color:var(--color-primary)}
+.tpl-custom{margin-top:var(--space-5)}
+.tpl-custom h2{font-size:var(--text-lg);margin-bottom:var(--space-3)}
+.tpl-custom-row{gap:var(--space-3);flex-wrap:wrap}
+.tpl-custom-row.selected{border-color:var(--color-primary);background:var(--color-primary-soft)}
+.tpl-custom-row .name{min-width:0;overflow-wrap:anywhere}
+.tpl-output-bar{flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-5)}
+.tpl-output-bar>.help{flex-basis:100%;margin:0}
+.tpl-output-actions,.template-output-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.template-output-dialog{width:min(var(--chat-column),calc(100% - var(--space-6)));max-height:calc(100% - var(--space-6));overflow:auto;color:var(--color-text)}
+.template-output-dialog .section-title{gap:var(--space-4);align-items:flex-start}
+.template-output-dialog .section-title h2{margin:0}
+.template-output-choice{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-block:var(--space-4);overflow-wrap:anywhere}
+.template-output-choice .help{margin-left:auto}
+.template-output-field{display:grid;gap:var(--space-2);margin-block:var(--space-4);font-weight:var(--fw-medium)}
+.template-output-field :is(input,select){width:100%;min-height:var(--control-h-lg);border-color:var(--color-border-strong)}
+.template-output-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2);margin-block:var(--space-4)}
+.template-output-search label{grid-column:1 / -1}
+.template-output-search input{min-width:0}
+.template-output-status{margin-block:var(--space-4);overflow-wrap:anywhere}
+.template-output-status:empty{display:none}
+.template-output-error{color:var(--color-danger)}
+.template-output-notes{padding-left:var(--space-5);font-size:var(--text-sm);color:var(--color-text-muted);overflow-wrap:anywhere}
+.template-output-download{display:inline-flex;align-items:center;justify-content:center;min-height:var(--control-h-md);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);text-decoration:none;font-size:var(--text-sm);font-weight:var(--fw-medium)}
+@media(max-width:560px){
+ .tpl-output-actions,.template-output-actions{width:100%;align-items:stretch;flex-direction:column}
+ .template-output-choice .help{margin-left:0;flex-basis:100%}
+}

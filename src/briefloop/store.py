@@ -375,7 +375,7 @@ class Store:
         rid = uid("run")
         with self.tx() as c:
             c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(req.model_dump()), dump(source_ids), options.get("skill_id",self.meta("active_skill")), now(), options.get("mode","normal")))
-            if options.get("mode","normal")=="normal":
+            if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
                 c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(req.model_dump()),))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
@@ -395,7 +395,9 @@ class Store:
         return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
 
     def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
-        if author not in ('agent', 'example'):raise ValueError('无效稿件作者')
+        # Explicit source-document imports are user-authored first versions,
+        # not generated drafts or revisions that should trigger learning.
+        if author not in ('agent', 'example', 'user'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
         run=self.one("runs", run_id)

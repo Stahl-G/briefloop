@@ -38,6 +38,7 @@ import {connectorSettings} from './connectors.js';
 import {mcpSelection} from './mcp-selection.js';
 import {appUpdatesUI} from './app-updates.js';
 import {templatesUI,GENRE_META,ICONS,splitTemplateName} from './templates.js';
+import {createTemplateOutput} from './template-output.js';
 import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
 import {reportExportUI} from './report-export.js';
 import {excelExportUI} from './excel-export.js';
@@ -95,7 +96,7 @@ function backgroundActive(){return !!state?.jobs?.some(j=>['queued','running'].i
 // Every snapshot carries the server clock. That stamp alone must not rebuild the
 // page, which would reset focus and selections on each poll; only the timed task
 // cards and the result banner follow the clock.
-async function refreshState(first=false,signal){try{const next=await api(typeof reportBrowsing==='undefined'?'state':reportBrowsing.stateRoute(current,pendingRun));if(signal?.aborted)return false;$('connection').textContent='本地已连接';const {system_clock,...stable}=next;const signature=JSON.stringify(stable);state=typeof reportBrowsing==='undefined'?next:reportBrowsing.acceptState(next,current);scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)delivery.refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}else{renderTasks();renderTaskBanner()}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
+async function refreshState(first=false,signal){try{const next=await api(typeof reportBrowsing==='undefined'?'state':reportBrowsing.stateRoute(current,pendingRun));if(signal?.aborted)return false;$('connection').textContent='本地已连接';const {system_clock,...stable}=next;const signature=JSON.stringify(stable);if(state?.workspace_id&&state.workspace_id!==next.workspace_id)templateOutput.reset();state=typeof reportBrowsing==='undefined'?next:reportBrowsing.acceptState(next,current);scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)delivery.refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}else{renderTasks();renderTaskBanner()}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -2435,7 +2436,10 @@ async function openSourceDrawer(id,usage,match){
  }
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1)}if(b)b.hidden=true}
-const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,setSettings:next=>state.settings=next,syncTemplateLanguage:template=>reportLanguageForm.syncTemplate(template)});
+const templateOutput=createTemplateOutput({api,notice,refresh,getState:()=>state,getCurrent:()=>current,savedVersion,
+ openBrief:brief=>{const opened=openBrief(brief);if(opened)page('report');return opened},uploadPayload,getUploadLimits});
+const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,
+ syncTemplateLanguage:template=>reportLanguageForm.syncTemplate(template),openTemplateOutput:(id,mode)=>templateOutput.open(id,mode)});
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
 if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
