@@ -718,8 +718,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
+                elif path=='/api/template-convert':
+                    if body.get('workspace_id')!=store.meta('workspace_id'):
+                        raise ValueError('工作区已切换，请回到原工作区重新选择文件')
+                    from .template_conversion import convert_request
+                    result=convert_request(store,body['name'],_upload_data(body),body['template_id'],body.get('request_id'))
                 elif path=='/api/reports/delete':result=store.delete_report(body['version_id'])
                 elif path=='/api/export':
+                    if body.get('workspace_id',store.meta('workspace_id'))!=store.meta('workspace_id'):
+                        raise ValueError('工作区已切换，请回到原工作区重新选择报告')
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))
                 elif path=='/api/export-xlsx':

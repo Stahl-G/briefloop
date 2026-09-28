@@ -34,65 +34,57 @@ export const ICONS={
 const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
 const THEME_ORDER=Object.keys(THEME_COLORS);
 export function splitTemplateName(name){const i=name.lastIndexOf('·');return i<0?{genre:name,theme:''}:{genre:name.slice(0,i),theme:name.slice(i+1)}}
-export function templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState,setSettings,syncTemplateLanguage}){
- function templatePickState(){
-  const builtins=(getState().templates||[]).filter(t=>t.origin==='builtin'&&t.name.includes('·')).map(t=>({id:t.id,...splitTemplateName(t.name),status:t.status}));
-  const genres={};for(const item of builtins)(genres[item.genre]=genres[item.genre]||[]).push(item);
-  for(const genre in genres)genres[genre].sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
-  return {builtins,genres};
+// Reinstalled builtins can retain earlier hashes. Show one ready, newest
+// choice for each named style without deleting any saved template records.
+export function visibleBuiltinTemplates(templates){
+ const groups=new Map();
+ for(const template of templates.filter(t=>t.origin==='builtin'&&t.name.includes('·'))){
+  const {genre,theme}=splitTemplateName(template.name),key=genre+'\0'+theme,old=groups.get(key);
+  const compare=(a,b)=>Number(a.status==='ready')-Number(b.status==='ready')
+   ||Number(a.revision||0)-Number(b.revision||0)
+   ||String(a.created||'').localeCompare(String(b.created||''))
+   ||String(a.id).localeCompare(String(b.id));
+  if(!old||compare(template,old)>0)groups.set(key,template);
  }
- let templatePick=null;
+ return [...groups.values()].map(t=>({...t,...splitTemplateName(t.name)}));
+}
+export function templatesUI({notice,action,page,renderWorkflowChoices,templateSections,getState,syncTemplateLanguage,openTemplateOutput}){
+ let templatePick=null,workspace=null;
  function renderTemplatesPage(){
-  const state=getState();
-  const box=$('templates-page-list');if(!box||!state)return;
-  const list=state.templates||[];
-  const sig=JSON.stringify([state.settings&&state.settings.default_template_id,templatePick,...list.map(t=>[t.id,t.status,t.revision,t.name,t.origin])]);
+  const state=getState(),box=$('templates-page-list');if(!box||!state)return;
+  if(workspace!==state.workspace_id){workspace=state.workspace_id;templatePick=null;renderTemplatesPage.sig=''}
+  const list=state.templates||[],builtins=visibleBuiltinTemplates(list),mine=list.filter(t=>t.origin!=='builtin'),choices=[...builtins,...mine];
+  const sig=JSON.stringify([workspace,state.settings?.default_template_id,templatePick,...list.map(t=>[t.id,t.status,t.revision,t.created,t.name,t.origin,t.error])]);
   if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
-  const {builtins,genres}=templatePickState();
-  if(!templatePick||!builtins.some(t=>t.id===templatePick.id)){
-   const saved=builtins.find(t=>t.id===(state.settings||{}).default_template_id);
-   const picked=saved||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌绿')||builtins[0];
-   templatePick=picked?{genre:picked.genre,theme:picked.theme,id:picked.id}:null;
+  if(!choices.some(t=>t.id===templatePick&&t.status==='ready')){
+   const saved=list.find(t=>t.id===state.settings?.default_template_id),sameStyle=saved&&builtins.find(t=>t.name===saved.name&&t.status==='ready');
+   templatePick=(choices.find(t=>t.id===saved?.id&&t.status==='ready')||sameStyle||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌绿'&&t.status==='ready')||choices.find(t=>t.status==='ready'))?.id||null;
   }
-  const fallback=(state.settings||{}).default_template_id;
-  const cards=GENRE_ORDER.filter(g=>genres[g]).map(genre=>{
-   const meta=GENRE_META[genre]||{desc:'',icon:'file',cat:'cat-neutral'};
-   const items=genres[genre];
-   const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
-   const selected=templatePick&&templatePick.genre===genre;
-   const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="--swatch-color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
-   return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
-    +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
-    +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
+  const genres={};for(const item of builtins)(genres[item.genre]??=[]).push(item);
+  for(const items of Object.values(genres))items.sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
+  const order=[...GENRE_ORDER,...Object.keys(genres).filter(g=>!GENRE_ORDER.includes(g))];
+  const cards=order.filter(g=>genres[g]).map(genre=>{
+   const meta=GENRE_META[genre]||{desc:'',icon:'file',cat:'cat-neutral'},items=genres[genre],selected=items.some(t=>t.id===templatePick);
+   const preferred=items.find(t=>t.id===templatePick)||items.find(t=>t.status==='ready')||items[0];
+   const dots=items.map(it=>`<button type="button" class="color-dot${preferred.id===it.id?' selected':''}" style="--swatch-color:${THEME_COLORS[it.theme]||'var(--color-text-muted)'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" data-testid="template-theme" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}" aria-pressed="${it.id===templatePick}" ${it.status==='ready'?'':'disabled'}></button>`).join('');
+   return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check" aria-hidden="true">✓</span>`
+    +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[meta.icon]||''}</svg></span>`
+    +`<button type="button" class="tpl-name tpl-select" data-template-pick="${esc(preferred.id)}" aria-pressed="${selected}" ${items.some(t=>t.status==='ready')?'':'disabled'}>${esc(genre)}</button><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
     +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
   }).join('');
-  const pickedLabel=templatePick?`已选：<strong>${esc(templatePick.genre)} · ${esc(templatePick.theme)}</strong>`:'已选：—';
-  const mine=list.filter(t=>t.origin!=='builtin');
-  const mineRows=mine.length?`<p class="help">我的模板</p>`+mine.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'';
-  box.innerHTML=(cards?`<div class="tpl-grid">${cards}</div><div class="tpl-bar"><span class="picked">${pickedLabel}</span><button type="button" id="template-apply" class="primary" ${templatePick?'':'disabled'}>使用该模板 →</button></div>`:'')
-   +mineRows+(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
-  if(!cards)return;
-  box.querySelectorAll('.tpl-card').forEach(card=>card.onclick=event=>{
-   if(event.target.closest('.color-dot'))return;
-   const genre=card.dataset.genre;const items=genres[genre]||[];
-   const keepTheme=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
-   const target=items.find(i=>i.theme===keepTheme)||items[0];
-   templatePick={genre,theme:target.theme,id:target.id};renderTemplatesPage.sig='';renderTemplatesPage();
-  });
-  box.querySelectorAll('.color-dot').forEach(dot=>dot.onclick=event=>{
-   event.stopPropagation();
-   templatePick={genre:dot.dataset.genre,theme:dot.dataset.theme,id:dot.dataset.id};
-   renderTemplatesPage.sig='';renderTemplatesPage();
-  });
-  const apply=$('template-apply');
-  if(apply)apply.onclick=()=>action(async()=>{
-   if(!templatePick)return;
-   await api('settings',{default_template_id:templatePick.id});
-   setSettings({...getState().settings||{},default_template_id:templatePick.id});
-   $('template-select').value=templatePick.id;renderWorkflowChoices();
-   templateSections();syncTemplateLanguage?.((getState().templates||[]).find(t=>t.id===templatePick.id));
-   notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
-   renderTemplatesPage.sig='';page('setup');
+  const picked=choices.find(t=>t.id===templatePick),pickedLabel=picked?`已选：<strong>${esc(picked.name.replace('·',' · '))}</strong>`:'尚无可用模板';
+  const mineRows=mine.length?`<div class="tpl-custom"><h2>我的版式模板</h2>`+mine.map(t=>`<div class="source-row tpl-custom-row${templatePick===t.id?' selected':''}"><span class="name">${esc(t.name)} · v${esc(t.revision)}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span><button type="button" class="outline" data-template-pick="${esc(t.id)}" data-testid="custom-template-select" aria-pressed="${templatePick===t.id}" ${t.status==='ready'?'':'disabled'}>${templatePick===t.id?'已选择':'选择模板'}</button></div>`).join('')+'</div>':'';
+  box.innerHTML=(cards?`<div class="tpl-grid">${cards}</div>`:'')+mineRows+(list.length?`<div class="tpl-bar tpl-output-bar"><span class="picked">${pickedLabel}</span><div class="tpl-output-actions"><button type="button" id="template-use-upload" data-testid="template-use-upload" class="primary" ${picked?'':'disabled'}>上传原稿套用</button><button type="button" id="template-use-report" data-testid="template-use-report" class="outline" ${picked?'':'disabled'}>从已有报告套用</button><button type="button" id="template-new-report" data-testid="template-new-report" class="ghost" ${picked?'':'disabled'}>按模板新建报告</button></div><p class="help">上传原稿或选择已有报告，按所选版式生成 Word；新建报告会进入写作设置。</p></div>`:'<p class="help">还没有模板。添加一个 Word 作为版式模板。</p>');
+  const pick=id=>{if(!choices.some(t=>t.id===id&&t.status==='ready'))return;templatePick=id;renderTemplatesPage.sig='';renderTemplatesPage()};
+  box.querySelectorAll('.tpl-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button'))return;const items=genres[card.dataset.genre]||[];pick((items.find(t=>t.id===templatePick)||items.find(t=>t.status==='ready'))?.id)});
+  box.querySelectorAll('[data-template-pick]').forEach(button=>button.onclick=()=>pick(button.dataset.templatePick));
+  box.querySelectorAll('.color-dot').forEach(dot=>dot.onclick=event=>{event.stopPropagation();pick(dot.dataset.id)});
+  for(const [id,mode] of [['template-use-upload','upload'],['template-use-report','report']]){const button=$(id);if(button)button.onclick=()=>{if(templatePick)openTemplateOutput?.(templatePick,mode)}}
+  const create=$('template-new-report');if(create)create.onclick=()=>action(async()=>{
+   const template=(getState().templates||[]).find(t=>t.id===templatePick&&t.status==='ready');if(!template)return;
+   $('template-select').value=template.id;renderWorkflowChoices();
+   templateSections();syncTemplateLanguage?.(template);
+   notice(`新建报告已选择 ${template.name}`);page('setup');
   });
  }
  return {render:renderTemplatesPage};
