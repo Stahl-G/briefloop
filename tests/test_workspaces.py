@@ -7,6 +7,29 @@ from briefloop.store import Store, dump
 from briefloop.workspaces import list_workspaces, open_workspace
 
 
+def test_workspace_markers_are_read_as_utf8_independent_of_windows_locale(tmp_path, monkeypatch):
+    """Workspace state files are UTF-8 even when Windows uses a legacy code page."""
+    from briefloop import workspaces
+
+    target=tmp_path/'工作区甲';target.mkdir()
+    (target/'server.json').write_text(dump({'pid':os.getpid(),'url':'http://127.0.0.1:19001',
+                                           'workspace_id':'标识甲'}),encoding='utf-8')
+    registry=tmp_path/workspaces.REGISTRY
+    registry.write_text(dump({'recent':[str(target)]}),encoding='utf-8')
+    original=Path.read_text
+    reads=[]
+    def require_utf8(path,*args,**kwargs):
+        if path in (registry,target/'server.json'):
+            assert kwargs.get('encoding')=='utf-8'
+            reads.append(path)
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'read_text',require_utf8)
+
+    assert workspaces._recent(tmp_path)==[target.resolve()]
+    assert workspaces._validated_info(target,'标识甲')=={'pid':os.getpid(),'url':'http://127.0.0.1:19001'}
+    assert set(reads)=={registry,target/'server.json'}
+
+
 def test_workspace_open_checks_identity_and_launches_paused_without_touching_old_service(tmp_path, monkeypatch):
     current=Store(tmp_path/'nearby'/'current')
     sibling=Store(tmp_path/'nearby'/'sibling')

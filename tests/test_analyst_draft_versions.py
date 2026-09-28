@@ -74,26 +74,27 @@ def test_cli_preflight_checks_frozen_contract_and_submit_checks_file_version(tmp
     session = chat.create('writer', {'backend': 'pi'}, path.parent)
     message = chat.message(session['id'], 'write', status='delivered')
     (path.parent/'conversation.json').write_text(json.dumps({'session_id': session['id'],
-        'message_id': message['id'], 'job_id': 'job_writer'}))
+        'message_id': message['id'], 'job_id': 'job_writer'}),encoding='utf-8')
     def cli(name, *extra):
         result = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(store.root),
-                    name, '--run', run['id'], '--file', str(path), *extra], capture_output=True, text=True)
+                        name, '--run', run['id'], '--file', str(path), *extra], capture_output=True,
+                        text=True, encoding='utf-8')
         return result.returncode, json.loads(result.stdout)
     value = {**draft(source['id']), 'reader_contract': {'clauses': []}}
-    path.write_text(json.dumps(value))
+    path.write_text(json.dumps(value),encoding='utf-8')
     code, rejected = cli('check-draft')
     assert code == 1 and 'reader_contract' in str(rejected)
     value.pop('reader_contract')
-    path.write_text(json.dumps(value))
+    path.write_text(json.dumps(value),encoding='utf-8')
     code, checked = cli('check-draft')
     assert code == 0 and checked['scope'] == 'writer_packet'
     value['gaps'] = ['新增未核实事项']
-    path.write_text(json.dumps(value))
+    path.write_text(json.dumps(value),encoding='utf-8')
     assert cli('submit-draft', '--revision', checked['revision'])[0] == 1
     code, latest = cli('check-draft')
     assert code == 0
     assert cli('submit-draft', '--revision', latest['revision'])[0] == 0
-    assert json.loads(path.read_text())['gaps'] == value['gaps']
+    assert json.loads(path.read_text(encoding='utf-8'))['gaps'] == value['gaps']
     chat.patch_message(message['id'], status='cancelled')
     assert cli('submit-draft', '--revision', latest['revision'])[0] == 1
 

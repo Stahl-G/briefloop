@@ -269,7 +269,9 @@ class Store:
             if status=='ready':
                 text=str(text or '')
                 extracted=self.root/'sources'/(source_id+'.extracted.txt')
-                temporary=extracted.with_suffix('.pending.txt');temporary.write_text(text,encoding='utf-8');temporary.replace(extracted)
+                # Preserve logical text bytes so the UTF-8 content hash remains
+                # valid on Windows, where the default newline translates LF to CRLF.
+                temporary=extracted.with_suffix('.pending.txt');temporary.write_text(text,encoding='utf-8',newline='');temporary.replace(extracted)
                 c.execute('UPDATE sources SET status=?,error=?,hash=?,path=? WHERE id=?',(status,error,content_hash(text),str(extracted.relative_to(self.root)),source_id))
             else:c.execute('UPDATE sources SET status=?,error=? WHERE id=?',(status,error,source_id))
             metadata={**metadata,'extraction_status':status,'extraction_job_id':job_id}
