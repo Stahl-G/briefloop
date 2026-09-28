@@ -160,13 +160,13 @@ def _word_document(data, notes):
         num = next((pr.find(qn('w:numPr')) for pr in properties
                     if pr is not None and pr.find(qn('w:numPr')) is not None), None)
         if num is None:
-            return None
+            return None, None
         identifier = num.find(qn('w:numId'))
         if identifier is None:
             raise ValueError('Word 列表缺少编号定义')
         identifier = identifier.get(qn('w:val'))
         if identifier == '0':
-            return None
+            return None, None
         numbering = doc.part.numbering_part.element
         level = num.find(qn('w:ilvl'))
         level = int(level.get(qn('w:val'))) if level is not None else 0
@@ -186,12 +186,12 @@ def _word_document(data, notes):
         if definition is None:
             raise ValueError('Word 列表层级定义缺失')
         level_break = definition.find(qn('w:pPr') + '/' + qn('w:pageBreakBefore'))
-        if level_break is not None and level_break.get(qn('w:val'), 'true').lower() not in ('0', 'false', 'off'):
-            raise ValueError('Word 列表定义含分页设置，当前不能可靠转换')
+        level_break = (level_break.get(qn('w:val'), 'true').lower() not in ('0', 'false', 'off')
+                       if level_break is not None else None)
         fmt = definition.find(qn('w:numFmt'))
         fmt = fmt.get(qn('w:val')) if fmt is not None else ''
         if fmt == 'bullet':
-            return '• '
+            return '• ', level_break
         if fmt != 'decimal':
             raise ValueError('Word 列表含非十进制编号，当前不能可靠转换')
         marker = definition.find(qn('w:lvlText'))
@@ -204,12 +204,17 @@ def _word_document(data, notes):
         value = counters.get(identifier, int(start.get(qn('w:val'))) if start is not None else 1)
         counters[identifier] = value + 1
         notes.append('编号列表的序号保留为正文文字，以避免 Word 自动重新编号。')
-        return marker.replace('%1', str(value)) + ' '
+        return marker.replace('%1', str(value)) + ' ', level_break
 
     def paragraph(element):
         p = Paragraph(element, doc)
         formats = [p.paragraph_format, *(style.paragraph_format for style in style_chain(p))]
         page_break = next((fmt.page_break_before for fmt in formats if fmt.page_break_before is not None), None)
+        prefix, level_break = list_prefix(p)
+        # Keep explicit False: paragraph/style overrides numbering, which in
+        # turn overrides document defaults. Only reject an effective boundary.
+        if page_break is None:
+            page_break = level_break
         if page_break is None:
             default_break = doc.styles.element.find('/'.join(qn(name) for name in
                 ('w:docDefaults', 'w:pPrDefault', 'w:pPr', 'w:pageBreakBefore')))
@@ -229,7 +234,6 @@ def _word_document(data, notes):
         if alignment:
             attrs['textAlign'] = alignment
         content = []
-        prefix = list_prefix(p)
         if prefix:
             content.append(_text(prefix))
         allowed = {qn('w:pPr'), qn('w:bookmarkStart'), qn('w:bookmarkEnd'), qn('w:proofErr')}

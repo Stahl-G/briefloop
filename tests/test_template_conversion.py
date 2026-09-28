@@ -311,3 +311,29 @@ def test_explicitly_disabled_inherited_page_break_can_convert(workspace):
     defaults.find(qn('w:pPrDefault') + '/' + qn('w:pPr')).append(OxmlElement('w:pageBreakBefore'))
     result = convert_file(store, 'disabled-boundary.docx', word_bytes(doc), template_id)
     assert 'No authored break here' in result['version']['markdown']
+
+
+@pytest.mark.parametrize('override', ['paragraph', 'style', 'numbering'])
+def test_explicit_false_page_break_overrides_lower_precedence_defaults(workspace, override):
+    store, template_id = workspace
+    doc = Document()
+    p = doc.add_paragraph('Supported numbered paragraph', 'List Number')
+    doc.styles.element.find(qn('w:docDefaults') + '/' + qn('w:pPrDefault') + '/' + qn('w:pPr')).append(OxmlElement('w:pageBreakBefore'))
+    numbering = doc.part.numbering_part.element
+    identifier = doc.styles['List Number'].element.pPr.numPr.numId.val
+    num = next(n for n in numbering.findall(qn('w:num')) if n.get(qn('w:numId')) == str(identifier))
+    abstract_id = num.find(qn('w:abstractNumId')).get(qn('w:val'))
+    abstract = next(n for n in numbering.findall(qn('w:abstractNum')) if n.get(qn('w:abstractNumId')) == abstract_id)
+    level = abstract.find(qn('w:lvl'))
+    properties = level.find(qn('w:pPr'))
+    if properties is None:
+        properties = OxmlElement('w:pPr'); level.append(properties)
+    boundary = OxmlElement('w:pageBreakBefore')
+    boundary.set(qn('w:val'), '0' if override == 'numbering' else '1')
+    properties.append(boundary)
+    if override == 'paragraph':
+        p.paragraph_format.page_break_before = False
+    elif override == 'style':
+        p.style.paragraph_format.page_break_before = False
+    result = convert_file(store, 'no-effective-break.docx', word_bytes(doc), template_id)
+    assert '1. Supported numbered paragraph' in result['version']['markdown']
