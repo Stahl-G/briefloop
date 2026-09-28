@@ -163,7 +163,7 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
 
 @pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
                                 'inherited_superscript', 'inherited_hidden', 'wrapped_table_row', 'page_break', 'column_break',
-                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math', 'paragraph_break', 'inherited_paragraph_break'])
+                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math', 'paragraph_break', 'inherited_paragraph_break', 'numbering_page_break'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
     if case == 'control':
@@ -181,7 +181,19 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name = 'source.docx'
         doc = Document()
         p = doc.add_paragraph('可读取正文')
-        if case == 'paragraph_break':
+        if case == 'numbering_page_break':
+            p.style = 'List Number'
+            numbering = doc.part.numbering_part.element
+            identifier = doc.styles['List Number'].element.pPr.numPr.numId.val
+            num = next(n for n in numbering.findall(qn('w:num')) if n.get(qn('w:numId')) == str(identifier))
+            abstract_id = num.find(qn('w:abstractNumId')).get(qn('w:val'))
+            abstract = next(n for n in numbering.findall(qn('w:abstractNum')) if n.get(qn('w:abstractNumId')) == abstract_id)
+            level = abstract.find(qn('w:lvl'))
+            properties = level.find(qn('w:pPr'))
+            if properties is None:
+                properties = OxmlElement('w:pPr'); level.append(properties)
+            properties.append(OxmlElement('w:pageBreakBefore'))
+        elif case == 'paragraph_break':
             p.paragraph_format.page_break_before = True
         elif case == 'inherited_paragraph_break':
             base = doc.styles.add_style('Boundary Base', WD_STYLE_TYPE.PARAGRAPH)

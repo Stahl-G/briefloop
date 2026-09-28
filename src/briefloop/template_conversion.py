@@ -185,6 +185,9 @@ def _word_document(data, notes):
             definition = override.find(qn('w:lvl'))
         if definition is None:
             raise ValueError('Word 列表层级定义缺失')
+        level_break = definition.find(qn('w:pPr') + '/' + qn('w:pageBreakBefore'))
+        if level_break is not None and level_break.get(qn('w:val'), 'true').lower() not in ('0', 'false', 'off'):
+            raise ValueError('Word 列表定义含分页设置，当前不能可靠转换')
         fmt = definition.find(qn('w:numFmt'))
         fmt = fmt.get(qn('w:val')) if fmt is not None else ''
         if fmt == 'bullet':
