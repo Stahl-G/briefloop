@@ -76,6 +76,12 @@ class ReportSection(Model):
     placeholder: str = '待填充'
 
 
+class LengthRequirement(Model):
+    """Recorded source of an explicit limit, not a separate authorization grant."""
+    kind: Literal['user_selection', 'user_quote'] = Field(description='user_selection 由用户明确选择网页严格选项时记录；Agent 整理用户口述只用 user_quote，不虚构界面点击。')
+    text: str = Field(min_length=1, max_length=1000, description='user_quote 为 objective、raw_input 或 writing_preferences 中连续逐字原话；来源记录本身不证明语义或授权。')
+
+
 class Requirements(Model):
     title: str = Field(min_length=1, max_length=200)
     objective: str = Field(min_length=1, max_length=10000)
@@ -122,6 +128,8 @@ class Requirements(Model):
     fact_check: bool | None = None
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
+    length_mode: Literal['soft', 'strict'] = Field(default='soft', description='默认篇幅建议；仅用户明确选择或要求严格上限时用 strict，并提供 max_words 和 length_requirement。')
+    length_requirement: LengthRequirement | None = None
 
     @model_validator(mode='before')
     @classmethod
@@ -154,8 +162,16 @@ class Requirements(Model):
 
     @model_validator(mode='after')
     def fill_length_preferences(self):
+        if self.length_mode == 'strict':
+            if self.max_words is None or not self.length_requirement or not self.length_requirement.text.strip():
+                raise ValueError('严格篇幅需要明确上限和用户要求来源；仅有旧 max_words 不构成严格限制')
+            if self.length_requirement.kind == 'user_quote':
+                originals = [self.objective, self.raw_input, *self.writing_preferences]
+                if not any(self.length_requirement.text in original for original in originals):
+                    raise ValueError('严格篇幅的 user_quote 必须逐字出现在 objective、raw_input 或 writing_preferences 中')
         target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else INDUSTRY_LENGTH[self.language]
                         if self.report_profile=="industry_periodic" else length_presets(self.language)[self.extent])
+        if self.length_mode == 'strict':target=min(target,self.max_words)
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:

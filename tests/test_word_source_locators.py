@@ -50,7 +50,9 @@ def test_word_source_locations_match_saved_version_and_keep_links(tmp_path, rout
     saved_brief = store.one('briefs', brief['id'])
     saved_sources = store.rows('SELECT * FROM sources ORDER BY id')
     saved_markdown = reader_markdown(store, brief)
-    assert 'Public evidence](https://example.test/report) · line 1；lines 2-3' in saved_markdown
+    assert 'Public evidence](https://example.test/report)' in saved_markdown
+    assert 'line 1' not in saved_markdown and 'lines 2-3' not in saved_markdown
+    assert 'Local evidence · line 3' in saved_markdown
 
     if route.endswith('download'):
         blob = _download(store, brief['id'])
@@ -74,7 +76,8 @@ def test_word_source_locations_match_saved_version_and_keep_links(tmp_path, rout
 
     document = Document(BytesIO(blob))
     paragraphs = [''.join(p.xpath('.//w:t/text()')) for p in document.element.xpath('.//w:p')]
-    assert sum(p.endswith('Public evidence · line 1；lines 2-3') for p in paragraphs) == 1
+    assert sum(p.endswith('Public evidence') for p in paragraphs) == 1
+    assert 'line 1' not in document.element.xml and 'lines 2-3' not in document.element.xml
     assert sum(p.endswith('Local evidence · line 3') for p in paragraphs) == 1
     assert 'unused-location' not in document.element.xml
     assert 'Uncited evidence' not in document.element.xml

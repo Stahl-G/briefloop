@@ -41,6 +41,7 @@ import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
 import {reportExportUI} from './report-export.js';
 import {excelExportUI} from './excel-export.js';
 import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,DEEP_LENGTH,INDUSTRY_LENGTH,lengthUnit,runLanguage} from './report-language.js';
+import {createLengthControls} from './length-controls.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -183,6 +184,8 @@ function applyRequirements(text){
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
+ lengthControls.restore(data,{fromDiscussion:true});
+ validateLengthInputs();
  if(Array.isArray(data.writing_preferences))writingPreferencesOverride=[...data.writing_preferences];
  page('setup');notice('已填入材料与需求，请检查后生成');
 }
@@ -521,7 +524,7 @@ async function previewReportTime(){
  try{const requirements={title:form.elements.title.value||'预览',objective:form.elements.objective.value||'预览'};for(const key of ['period','period_start','period_end','report_timezone'])requirements[key]=form.elements[key].value;const t=await api('report-time-preview',{requirements});if(ticket!==reportTimePreviewTicket)return;box.textContent=`系统日期：${t.today} · ${t.timezone}；报告范围：${t.start} 至 ${t.end_exclusive}（不含结束时刻）。提交时冻结。`;}catch(e){if(ticket===reportTimePreviewTicket)box.textContent=e.message}
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read());req.research_budget=readResearchBudget();req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){const s=await uploadSource(f);if(s.status==='ready')selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});if(s.status==='ready')selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
@@ -1675,6 +1678,8 @@ $('chat-model-provider').oninput=()=>{rememberDraft();updateComposer()};
 for(const id of ['chat-model','chat-model-provider','model-select','model-provider'])$(id).addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();event.stopPropagation();$(id).blur()}});
 
 let lengthEdited=false;
+const lengthControls=createLengthControls({$,notice,language:()=>reportLanguage($('report-language').value)||'zh'});
+lengthControls.init();
 // Length presets follow the report language; untouched numbers follow a language change.
 const reportLanguageForm=reportLanguageUI({notice,onChange:language=>{
  if(lengthEdited)return;
@@ -1686,11 +1691,11 @@ reportLanguageForm.init();
 function presetLengths(extent){const presets=LANGUAGE_LENGTHS[reportLanguageForm.current()];return presets[extent]||presets.balanced}
 function initializeLengthInputs(requirements){
  const preset=presetLengths($('length-preset').value);
- $('target-words').value=requirements.target_words??preset[0];$('max-words').value=requirements.max_words??preset[1];validateLengthInputs();
+ $('target-words').value=requirements.target_words??preset[0];$('max-words').value=requirements.max_words??preset[1];lengthControls.restore(requirements);validateLengthInputs();
 }
 function validateLengthInputs(){
  const target=Number($('target-words').value),maximum=Number($('max-words').value);
- $('max-words').setCustomValidity(Number.isInteger(target)&&target>0&&Number.isInteger(maximum)&&maximum>0&&maximum<target?'字数上限不能小于目标字数。':'');
+ $('max-words').setCustomValidity(Number.isInteger(target)&&target>0&&Number.isInteger(maximum)&&maximum>0&&maximum<target?'篇幅上沿不能小于建议目标，请调整其中一个数字。':'');
 }
 $('length-preset').onchange=()=>{lengthEdited=true;const [target,maximum]=presetLengths($('length-preset').value);$('target-words').value=target;$('max-words').value=maximum;validateLengthInputs()};
 for(const id of ['target-words','max-words'])$(id).oninput=()=>{lengthEdited=true;validateLengthInputs()};
@@ -1698,11 +1703,7 @@ function renderBriefLength(){
  renderReportDataButton();
  const element=$('brief-length');if(!current){element.hidden=true;return}element.hidden=false;
  const stats=state.briefs.find(brief=>brief.id===current.id)?.length_stats||current.length_stats;
- element.classList.remove('over-limit');if(!stats||!Number.isFinite(stats.count)){element.textContent='字数信息暂不可用';return}
- const unit=lengthUnit(runLanguage(state,current.run_id)),count=value=>new Intl.NumberFormat('zh-CN').format(value),parts=[`${dirty?'上次保存':'正文'} ${count(stats.count)} ${unit}`];
- if(stats.target_words==null&&stats.max_words==null)parts.push(`${unit}数目标与上限未设置`);else {parts.push(stats.target_words==null?'目标未设置':`目标 ${count(stats.target_words)}`);parts.push(stats.max_words==null?'上限未设置':`上限 ${count(stats.max_words)}`)}
- if(stats.over_limit===true&&stats.max_words!=null){parts.push(`超出 ${count(stats.count-stats.max_words)} ${unit}`);element.classList.add('over-limit')}
- if(dirty)parts.push('保存后更新');element.textContent=parts.join(' · ');
+ lengthControls.renderBrief(element,stats,{dirty,language:runLanguage(state,current.run_id)});
 }
 
 let sessionMenuTarget=null;

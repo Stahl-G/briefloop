@@ -375,10 +375,10 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     5. 把返回的 reconciliation_id 写进 draft.json.reconciliation_id；正文按对照结论组织并执行必要限定，不把来源陈述直接当作报告事实，也不平均或投票选赢家。
    Analyst 直接写可读 Brief：按对读者的重要性取舍，解释变化与有证据支持的意义，区分事实与推断，保留关键条件。
    按本轮产物约定决定分析深度和行动建议，避免逐篇复述材料或用泛泛背景凑篇幅。
-   正文目标约 {req['target_words']}，上限 {req['max_words']} 个计数单位；接近目标优先保留关键信息，正文不得超过上限。规则：中文汉字每字计 1，连续英文字母或数字串计 1；排除 Markdown 语法、URL 和 [@source_id] 引用，标题、列表与表格文字计入正文。
+   正文建议目标约 {req['target_words']} 个计数单位，结构化范围上沿为 {req['max_words']}；软目标或严格要求以本轮产物约定的篇幅说明为准。规则：中文汉字每字计 1，连续英文字母或数字串计 1；排除 Markdown 语法、URL 和 [@source_id] 引用，标题、列表与表格文字计入正文。
    正文只保留 [@source_id] 这种行内引用；准确 locator 和相关 excerpt 仅放进 draft.json.citations 元数据，不把证据原文、定位信息或来源字段括号倾倒到正文。
    新稿以 draft.editor_document 提交 Tiptap 富文档 JSON（根 type=doc）；正文由 paragraph/heading/list/table/image/citation 等节点组成，加粗用 bold mark、颜色用 textStyle.color；图片 src 引用 briefloop-figure:FIGID。引用节点为 citation，attrs.sourceId 为真实来源ID。主章节 heading.attrs.blockId 使用产物约定的 section_id，标题和顺序遵守本轮明确要求。正文文字不要嵌入 Markdown 星号。可使用本地工具 normalize-document 检查结构并导出兼容 Markdown 用于字数检查；不要把 HTML/CSS 当纯文字。
-   保存最终 draft.json 前，先把待提交的 markdown 原样写入 {folder/'draft-body.md'}，调用 `{tool} count-brief --file {quote_path(folder/'draft-body.md',backend)} --target-words {req['target_words']} --max-words {req['max_words']}` 检查，或使用完全相同算法计数；超限先压缩临时稿再保存最终 JSON。不要把 citations 元数据当正文计数，也不要在最终稿已经发布后才为长度反复改写它。
+   保存最终 draft.json 前，先把待提交的 markdown 原样写入 {folder/'draft-body.md'}，调用 `{tool} count-brief --file {quote_path(folder/'draft-body.md',backend)} --target-words {req['target_words']} --max-words {req['max_words']}` 检查，或使用完全相同算法计数；按本轮篇幅模式处理结果，不因偏离建议范围反复重写。不要把 citations 元数据当正文计数，也不要在最终稿已经发布后才为长度反复改写它。
     把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。保存后调用 `{tool} check-draft --run {run['id']} --file {quote_path(folder/'draft.json',backend)}` 自检：status=invalid 要按 errors 指出的字段改正后重存；unknown_fields 里的键不在契约内，发布时会被丢弃并记入任务日志，其中若有必需内容要改放到契约字段。diagnostics 返回实际总量、各章篇幅、引用定位和数字绑定问题，对照用户重点修正；检查通过不等于语义核实或独立审阅完成。
     重要数字绑定：凡是承载结论的数值——金额、财务指标、比率、占比、年份、日期、指数、计数、产能、订单、成交量、涨跌幅等，无论是否属于常见业务口径——都用 number_bindings 记录原始 value/unit、label/entity/period、source_id/locator；另给 source_excerpt（来源中逐字存在、含原始数值与完整单位的摘录）、report_quote（正文中唯一的逐字片段）、number_text（该片段内唯一、完整的带符号数字与单位）。示例：{{"label":"公司订单金额","value":13.6,"unit":"billion USD","period":"本报告期","entity":"示例公司","source_id":"实际来源ID","locator":"line 1","source_excerpt":"从真实来源逐字摘录，不照抄示例","report_quote":"示例公司订单为136亿美元。","number_text":"136亿美元"}}。示例仅说明字段，必须使用实际材料；不要编造绑定。locator 使用可解析的明确范围：line 1（或 line 1-3）、page 1，或序列化为字符串的证据定位 JSON（如带 kind、sheet、cells 的 XLSX 定位）；行号、页码和单元格均须替换为原件真实位置。无法识别的定位会标记未检查，不会退回整份来源寻找相同文字。程序只核对指定位置的数值、币种、单位换算以及摘录存在性，不证明主体、期间或指标含义正确。不能准确绑定或不支持的单位会标记未检查，不能声称全文已核验。数值性结论的关键数必须尝试绑定；确实无法绑定的数值不得为规避未检查标记而默默从绑定中省略——正文保留该数值却不绑定，等同于放弃该项核验，发布记录会如实标注数值核验未执行。
     草稿一保存应用就会展示；不需要 Editor、Auditor 或评分通过。
@@ -430,6 +430,11 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     input_pack.update(store.assessment_context(brief['id']))
+    from .evaluation_reading import reading_context, GUIDE as READING_GUIDE
+    from .exports import reader_markdown
+    input_pack['reading_context'] = reading_context(brief)
+    reader_preview = reader_markdown(store, brief)
+    (folder/'reader-preview.md').write_text(reader_preview, encoding='utf-8')
     (folder/'input.json').write_text(json.dumps(input_pack,ensure_ascii=False,indent=2),encoding='utf-8')
     tool=tool_command(store.root,backend=backend)
     no_question='本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n'
@@ -449,6 +454,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
         from .models import Assessment
         from .native_roles import evaluator_packet
         evaluator_packet(store,input_pack,Assessment.model_json_schema(),folder)
+        (folder/'packet'/'reader-preview.md').write_text(reader_preview, encoding='utf-8')
         context='本次评价只能读取固定任务包：路径一律相对任务包根目录。\n'
         figure_view_word='实际用 packet_read 读取其 image_path（任务包内相对路径）'
         read_input='本轮是单稿评分模式。直接读取 input.json（正文另有每行一个段落的 report.txt）；'
@@ -467,7 +473,9 @@ def assessment_prompt(store, brief, folder, backend='codex'):
 {read_input}初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
 {no_question}{read_sources}按需打开额外原文；没有在初始 sources 中列出不代表来源不存在，不要求默认全量读取。
 {read_visual}
-input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是指定正文数值与原始值不一致的项目；numbers.skipped 是缺少定位、来源不可核对或单位不支持的未检查项目。numbers.status 为 not_checked 且 body_quantity_count 大于 0 时，表示正文含数值但从未登记任何数字绑定——数值维没有任何机械信号；这属于接地缺陷，必须按未核验对待并指出，不得视为已核验或遗漏检查。即使 matched，也只表示指定位置数值匹配，不证明主体、期间、指标或原文支持关系；请读取 number_bindings 对照原文检查这些含义；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。refcheck.gaps 统计影响交付的缺口（total/open/open_records）：related 是否对应真实必答问题或正文位置、impact 是否成立、status 是否未经独立确认就写 resolved，由你对照原件判断；仍有 open 的记录不因写了缺口就免除覆盖评价。input.clause_index 是本轮已保存的读者约定条款（clause_id/kind/source_quote/instruction）。四维评价按条款对齐：reader_content 决定覆盖；research_method 约束证据与分析；writing_preference 决定表达；manual_assignment 只核对占位；发现可引用对应条款的 instruction 说明违反点。
+读取同目录 reader-preview.md 和 input.reading_context，先区分读者预览、核查定位与机器记录。
+{READING_GUIDE}
+input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是指定正文数值与原始值不一致的项目；numbers.skipped 是缺少定位、来源不可核对或单位不支持的未检查项目。numbers.status 为 not_checked 且 body_quantity_count 大于 0 时，只表示正文数值尚无机器绑定检查；保留该未检范围，再回读原文判断事实，不能仅因缺记录就认定数值错误或重大事实问题。即使 matched，也只表示指定位置数值匹配，不证明主体、期间、指标或原文支持关系；请读取 number_bindings 对照原文检查这些含义；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。refcheck.gaps 统计影响交付的缺口（total/open/open_records）：related 是否对应真实必答问题或正文位置、impact 是否成立、status 是否未经独立确认就写 resolved，由你对照原件判断；仍有 open 的记录不因写了缺口就免除覆盖评价。input.clause_index 是本轮已保存的读者约定条款（clause_id/kind/source_quote/instruction）。四维评价按条款对齐：reader_content 决定覆盖；research_method 约束证据与分析；writing_preference 决定表达；manual_assignment 只核对占位；发现可引用对应条款的 instruction 说明违反点。
 事实核对清单（程序不擅长，必须你来）：财务指标名称是否被偷换（如 Adjusted EBITDA 写成调整后利润）；事件先后与时区是否正确（如盘前公告写成盘后开盘）；政策条件与例外是否被压缩合并（如两种税负情形写成一种）；公司预期/会议纪要是否被升级成已获批、已融资、已到账；每条结论是否真有来源原文支持，而不只是引用存在。要求中明确点名的重要对象没有研究、只有"尚未核验"时，覆盖项扣分，不因写了缺口而豁免。
 {schema_line}brief_hash 必须是 {brief['hash']}。
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。

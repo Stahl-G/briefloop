@@ -68,6 +68,11 @@ def resolve(requirements, template=None, *, reader_contract=None):
             'interpretation_rule': 'objective及requirement_items保留用户原始要求；reader_contract是待对照原文核查的执行解释，不得降级或替换明确要求。'}
     if requirements.get('target_minutes') is not None:
         spec['target_minutes'] = requirements['target_minutes']
+    # Legacy max_words stays advisory without changing its saved contract hash.
+    # Only an explicit strict policy adds a new requirement identity.
+    if requirements.get('length_mode') == 'strict':
+        spec['length_mode'] = 'strict'
+        spec['length_requirement'] = deepcopy(requirements.get('length_requirement'))
     # Chinese keeps the spec byte-identical to runs saved before the language
     # enum. Language stays out of the reader-contract fingerprint (it is frozen
     # per run), and review validation ignores it for packets saved without it.
@@ -172,7 +177,8 @@ def instructions(spec, role='analyst', *, include_spec=True):
     }[role]
     if role in ('evaluator', 'reviewer'):
         reader = '以下是被审报告的交付标准，用来核对产物；其中补查、改稿等动作由主Agent执行。\n' + reader
-    parts = [reader, common, role_text]
+    from .length import length_instructions
+    parts = [reader, common, role_text, length_instructions(spec)]
     if role in ('analyst', 'revision'):
         from .writing_guidance import ANALYST_GUIDE
         parts.append(ANALYST_GUIDE)

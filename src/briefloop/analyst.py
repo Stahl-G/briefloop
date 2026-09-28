@@ -25,7 +25,7 @@ WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报�
 复合句中的事实分别挂到真正支持它的来源；引用存在不等于支持该句。数值与事件同时发生不足以确认因果，结论本身保留适当强度，不靠末尾免责声明抵消。
 重要数字用 number_bindings 绑定原始 value/unit、label/entity/period、source_id/locator、逐字 source_excerpt，以及正文唯一 report_quote 和其中的 number_text；匹配只证明数值定位，含义仍须核对。
 数字定位用 line 12-14、page 3 或证据定位 JSON，不用章节名称代替定位；源摘录必须逐字来自该位置。单独查看 document-guide.json 的数字绑定规则，不把不支持的单位或未定位结果写成核验成功。
-先按重点分配篇幅，并给标题、表格和最后提炼的摘要留余量；这些都计入正文。分章保存后看累计长度，不等写完整篇才发现超限。篇幅按 target_words 安排，不贴着 max_words 写；没有硬性字数下限，不填充无关内容。提交前检查总量、各章篇幅和引用定位，只修具体问题，不反复整篇重抄。修订时逐项处理 input.feedback，保留有效内容、必要条件及未解决问题，不仅添加免责段。
+先按重点分配篇幅，标题、表格和摘要都计入正文。分章保存回执给出累计长度；默认 soft 中 target_words/max_words 都是建议，完整且切题的必要内容可以直接提交，不为消除超出提示反复改稿。只有 length_mode=strict 且有用户要求来源时才按明确上限检查；冲突时保留事实、引用和采用条件并说明差距。低于目标也不为凑字数扩写。提交前核对具体重复、离题及引用定位问题，不反复整篇重抄。修订时逐项处理 input.feedback，保留有效内容、必要条件及未解决问题，不仅添加免责段。
 输出完整 BriefDraft，使用 editor_document 富文档正文，结构见 draft.schema.json 与 document-guide.json。
 图表只复用任务包中实际登记的 figure_id；需要比较表时复用 document-guide.json 的 table_example：表头和单元格都先放 paragraph，再放 text/citation。表内事实的引用放在相应单元格，不能只登记在 draft.citations 而正文不标引用。结构化指标可交给 prepare_report_data 计算，最终 report_data 保留原始 records。
 来源 ID 仅用于 citation 节点与结构化字段，不作为读者正文；系统自动生成可点击的引用来源列表，除非用户明确要求，不在正文重复附来源表或列出 src_ 标识。
@@ -258,7 +258,8 @@ def _save_section(store, config, args):
     req = json.loads((Path(config['packet_root']) / 'input.json').read_text(encoding='utf-8'))['requirements']
     assembled = document_markdown({'type': 'doc', 'content': [
         block for section in ledger.values() for block in section['editor_document'].get('content', [])]})
-    length = length_stats(assembled, target_words=req.get('target_words'), max_words=req.get('max_words'))
+    length = length_stats(assembled, target_words=req.get('target_words'), max_words=req.get('max_words'),
+                          length_mode=req.get('length_mode', 'soft'), length_requirement=req.get('length_requirement'))
     length['remaining_to_max'] = max(0, length['max_words'] - length['count']) if length['max_words'] else None
     length['scope'] = '当前已存章节（每个 ID 的最新内容）；最终 section_ids 选取后以完整稿检查为准。'
     # Return a receipt, not another full copy of the authored content.
