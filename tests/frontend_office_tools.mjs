@@ -178,14 +178,12 @@ test('office summary trusts the stored status and falls back to the item count',
  assert.match(tools.officeCheckSummary({validate:{status:'ok'},issues:{status:'error',reason:'officecli 执行超时（120 秒）'}}),/质检未完成：officecli 执行超时/);
 });
 
-test('settings card and preview wording disclose the renderer network calls',()=>{
+test('settings keeps one renderer disclosure separate from detection status; preview discloses it too',()=>{
  const {tools,dom}=makeTools({installed:true,enabled:true});
  tools.renderSettingsCapability({installed:true,version:'1.0.152',enabled:true});
  const status=dom.$('settings-officecli-status').textContent;
- assert.match(status,/本地渲染/);
- assert.match(status,/d\.officecli\.ai/);
- assert.match(status,/KaTeX/);
- assert.match(status,/字体名发给它的字体代理/);
+ assert.match(status,/版本 1\.0\.152.*开关已开启/);
+ assert.doesNotMatch(status,/d\.officecli\.ai|KaTeX|字体代理/);
  // The dialog opens with the same disclosure next to the page input.
  tools.openPreview({job_id:'job_1'});
  const note=dom.$('office-preview-note').textContent;
@@ -196,6 +194,7 @@ test('settings card and preview wording disclose the renderer network calls',()=
  const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
  const block=html.slice(html.indexOf('settings-officecli-block'),html.indexOf('settings-view-learning'));
  assert.match(block,/d\.officecli\.ai/);assert.match(block,/KaTeX/);assert.match(block,/字体代理/);
+ assert.equal((block+status).match(/d\.officecli\.ai/g).length,1);
  const dialog=html.slice(html.indexOf('office-preview-dialog'),html.indexOf('source-updates-dialog'));
  assert.match(dialog,/d\.officecli\.ai/);assert.match(dialog,/KaTeX/);assert.match(dialog,/字体代理/);
 });

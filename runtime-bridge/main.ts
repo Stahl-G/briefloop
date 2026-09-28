@@ -130,7 +130,11 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
  if(p.runtime_id==='pi')return piModels(bin,p,launch,terminate);
  if(p.runtime_id==='zcode')return zcodeModels();
  if(p.runtime_id==='antigravity'){const r=await exec(bin,['models'],{env,cwd:p.cwd||process.cwd(),timeout:20000,maxBuffer:1024*1024});const models=r.stdout.split(/\r?\n/).map(line=>line.trim().split(/\t+/)).filter(([id,label])=>label&&sanitizeCustomModel(id)).map(([id,label])=>({id,label}));return {models:[...defaults,...models],source:models.length?'host':'host_default_only'};}
- if(p.runtime_id==='claude'){const routed=await loadMmdRouteModels(env,fallback);return {models:routed||fallback,source:routed?'local_routes':'builtin_hints',note:'内置选项与已配置路由；可手动输入其他模型 ID。'};}
+ if(p.runtime_id==='claude'){
+  const routed=await loadMmdRouteModels(env,fallback);
+  return {models:routed||fallback,source:routed?'local_routes':'builtin_hints',
+   note:'Claude Code 未提供可读取的实时模型目录。opus / sonnet 等别名由 CLI 在运行时解析；具体模型 ID 可手动输入，内置建议不代表账号可用。'};
+ }
  try{
   if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
   if(['mimo','opencode'].includes(p.runtime_id)){const r=await exec(bin,['models','--verbose'],{env,timeout:20000,maxBuffer:8*1024*1024});const models=parseOpenCodeModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}

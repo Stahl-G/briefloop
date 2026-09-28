@@ -166,7 +166,9 @@ def test_new_protocol_requires_every_clause():
 
 
 @pytest.mark.parametrize('backend', ['codebuddy', 'claude', 'opencode'])
-def test_dispatch_instructions_match_native_host(tmp_path, backend):
+def test_dispatch_instructions_match_native_host(tmp_path, backend, monkeypatch):
+    # This assertion exercises the v1 task ID dialect; v2 is covered separately.
+    monkeypatch.setattr('briefloop.opencode_version.installed_major', lambda: 1)
     from briefloop.runtime import generation_prompt
     from briefloop.store import Store
     store = Store(tmp_path)

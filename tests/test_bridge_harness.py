@@ -66,7 +66,59 @@ def test_internal_run_rejects_host_permission_question_instead_of_waiting(tmp_pa
     question=next(e for e in snap['events'] if e['kind']=='runtime/question')
     assert question['data']=={'auto':'rejected','title':'文件操作 · jobs/x/request.json'}
     errors=[e for e in snap['events'] if e['kind']=='error']
-    assert errors and '没有用户可回答宿主授权请求' in errors[-1]['data']['message']
+    assert errors and '未绑定可处理授权的任务' in errors[-1]['data']['message']
+
+
+@pytest.mark.parametrize('backend,decision',[('claude','allow'),('claude','deny'),('claude','cancel'),('codebuddy','allow')])
+def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_path,backend,decision):
+    class WaitingBridge(QuestionBridge):
+        def call(self,method,params,timeout=None):
+            if method=='start':
+                super().call(method,params,timeout)
+                sink=self.sinks[params['execution_id']]
+                events=[sink.get_nowait() for _ in range(sink.qsize())]
+                for event in events:
+                    if event['kind']!='end':sink.put(event)
+                return {'execution_id':params['execution_id']}
+            result=super().call(method,params,timeout)
+            if method in ('answer','cancel'):
+                sink=self.sinks.get(params['execution_id'])
+                if sink:sink.put({'kind':'end','status':'completed' if method=='answer' else 'cancelled'})
+            return result
+    store=Store(tmp_path);bridge=WaitingBridge();h=BridgeHarness(store,bridge,backend)
+    job=store.enqueue('generate',{'agent_backend':backend,'runtime':{'model':'default'}})
+    run=h.start_internal('合成报告任务',job_id=job['id'],message_id='report-perm')
+    try:
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            snap=h.snapshot(run.session_id)
+            if snap['requests'] and store.rows('SELECT seq FROM notifications WHERE event_key=?',('permission:'+snap['requests'][0]['id'],)):break
+            time.sleep(.01)
+        request=snap['requests'][0]
+        assert request['status']=='pending'
+        assert next(m for m in snap['messages'] if m['id']==run.message_id)['status']=='delivered'
+        assert not bridge.calls
+        assert next(e for e in snap['events'] if e['kind']=='runtime/question')['data']['jobId']==job['id']
+        notices=store.rows('SELECT target,read_at FROM notifications WHERE event_key=?',('permission:'+request['id'],))
+        assert json.loads(notices[0]['target'])['job_id']==job['id'] and notices[0]['read_at'] is None
+        assert json.loads(notices[0]['target'])['session_id']==run.session_id
+        if decision=='cancel':
+            h.cancel(run.session_id)
+            _wait_status(h,run.session_id,run.message_id,'cancelled')
+            deadline=time.monotonic()+3
+            while time.monotonic()<deadline and not store.rows('SELECT read_at FROM notifications WHERE event_key=?',('permission:'+request['id'],))[0]['read_at']:time.sleep(.01)
+            assert h.snapshot(run.session_id)['requests'][0]['status']=='expired'
+            assert not any(method=='answer' for method,_ in bridge.calls)
+            assert store.rows('SELECT read_at FROM notifications WHERE event_key=?',('permission:'+request['id'],))[0]['read_at']
+            return
+        h.answer(run.session_id,request['id'],{'permission':{'answers':[decision]}})
+        done=_wait_status(h,run.session_id,run.message_id,'completed')
+        assert bridge.calls==[('answer',{'execution_id':'report-perm','request_id':'q1','option_id':decision})]
+        assert done['requests'][0]['status']=='answered'
+        assert store.rows('SELECT read_at FROM notifications WHERE event_key=?',('permission:'+request['id'],))[0]['read_at']
+        with pytest.raises(ValueError,match='问题已结束'):
+            h.answer(run.session_id,request['id'],{'permission':{'answers':['allow']}})
+    finally:h.close()
 
 
 def test_internal_run_without_reject_option_answers_cancelled(tmp_path):

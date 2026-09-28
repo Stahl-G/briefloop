@@ -118,6 +118,17 @@ class ChatStore:
                 return usage_projector(usage,previous())
             session=self.decode(c.execute('SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE id=?',(sid,)).fetchone())
             messages=[self.decode(r) for r in c.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created,rowid',(sid,))]
+            probe=c.execute("SELECT data FROM chat_events WHERE session_id=? AND kind='runtime/test' ORDER BY seq LIMIT 1",(sid,)).fetchone()
+            if probe:
+                probe_data=json.loads(probe['data'])
+                first_user=next((m for m in messages if m['role']=='user'),None)
+                # Legacy probes have no message ID; recognize only their fixed
+                # diagnostic prompt, never a later user's offline instruction.
+                probe_id=probe_data.get('message_id')
+                if not probe_id and first_user and first_user['text']=='Reply with OK only. Do not use tools.':
+                    probe_id=first_user['id']
+                for message in messages:
+                    if message['id']==probe_id:message['purpose']='runtime_test'
             usage_row=c.execute("SELECT seq,data FROM chat_events WHERE session_id=? AND kind='thread/tokenUsage/updated' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
             changed=c.execute("SELECT seq FROM chat_events WHERE session_id=? AND kind='thread/providerChanged' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
             token_usage=project_usage(usage_row['seq'],json.loads(usage_row['data'])) if usage_row and (not changed or usage_row['seq']>changed['seq']) else None

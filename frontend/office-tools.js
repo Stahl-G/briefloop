@@ -42,9 +42,7 @@ export function createOfficeTools(deps){
     +' 开关保持关闭；安装后重新检测即可开启，未安装或关闭时导出与界面行为不变。';
    return;
   }
-  status.textContent=`已检测到本机 OfficeCLI${cap.version?' · 版本 '+cap.version:''}；${cap.enabled
-   ?`开关已开启：导出 Word 后自动运行结构校验与质检，Word/Excel/PowerPoint 文件可用本地渲染查看页面；${RENDER_DISCLOSURE}质检失败只记录结果，不影响导出。`
-   :'开关当前关闭：不运行质检，也不显示页面预览。'}检测只确认二进制存在，不代表质检已经运行或可用。`;
+  status.textContent=`已检测到本机 OfficeCLI${cap.version?' · 版本 '+cap.version:''}；${cap.enabled?'开关已开启。':'开关当前关闭。'}检测只确认二进制存在，不代表质检已经运行或可用。`;
  }
 
  function parsePages(value){

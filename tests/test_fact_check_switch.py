@@ -8,6 +8,12 @@ import pytest
 from briefloop.store import Store
 
 
+def test_new_reports_allow_web_by_default_but_explicit_offline_stays_off():
+    from briefloop.models import Requirements
+    assert Requirements(title='T', objective='o').allow_web is True
+    assert Requirements(title='T', objective='o', allow_web=False).allow_web is False
+
+
 def _requirements(**extra):
     base = {'title': 'T', 'objective': 'o', 'allow_web': True}
     base.update(extra)

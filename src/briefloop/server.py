@@ -164,8 +164,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
         root=store.root/'runtime-tests'/secrets.token_hex(8);root.mkdir(parents=True)
         runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode','briefloop-native') else 'runtime-native'}
         session=manager.create_session(backend+' · 连接测试',runtime,root)
-        manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call'})
-        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
+        message_id='msg_'+secrets.token_hex(8)
+        manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call','message_id':message_id})
+        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False,message_id=message_id)
         return {'session_id':session['id'],'message_id':message['id'],'status':'submitted'}
 
     token=secrets.token_urlsafe(24)
@@ -498,7 +499,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                             document=json.loads(b['editor_document']) if b.get('editor_document') else None,
                             source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])},citations=detail.get('citations',[])),
                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
-                    else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
+                    else:self.send(200,md.encode(),'text/markdown; charset=utf-8',download_name='report.md')
                 elif u.path in ('/','/index.html'):
                     self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
                 elif u.path[1:] in icon_names:

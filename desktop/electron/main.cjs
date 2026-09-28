@@ -7,6 +7,7 @@ const {randomUUID} = require('node:crypto');
 const {WorkspaceService} = require('./service.cjs');
 const {createEnvironment} = require('./environment.cjs');
 const {createUpdater} = require('./updater.cjs');
+const {installNavigation, isWorkspaceDownload} = require('./navigation.cjs');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null, environment;
@@ -79,6 +80,9 @@ function environmentOperation(callback) {
 function resumeEditing() { if (window && !window.isDestroyed()) window.webContents.send('workspace:resume'); }
 function prepareClose() {
   if (window.webContents.getURL() === welcomeURL) return Promise.resolve({status: 'saved'});
+  // An inline download is not an editor and cannot answer the save handshake.
+  // The normal backend busy-task/stop gate still runs; never waive a real editor's save.
+  if (isWorkspaceDownload(window.webContents.getURL(), service?.info?.url)) return Promise.resolve({status: 'not-editor'});
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { prepared.delete(requestId); reject(Error('页面尚未确认保存，窗口已保留。请等待保存完成后重试。')); }, 30000);
@@ -89,6 +93,12 @@ function prepareClose() {
 function saveCurrent() {
   if (closePending || switching || menuSave) return;
   menuSave = prepareClose().catch(reportError).finally(() => { menuSave = null; if (!closePending && !switching) resumeEditing(); });
+}
+async function returnToWorkspace() {
+  if (closePending || switching || menuSave) return;
+  // Only recover a displaced download page. Reloading the live editor could
+  // discard unsaved text, so leave it (and unknown/error pages) untouched.
+  if (isWorkspaceDownload(window.webContents.getURL(), service?.info?.url)) await window.loadURL(service.info.url);
 }
 async function stopCurrent() {
   await prepareClose();
@@ -303,13 +313,8 @@ else {
     window.on('close', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     window.webContents.session.setPermissionCheckHandler(() => false);
-    window.webContents.setWindowOpenHandler(({url}) => { if (/^https?:\/\//.test(url)) shell.openExternal(url).catch(reportError); return {action: 'deny'}; });
-    window.webContents.on('will-navigate', (event, url) => {
-      if (url === welcomeURL || (service?.info && new URL(url).origin === service.info.url)) return;
-      event.preventDefault();
-      if (/^https?:\/\//.test(url) && new URL(url).hostname !== '127.0.0.1') shell.openExternal(url).catch(reportError);
-      else reportError(Error('请使用桌面菜单打开工作区。'));
-    });
+    installNavigation({contents: window.webContents, getWorkspaceURL: () => service?.info?.url,
+      welcomeURL, shell, reportError});
     window.webContents.session.on('will-download', (event, item, contents) => {
       if (contents !== window.webContents || !service?.info || new URL(item.getURL()).origin !== service.info.url) { event.preventDefault(); return; }
       item.setSaveDialogOptions({title: '报告另存为', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())), properties: ['showOverwriteConfirmation', 'createDirectory']});
@@ -335,7 +340,8 @@ else {
         {label: '打开工作区…', accelerator: 'CmdOrCtrl+O', click: () => chooseWorkspace(false).catch(reportError)}, {type: 'separator'},
         {label: '保存当前修改', accelerator: 'CmdOrCtrl+S', click: saveCurrent}, {role: 'close'}]},
       {label: '编辑', submenu: [{role: 'undo'}, {role: 'redo'}, {type: 'separator'}, {role: 'cut'}, {role: 'copy'}, {role: 'paste'}, {role: 'selectAll'}]},
-      {label: '视图', submenu: [{role: 'resetZoom'}, {role: 'zoomIn'}, {role: 'zoomOut'}, {role: 'togglefullscreen'}]},
+      {label: '视图', submenu: [{label: '返回工作台', accelerator: 'CmdOrCtrl+[', click: () => returnToWorkspace().catch(reportError)},
+        {type: 'separator'}, {role: 'resetZoom'}, {role: 'zoomIn'}, {role: 'zoomOut'}, {role: 'togglefullscreen'}]},
       {label: '窗口', submenu: [{role: 'minimize'}, {role: 'front'}]},
     ]));
     const readiness = environment.startup();

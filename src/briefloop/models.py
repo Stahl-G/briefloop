@@ -102,7 +102,7 @@ class Requirements(Model):
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"
     extent: Literal["quick", "compact", "balanced", "detailed"] = "balanced"
-    allow_web: bool = False
+    allow_web: bool = True
     search_policy: SearchPolicy | None = None
     period: str = ""
     period_start: str = ""
