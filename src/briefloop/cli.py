@@ -262,7 +262,7 @@ def main():
                 value=json.loads(path.read_text(encoding='utf-8-sig'))
                 if (path.parent/'packet/input.json').exists():
                     from .analyst_drafts import file_config, save, check, submit
-                    run_id=a.run or json.loads((path.parent/'packet/input.json').read_text())['run_id']
+                    run_id=a.run or json.loads((path.parent/'packet/input.json').read_text(encoding='utf-8'))['run_id']
                     config=file_config(store,run_id,path)
                     if a.tool=='submit-draft':
                         report=submit(store,config,{'revision':a.revision},file_value=value)

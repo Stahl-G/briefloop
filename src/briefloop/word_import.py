@@ -30,9 +30,9 @@ def import_revision(store,base_version,name,data,*,accept_unaligned=False,source
     if source['status']!='ready':raise ValueError('修订原件无法读取，失败记录已保留')
     provenance=store.root/'sources'/(source['id']+'.provenance.json')
     if provenance.is_file():
-        metadata=json.loads(provenance.read_text())
+        metadata=json.loads(provenance.read_text(encoding='utf-8'))
         metadata['revision_for_runs']=list(dict.fromkeys(metadata.get('revision_for_runs',[])+[base['run_id']]))
-        provenance.write_text(json.dumps(metadata,ensure_ascii=False,sort_keys=True))
+        provenance.write_text(json.dumps(metadata,ensure_ascii=False,sort_keys=True),encoding='utf-8')
     doc=Document(BytesIO(data));original=brief_document(base)
     refs=source_ids(original);headings={}
     for node in original.get('content',[]):

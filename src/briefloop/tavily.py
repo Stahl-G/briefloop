@@ -295,7 +295,7 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
             provenance={'url':source_url,'content_type':'application/json','fetched_at':now(),'raw_sha256':hashlib.sha256(raw).hexdigest(),'text_sha256':content_hash(text),'extractor':'tavily.extract','original_path':str(original.relative_to(store.root)),'extraction_status':'failed' if error else 'ready','original_kind':'provider_response','provider':NAME,'notice':'保存的是 Tavily 提供方响应及提取正文，不是原网站 HTML/PDF 字节。','request_id':response.get('request_id')}
             if error:provenance['error']=error;failed.append(url)
             if item and item.get('url')!=source_url:provenance['provider_url']=item.get('url')
-            (store.root/'sources'/(sid+'.provenance.json')).write_text(dump(provenance))
+            (store.root/'sources'/(sid+'.provenance.json')).write_text(dump(provenance),encoding='utf-8')
             source=source_store.add_source((item.get('title') if item else None) or source_url.rsplit('/',1)[-1] or source_url,text,url=source_url,error=error,source_id=sid)
             results.append({**source,'provenance':provenance})
         accepted=(pending_sources.admit(run_id,reservation,claim_owner=claim['owner'],claimed_urls=urls)

@@ -62,7 +62,7 @@ def test_changed_sections_or_sources_cannot_use_a_checked_revision(tmp_path):
     assert not run_tool(store, config, 'submit_draft', {'revision': first})['ok']
     second = saved_revision(store, config, {'base_revision': first, 'section_ids': ['one']})
     check(store, config, second)
-    (store.root/source['path']).write_text('来源被修改')
+    (store.root/source['path']).write_text('来源被修改', encoding='utf-8')
     assert not run_tool(store, config, 'submit_draft', {'revision': second})['ok']
     assert not Path(config['result_file']).exists()
 
@@ -74,22 +74,21 @@ def test_cli_preflight_checks_frozen_contract_and_submit_checks_file_version(tmp
     session = chat.create('writer', {'backend': 'pi'}, path.parent)
     message = chat.message(session['id'], 'write', status='delivered')
     (path.parent/'conversation.json').write_text(json.dumps({'session_id': session['id'],
-        'message_id': message['id'], 'job_id': 'job_writer'}),encoding='utf-8')
+        'message_id': message['id'], 'job_id': 'job_writer'}), encoding='utf-8')
     def cli(name, *extra):
         result = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(store.root),
-                        name, '--run', run['id'], '--file', str(path), *extra], capture_output=True,
-                        text=True, encoding='utf-8')
+                    name, '--run', run['id'], '--file', str(path), *extra], capture_output=True, text=True, encoding='utf-8')
         return result.returncode, json.loads(result.stdout)
     value = {**draft(source['id']), 'reader_contract': {'clauses': []}}
-    path.write_text(json.dumps(value),encoding='utf-8')
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
     code, rejected = cli('check-draft')
     assert code == 1 and 'reader_contract' in str(rejected)
     value.pop('reader_contract')
-    path.write_text(json.dumps(value),encoding='utf-8')
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
     code, checked = cli('check-draft')
     assert code == 0 and checked['scope'] == 'writer_packet'
     value['gaps'] = ['新增未核实事项']
-    path.write_text(json.dumps(value),encoding='utf-8')
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
     assert cli('submit-draft', '--revision', checked['revision'])[0] == 1
     code, latest = cli('check-draft')
     assert code == 0
@@ -97,6 +96,24 @@ def test_cli_preflight_checks_frozen_contract_and_submit_checks_file_version(tmp
     assert json.loads(path.read_text(encoding='utf-8'))['gaps'] == value['gaps']
     chat.patch_message(message['id'], status='cancelled')
     assert cli('submit-draft', '--revision', latest['revision'])[0] == 1
+
+
+def test_cli_check_draft_reads_chinese_writer_packet_under_legacy_locale(tmp_path):
+    store, run, source, config = writer(tmp_path)
+    path = Path(config['result_file'])
+    path.write_text(json.dumps(draft(source['id']), ensure_ascii=False), encoding='utf-8')
+    chat = ChatStore(store)
+    session = chat.create('writer', {'backend': 'pi'}, path.parent)
+    message = chat.message(session['id'], 'write', status='delivered')
+    (path.parent/'conversation.json').write_text(json.dumps({'session_id': session['id'],
+        'message_id': message['id'], 'job_id': 'job_writer'}), encoding='utf-8')
+    result = subprocess.run([sys.executable, '-X', 'utf8=0', '-m', 'briefloop', 'tool',
+        '--workspace', str(store.root), 'check-draft', '--file', str(path)],
+        capture_output=True, text=True, encoding='utf-8')
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report['scope'] == 'writer_packet'
+    assert report['status'] == 'ok'
 
 
 def test_below_target_is_advisory_but_actual_errors_remain_visible(tmp_path):

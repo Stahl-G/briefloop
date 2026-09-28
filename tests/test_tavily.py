@@ -56,18 +56,21 @@ def test_extract_is_full_provider_text_and_failed_sources_remain_visible(tmp_pat
     monkeypatch.delenv('TAVILY_API_KEY',raising=False)
     keyfile=tmp_path/'key';tavily.save_key('tvly-test-secret',key_file=keyfile)
     store=Store(tmp_path/'workspace');requests=[]
-    payload={'results':[{'url':'https://example.test/good','raw_content':'# Source\nAmount 123; capacity 45 MW.\n'+('Full body. '*1000)}],'failed_results':[{'url':'https://example.test/bad','error':'unreadable'}],'request_id':'test-id'}
+    payload={'results':[{'url':'https://example.test/good','title':'中文来源','raw_content':'# 来源\n金额 123；产能 45 MW。\n'+('完整正文。 '*1000)}],'failed_results':[{'url':'https://example.test/bad','error':'unreadable'}],'request_id':'test-id'}
     raw=json.dumps(payload).encode()
     def respond(request,timeout):requests.append(json.loads(request.data));return BytesIO(raw)
     monkeypatch.setattr(tavily.urllib.request,'build_opener',lambda *handlers:SimpleNamespace(open=respond))
     result=tavily.extract(store,['https://example.test/good','https://example.test/bad'],key_file=keyfile)
     assert 'query' not in requests[0] and 'chunks_per_source' not in requests[0]
     good,bad=result['sources']
+    assert good['name']=='中文来源'
     assert store.source_text(good['id'])==payload['results'][0]['raw_content']
     assert good['provenance']['extractor']=='tavily.extract'
     assert good['provenance']['original_kind']=='provider_response'
     assert good['provenance']['raw_sha256']==hashlib.sha256(raw).hexdigest()
     assert (store.root/good['provenance']['original_path']).read_bytes()==raw
+    saved=json.loads((store.root/'sources'/(good['id']+'.provenance.json')).read_text(encoding='utf-8'))
+    assert saved['request_id']=='test-id'
     assert bad['status']=='failed' and store.source_text(bad['id'])==''
     assert 'tvly-test-secret' not in str(result)
 

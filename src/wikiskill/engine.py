@@ -40,17 +40,18 @@ def save(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str) + '\n')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str) + '\n',
+                         encoding='utf-8', newline='')
     temporary.replace(path)
 
 
 def read(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
 def append(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a') as handle:
+    with path.open('a', encoding='utf-8', newline='') as handle:
         handle.write(json.dumps(value, ensure_ascii=False, default=str) + '\n')
         handle.flush()
 
@@ -92,7 +93,7 @@ def initialize(root, config):
     shutil.copytree(RESOURCES / template / 'wiki', root / 'wiki')
     (root / 'wiki/patterns').mkdir(exist_ok=True)
     (root / 'skills').mkdir()
-    (root / 'skills/S0.md').write_text('')
+    (root / 'skills/S0.md').write_text('', encoding='utf-8', newline='')
     config['prompt_hashes'] = {p.name: sha256(p.read_bytes()).hexdigest() for p in (root/'wiki/prompts').glob('*.md')}
     save(root / 'manifest.json', config)
     save(root / 'manifest-lock.json', {'sha256': digest(config)})
@@ -222,7 +223,7 @@ def evolve(root):
         while current['status'] == 'evolving':
             iteration = current['next_iteration']
             directory = root/f'iterations/{iteration:03d}'
-            skill = (root/current['skill']).read_text()
+            skill = (root/current['skill']).read_text(encoding='utf-8')
             if sha256(skill.encode()).hexdigest() != current['skill_sha256']:
                 raise ValueError('Incumbent skill changed')
             train_rows = batch(root,f'iterations/{iteration:03d}/train',config,train,train_rollout,skill)
@@ -260,8 +261,8 @@ def evolve(root):
                      'skill':f'skills/iteration-{iteration:03d}.md' if accepted else current['skill']}
             if accepted:
                 target = root/event['skill']
-                if target.exists() and target.read_text()!=candidate:raise ValueError('Frozen skill mismatch')
-                target.write_text(candidate)
+                if target.exists() and target.read_text(encoding='utf-8')!=candidate:raise ValueError('Frozen skill mismatch')
+                target.write_text(candidate,encoding='utf-8',newline='')
             # Model-facing impact contains accepted and rejected proposals alike.
             import difflib
             impact = SkillImpactEntry(schema_version='wikiskill.skill_impact.v1',iteration=iteration,
