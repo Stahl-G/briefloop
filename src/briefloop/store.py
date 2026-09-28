@@ -315,24 +315,27 @@ class Store:
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
-        if req.completion_mode == 'fast':
+        if clone is not None and req.completion_mode == 'fast_web':req.completion_mode='fast'
+        if req.completion_mode=='fast_web' and not req.allow_web:
+            raise ValueError('快速联网需要允许公开检索；保持离线请选择已有材料快速模式。')
+        if req.completion_mode in ('fast','fast_web'):
             if options.get('connector_selection_validated'):
                 raise ValueError('快速模式使用已有材料；请先导入连接器材料或选择完整流程。')
-            req.allow_web = False
+            req.allow_web = req.completion_mode == 'fast_web'
             req.research_tier = 'quick'
             if req.fact_check is None:req.fact_check = False
         if req.target_minutes is None:
-            req.target_minutes = 10 if req.completion_mode in ('draft_first','fast') else self.settings()['timeout_minutes']
+            req.target_minutes = 10 if req.completion_mode in ('draft_first','fast','fast_web') else self.settings()['timeout_minutes']
         if req.hard_timeout_minutes is None:
             req.hard_timeout_minutes = self.settings()['hard_timeout_minutes']
         if clone is None:
             from .report_time import freeze
             req.time_context = freeze(req.model_dump())
         selected = None
-        if clone is None and req.completion_mode!='fast' and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
+        if clone is None and req.completion_mode not in ('fast','fast_web') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
-        if clone is None:req.company_context_required=req.completion_mode!='fast' and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
-        if clone is None and req.completion_mode!='fast' and self.settings().get('company_context_enabled') and not req.company_context_revision:
+        if clone is None:req.company_context_required=req.completion_mode not in ('fast','fast_web') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
+        if clone is None and req.completion_mode not in ('fast','fast_web') and self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
         # The task choice overrides the workspace default; the resolved bool is what

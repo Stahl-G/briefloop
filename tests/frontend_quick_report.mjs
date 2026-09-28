@@ -58,3 +58,14 @@ test('no duplicate continue button while checking; old reports keep their normal
  assert.doesNotMatch($('draft-completion').innerHTML,/data-continue-checks/);
  setResult({mode:'standard'});await controls.render();assert.equal($('draft-completion').hidden,true);
 });
+
+test('fast web is distinct from material-only writing and shows its bounded search scope',async()=>{
+ const {$,controls,setResult}=view();
+ $('completion-mode').value='fast_web';$('completion-mode').listeners.change();
+ assert.deepEqual(controls.read(),{completion_mode:'fast_web',target_minutes:10,research_tier:'quick',allow_web:true,fact_check:false});
+ assert.match($('completion-mode-help').textContent,/3 次搜索、读取 6 篇原文/);
+ setResult({mode:'fast_web',state:'checking'});await controls.render();
+ assert.equal($('draft-completion').hidden,false);
+ assert.match($('draft-completion').innerHTML,/不自动改写正文/);
+ $('completion-mode').value='fast';assert.equal(controls.read().allow_web,false);
+});

@@ -85,11 +85,13 @@ class ProgressTracker:
         self.draft_first = False
         if self.run_id and context.get('kind') == 'generate':
             run=store.one('runs',self.run_id)
-            self.draft_first=json.loads(run['requirements']).get('completion_mode') in ('draft_first','fast')
+            self.draft_first=json.loads(run['requirements']).get('completion_mode') in ('draft_first','fast','fast_web')
         role = context.get('runtime_role')
         self.phase = None
         if context.get('plain_output'):
             self.phase=('writing','快速写作','直接阅读材料并写作') if context.get('kind')=='generate' else ('evidence','补充依据','后台补充原文依据')
+        if context.get('plain_phase')=='research':
+            self.phase=('research','快速联网','规划查询并选择原文')
         if context.get('readonly_output') == 'review.json' or context.get('kind') == 'review':
             self.phase = ('review', '独立复核', '正在独立复核稿件与原件')
         elif role in ('evaluator', 'scorer', 'assessor'):

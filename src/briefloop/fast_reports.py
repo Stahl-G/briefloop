@@ -31,14 +31,23 @@ def material_packet(store, source_ids):
     return rows
 
 
+def selected_packet(store, run_id, source_ids):
+    if not set(source_ids).issubset(store.source_ids(run_id)):
+        raise Conflict('写作材料已不属于本任务，请新建任务。')
+    return material_packet(store, source_ids)
+
+
 def validate_request(store, req, source_ids):
-    if req.completion_mode != 'fast':
+    if req.completion_mode not in ('fast','fast_web'):
         return
     if req.fact_check:
         raise ValueError('快速模式先用已有材料写作和检查；需要联网事实核查时请选择完整流程。')
     if req.reference_source_ids:
         raise ValueError('快速模式暂不读取独立风格参考；请取消风格参考或选择完整流程。')
-    material_packet(store, source_ids)
+    if req.completion_mode=='fast_web':
+        from .fast_research import validate_request as validate_web
+        validate_web(store,req)
+    if source_ids or req.completion_mode=='fast':material_packet(store, source_ids)
 
 
 def _sources_text(rows):
@@ -46,10 +55,10 @@ def _sources_text(rows):
                         + r['text'] + '\n</source>' for r in rows)
 
 
-def _plain_turn(worker, job, folder, prompt):
+def _plain_turn(worker, job, folder, prompt, *, phase=None):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / 'packet').mkdir(exist_ok=True)
-    task = {**job, 'allow_web': False, 'plain_output': 'response.txt', 'input_source_ids': [],
+    task = {**job, 'allow_web': False, 'plain_output': 'response.txt', 'plain_phase':phase, 'input_source_ids': [],
             'native_packet': {'role': 'quick_writer', 'run_id': json.loads(job['payload'])['run_id']}}
     return worker.runtime.execute(task, prompt, folder,
                                   resume_on_complete=int(json.loads(job['payload']).get('attempt',1))>1)
@@ -74,7 +83,14 @@ def generate(worker, job):
     payload = json.loads(job['payload']); run = store.one('runs', payload['run_id'])
     req = json.loads(run['requirements']); folder = worker.folder(job)
     snapshot = folder / 'fast-materials.json'
-    actual = material_packet(store, store.source_ids(run['id']))
+    research = None
+    if req.get('completion_mode')=='fast_web':
+        from .fast_research import collect
+        research = collect(worker,job,run,folder)
+        if not research['source_ids']:
+            raise ValueError('未取得可读原文，不能凭搜索摘要生成报告；搜索及失败记录已保留，请调整范围或添加材料后新建任务。')
+    source_ids = research['source_ids'] if research else store.source_ids(run['id'])
+    actual = selected_packet(store,run['id'],source_ids)
     if snapshot.exists():
         materials = json.loads(snapshot.read_text(encoding='utf-8'))
         if materials != actual:
@@ -96,8 +112,12 @@ def generate(worker, job):
                   '表格后也标注来源；不要另写来源列表，系统会统一生成。'
                   '按目标篇幅组织内容，重要限定条件简洁说明一次，避免摘要、表格、分析反复复述同一事实。'
                   '不把执行指令、禁止事项或核查过程照抄进正文。'
-                  '保留主体、期间、单位、适用条件和实际/计划/预测区别。用户要求的人工填写部分保留占位。'
+                  '保留主体、期间、单位、适用条件和实际/计划/预测区别。摘要与表格也必须保留这些条件，不能把必要时更新写成每次更新、跳过某项检查写成不做任何检查。'
+                  '每条引用只支持相邻的具体主张；多项主张支持范围不同时拆开引用。用户要求的人工填写部分保留占位。'
                   '\n' + instructions(spec, role='analyst') + '\n用户要求：\n' + dump(req)
+                  + ('\n本次只做一轮聚焦检索，覆盖不保证完整；以下为搜索/读取缺口，不可写成已核实事实：'+dump(research['gaps'])
+                     +'\n读取前提出的待核对问题（并非最终缺口；用下面原文逐项判断是否已解决，不将已解决问题继续写成未取得）：'+dump(research.get('questions_before_reading',[]))
+                     +'\n来源读取方式说明（留在研究记录，不照抄到正文）：'+dump(research.get('notices',[])) if research else '')
                   + '\n下面是全部来源原文：\n' + _sources_text(materials))
         store.event(job['id'], 'fast_writing', {'message': '直接阅读已有材料写作，完成后立即保存初稿。'})
         result = _plain_turn(worker, job, folder / 'fast-writing', prompt)
@@ -110,10 +130,13 @@ def generate(worker, job):
         text = re.sub(r'\[(S\d+)\]', lambda m: '[@' + aliases[m[1]]['source_id'] + ']', text)
         data = {'title': req['title'], 'editor_document': markdown_document(text),
                 'citations': [{'source_id': aliases[a]['source_id']} for a in sorted(cited)],
-                'research_notes': [{'kind': 'fast_draft', 'summary': '直接依据已有材料写作；未联网补搜，依据定位与评价在后台继续。'}]}
+                'research_notes': [{'kind': 'fast_draft', 'summary': '一轮聚焦检索后根据已读取原文写作；未做完整事实核查，依据定位与评价在后台继续。' if research else '直接依据已有材料写作；未联网补搜，依据定位与评价在后台继续。'}]}
+        if research:
+            data['research_notes'].append({'kind':'fast_web_gaps','summary':'本次搜索与读取记录','gaps':research['gaps'],'reading_notices':research.get('notices',[]),
+                                           'questions_before_reading':research.get('questions_before_reading',[])})
         if worker.runtime.cancelled.is_set() or worker.stopping.is_set():
             raise InterruptedError('快速写作已停止，返回正文保留在任务目录。')
-        if material_packet(store, store.source_ids(run['id'])) != materials:
+        if selected_packet(store,run['id'],source_ids) != materials:
             raise Conflict('写作期间材料已变化，模型输出已保留；请使用当前材料新建任务。')
         brief = store.publish(run['id'], data, version_id=version)
         worker._remember_generated_sources(folder, brief)
@@ -137,7 +160,7 @@ def enrich(worker, job, brief, folder):
         return saved[0]
     origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
     materials = json.loads(origin.read_text(encoding='utf-8'))
-    if material_packet(store, store.source_ids(brief['run_id'])) != materials:
+    if selected_packet(store,brief['run_id'],[r['source_id'] for r in materials]) != materials:
         raise Conflict('材料与快速写作时的原文不同，请使用当前材料新建任务。')
     phase = folder / 'evidence'
     prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'

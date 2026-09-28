@@ -89,7 +89,7 @@ def accept_stage_sources(store,job):
 def origin(store, version_id):
     brief = store.one('briefs', version_id)
     run = store.one('runs', brief['run_id'])
-    if json.loads(run['requirements']).get('completion_mode') not in ('draft_first','fast'):
+    if json.loads(run['requirements']).get('completion_mode') not in ('draft_first','fast','fast_web'):
         raise ValueError('这份报告未选择先交初稿，请使用现有评分或审阅入口')
     rows = store.rows("SELECT * FROM jobs WHERE kind='generate' AND json_extract(payload,'$.run_id')=? ORDER BY rowid DESC",
                       (run['id'],))
@@ -126,7 +126,7 @@ class ExistingContinuation(Exception):
 def enqueue(store, version_id, *, automatic=False):
     parent = origin(store, version_id)
     brief=store.one('briefs',version_id)
-    fast=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode')=='fast'
+    fast=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode') in ('fast','fast_web')
     automatic=bool(automatic and fast)
     if parent['status'] in ('queued', 'running') and not automatic:
         raise ValueError('作者仍在完成初稿，请等本轮写作结束后继续检查')
@@ -281,7 +281,7 @@ def execute(worker, job):
 def status(store, version_id):
     brief = store.one('briefs', version_id)
     req = json.loads(store.one('runs', brief['run_id'])['requirements'])
-    if req.get('completion_mode') not in ('draft_first','fast'):
+    if req.get('completion_mode') not in ('draft_first','fast','fast_web'):
         return {'mode': 'standard'}
     parent = origin(store, version_id)
     result = {'mode': req['completion_mode'], 'origin_job_id': parent['id'],

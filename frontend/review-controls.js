@@ -67,7 +67,7 @@ export function createReviewControls({api,action,$,getState,backendValue,friendl
   const note=$('review-capability-note');
   if(note){
    const offline=!form.elements.allow_web.checked;
-   note.hidden=form.elements.completion_mode?.value==='fast'||(!offline&&available!==false&&!pending);
+   note.hidden=['fast','fast_web'].includes(form.elements.completion_mode?.value)||(!offline&&available!==false&&!pending);
    note.textContent=pending?'审阅设置尚未保存，请先完成设置。':offline?'未允许联网，不能补查公开主张；开启上方联网选项后可再次选择事实核查。':available===false?unavailable(savedMode(),reviewerBackend())+' 当前不能开启事实核查。'+
     (form.elements.writing_mode.value==='internal_report'?'已有稿件仍可编辑和下载；正式交付需要完成独立审阅。':''):'';
   }

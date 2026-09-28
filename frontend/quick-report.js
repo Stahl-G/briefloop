@@ -3,28 +3,32 @@
 export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,esc,syncSourceHints=()=>{}}){
  let ticket=0,busy=false;
  function sync(){
-  const mode=$('completion-mode')?.value,enabled=['draft_first','fast'].includes(mode);
+  const mode=$('completion-mode')?.value,enabled=['draft_first','fast','fast_web'].includes(mode),fast=['fast','fast_web'].includes(mode);
   if($('draft-target-label'))$('draft-target-label').hidden=!enabled;
   if($('draft-target'))$('draft-target').disabled=!enabled;
   for(const node of $('requirements')?.querySelectorAll?.('[name="allow_web"], [name="fact_check"], [name="research_tier"], #auto-revision, #company-mode')||[]){
-   if(mode==='fast'&&!node.hasAttribute('data-fast-disabled')){
+   if(fast&&!node.hasAttribute('data-fast-disabled')){
     node.setAttribute('data-fast-disabled',String(node.disabled));node.disabled=true;
     if(node.type==='checkbox'){node.setAttribute('data-fast-checked',String(node.checked));node.checked=false}
     else{node.setAttribute('data-fast-value',node.value);node.value=node.id==='company-mode'?'off':'quick'}
-   }else if(mode!=='fast'&&node.hasAttribute('data-fast-disabled')){
+   }else if(!fast&&node.hasAttribute('data-fast-disabled')){
     node.disabled=node.getAttribute('data-fast-disabled')==='true';node.removeAttribute('data-fast-disabled');
     if(node.hasAttribute('data-fast-checked')){node.checked=node.getAttribute('data-fast-checked')==='true';node.removeAttribute('data-fast-checked')}
     if(node.hasAttribute('data-fast-value')){node.value=node.getAttribute('data-fast-value');node.removeAttribute('data-fast-value')}
    }
   }
+  if(fast){const web=$('requirements')?.querySelector?.('[name="allow_web"]');if(web)web.checked=mode==='fast_web'}
   for(const node of $('requirements')?.querySelectorAll?.('[data-report-options="setup"], #research-budget-controls, .setup-search-launch')||[]){
-   if(mode==='fast'&&!node.hasAttribute('data-fast-hidden')){node.setAttribute('data-fast-hidden',String(node.hidden));node.hidden=true}
-   else if(mode!=='fast'&&node.hasAttribute('data-fast-hidden')){node.hidden=node.getAttribute('data-fast-hidden')==='true';node.removeAttribute('data-fast-hidden')}
+   const hide=fast&&!(node.matches?.('.setup-search-launch')&&mode==='fast_web');
+   if(hide&&!node.hasAttribute('data-fast-hidden')){node.setAttribute('data-fast-hidden',String(node.hidden));node.hidden=true}
+   else if(!hide&&node.hasAttribute('data-fast-hidden')){node.hidden=node.getAttribute('data-fast-hidden')==='true';node.removeAttribute('data-fast-hidden')}
   }
-  if($('completion-mode-help'))$('completion-mode-help').textContent=mode==='fast'
+  if($('completion-mode-help'))$('completion-mode-help').textContent=mode==='fast_web'
+   ?'一轮聚焦检索，最多 3 次搜索、读取 6 篇原文，随后直接出稿。无需先上传材料；可在搜索设置选择渠道。保存后在后台补依据和评价，不自动改写正文；十分钟是目标，非保证或截止。'
+   :mode==='fast'
    ?'已有文本材料直接出稿，保存后自动在后台补充依据和评价；可立即编辑、下载。此模式不联网补搜、不维护企业背景、不自动改写正文。材料最多 10 万字符，不保证固定时限。'
    :'完整流程按所选研究深度检索、写作和检查。先交研究初稿的旧任务仍可手动继续完整检查。';
-  if(mode==='fast'&&$('review-capability-note'))$('review-capability-note').hidden=true;
+  if(fast&&$('review-capability-note'))$('review-capability-note').hidden=true;
  }
  function init(){
   $('completion-mode')?.addEventListener('change',()=>{sync();syncSourceHints()});
@@ -34,8 +38,8 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
  function read(){
   sync();
   const mode=$('completion-mode')?.value;
-  return ['draft_first','fast'].includes(mode)
-   ?{completion_mode:mode,target_minutes:Number($('draft-target').value),...(mode==='fast'?{research_tier:'quick',allow_web:false,fact_check:false}:{})}
+  return ['draft_first','fast','fast_web'].includes(mode)
+   ?{completion_mode:mode,target_minutes:Number($('draft-target').value),...(['fast','fast_web'].includes(mode)?{research_tier:'quick',allow_web:mode==='fast_web',fact_check:false}:{})}
    :{completion_mode:'standard'};
  }
  async function render(){
@@ -46,12 +50,12 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
   try{
    const data=await api('completion-status?version='+encodeURIComponent(current.id));
    if(request!==ticket||getCurrent()?.id!==current.id)return;
-   box.hidden=!['draft_first','fast'].includes(data.mode);if(box.hidden)return;
+   box.hidden=!['draft_first','fast','fast_web'].includes(data.mode);if(box.hidden)return;
    const labels={writing:'正在完成初稿，已保存的内容可以下载',deferred:'初稿已保存，完整核验尚未开始',checking:'正在继续检查，工作稿仍可下载',complete:'该保存版本已有检查完成记录',incomplete:'检查未全部完成，已有稿件保留',failed:'检查未完成，已有稿件保留',cancelled:'检查已停止，已有稿件保留',interrupted:'检查已中断，已有稿件保留'};
    const retry=['failed','cancelled','interrupted'].includes(data.state);
    const button=retry?'<button type="button" class="outline" data-continue-checks="resume">恢复检查</button>':data.state==='deferred'?'<button type="button" class="outline" data-continue-checks="start">继续完整检查</button>':'';
-   const help=data.mode==='fast'?'快速初稿不代表事实已核实。后台补充依据和评价，不自动改写正文；你的编辑优先保留。检查仅适用于对应保存版本，正式交付仍需独立审阅。':'先交初稿只做结构、引用、数字与版式的自动检查，不代表事实已核实。继续检查使用原模型与联网选择，按原设置决定是否进行本轮最多一次自动修订；正式交付仍需独立审阅通过。';
-   const label=data.mode==='fast'&&data.state==='checking'?'初稿已保存，后台正在补充依据和评价':labels[data.state];
+   const help=['fast','fast_web'].includes(data.mode)?'快速初稿不代表事实已核实。后台补充依据和评价，不自动改写正文；你的编辑优先保留。检查仅适用于对应保存版本，正式交付仍需独立审阅。':'先交初稿只做结构、引用、数字与版式的自动检查，不代表事实已核实。继续检查使用原模型与联网选择，按原设置决定是否进行本轮最多一次自动修订；正式交付仍需独立审阅通过。';
+   const label=['fast','fast_web'].includes(data.mode)&&data.state==='checking'?'初稿已保存，后台正在补充依据和评价':labels[data.state];
    box.innerHTML=`<p><strong>${esc(label||'检查状态待确认')}</strong></p><p class="help">${esc(help)}</p>${data.checked_version&&data.checked_version!==current.id?'<p class="help">当前检查对应先前保存的版本，你的新修改尚未检查。</p>':''}${data.error?`<p class="help">${esc(data.error)}</p>`:''}${button}`;
    const control=box.querySelector('[data-continue-checks]');
    if(control){control.disabled=busy;control.onclick=()=>action(async()=>{

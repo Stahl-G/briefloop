@@ -745,7 +745,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=freeze(Requirements.model_validate(body['requirements']).model_dump())
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
-                    if req.completion_mode=='fast' and body.get('connector_selection'):
+                    if req.completion_mode in ('fast','fast_web') and body.get('connector_selection'):
                         raise ValueError('快速模式使用已读取的材料；请先导入连接器材料，或选择完整流程。')
                     if 'connector_selection' in body:
                         result=self.server.connector_tasks.enqueue(req.model_dump(),body.get('source_ids',[]),body['connector_selection'],session_id=body.get('session_id'))

@@ -284,3 +284,20 @@ def test_v2_reviewer_guard_rejects_before_session_or_prompt(tmp_path):
         assert api.calls==[], 'restricted review must fail before binding or sending'
         assert any('Reviewer' in str(e) and 'AGENTS' in str(e) for e in snapshot['events'])
     finally:manager.close()
+
+
+def test_v2_cold_empty_location_refreshes_before_model_validation_without_default(tmp_path):
+    c,api=client(tmp_path);reads={'/api/provider':0,'/api/model':0}
+    def cold(method,path,body=None):
+        route=urlsplit(path).path
+        if route in reads:
+            reads[route]+=1
+            if reads[route]==1:return {'data':[]}
+        return api(method,path,body)
+    c._request=cold
+    assert create(c,tmp_path)['model']=={'providerID':'fixture','id':'tiny'}
+    assert reads=={'/api/provider':2,'/api/model':2}
+    c2,api2=client(tmp_path)
+    c2._request=lambda method,path,body=None:{'data':[]} if urlsplit(path).path in reads else api2(method,path,body)
+    with pytest.raises(OpencodeError,match='未提供所选模型'):create(c2,tmp_path)
+    assert not api2.calls, 'An actually empty catalog cannot create a session or use a default model'

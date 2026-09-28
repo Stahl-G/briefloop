@@ -1142,7 +1142,7 @@ class Worker:
 
     def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
-        if json.loads(run['requirements']).get('completion_mode')=='fast':
+        if json.loads(run['requirements']).get('completion_mode') in ('fast','fast_web'):
             from .fast_reports import generate
             return generate(self,job)
         from .backends import validate_backend
@@ -1515,7 +1515,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         # satisfy the delivery gate, which asks for a completed review (#726).
         # Fast background checks score the saved draft; independent review is
         # still a separate explicit action and remains required for delivery.
-        fast_background=req.get('completion_mode')=='fast' and json.loads(job['payload']).get('fast_evidence')
+        fast_background=req.get('completion_mode') in ('fast','fast_web') and json.loads(job['payload']).get('fast_evidence')
         without_review=fast_background or not review_available(backend,review_runtime,review_mode)
         if (req.get('writing_mode')=='internal_report' or req.get('fact_check')) and not without_review:
             from .review import run_review
