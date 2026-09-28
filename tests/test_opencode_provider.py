@@ -1,3 +1,6 @@
+import json
+from io import BytesIO
+from types import SimpleNamespace
 import pytest
 from briefloop.backends.opencode_server import OpencodeServerClient, OpencodeError
 from briefloop.opencode_harness import OpencodeHarness
@@ -67,3 +70,23 @@ def test_provider_settings_never_projects_credentials():
     result=client.provider_settings()
     assert 'SECRET' not in str(result)
     assert result[0]['base_url']=='' and result[0]['protocol']=='responses'
+
+
+def test_legacy_provider_probe_reads_utf8_auth_file_without_losing_credential(tmp_path,monkeypatch):
+    auth=tmp_path/'opencode'/'auth.json';auth.parent.mkdir()
+    auth.write_text(json.dumps({'fixture':{'type':'api','key':'synthetic-token','account_name':'中文账户'}},
+                               ensure_ascii=False),encoding='utf-8')
+    monkeypatch.setenv('XDG_DATA_HOME',str(tmp_path))
+    client=object.__new__(OpencodeServerClient)
+    client._v2=lambda:None
+    client.provider_settings=lambda:[{'provider':'fixture','base_url':'https://catalog.example.test',
+                                      'protocol':'chat-completions'}]
+    calls=[]
+    def open_catalog(request,timeout):
+        calls.append(request.get_header('Authorization'))
+        return BytesIO(b'{"data":[{"id":"model-a"}]}')
+    monkeypatch.setattr('briefloop.backends.opencode_server.urllib.request.build_opener',
+                        lambda *handlers:SimpleNamespace(open=open_catalog))
+    result=client.probe_provider_catalog('fixture')
+    assert result['status']=='reachable' and result['credential_sent'] is True
+    assert result['models']==['model-a'] and calls==['Bearer synthetic-token']

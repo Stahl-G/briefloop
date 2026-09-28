@@ -318,7 +318,7 @@ class OpencodeServerClient:
         if not base:raise ValueError('请先保存不含凭据的 API Base URL')
         # Native OpenCode credentials stay in memory and never enter results.
         auth_path=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'opencode/auth.json'
-        try:auth=json.loads(auth_path.read_text()).get(provider,{})
+        try:auth=json.loads(auth_path.read_text(encoding='utf-8')).get(provider,{})
         except (OSError,ValueError):auth={}
         key=auth.get('key','') if auth.get('type')=='api' else ''
         headers={'Accept':'application/json'}
