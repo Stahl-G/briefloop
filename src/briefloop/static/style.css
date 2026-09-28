@@ -709,6 +709,9 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .compact-report-options select,.compact-report-options input{width:auto;min-height:28px;height:28px;margin:0;padding:2px 4px;font:inherit;color:inherit;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
 .compact-report-options input[type=checkbox]{width:16px;height:16px;min-height:16px;accent-color:var(--green)}
 .compact-report-options input[type=number]{width:48px}.compact-report-options details{position:relative;margin:0;padding:0;border:0}.compact-report-options summary{cursor:pointer;list-style:none}
+.compact-fact-note{flex-basis:100%;margin:0;color:var(--muted);overflow-wrap:anywhere}
+.compact-fact-note[hidden]{display:none}
+.compact-fact-note button{border:0;background:none;color:var(--green);font:inherit;text-decoration:underline;cursor:pointer;padding:0;min-height:28px}
 .compact-options-menu{position:absolute;z-index:30;top:28px;right:0;width:230px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);box-shadow:var(--shadow-sm)}.compact-options-menu label{display:flex;justify-content:space-between;margin:4px 0}
 
 .compact-legacy-option[hidden]{display:none!important}

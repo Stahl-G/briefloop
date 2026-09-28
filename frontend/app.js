@@ -9,6 +9,7 @@ const providerCapabilities=createProviderCapabilities({$});
 const reasoning=reasoningControls({api});
 import {createAssessmentPanel} from './assessment-panel.js';
 import {createReviewControls} from './review-controls.js';
+import {factCheckAvailability} from './fact-check-availability.js';
 import {reviewResultHTML} from './review-results.js';
 import {renderVersionDiff} from './version-diff.js';
 import {DOMSerializer} from '@tiptap/pm/model';
@@ -507,7 +508,7 @@ const assessmentPanel=createAssessmentPanel({
 const {assessment,citations,renderDeliveryChecks,renderReportIssues,renderFactChecks}=assessmentPanel;
 $('close-source').onclick=()=>$('source-dialog').close();
 $('requirements').addEventListener('reset',()=>{writingPreferencesOverride=[];syncFactCheckControl()});
-const reviewControls=createReviewControls({api,action,$,getState:()=>state,backendValue,friendlyModel,savedVersion,notice,runtimeName});
+const reviewControls=createReviewControls({api,action,$,getState:()=>state,backendValue,friendlyModel,savedVersion,notice,runtimeName,onAvailabilityChange:syncCompactReportControls});
 const {syncFactCheckControl,renderReviewRuntime}=reviewControls;
 reviewControls.init();
 $('requirements').elements.allow_web.addEventListener('change',syncFactCheckControl);
@@ -923,7 +924,7 @@ function restoreDraft({preserveNewDraft=false}={}){
  const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:settingsEffort(state.settings,backend),variant:backend==='mimo'?state.settings.runtime_efforts?.mimo:state.settings.model_variant,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
  const runtime=saved||sessionRuntime||fallback;
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
- $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};
+ $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user'&&m.purpose!=='runtime_test')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',Object.hasOwn(runtime,'effort')?effortValue(runtime,'effort'):(backend==='codex'?'high':'none'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';
  $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
@@ -2483,12 +2484,17 @@ $('search-activity-close').onclick=()=>$('search-activity-dialog').close();
 function compactReportInstruction(){
  const row=document.querySelector('[data-report-options="chat"]');if(!row)return '';
  const tier=row.querySelector('[data-option="tier"]').value;
- const fact=row.querySelector('[data-option="fact"]').checked&&$('chat-allow-web').checked;
+ const fact=row.querySelector('[data-option="fact"]').checked&&compactFactAvailability('chat').enabled;
  return `\n\n本轮报告选项（仅当用户要求生成报告时使用，不因此自动生成）：research_tier=${tier}，fact_check=${fact}。生成时传入 requirements；${tier==='deep'?'深度研究建议 8000–12000 字（英文报告约 6500–8000 词）；不传 target_words/max_words 时按报告语言取默认；':''}用户正文另有明确选择则按正文。`;
 }
 function compactReportControls(where){
  const row=document.createElement('div');row.className='compact-report-options';row.dataset.reportOptions=where;
- row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>目标用时 <select data-option="timeout"><option value="10">约 10 分钟</option><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不设目标</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
+ row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>目标用时 <select data-option="timeout"><option value="10">约 10 分钟</option><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不设目标</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details><p class="compact-fact-note" data-fact-note role="status" hidden><span data-fact-reason></span> <button type="button" data-fact-action></button></p>';
+ row.querySelector('[data-fact-action]').onclick=()=>{
+  const target=compactFactAvailability(where).target;
+  if(target==='network'){if(where==='chat'){showSettings();settingsView('execution')}else{const control=$('requirements').elements.allow_web;control.scrollIntoView({block:'center'});control.focus()}}
+  if(target==='review'){page('setup');const panel=document.querySelector('.review-runtime-settings');panel.open=true;panel.scrollIntoView({block:'center'})}
+ };
  row.addEventListener('change',event=>action(async()=>{
   const key=event.target.dataset.option;if(!key)return;const value=event.target.type==='checkbox'?event.target.checked:event.target.value;
   if(key==='learn'){try{await setAutoLearn(value);await refresh()}finally{syncCompactReportControls()}$('auto-learn').checked=state.learning_authorization?.state==='authorized';return}
@@ -2501,14 +2507,23 @@ function compactReportControls(where){
   syncCompactReportControls();
  }));return row;
 }
+function compactFactAvailability(where){
+ return factCheckAvailability({allowWeb:where==='chat'?$('chat-allow-web').checked:$('requirements').elements.allow_web.checked,
+  backend:where==='chat'?chatBackendChoice():backendValue(),reviewRuntime:state.settings.review_runtime,
+  reviewMode:state.settings.review_mode||'standard',capability:state.review_capability,pendingReview:reviewControls.pending(),backendLabel:runtimeName});
+}
 function syncCompactReportControls(){
  if(!state?.settings)return;
  document.querySelectorAll('[data-report-options]').forEach(row=>{
-  const web=row.dataset.reportOptions==='chat'?$('chat-allow-web').checked:$('requirements').elements.allow_web.checked;
+  const availability=compactFactAvailability(row.dataset.reportOptions);
   for(const [key,value] of Object.entries({tier:row.dataset.reportOptions==='setup'?$('research-tier').value:state.settings.research_tier||'standard',fact:row.dataset.reportOptions==='setup'?$('requirements').elements.fact_check.checked:state.settings.fact_checker,learn:state.learning_authorization?.state==='authorized',rounds:state.settings.k,timeout:state.settings.timeout_minutes,scouts:state.settings.max_parallel})){
    const input=row.querySelector(`[data-option="${key}"]`);if(document.activeElement===input)continue;if(input.type==='checkbox')input.checked=!!value;else input.value=value;
   }
-  const fact=row.querySelector('[data-option="fact"]');fact.disabled=!web;if(!web)fact.checked=false;
+  const fact=row.querySelector('[data-option="fact"]');fact.disabled=!availability.enabled;if(!availability.enabled)fact.checked=false;
+  fact.title=availability.reason;
+  const note=row.querySelector('[data-fact-note]');note.hidden=availability.enabled;
+  note.querySelector('[data-fact-reason]').textContent=availability.reason;
+  const action=note.querySelector('[data-fact-action]');action.textContent=availability.action;
  });
  const reports=$('max-reports');if(reports&&document.activeElement!==reports&&!reports.dataset.editing)reports.value=state.settings.max_reports||4;
 }
