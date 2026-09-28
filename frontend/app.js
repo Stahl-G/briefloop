@@ -2040,8 +2040,8 @@ async function loadProviderCatalog(){
   const r=await api(engine+'/provider-catalog',{provider});
   if(request!==providerCatalogRequest||engine!==providerEndpoint()||provider!==$('custom-provider').value.trim())return;
   $('provider-model-options').innerHTML=(r.models||[]).map(id=>`<option value="${esc(id)}"></option>`).join('');
-  const labels={reachable:'目录已更新',auth_failed:'认证失败',insufficient_balance:'余额不足',forbidden:'无权访问',catalog_unavailable:'目录接口不可用，可手填模型',rate_limited:'请求限流',upstream_unavailable:'服务商暂不可用',connection_failed:'连接失败，可手填模型',invalid_catalog:'响应不是可识别的模型目录',http_error:'接口返回错误'};
-  $('provider-result').textContent=(labels[r.status]||r.status)+' · '+(r.models||[]).length+' 个模型。未调用模型。';
+  const labels={configured:'本机登记已读取',reachable:'目录已更新',auth_failed:'认证失败',insufficient_balance:'余额不足',forbidden:'无权访问',catalog_unavailable:'目录接口不可用，可手填模型',rate_limited:'请求限流',upstream_unavailable:'服务商暂不可用',connection_failed:'连接失败，可手填模型',invalid_catalog:'响应不是可识别的模型目录',http_error:'接口返回错误'};
+  $('provider-result').textContent=(labels[r.status]||r.status)+' · '+(r.models||[]).length+' 个模型。'+(r.source==='native_config'?'尚未验证服务商连接，请使用“测试模型”确认可用性。':'未调用模型。');
  }catch(e){if(request===providerCatalogRequest)$('provider-result').textContent='目录读取失败：'+e.message+'；可手动输入模型 ID。'}
 }
 $('provider-catalog').onclick=loadProviderCatalog;

@@ -8,7 +8,7 @@ const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',dataset:{}});return elements.get(id)};
 const calls=[];
 const ctx=vm.createContext({$:el,providerCapabilities:createProviderCapabilities({$:el}),state:{settings:{model_variant:'low'}},chat:{},chatBackendChoice:()=> 'briefloop-native',
- api:async(route,body)=>{calls.push({route,body:{...body}});return {model:'custom/model',models:[],status:'reachable'}},
+ api:async(route,body)=>{calls.push({route,body:{...body}});return {model:'custom/model',models:[],status:'configured',source:'native_config'}},
  esc:x=>x,action:fn=>fn(),selectChat:async()=>{},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},backendValue:()=> 'opencode',chatActive:()=>false,renderChatRuntimePermissions:()=>{},rememberDraft:()=>{},updateComposer:()=>{}});
 vm.runInContext(section(source,'function runtimeChoice(){','function messageTime(','frontend/app.js'),ctx);
 el('chat-variant').value='low';el('chat-model').value='custom/model';el('chat-permission').value='read-only';
@@ -23,6 +23,7 @@ await el('provider-form').onsubmit({preventDefault(){}});
 assert.equal(calls[0].route,'native/provider');assert.equal(calls[0].body.api_key,'test-only-secret');
 assert.equal(calls[0].body.supports_reasoning,true);
 assert.equal(el('custom-api-key').value,'');assert.equal(calls[1].route,'native/provider-catalog');
+assert.equal(el('provider-result').textContent,'本机登记已读取 · 0 个模型。尚未验证服务商连接，请使用“测试模型”确认可用性。');
 await el('provider-use').onclick();assert.equal(ctx.chat.nextBackend,'briefloop-native');assert.equal(el('agent-backend').value,'briefloop-native');
 await el('provider-test-model').onclick();assert.equal(calls.at(-1).route,'runtime-test');
 assert.equal(calls.at(-1).body.backend,'briefloop-native');assert.equal(calls.at(-1).body.model,'custom/model');

@@ -73,5 +73,5 @@ def save(body):
 
 def catalog(body):
     provider = body.get('provider')
-    return {'status':'reachable', 'models': [row['model'] for row in configurations() if row['provider'] == provider],
-            'source': 'native_config', 'diagnostic': '显示已登记模型；也可直接输入新的模型 ID 保存。'}
+    return {'status':'configured', 'models': [row['model'] for row in configurations() if row['provider'] == provider],
+            'source': 'native_config', 'diagnostic': '仅显示本机已登记模型；尚未验证服务商连接，请使用“测试模型”确认可用性。'}

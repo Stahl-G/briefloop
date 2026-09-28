@@ -14,6 +14,12 @@ def test_native_credentials_redacted_and_not_in_workspace(tmp_path, monkeypatch)
             'api_key': 'test-not-a-real-key', 'base_url': 'https://example.test/v1'}
     assert providers.save(body)['model'] == 'synthetic/fixture'
     assert 'test-not-a-real-key' not in json.dumps(providers.configurations())
+    catalog = providers.catalog({'provider': 'synthetic'})
+    assert catalog['status'] == 'configured'
+    assert catalog['source'] == 'native_config'
+    assert catalog['models'] == ['fixture']
+    assert '尚未验证' in catalog['diagnostic']
+    assert 'test-not-a-real-key' not in json.dumps(catalog)
     if os.name == 'nt':
         from briefloop.connectors.windows_acl import verify_private
         verify_private(path)

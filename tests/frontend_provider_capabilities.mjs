@@ -42,7 +42,7 @@ for(const declared of [true,false]){
     localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
     api:async(route,body)=>{
       if(route==='native/providers')return {configurations:configs};
-      if(route==='native/provider-catalog')return {models:['target','other'],status:'reachable'};
+      if(route==='native/provider-catalog')return {models:['target','other'],status:'configured',source:'native_config'};
       assert.equal(route,'native/provider');bodies.push({...body});return {model:'shared/target'};
     }});
   vm.runInContext(section(source,'let savedProviderConfigurations=[];',"$('timeout-minutes').onchange=",'frontend/app.js'),context);
