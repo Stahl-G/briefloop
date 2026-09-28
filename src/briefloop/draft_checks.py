@@ -70,6 +70,7 @@ def _table_citation_notes(draft):
 def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None):
     from .delivery_checks import check_numbers, numeric_occurrence_review, quantities
     from .document_model import markdown_document
+    from .report_time import check as check_time
     draft = BriefDraft.model_validate(value)
     req = requirements or {}
     length = length_stats(draft.markdown, target_words=req.get('target_words'), max_words=req.get('max_words'))
@@ -94,6 +95,13 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
         occurrence_review = None
     warnings = []
     notes = []
+    temporal = check_time(req.get('time_context'), [claim.model_dump() for claim in draft.temporal_claims])
+    notes.extend({**warning, 'kind': 'advisory'} for warning in temporal.get('warnings', []))
+    if temporal.get('missing_date_count') or temporal.get('out_of_range_count'):
+        notes.append({'code': 'temporal_basis_to_review', 'kind': 'needs_semantic_review',
+                      'message': '部分当期动态的依据日期在范围外，或缺少日期/新闻性说明/来源定位；回读原文后按发生、首次披露或新进展登记。不要改写真实事件日期，不能仅用发布或抓取时间补齐。',
+                      'missing_basis_count': temporal.get('missing_date_count', 0),
+                      'out_of_range_count': temporal.get('out_of_range_count', 0)})
     if length['over_limit']:
         warnings.append({'code': 'over_limit', 'message': '正文超过本轮上限；请保留重点并压缩重复内容。'})
     if length['below_target']:
@@ -118,6 +126,7 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
     notes.extend(_table_citation_notes(draft))
     return {'status': 'needs_attention' if warnings else 'checks_completed',
             'review_status': 'not_reviewed', 'length': length, 'sections': sections,
+            'temporal': temporal,
             'citations': {'body_source_count': len(cited), 'missing_locator': sorted(cited - located)},
             'numbers': {'total': len(numbers), 'checked': checked,
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',

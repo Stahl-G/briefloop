@@ -62,9 +62,30 @@ def freeze(requirements, instant=None):
             end = start+timedelta(days=calendar.monthrange(start.year, start.month)[1])
     if start >= end:
         raise ValueError('报告结束时间必须晚于开始时间')
-    return {'checked_at': clock.isoformat(), 'today': local.date().isoformat(),
-            'timezone': zone, 'start': start.isoformat(), 'end_exclusive': end.isoformat(),
-            'basis': basis, 'clock_source': 'system_clock'}
+    window = {'checked_at': clock.isoformat(), 'today': local.date().isoformat(),
+              'timezone': zone, 'start': start.isoformat(), 'end_exclusive': end.isoformat(),
+              'basis': basis, 'clock_source': 'system_clock'}
+    warnings = []
+    for field in ('period', 'title'):
+        label = re.search(r'(?:(\d{4})\s*年\s*)?第\s*(\d{1,2})\s*周', requirements.get(field, ''))
+        if not label:
+            continue
+        year, week = int(label[1] or start.isocalendar().year), int(label[2])
+        try:
+            week_start = datetime.fromisocalendar(year, week, 1).replace(tzinfo=local.tzinfo)
+        except ValueError:
+            warnings.append({'code': 'invalid_iso_week', 'field': field,
+                             'message': f'{year} 年不存在 ISO 第 {week} 周；已保留明确填写的日期范围。'})
+            continue
+        week_end = week_start + timedelta(days=7)
+        if start < week_start or end > week_end:
+            warnings.append({'code': 'iso_week_mismatch', 'field': field,
+                             'message': f'ISO {year} 年第 {week} 周为 {week_start.date()} 至 '
+                                        f'{(week_end-timedelta(days=1)).date()}，与本轮日期范围不一致；'
+                                        '已保留用户填写的范围，请修正周编号或说明跨周覆盖。'})
+    if warnings:
+        window['warnings'] = warnings
+    return window
 
 
 def instructions(window):
@@ -74,29 +95,46 @@ def instructions(window):
             f"本轮冻结范围：{window['start']} 至 {window['end_exclusive']}（不含结束时刻）。"
             '所有检索、子任务、写作和评分沿用此范围，恢复任务不得移动范围。'
             '稿件应逐条提供当期动态的 temporal_claims：statement、event_date、published_at、fetched_at、source_id、locator、usage(current/background)。'
-            '事件日期决定是否当期，发布日期与抓取日期分别记录，不能相互替代。'
-            '范围外事件只能作背景；事件日期不明须明确标为待核实，不算当期已证实动态。'
-            '日期记录还须独立核对原文；程序日期比较不等于事实认证。')
+            '当期依据 news_basis 可为 event（本期发生，默认，比较 event_date）、first_disclosure（本期首次披露）或 new_development（本期新进展）。'
+            '首次披露或新进展须提供 news_date、news_note（本期具体新增什么）、source_id 与 locator；保留真实 event_date，不把旧事件日期改为报道日。'
+            'published_at 与 fetched_at 仅为元数据，不能自动证明首次披露或新进展；转载、重新抓取、无实质变化的页面更新不能算当期新增。'
+            '缺少新闻性依据须标为待核实；旧事件无本期新增依据时作背景。正文分别写“本周发生”“本周首次披露”或“本周新进展”。'
+            '日期记录和新闻性仍须独立回读原文；程序日期比较不等于事实认证。'
+            + ''.join('时间范围提示：' + warning['message'] for warning in window.get('warnings', [])))
 
 
 def check(window, claims):
     if not window: return {'status': 'not_checked', 'reason': 'legacy_window', 'items': []}
-    if not claims: return {'status': 'not_checked', 'reason': 'missing_date_records', 'items': []}
+    warnings = window.get('warnings', [])
+    if not claims: return {'status': 'not_checked', 'reason': 'missing_date_records', 'items': [], 'warnings': warnings}
     start = datetime.fromisoformat(window['start'])
     end = datetime.fromisoformat(window['end_exclusive'])
     items = []
     for claim in claims:
         status = 'background' if claim.get('usage') == 'background' else 'unverified'
-        value = claim.get('event_date')
-        if status != 'background' and value:
+        basis = claim.get('news_basis', 'event')
+        value = claim.get('event_date') if basis == 'event' else claim.get('news_date')
+        reason = 'background' if status == 'background' else 'missing_or_invalid_basis_date'
+        if basis in ('first_disclosure', 'new_development'):
+            has_basis = all(str(claim.get(key) or '').strip() for key in ('news_note', 'source_id', 'locator'))
+            if not has_basis and status != 'background':
+                reason = 'missing_news_basis_evidence'
+        else:
+            has_basis = basis == 'event'
+            if not has_basis and status != 'background':
+                reason = 'unknown_news_basis'
+        if status != 'background' and value and has_basis:
             try:
                 event = datetime.fromisoformat(value)
                 event = event.replace(tzinfo=start.tzinfo) if event.tzinfo is None else event
                 # A source may publish only a date: compare overlapping calendar days.
                 finish = event+timedelta(days=1) if len(value)==10 else event+timedelta(microseconds=1)
                 status = 'in_range_unverified' if event < end and finish > start else 'out_of_range'
+                reason = 'basis_date_in_range' if status == 'in_range_unverified' else 'basis_date_out_of_range'
             except ValueError: pass
-        items.append({**claim, 'temporal_status': status})
-    return {'status': 'needs_source_review', 'items': items,
+        items.append({**claim, 'news_basis': basis, 'basis_date': value or '',
+                      'temporal_status': status, 'reason': reason})
+    return {'status': 'needs_source_review', 'items': items, 'warnings': warnings,
+            'review_hint': '日期范围比较不证明新闻性；首次披露或新进展须回读 source_id/locator，核实 news_note 并保留真实事件日期。',
             'missing_date_count': sum(i['temporal_status']=='unverified' for i in items),
             'out_of_range_count': sum(i['temporal_status']=='out_of_range' for i in items)}

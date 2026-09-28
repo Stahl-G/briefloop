@@ -4,7 +4,7 @@ import threading
 import time
 from importlib.resources import files
 
-_PROFILES = json.loads(files('briefloop').joinpath('static/runtime-reasoning.json').read_text())
+_PROFILES = json.loads(files('briefloop').joinpath('static/runtime-reasoning.json').read_text(encoding='utf-8'))
 _cache = {}
 _lock = threading.Lock()
 

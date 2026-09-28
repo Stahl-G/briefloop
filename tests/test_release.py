@@ -268,6 +268,12 @@ def test_full_and_restricted_audit_packages_validate_offline_without_original_wo
         assert checked['valid'], checked
         assert checked['complete_materials'] is complete
         with ZipFile(copied) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            context_name = 'packet/assessment-context.json'
+            # This initial report has no prior findings: the context contains
+            # only check identities/labels, so restricted export preserves bytes.
+            assert sha(archive.read(context_name)) == manifest['original_files'][context_name]
+            assert not any(item['file'] == context_name for item in manifest['transformations'])
             target = json.loads(archive.read('packet/target.json'))
             span = target['evidence']['bindings'][0]['evidence'][0]
             if not complete:
@@ -333,11 +339,24 @@ def test_audit_binds_figure_data_script_and_sanitized_tool_record(tmp_path):
 def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkeypatch):
     import briefloop.figures as figures
     original_register = figures.register_figure
+    original_assessment_context = Store.assessment_context
+
+    def context_with_private_quote(store, version_id):
+        context = original_assessment_context(store, version_id)
+        brief = store.one('briefs', version_id)
+        source_id = store.source_ids(brief['run_id'])[0]
+        private = store.source_text(source_id).splitlines()[1]
+        # A prior assessment can contain source text outside approved excerpts.
+        context['revision_context'] = {'findings': [{'evidence': private}],
+                                       'brief': {'markdown': private}}
+        return context
+
+    monkeypatch.setattr(Store, 'assessment_context', context_with_private_quote)
 
     def register_with_source_copy(store, run_id, image, title, caption, source_ids, data_path, script_path):
         raw = store.source_text(source_ids[0])
-        data_path.write_text(dump({'raw_source_extract': raw, 'plotted_revenue_millions': 12}))
-        script_path.write_text('source_text = ' + repr(raw) + '\nprint(12 * 1000000)')
+        data_path.write_text(dump({'raw_source_extract': raw, 'plotted_revenue_millions': 12}), encoding='utf-8')
+        script_path.write_text('source_text = ' + repr(raw) + '\nprint(12 * 1000000)', encoding='utf-8')
         return original_register(store, run_id, image, title, caption, source_ids, data_path, script_path)
 
     monkeypatch.setattr(figures, 'register_figure', register_with_source_copy)
@@ -345,7 +364,7 @@ def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkey
     release, job = complete_release(store, brief)
     report_bytes = release_file(store, release['id']).read_bytes()
     all_source_ids = [item['id'] for item in release['data']['snapshot']['sources']]
-    packet_index = json.loads((store.root / release['data']['packet_path'] / 'index.json').read_text())
+    packet_index = json.loads((store.root / release['data']['packet_path'] / 'index.json').read_text(encoding='utf-8'))
     private_excerpt=store.source_text(source['id']).splitlines()[1]
     assert private_excerpt in release['data']['review_result']['summary']
     assert private_excerpt in release['data']['review_result']['claim_checks'][0]['reason']
@@ -369,6 +388,11 @@ def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkey
             assert {item.get('file') for item in visual_index['images']}.issuperset(name.removeprefix('packet/') for name in source_visuals)
             leaks=[name for name in archive.namelist() if private_excerpt.encode() in archive.read(name)]
             assert not leaks, {'mode':mode,'leaked_members':leaks}
+            manifest = json.loads(archive.read('manifest.json'))
+            context_name = 'packet/assessment-context.json'
+            transform = next(item for item in manifest['transformations'] if item['file'] == context_name)
+            assert transform['original_sha256'] == manifest['original_files'][context_name]
+            assert transform['included_sha256'] == sha(archive.read(context_name))
             target=json.loads(archive.read('packet/target.json'))
             selected_span=next(item for binding in target['evidence']['bindings'] for item in binding['evidence'] if item['source_id']==source['id'])
             if mode=='excerpt':assert selected_span['data']['excerpt']=='Revenue was USD 12 million.'

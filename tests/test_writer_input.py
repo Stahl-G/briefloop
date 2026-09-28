@@ -391,3 +391,53 @@ def test_markdown_prompt_preserves_content_rules_and_frozen_protocol(tmp_path):
         with pytest.raises(Captured):
             analyst.run(store,Runtime(),job,run['id'],folder,'briefloop-native',**inputs)
     assert json.loads((folder/'packet/input.json').read_text())['writer_input_protocol']=='writer_input_v1'
+
+
+def test_assembly_reports_multiple_invalid_indices_without_partial_save(tmp_path):
+    from briefloop.writer_assembly import AssemblyErrors
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%。'})
+    current = drafts._root(store, config) / 'current.json'
+    before = current.read_bytes()
+    batch = {'base_revision': first['revision'], 'citations': [
+        {'source_id': source['id'], 'excerpt': '不存在的第一段'},
+        {'source_id': source['id'], 'excerpt': store.source_text(source['id'])},
+        {'source_id': 'src_missing', 'excerpt': '不存在的来源'}]}
+    with pytest.raises(AssemblyErrors) as failure:
+        writer.assemble_evidence(store, config, batch)
+    assert [(e['field'], e['index']) for e in failure.value.errors] == [('citations', 0), ('citations', 2)]
+    assert 'citations[0]' in str(failure.value) and 'citations[2]' in str(failure.value)
+    assert current.read_bytes() == before
+    assert not drafts._candidate(store, config, {'revision': first['revision']})['draft'].get('citations')
+    fixed = {**batch, 'citations': [batch['citations'][1]]}
+    saved = writer.assemble_evidence(store, config, fixed)
+    assert saved['revision'] != first['revision']
+
+
+def test_exact_patch_matches_across_marks_but_preserves_citations_and_atomicity(tmp_path):
+    from copy import deepcopy
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown':
+        f'**收入**增长20%。[@{source["id"]}]保持观察。\n\n下一段不变。'})
+    before = drafts._candidate(store, config, {'revision': first['revision']})['draft']
+    original = deepcopy(before['editor_document'])
+    saved = writer.patch_report_text(store, config, {'base_revision': first['revision'],
+        'replacements': [{'old_text': '收入增长20%', 'new_text': '收入同比增长20%'}]})
+    after = drafts._candidate(store, config, {'revision': saved['revision']})['draft']['editor_document']
+    assert after['content'][0]['content'][0] == original['content'][0]['content'][0]  # bold remains
+    assert after['content'][0]['content'][1]['text'] == '同比增长20%。'
+    assert after['content'][0]['content'][2:] == original['content'][0]['content'][2:]  # citation stays
+    assert after['content'][1:] == original['content'][1:]
+    current = drafts._root(store, config) / 'current.json'
+    unchanged = current.read_bytes()
+    with pytest.raises(ValueError, match='不跨|不要跨'):
+        writer.patch_report_text(store, config, {'base_revision': saved['revision'], 'replacements': [
+            {'old_text': '下一段不变', 'new_text': '临时改动'},
+            {'old_text': '20%。保持观察', 'new_text': '跨引用改动'}]})
+    assert current.read_bytes() == unchanged
+    # Overlapping matches must not be treated as a unique target.
+    section = {'editor_document': {'type': 'doc', 'content': [
+        {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'aaa'}]}]}, 'citations': []}
+    with pytest.raises(ValueError, match='命中 2 处'):
+        drafts.replace_section_text(section, [{'old_text': 'aa', 'new_text': 'b'}], drafts._hash(section))
+    assert section['editor_document']['content'][0]['content'][0]['text'] == 'aaa'

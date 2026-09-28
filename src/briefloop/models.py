@@ -361,6 +361,9 @@ class TemporalClaim(Model):
     source_id: str = ""
     locator: str = ""
     usage: Literal["current", "background"] = "current"
+    news_basis: Literal["event", "first_disclosure", "new_development"] = "event"
+    news_date: str = ""
+    news_note: str = ""
 
 
 class BriefDraft(Model):
@@ -398,6 +401,8 @@ class Finding(Model):
     locator: str = ""
     evidence: str = ""
     suggestion: str = ""
+    # Optional links to this assessment's checks; findings describe remaining issues.
+    check_ids: list[str] = Field(default_factory=list)
     # Tolerated drift: scoring findings occasionally reuse review-finding keys.
     kind: str | None = None
     block_ids: list[str] = Field(default_factory=list)
@@ -419,7 +424,50 @@ class Assessment(Model):
     def complete_has_scores(self):
         if self.status == "complete" and any(getattr(self, x) is None for x in ("evidence", "coverage", "analysis", "expression")):
             raise ValueError("Complete assessment needs four grades; unfinished checks are not a zero score")
+        self.checks = assessment_checks(self.checks, self.findings)
         return self
+
+
+def assessment_checks(checks, findings, expected=()):
+    """Record explicit check/finding relationships, never infer from prose.
+
+    Old checks remain readable. A missing new check is observable, not another
+    generation retry or a fabricated failure; aggregate scores stay the agent's.
+    """
+    result = [dict(check) for check in checks]
+    for item in expected:
+        matches = [check for check in result if check.get('id') == item['id']]
+        if not matches:
+            result.append({**item, 'status': 'not_checked',
+                           'reason': '本次评价未返回这一项的复核结果。'})
+        elif len(matches) > 1:
+            for check in matches:
+                check.setdefault('model_status', check.get('status'))
+                check['status'] = 'not_checked'
+                check['consistency_note'] = '这一项返回了重复结果，不能判定复核完成。'
+        else:
+            check = matches[0]
+            # Labels and prior-assessment identity are supplied by the runner.
+            check.update({key: value for key, value in item.items() if key != 'id'})
+            if check.get('status') not in ('passed', 'needs_attention', 'not_checked', 'disputed') or not str(check.get('reason') or '').strip():
+                check.setdefault('model_status', check.get('status'))
+                check['status'] = 'not_checked'
+                check['consistency_note'] = '缺少有效状态或具体复核依据，保留为未核对。'
+    linked = {}
+    for index, finding in enumerate(findings):
+        data = finding if isinstance(finding, dict) else finding.model_dump()
+        for identity in data.get('check_ids', []):
+            linked.setdefault(identity, []).append(index)
+    for check in result:
+        identity = check.get('id')
+        indices = linked.get(identity) if isinstance(identity, str) else None
+        if indices:
+            check['finding_indices'] = indices
+            if check.get('status') == 'passed':
+                check['model_status'] = 'passed'
+                check['status'] = 'needs_attention'
+                check['consistency_note'] = '评价仍列出与此项关联的问题，不能同时显示为全部通过；不改变总评或问题严重程度。'
+    return result
 
 
 # Expression anchor 2 means a reader must do real editing before the body is usable
@@ -478,9 +526,50 @@ class ScoutEvidence(Model):
     claim_ids: list[str] = Field(default_factory=list)
 
 
+class ResearchGapEvidence(Model):
+    source_id: str = Field(min_length=1)
+    locator: str = Field(min_length=1)
+    excerpt: str = Field(min_length=1)
+    source_hash: str | None = None
+
+
+class ResearchGapUpdate(Model):
+    gap_id: str = Field(min_length=1)
+    status: Literal['open', 'partial', 'resolved']
+    reason: str = Field(min_length=1)
+    remaining_question: str = ''
+    evidence: list[ResearchGapEvidence] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def explicit_change(self):
+        if not self.reason.strip():
+            raise ValueError('缺口状态更新需要具体 reason')
+        if self.status != 'open' and not self.evidence:
+            raise ValueError('partial/resolved 必须至少给一条 evidence')
+        if self.status == 'partial' and not self.remaining_question.strip():
+            raise ValueError('partial 必须写 remaining_question，说明仍需核对什么')
+        if self.status != 'partial' and self.remaining_question:
+            raise ValueError('remaining_question 仅用于 partial')
+        return self
+
+
+class ResearchGap(Model):
+    gap_id: str
+    description: str
+    status: Literal['open', 'partial', 'resolved'] = 'open'
+    reason: str = ''
+    remaining_question: str = ''
+    evidence: list[ResearchGapEvidence] = Field(default_factory=list)
+    round_id: str | None = None
+    round_index: int | None = None
+    validation_error: str | None = None
+
+
 class ScoutResult(Model):
     sources: list[ScoutEvidence]
     gaps: list[str] = Field(default_factory=list)
+    gap_records: list[ResearchGap] = Field(default_factory=list)
+    gap_history: list[ResearchGap] = Field(default_factory=list)
     search_summary: str = ""
     retrieval_notes: list[dict] = Field(default_factory=list)
 

@@ -150,9 +150,83 @@ def test_pairwise_comparison_is_frozen_and_checked_against_the_learning_gate(tmp
     assert 'case_id' in comparison_errors({'pairs': [good, good]}, [case])
 
     config = {'native_role': 'evaluator', 'evaluation_mode': 'pairwise', 'packet_root': str(packet)}
-    assert [t['name'] for t in runner_tool_specs('evaluator', 'pairwise')] == ['submit_comparison']
+    specs = runner_tool_specs('evaluator', 'pairwise')
+    assert [t['name'] for t in specs] == ['submit_comparison']
+    schema = specs[0]['parameters']
+    assert schema['required'] == ['pairs']
+    assert 'reason' in schema['properties']  # legacy overall explanations still accepted
+    pair_schema = schema['properties']['pairs']['items']
+    assert set(pair_schema['required']) == {'case_id', 'verdict', 'reason', 'regressions'}
+    assert pair_schema['properties']['verdict']['enum'] == ['better', 'tie', 'worse']
+    assert pair_schema.get('additionalProperties') is not False  # caller-specific assessments
     rejected = run_tool(store, config, 'submit_comparison', {'pairs': [dict(good, verdict='same')], 'reason': 'x'})
     assert not rejected['ok'] and not (folder / 'comparison.json').exists()
     assert run_tool(store, config, 'submit_assessment', {})['ok'] is False
     ok = run_tool(store, config, 'submit_comparison', {'pairs': [good], 'reason': '完成'})
     assert ok['ok'] and json.loads((folder / 'comparison.json').read_text(encoding='utf-8'))['pairs'][0]['verdict'] == 'better'
+    # A complete pair needs no duplicate overall explanation. Legacy callers
+    # can still supply one; neither path may omit the per-case evidence.
+    assert json.loads(ok['settle'])['reason'] == '完成'
+    ok = run_tool(store, config, 'submit_comparison', {'pairs': [good]})
+    assert ok['ok'] and json.loads(ok['settle']) == {'pairs': [good], 'reason': ''}
+    saved = (folder / 'comparison.json').read_bytes()
+    for broken in (dict(good, reason='  '), dict(good, requirement_checks=[])):
+        assert not run_tool(store, config, 'submit_comparison', {'pairs': [broken]})['ok']
+        assert (folder / 'comparison.json').read_bytes() == saved
+
+
+def test_pairwise_required_extension_rejects_before_save_and_binds_to_frozen_case(tmp_path):
+    from copy import deepcopy
+    from briefloop.native_roles import comparison_packet
+    store, source, brief = _brief(tmp_path)
+    case = {'case_id': 'run_1', 'source_ids': [source['id']],
+            'baseline': {**brief, 'markdown': 'A'}, 'candidate': {**brief, 'markdown': 'B'}}
+    contract = {
+        'pair_fields': {'audit': {'$ref': '#/$defs/Audit'}},
+        'definitions': {'Audit': {'type': 'object', 'required': ['hash', 'complete', 'findings'],
+                                 'properties': {'hash': {'type': 'string'}, 'complete': {'const': True},
+                                                'findings': {'type': 'array', 'items': {'type': 'string'}}}}},
+        'bindings': [{'result_path': ['audit', 'hash'], 'case_path': ['candidate', 'hash']}]}
+    folder = tmp_path / 'comparison'
+    packet = comparison_packet(store, [case], folder, submission_contract=contract)
+    config = {'native_role': 'evaluator', 'evaluation_mode': 'pairwise',
+              'packet_root': str(packet), 'comparison_contract': contract}
+    schema = runner_tool_specs('evaluator', 'pairwise', config)[0]['parameters']
+    assert 'audit' in schema['properties']['pairs']['items']['required']
+    assert schema['$defs']['Audit'] == contract['definitions']['Audit']
+    pair = {'case_id': 'run_1', 'verdict': 'tie', 'reason': 'A/B一致', 'regressions': []}
+    for audit, needle in ((None, 'audit'), ({'hash': brief['hash'], 'complete': False, 'findings': []}, 'complete'),
+                          ({'hash': 'wrong', 'complete': True, 'findings': []}, '不匹配')):
+        args = {'pairs': [{**pair, **({'audit': audit} if audit is not None else {})}]}
+        rejected = run_tool(store, config, 'submit_comparison', args)
+        assert not rejected['ok'] and needle in rejected['error'] and 'settle' not in rejected
+        assert not (folder / 'comparison.json').exists()
+    good = {'pairs': [{**pair, 'audit': {'hash': brief['hash'], 'complete': True, 'findings': []}}]}
+    result = run_tool(store, config, 'submit_comparison', good)
+    assert result['ok'] and json.loads(result['settle'])['pairs'] == good['pairs']
+    saved = (folder / 'comparison.json').read_bytes()
+    assert not run_tool(store, config, 'submit_comparison', {'pairs': [pair]})['ok']
+    assert (folder / 'comparison.json').read_bytes() == saved
+    # A caller cannot silently drop a previously frozen extension on resume.
+    with pytest.raises(ValueError, match='未绑定'):
+        runner_tool_specs('evaluator', 'pairwise', {k: v for k, v in config.items() if k != 'comparison_contract'})
+    changed = deepcopy(contract)
+    changed['pair_fields'] = {}
+    with pytest.raises(ValueError, match='不一致'):
+        runner_tool_specs('evaluator', 'pairwise', {**config, 'comparison_contract': changed})
+
+
+def test_comparison_extension_cannot_weaken_base_or_resolve_network_schema():
+    from briefloop.comparison_contract import extend_schema
+    base = runner_tool_specs('evaluator', 'pairwise')[0]['parameters']
+    for contract, message in (({'pair_fields': {'reason': {'type': 'number'}}}, '覆盖'),
+                              ({'pair_fields': {'audit': {'$ref': 'https://example.invalid/schema'}}}, '本地'),
+                              ({'pair_fields': {'audit': {'$ref': '#/$defs/missing'}}}, '不存在')):
+        with pytest.raises(ValueError, match=message):
+            extend_schema(base, contract)
+
+    from briefloop.comparison_contract import validate_cases
+    with pytest.raises(ValueError, match='candidate/hash'):
+        validate_cases({'pair_fields': {}, 'bindings': [
+            {'result_path': ['audit', 'hash'], 'case_path': ['candidate', 'hash']}]},
+            [{'case_id': 'one', 'candidate': {}}])

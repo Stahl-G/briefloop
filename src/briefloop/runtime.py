@@ -177,11 +177,13 @@ def _research_handoff(store, run_id, plan):
             validated = check_handoff(store, run_id, data)
         except HandoffError as exc:
             return {'round_index': info.get('index'), 'invalid': True, 'errors': exc.errors}
-        return {'round_index': info.get('index'), **validated}
+        from .research_handoff import gap_view
+        return {'round_index': info.get('index'), **validated, **gap_view(store, run_id)}
     return None
 
 
 def generation_prompt(store, run, folder, backend='codex'):
+    from .research_handoff import PLANNING_GUIDE, GAP_UPDATE_GUIDE
     from .models import normalize_search_provider
     opencode_tool = opencode_subagent_tool() if backend == 'opencode' else None
     raw_requirements=json.loads(run['requirements'])
@@ -207,7 +209,7 @@ def generation_prompt(store, run, folder, backend='codex'):
     evidence_categories='|'.join(EvidenceInput.model_json_schema()['properties']['category']['enum'])
     deliverable=resolve(req)
     (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
-    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note,encoding='utf-8')
+    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note+'\n'+PLANNING_GUIDE,encoding='utf-8')
     scout_contract=(folder/'scout-contract.md').resolve()
     scout_contract.write_text(instructions(deliverable,role='scout')+'\n'+temporal_note,encoding='utf-8')
     from .company_context import prompt as company_prompt
@@ -326,6 +328,8 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 任务创建时间：{run['created']}。报告期间要求：{req.get('period') or '未指定'}。日期以任务创建时间和用户明确期间为准，不按模型记忆中的年份推断今天。日报的当期动态必须核对事件日期与发布日期；历史发布只能标作背景，不计作今日新增。派发每个 Scout 时传递同一报告期间；Tavily 查询使用适用的 --time-range 或 --start-date/--end-date，原生搜索将期间写入查询并核对正文日期。时间过滤不证明事件新近发生，抓取时间也不是发布日期。缺少当期证据时明确缺口，不能用旧新闻凑数。
 {research_plan_note}
 {handoff_note}
+{PLANNING_GUIDE}
+{GAP_UPDATE_GUIDE}
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
 图表与表格由主 Agent 根据报告目标、参考报告和可用数据决定类型、数量与正文位置，不要求凑图，也不固定成一种预测图。趋势、量价和事件反应用图，精确数值与竞争条件用表；IR任务优先二级市场量能/PR反应，市场细价按需求精简。
 先复用用户Excel/历史报告已有且适用的图表，不默认重绘。对XLSX来源用 `{tool} extract-workbook-figures --id SOURCE_ID` 获取原始内嵌图片与原生图表清单；原生图表需用可用渲染器，或复用经核对来自同版本工作簿的渲染图。重新绘图不能称原图复制，旧参考只提供表达方式，数据日期必须适用本期。
@@ -359,6 +363,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
 3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS --output {quote_path(folder/'joined-scouts.json',backend)}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
+   收轮/更新缺口后再次调用同一 join-scouts，刷新 joined-scouts.json 的当前 gaps/gap_records 与历史 gap_history，再交给写作；不要手改 Scout 原件或仅凭 covered 关闭缺口。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
     Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
     动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：
@@ -424,6 +429,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['clause_index']=clause_items(deliverable)
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
+    input_pack.update(store.assessment_context(brief['id']))
     (folder/'input.json').write_text(json.dumps(input_pack,ensure_ascii=False,indent=2),encoding='utf-8')
     tool=tool_command(store.root,backend=backend)
     no_question='本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n'
@@ -467,6 +473,8 @@ input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条�
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。
 四项是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误以 report_quote+source_id/locator/evidence 定位。结论为建议修改或存在重大问题时，每个需要修改的问题都写成一条 findings，摘要不能代替。
 分别评价证据、覆盖、分析与表达；内部缺口记录不抵消正文错误或任务未完成。Reviewer工具失败或关键核验未完成应明确记录，不给假分。
+对 input.assessment_checks 中每项返回 checks：id 原样保留，status 用 passed / needs_attention / not_checked / disputed，reason 说明实际比较的位置和依据，可附 report_quote。摘要和标题逐项回查正文、表格及相关原文：不能遗漏表内重要范围或把 preview、预测、最高、限定主体/期间升级为已经实现；影响/建议区分来源事实与作者推论，融资规模不能直接证明客户付费意愿，单项事件不能直接证明整个行业转向。
+若有 input.revision_context，先读上一版具体 findings 和原稿，再逐项对照本版及来源，检查问题所在段落、摘要/结论、相关表格是否一起修正。原问题已处理用 passed，仍有问题用 needs_attention，未核对用 not_checked，认为原发现不成立用 disputed 并给反证；不要因旧评价说错就机械改判。findings 只列本版仍存在的问题，check_ids 关联对应 checks.id，不得将上一版发现直接复制成新错误。轻微问题可与总评达到要求并存，但相连 checks 不能同时称完全通过。检查记录是本次评价范围，不等同独立审阅或全篇事实核查。
 {output_line}
 '''
 
@@ -1299,7 +1307,8 @@ class Worker:
             from .evidence import inspect_bindings,EvidenceInput,ClaimInput
             from .figures import read_figure
             detail=json.loads(brief['detail'])
-            (stage/'input.json').write_text(json.dumps({'brief':brief,'assessment':assessment,'revision_reasons':reasons,
+            revision_focus='修正每条问题所在原段后，同步复核摘要、标题、相关表格和影响建议有无同一结论残留；保留来源的条件、主体、期间与事实状态。有证据认为原发现不成立时保留原文并给出依据，不机械服从旧评分。'
+            (stage/'input.json').write_text(json.dumps({'brief':brief,'assessment':assessment,'revision_reasons':reasons,'revision_focus':revision_focus,
                 'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts'],
                 'evidence':inspect_bindings(self.store,brief['id']),
                 'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
@@ -1319,6 +1328,7 @@ class Worker:
             tool=tool_command(self.store.root,backend=payload.get('agent_backend','codex'))
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
 优先处理 input.revision_reasons 指向的证据、必答内容和明确要求违规；总评达到要求不豁免这些问题。普通可选润色不扩展本轮工作。
+遵循 input.revision_focus：同一结论在问题原段、摘要、标题、表格、影响建议中一起核对，避免只改局部原句。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
 input.figures提供已登记图表、数据和脚本。图像本身有错误时，在工作区另存修正后的数据/脚本/图片并实际查看，使用 `{tool} register-figure --run {brief['run_id']} --image IMAGE_PATH --title TITLE --caption CAPTION --source SOURCE_ID --data DATA_PATH --script SCRIPT_PATH` 登记新快照；用返回的真实figure_id同步draft.figures与editor_document图片src（briefloop-figure:FIGURE_ID），旧资产保留。图中错误未改时不能仅改正文图注或写入gaps就声称已修正。
@@ -1456,9 +1466,13 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
             # The native Evaluator reads a frozen packet and submits through the
             # runner; the version it scores is fixed here, not taken from the model.
             job={**job,'native_packet':{'role':'evaluator','version_id':brief['id']}}
-        result=self.runtime.execute(job,assessment_prompt(self.store,brief,folder,backend),folder)
+        prompt=assessment_prompt(self.store,brief,folder,backend)
+        # Freeze expected identities before executing a compatibility host. Missing
+        # answers remain visible, without regenerating the report or its score.
+        expected=json.loads((folder/'input.json').read_text(encoding='utf-8'))['assessment_checks']
+        result=self.runtime.execute(job,prompt,folder)
         basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
-        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis)
+        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis,expected_checks=expected)
         return result
 
     def _review_child(self,parent,brief):

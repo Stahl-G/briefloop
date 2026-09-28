@@ -67,6 +67,9 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
         notes.extend(result.retrieval_notes)
     merged=ScoutResult(sources=sorted(results,key=lambda r:(r['source_id'],r['locator'],r['excerpt'])),gaps=gaps,
                        search_summary='\n'.join(summaries),retrieval_notes=notes)
+    if run_id:
+        from .research_handoff import current_research
+        return current_research(store, run_id, merged.model_dump(), register=True)
     return merged.model_dump()
 
 
@@ -186,8 +189,15 @@ def check_handoff(store,run_id,handoff):
     open_questions=_handoff_texts(handoff,'open_questions',errors)
     if not isinstance(handoff.get('budget',{}),dict):
         errors.append({'path':'budget','code':'not_object','message':'budget 若填写必须是剩余预算视图对象'})
+    gap_updates = []
+    if 'gap_updates' in handoff:
+        from .research_handoff import validate_updates
+        try:
+            gap_updates = validate_updates(store, run_id, handoff['gap_updates'])
+        except ValueError as exc:
+            errors.append({'path':'gap_updates','code':'invalid_gap_update','message':str(exc)})
     if errors:raise HandoffError(errors)
-    return {'learnings':learnings,'follow_ups':follow_ups,'covered':covered,'open_questions':open_questions,
+    return {'gap_updates':gap_updates, 'learnings':learnings,'follow_ups':follow_ups,'covered':covered,'open_questions':open_questions,
             'unverified':sum(1 for item in learnings if item['status']=='待证')}
 
 

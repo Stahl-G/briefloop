@@ -27,7 +27,7 @@ def learning_candidates(store):
         for record,status,reason,round_number in records:
             path=(root/record['file']).resolve()
             if not path.is_relative_to(root.resolve()) or not path.is_file():continue
-            markdown=path.read_text()
+            markdown=path.read_text(encoding='utf-8')
             title=next((line.lstrip('# ').strip() for line in markdown.splitlines() if line.startswith('# ')),'候选技能')
             result.append({'job_id':job['id'],'job_status':job['status'],'title':title,'markdown':markdown,
                            'status':status,'reason':reason,'round':round_number,'origin':'explicit_human_requirement' if state.get('explicit_requirement_sources') else 'feedback_optimization'})
