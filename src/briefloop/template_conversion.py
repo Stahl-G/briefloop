@@ -400,7 +400,7 @@ def convert_request(store, name, data, template_id, request_id):
     from .external_requests import _RequestStore
     from .store import Conflict, dump
     if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', request_id):
-        raise ValueError('转换请求需要稳定的 request_id，请重新选择原稿')
+        raise ValueError('转换请求信息不完整，请刷新页面后重新选择原稿')
     fingerprint = hashlib.sha256(dump({'name': Path(name).name, 'template_id': template_id,
                                        'content': hashlib.sha256(data).hexdigest()}).encode()).hexdigest()
     key = 'template_convert:' + request_id
