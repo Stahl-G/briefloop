@@ -421,24 +421,41 @@ def _png_size(payload):
 
 def _render_directory(store, digest):
     directory = store.root / 'office' / 'renders' / digest
-    directory.mkdir(parents=True, exist_ok=True)
     if not directory.resolve().is_relative_to((store.root / 'office' / 'renders').resolve()):
         raise ValueError('渲染缓存路径无效')
+    platform_support.filesystem_path(directory).mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def _replace_cache_file(source, destination):
+    source_io = platform_support.filesystem_path(source)
+    destination_io = platform_support.filesystem_path(destination)
+    for attempt in range(5):
+        try:
+            os.replace(source_io, destination_io)
+            return
+        except PermissionError as exc:
+            # Windows readers can briefly prevent atomic replacement. Retry
+            # only these sharing/access errors, for at most 100 ms in total;
+            # persistent permission failures still reach the caller.
+            if os.name != 'nt' or getattr(exc, 'winerror', None) not in (5, 32) or attempt == 4:
+                raise
+            time.sleep(0.01 * (attempt + 1))
 
 
 def _atomic_bytes(path, data):
     temporary = path.with_name(path.name + '.' + uid('write') + '.tmp')
+    temporary_io = platform_support.filesystem_path(temporary)
     try:
-        temporary.write_bytes(data)
-        os.replace(temporary, path)
+        temporary_io.write_bytes(data)
+        _replace_cache_file(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        temporary_io.unlink(missing_ok=True)
 
 
 def _cached_render(directory, digest, page):
     path = directory / f'page-{page:04d}.png'
-    record = path.with_suffix('.json')
+    record = platform_support.filesystem_path(path.with_suffix('.json'))
     if not record.is_file():
         return None
     try:
@@ -453,7 +470,7 @@ def _cached_render(directory, digest, page):
             if metadata['image_file'] != name:
                 return None
             path = directory / name
-        payload = path.read_bytes()
+        payload = platform_support.filesystem_path(path).read_bytes()
         if hashlib.sha256(payload).hexdigest() != metadata.get('image_sha256'):
             return None
         width, height = _png_size(payload)
@@ -484,6 +501,7 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
     # Per-request staging name: concurrent renders of the same page must not
     # write into (or clean up) each other's temporary file.
     staging = directory / f'.render-{page:04d}-{uid("render")}.tmp.png'
+    staging_io = platform_support.filesystem_path(staging)
     try:
         outcome = run_json([binary, 'view', str(target), 'screenshot', '--page', str(page),
                             '-o', str(staging), '--json'], timeout=timeout, deadline=deadline)
@@ -491,17 +509,16 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
             if outcome['reason'] == BUDGET_EXHAUSTED:
                 raise BudgetExhausted('预览失败：' + BUDGET_EXHAUSTED)
             raise ValueError('预览失败，不影响文件本身：' + str(outcome['reason']))
-        payload = staging.read_bytes()
+        payload = staging_io.read_bytes()
         width, height = _png_size(payload)
         image_hash = hashlib.sha256(payload).hexdigest()
         # Publish immutable image bytes first, then atomically replace the page
         # manifest. Concurrent readers/writers never see another image paired
         # with this metadata, including across separate server processes.
         destination = directory / f'page-{page:04d}-{image_hash}.png'
-        os.replace(staging, destination)
+        _replace_cache_file(staging, destination)
     finally:
-        if staging.exists():
-            staging.unlink()
+        staging_io.unlink(missing_ok=True)
     metadata = {'source_sha256': digest, 'page': page,
                 'image_sha256': image_hash, 'image_file': destination.name,
                 'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height}
@@ -592,4 +609,4 @@ def office_image(store, digest, page):
     found = _cached_render(_render_directory(store, digest), digest, number)
     if not found:
         raise ValueError('渲染缓存不存在或绑定不一致')
-    return Path(found['path']).read_bytes()
+    return platform_support.filesystem_path(found['path']).read_bytes()

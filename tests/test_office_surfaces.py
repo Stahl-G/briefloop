@@ -106,7 +106,6 @@ def test_http_surfaces_degrade_without_officecli(tmp_path, monkeypatch):
         _stop_server(server, thread)
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_http_office_check_preview_and_image_with_stub(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     server, thread = _start_server(tmp_path / 'workspace')
@@ -137,7 +136,6 @@ def test_http_office_check_preview_and_image_with_stub(tmp_path, monkeypatch):
         _stop_server(server, thread)
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_version_checks_and_review_status_compose_the_office_key(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     server, thread = _start_server(tmp_path / 'workspace')
@@ -172,7 +170,6 @@ def test_version_checks_and_review_status_compose_the_office_key(tmp_path, monke
         _stop_server(server, thread)
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_release_chain_stays_frozen_with_office_checks_running(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store, source, brief, review = reviewed_report(tmp_path)
@@ -197,7 +194,6 @@ def test_release_chain_stays_frozen_with_office_checks_running(tmp_path, monkeyp
     assert again['release']['id'] == release['id'] and again['job']['id'] == job['id']
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_audit_bundle_office_render_branches(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store, source, brief, review = reviewed_report(tmp_path)
@@ -248,7 +244,6 @@ def test_audit_bundle_office_render_branches(tmp_path, monkeypatch):
     assert verify_bundle(blob_plain)['valid'] is True
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_audit_bundle_identity_changes_only_with_the_option(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store, source, brief, review = reviewed_report(tmp_path)
