@@ -25,7 +25,7 @@ export function runLanguage(state,runId){
 }
 export function presetLabel(language,extent){
  const [target,maximum]=LENGTH_PRESETS[language][extent],unit=lengthUnit(language),n=v=>new Intl.NumberFormat('zh-CN').format(v);
- return extent==='quick'?`${EXTENT_LABELS[extent]} · ${n(target)}–${n(maximum)} ${unit}`:`${EXTENT_LABELS[extent]} · ${n(target)} ${unit} / 最多 ${n(maximum)}`;
+ return `${EXTENT_LABELS[extent]} · 建议 ${n(target)}–${n(maximum)} ${unit}`;
 }
 
 export function reportLanguageUI({notice,onChange}){
@@ -35,7 +35,7 @@ export function reportLanguageUI({notice,onChange}){
   const language=current(),unit=lengthUnit(language);
   for(const option of $('length-preset')?.options||[])if(LENGTH_PRESETS[language][option.value])option.textContent=presetLabel(language,option.value);
   if($('target-words-label'))$('target-words-label').textContent=`目标${unit}数`;
-  if($('max-words-label'))$('max-words-label').textContent=`${unit}数上限`;
+  if($('max-words-label'))$('max-words-label').textContent=$('length-mode')?.value==='strict'?`严格${unit}数上限`:`建议${unit}数上沿`;
   // Word covers print the period and organization as typed.
   const period=$('requirements')?.elements?.period;
   if(period)period.placeholder=language==='en'?'例如：August 2026（封面原样显示，英文报告请用英文填写）':'例如：本周，或指定日期';

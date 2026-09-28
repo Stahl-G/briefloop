@@ -455,18 +455,19 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                     raise ValueError('已关闭轮次不可改写缺口状态；请在新轮次更新')
             return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
                     'gap_updates': previous, 'idempotent': True}
-        from .research_handoff import read_state, observe, apply_updates, save_state
+        from .research_handoff import read_state, observe, apply_updates, save_state, closeout_snapshot
         state = read_state(store, run_id, connection=connection, plan=plan)
         records = []
         for gap in gaps or []:
             _validate_gap(store, run_id, gap)
             identities = observe(state, run_id, [gap['description']])
             records.append({**gap, 'id': identities[gap['description'].strip()], 'round_id': round_id, 'round_index': info['index'], 'created': now()})
+        handoff_path = _round_dir(store, run_id, info['index']) / 'handoff.json'
+        handoff = json.loads(handoff_path.read_text(encoding='utf-8-sig')) if handoff_path.exists() else {}
+        if not isinstance(handoff, dict):
+            raise ValueError('handoff.json 必须为对象')
+        closeout = closeout_snapshot(handoff, summary)
         if gap_updates is None:
-            handoff_path = _round_dir(store, run_id, info['index']) / 'handoff.json'
-            handoff = json.loads(handoff_path.read_text(encoding='utf-8-sig')) if handoff_path.exists() else {}
-            if not isinstance(handoff, dict):
-                raise ValueError('handoff.json 必须为对象')
             gap_updates = handoff.get('gap_updates', [])
         apply_updates(store, run_id, state, gap_updates, round_id=round_id, round_index=info['index'])
         accepted_updates = [{key: value for key, value in update.items() if key not in ('id', 'round_id', 'round_index')}
@@ -475,11 +476,11 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         info['gaps'] = records
         info['status'] = 'closed'
         info['closed'] = now()
-        info['outcome'] = {'summary': summary, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now()}
+        info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now()}
         plan['current_round_id'] = None
         _save_plan(connection, run_id, plan)
     _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json',
-                {'round_id': round_id, 'index': info['index'], 'summary': summary, 'gaps': records, 'gap_updates': accepted_updates, 'closed_at': info['closed']})
+                {'round_id': round_id, 'index': info['index'], 'summary': summary, 'closeout': closeout, 'gaps': records, 'gap_updates': accepted_updates, 'closed_at': info['closed']})
     if job_id:
         store.event(job_id, 'research_round', {'action': 'finish', 'round_id': round_id,
                                                'index': info['index'], 'gap_ids': [record['id'] for record in records]})

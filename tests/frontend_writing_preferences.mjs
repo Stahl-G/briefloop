@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {section} from './source_section.mjs';
+import {createLengthControls} from '../frontend/length-controls.js';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const c=vm.createContext({});
 vm.runInContext(section(source,'function preserveWritingPreferences(','function applyRequirements(','frontend/app.js'),c);
@@ -17,9 +18,12 @@ assert.match(source,/preserveWritingPreferences\(req,state.requirements,writingP
 assert.match(source,/addEventListener\('reset',\(\)=>\{writingPreferencesOverride=\[\];syncFactCheckControl\(\)\}/);
 console.log('PASS: form preserves unedited writing preferences, respects explicit replacement/reset, and never carries frozen metadata');
 // Applying the discussion must preserve original wording and exact date fields.
-const fields=Object.fromEntries(['title','objective','audience','period','period_start','period_end','report_timezone','key_questions_text','manual_sections_text','target_words','max_words'].map(k=>[k,{value:'',dispatchEvent(){}}]));
-const d=vm.createContext({$:()=>({elements:fields}),Event:class {},notice(){},page(){},initializeWorkflowChoice(){},syncWorkflowProfile(){}});
-vm.runInContext('let writingPreferencesOverride;'+section(source,'function applyRequirements(','// The backend names every task kind','frontend/app.js'),d);
+const fields=Object.fromEntries(['title','objective','audience','period','period_start','period_end','report_timezone','key_questions_text','manual_sections_text','target_words','max_words'].map(k=>[k,{value:'',dispatchEvent(){},setCustomValidity(message){this.validationMessage=message}}]));
+const nodes={'requirements':{elements:fields},'target-words':fields.target_words,'max-words':fields.max_words};
+const formNode=id=>nodes[id]??=({value:'',textContent:'',hidden:false});
+const controls=createLengthControls({$:formNode});
+const d=vm.createContext({$:formNode,Event:class {},notice(){},page(){},initializeWorkflowChoice(){},syncWorkflowProfile(){},lengthControls:controls});
+vm.runInContext('let writingPreferencesOverride;'+section(source,'function validateLengthInputs(',"$('length-preset').onchange",'frontend/app.js')+section(source,'function applyRequirements(','// The backend names every task kind','frontend/app.js'),d);
 const brief={title:'周报',objective:'判断交付延迟的影响',audience:'业务负责人',period_start:'2026-09-01',period_end:'2026-09-07',report_timezone:'Asia/Shanghai',key_questions:['进度变化影响什么？'],manual_sections:['融资'],writing_preferences:['先结论，后依据']};
 d.applyRequirements(JSON.stringify(brief));
 for(const key of ['objective','period_start','period_end','report_timezone'])assert.equal(fields[key].value,brief[key]);
@@ -29,3 +33,13 @@ assert.equal(vm.runInContext('writingPreferencesOverride[0]',d),'先结论，后
 
 brief.manual_sections=[{title:'融资进展',placeholder:'由用户人工填写'}];
 d.applyRequirements(JSON.stringify(brief));assert.equal(fields.manual_sections_text.value,'融资进展');
+
+fields.target_words.value='1500';fields.max_words.value='2000';fields.max_words.validationMessage='旧表单错误';
+const strict={title:'周报',objective:'说明采用条件，不得超过200字',max_words:200,length_mode:'strict',length_requirement:{kind:'user_quote',text:'不得超过200字'}};
+d.applyRequirements(JSON.stringify(strict));
+assert.equal(Number(fields.target_words.value),200,'an omitted target must not keep an unrelated old 1500 target above the strict 200 maximum');
+assert.equal(fields.max_words.validationMessage,'','applying the consistent values clears stale validity');
+assert.equal(controls.read().length_requirement.text,strict.length_requirement.text);
+d.applyRequirements(JSON.stringify({...strict,target_words:400}));
+assert.equal(Number(fields.target_words.value),400,'never rewrite an explicitly supplied target');
+assert.match(fields.max_words.validationMessage,/不能小于/);

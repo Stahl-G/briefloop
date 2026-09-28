@@ -13,9 +13,40 @@ from .store import dump
 
 
 PLANNING_GUIDE = '''研究交接的 gaps/gap_records 是当前仍待核对的问题；gap_history 保留主 Agent 明确判定已解决的历史及依据，不把历史缺口继续写成当前事实。partial 只就 remaining_question 补查；未更新的缺口仍是 open。证据定位通过仅表示来源和摘录可回查，不证明判断正确，重要结论仍需按原文核对。
-写作计划和 writing_instructions 是组织建议，不是事实来源；若与冻结原文在状态、时间或主体上冲突，以原文写事实并在研究记录说明，不照抄被升级的主线，同时保留用户明确的写作要求。主 Agent 的写作计划、章节主线和给 Analyst 的指令同样受研究证据约束：不得把考虑中/公测/上月/最高/预测/适用条件升级或省略。关键二手消息若影响主结论，利用现有搜索与读取能力定向查找一手正文；找到以后明确更新旧缺口，不把历史读取失败当现状。按读者目标检查重要候选的覆盖，纳入或省略的重要候选在研究记录中简述理由，不把厂商数量或来源数量当覆盖率。'''
+写作计划和 writing_instructions 是组织建议，不是事实来源；若与冻结原文在状态、时间或主体上冲突，以原文写事实并在研究记录说明，不照抄被升级的主线，同时保留用户明确的写作要求。主 Agent 的写作计划、章节主线和给 Analyst 的指令同样受研究证据约束：不得把考虑中/公测/上月/最高/预测/适用条件升级或省略。关键二手消息若影响主结论，利用现有搜索与读取能力定向查找一手正文；找到以后明确更新旧缺口，不把历史读取失败当现状。按读者目标检查重要候选的覆盖，纳入或省略的重要候选在研究记录中简述理由，不把厂商数量或来源数量当覆盖率。
+研究收尾用已有 finish_research_round.summary 记录：本轮重要候选纳入/省略的理由、哪些承重结论仍只有二手稿、补查结果和剩余影响。handoff 的 covered/follow_ups/open_questions 继续保存具体问题；这些记录会随 research.retrieval_notes 交给写稿，属于主 Agent 的研究判断，不是事实认证。若重要候选可能遗漏或核心结论仍缺一手正文，先核对本轮材料索引；按预算与剩余轮次使用现有 begin_research_round/run_scouts 或已授权来源读取定向补查。补查要回答具体缺口，不重新扫全行业或为凑来源加调用；预算耗尽或仍无法获取时保留未检范围和理由，不把“未取得/未找到”改写成“来源不存在/没有发生”。Reviewer 不负责补查，不增加默认轮次。
+读者正文只保留会影响判断的限制，如公测、指定分支、最高值、讨论中或关键数据未披露；抓取失败、查询过程、工具返回的临时 line 行号及自我复核清单留研究记录与引用元数据。公开引用用稳定的标题、日期、章节/页码和链接，不以抓取器行号作为读者入口。不能为了减少过程噪音删掉必要条件。'''
 
 GAP_UPDATE_GUIDE = '''join-scouts/research_status 返回缺口的真实 gap_id。只有主 Agent 核对原文后才通过 finish_research_round 的可选 gap_updates（或本轮 handoff.json 中同字段）明确更新：每项含 gap_id、status=open|partial|resolved、reason、evidence=[{source_id,locator,excerpt}]；locator 为 line 3-5、page 2 或证据定位 JSON，excerpt 为该位置连续逐字原文，partial/resolved 至少一条，open 可只给 reason 重新开放。partial 另给 remaining_question。未更新、仅写 covered 或省略 open_questions 都不会关闭缺口；来源注册、摘录存在不等于语义核查通过。提交更新后再 join-scouts 刷新交给写稿的当前/历史视图，保留所有 Scout 原件。'''
+
+
+def closeout_snapshot(handoff, summary):
+    """Freeze the agent's existing closeout fields, without judging coverage."""
+    if not isinstance(summary, str):
+        raise ValueError('研究收尾 summary 必须是文本')
+    result = {'summary': summary}
+    for name in ('covered', 'follow_ups', 'open_questions'):
+        items = handoff.get(name, [])
+        if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
+            raise ValueError('研究收尾 ' + name + ' 必须是文本数组')
+        result[name] = items
+    return result
+
+
+def _closeout_notes(store, run_id):
+    plan = store.meta('research_plan:' + run_id) or {}
+    notes = []
+    for identity, info in sorted(plan.get('rounds', {}).items(), key=lambda pair: pair[1].get('index', 0)):
+        if info.get('status') != 'closed':
+            continue
+        outcome = info.get('outcome') or {}
+        closeout = outcome.get('closeout') or closeout_snapshot({}, outcome.get('summary') or '')
+        if not any(closeout.values()):
+            continue
+        notes.append({'kind': 'research_round_closeout', 'generated_by': 'briefloop',
+                      'round_id': identity, 'round_index': info.get('index'), **closeout,
+                      'scope': '主 Agent 的研究取舍与未检范围；不是事实认证。当前缺口以 gap_records 为准，历史记录不自动关闭或重开缺口。'})
+    return notes
 
 
 def _key(run_id):
@@ -167,4 +198,6 @@ def current_research(store, run_id, research, *, register=False):
         represented = {item['description'] for item in state['records'].values()}
         represented.update(item.get('remaining_question', '') for item in state['updates'])
         observe(state, run_id, [text for text in descriptions if text not in represented])
-    return {**value, **gap_view(store, run_id, state)}
+    notes = [item for item in value['retrieval_notes']
+             if not (item.get('kind') == 'research_round_closeout' and item.get('generated_by') == 'briefloop')]
+    return {**value, **gap_view(store, run_id, state), 'retrieval_notes': notes + _closeout_notes(store, run_id)}
