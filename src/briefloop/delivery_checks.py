@@ -22,7 +22,7 @@ _CURRENCIES = {'$': 'USD', 'us$': 'USD', 'usd': 'USD', '美元': 'USD',
 # without "metric", it can mean a US short ton or an imperial long ton.
 _SCALED_UNITS = {**{name: (currency, 1) for name, currency in _CURRENCIES.items()},
                  **{name: ('shares', 1) for name in ('股', 'share', 'shares')},
-                 **{name: ('count', 1) for name in ('个', '项', '次', '人', '家', '条', 'count', 'item',
+                 **{name: ('count', 1) for name in ('个', '件', '项', '次', '人', '家', '条', 'count', 'item',
                      'items', 'unit', 'units', 'vehicle', 'vehicles', 'car', 'cars', '辆', '台')},
                  **{name: ('mass', 1) for name in ('kg', 'kilogram', 'kilograms', '千克', '公斤')},
                  **{name: ('mass', 1000) for name in ('t', '吨', 'tonne', 'tonnes', 'metric ton', 'metric tons')}}
