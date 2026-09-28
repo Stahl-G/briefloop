@@ -395,7 +395,9 @@ class Store:
         return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
 
     def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
-        if author not in ('agent', 'example'):raise ValueError('无效稿件作者')
+        # Explicit source-document imports are user-authored first versions,
+        # not generated drafts or revisions that should trigger learning.
+        if author not in ('agent', 'example', 'user'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
         run=self.one("runs", run_id)

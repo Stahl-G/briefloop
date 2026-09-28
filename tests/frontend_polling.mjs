@@ -28,9 +28,9 @@ const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8
 const line=name=>source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
 
 test('a snapshot that differs only by the server clock keeps the page; timed task views still refresh',async()=>{
- let clock='2026-09-25T10:00:00+00:00',jobs=[],renders=0;const timed=[];
+ let clock='2026-09-25T10:00:00+00:00',jobs=[],renders=0,workspace='one',resets=0;const timed=[];
  const node={textContent:'',hidden:true,open:false};
- const context=vm.createContext({$:()=>node,api:async()=>({system_clock:{now:clock},jobs,briefs:[]}),
+ const context=vm.createContext({$:()=>node,state:null,templateOutput:{reset(){resets++}},api:async()=>({workspace_id:workspace,system_clock:{now:clock},jobs,briefs:[]}),
   scheduledReports:{render(){}},activity:null,renderWordExports(){},notice(){},render:()=>renders++,
   renderTasks:()=>timed.push('tasks'),renderTaskBanner:()=>timed.push('banner'),
   refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},refreshReleaseState:async()=>{}});
@@ -42,6 +42,9 @@ test('a snapshot that differs only by the server clock keeps the page; timed tas
  assert.equal(vm.runInContext('state.system_clock.now',context),clock,'readers still see the latest clock');
  jobs=[{id:'job',status:'running'}];await vm.runInContext('refresh()',context);
  assert.equal(renders,2,'a changed record still renders');
+ assert.equal(resets,0,'normal polling preserves template output selection');
+ workspace='two';await vm.runInContext('refresh()',context);
+ assert.equal(resets,1,'switching workspaces invalidates template output operations');
 });
 
 test('an unchanged task banner keeps its buttons across polls and a closed one stays consistent',()=>{
