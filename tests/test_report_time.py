@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import pytest
-from briefloop.report_time import freeze, check
+from briefloop.report_time import freeze, check, instructions
 from briefloop.store import Store
 
 
@@ -55,3 +55,70 @@ def test_tavily_uses_frozen_dates(tmp_path,monkeypatch):
     monkeypatch.setattr(tavily.urllib.request.OpenerDirector,'open',respond)
     tavily.search('news',store=store,run_id=run['id'],start_date='2025-01-01',key_file=key)
     assert seen[0]['start_date']=='2026-09-14' and seen[0]['end_date']=='2026-09-15'
+
+
+def test_news_basis_keeps_event_date_and_does_not_promote_republication():
+    window = freeze({'period': '2026年第39周'}, datetime(2026, 9, 28, tzinfo=ZoneInfo('UTC')))
+    event = {'statement': '20日发生，25日首次披露', 'event_date': '2026-09-20',
+             'published_at': '2026-09-25', 'fetched_at': '2026-09-26'}
+    disclosure = {**event, 'news_basis': 'first_disclosure', 'news_date': '2026-09-25',
+                  'news_note': '官方首次公开事件及处置过程', 'source_id': 'src_event', 'locator': 'line 2-4'}
+    development = {**disclosure, 'news_basis': 'new_development',
+                   'news_note': '25日官方公布新的处置进展'}
+    no_source = {**disclosure, 'locator': ''}
+    no_new_fact = {**disclosure, 'news_note': ''}
+    result = check(window, [event, disclosure, development, no_source, no_new_fact])
+    assert [item['temporal_status'] for item in result['items']] == [
+        'out_of_range', 'in_range_unverified', 'in_range_unverified', 'unverified', 'unverified']
+    assert result['items'][1]['event_date'] == '2026-09-20'
+    assert result['items'][1]['basis_date'] == '2026-09-25'
+    assert result['items'][3]['reason'] == 'missing_news_basis_evidence'
+    assert check(window, [{**disclosure, 'news_date': ''}])['items'][0]['temporal_status'] == 'unverified'
+    assert check(window, [{**disclosure, 'news_date': '2026-09-28'}])['out_of_range_count'] == 1
+    assert result['status'] == 'needs_source_review'
+
+
+def test_iso_week_warning_preserves_custom_range_and_reaches_check():
+    clock = datetime(2026, 9, 28, tzinfo=ZoneInfo('UTC'))
+    req = {'title': 'AI 周报 2026年第39周', 'period_start': '2026-09-21', 'period_end': '2026-09-28'}
+    window = freeze(req, clock)
+    assert window['end_exclusive'] == '2026-09-29T00:00:00+00:00'
+    assert window['warnings'][0]['code'] == 'iso_week_mismatch'
+    assert '2026-09-27' in instructions(window)
+    assert check(window, [])['warnings'] == window['warnings']
+    assert check(window, [{'statement': '本期事件', 'event_date': '2026-09-28'}])['warnings'] == window['warnings']
+    assert 'warnings' not in freeze({**req, 'period_end': '2026-09-27'}, clock)
+
+
+def test_writer_retains_disclosure_basis_and_returns_date_diagnostics(tmp_path):
+    from briefloop import analyst, analyst_drafts, writer_input
+    from test_native_orchestrator import contract
+    store = Store(tmp_path/'workspace')
+    text = '事件发生于2026-09-20，2026-09-25首次披露处置过程。'
+    source = store.add_source('测试事件公告', text)
+    run = store.create_run({'title': '2026年第39周', 'objective': '区分事件和披露',
+                            'period_start': '2026-09-21', 'period_end': '2026-09-28',
+                            'allow_web': False}, [source['id']])
+    store.set_meta('reader_contract:' + run['id'], contract(store, run['id']))
+    pack = analyst.packet(store, run['id'], store.root/'writer',
+                          plan={'draft_structure': ['动态']},
+                          research={'sources': [{'source_id': source['id'], 'locator': 'line 1',
+                                                 'excerpt': text, 'facts': ['此前事件本周首次披露'],
+                                                 'coverage_status': 'complete'}], 'gaps': []})
+    config = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(pack['root']),
+              'result_file': str(pack['root'].parent/'draft.json'), 'attempt_id': 'time-test'}
+    saved = writer_input.write_report(store, config, {
+        'title': '2026年第39周', 'markdown': f'本周首次披露此前事件。[@{source["id"]}]',
+        'temporal_claims': [{'statement': '本周首次披露此前事件', 'event_date': '2026-09-20',
+                             'news_basis': 'first_disclosure', 'news_date': '2026-09-25',
+                             'news_note': '首次披露此前事件的处置过程',
+                             'source_id': source['id'], 'source_excerpt': text}]})
+    diagnostics = analyst_drafts.check(store, config, {'revision': saved['revision']})['diagnostics']
+    item = diagnostics['temporal']['items'][0]
+    assert item['event_date'] == '2026-09-20'
+    assert item['locator'] == 'line 1'
+    assert item['news_basis'] == 'first_disclosure' and item['temporal_status'] == 'in_range_unverified'
+    assert diagnostics['temporal']['warnings'][0]['code'] == 'iso_week_mismatch'
+    assert any(note['code'] == 'iso_week_mismatch' for note in diagnostics['notes'])
+    assert diagnostics['review_status'] == 'not_reviewed'
+    assert analyst_drafts.submit(store, config, {'revision': saved['revision']})['status'] == 'saved'

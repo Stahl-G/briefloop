@@ -8,6 +8,16 @@
 
 研究与写稿契约、评分输入和独立审阅包沿用冻结范围。受控 Tavily 搜索用冻结日期替换模型传入的日期过滤参数；宿主原生搜索依赖宿主接口和研究指令，无法承诺同等参数强制。搜索日期过滤不等于事件日期验证。
 
-稿件可记录 `temporal_claims`：statement、event_date、published_at、fetched_at、source_id、locator、usage（current/background）。程序比较事件日期与范围，日期缺失显示待核实，旧事件不因今天抓取而成为当期动态。范围内仅标记 `in_range_unverified`，独立审阅仍须核对原文，且检查未被作者登记的正文主张。无日期记录不显示已通过。日期检查不会隐藏工作稿，也不是全文事实正确性的保证。
+标题或周期包含 ISO 周编号时，若明确日期跨出了该 ISO 周，会在冻结范围、写作提示和日期检查回执中显示提示。例如“2026年第39周”对应9月21日至27日；用户明确填到28日，仍保留这个八日窗口，提醒修改周编号或说明跨周覆盖，不擅自缩短用户范围。
+
+稿件可记录 `temporal_claims`：statement、event_date、published_at、fetched_at、source_id、locator、usage（current/background）。每条当期动态用 `news_basis` 说明入选理由：
+
+- `event`（默认，兼容旧稿）：事件在本期发生，比较真实 `event_date`。
+- `first_disclosure`：旧事件本期首次披露。填写 `news_date`、`news_note`（本期首次披露了什么），以及来源 `source_id` 和 `locator`；保留真实 `event_date`，比较披露日期。
+- `new_development`：旧事件本期有新进展。同样填写 `news_date`、`news_note` 和来源定位，说明本期新增事实，保留原事件日期，比较进展日期。
+
+例如事件发生于9月20日、官方首次披露于25日，可以按“本周首次披露”列入9月21日至27日周报，不能将事件日期改为25日。仅有25日的转载发布日期、抓取时间或页面更新时间，没有说明本期新增什么及其原文定位，则显示未核验，不能自动升格为当期新闻。原事件日期不明时保持空值，不从报道日推断；正文应明确区分发生、披露和进展。
+
+程序只对声明的依据日期作范围比较。范围内仍仅标记 `in_range_unverified`，**不代表已经证实“首次”或进展内容**；独立审阅须核对 `news_note` 与原文，并检查未被作者登记的正文主张。新类型缺少日期、说明或定位显示待核实；旧稿不补造这些依据。无日期记录不显示已通过。日期检查不会隐藏工作稿，也不是全文事实正确性的保证。
 
 Tavily 日期边界按[官方 Search API 文档](https://docs.tavily.com/documentation/api-reference/endpoint/search)处理：结束日期不含当天，部分结束日向上取整；报告内仍核对精确时间。接口按发布或更新日期过滤，不能证明事件发生于本期。

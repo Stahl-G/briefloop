@@ -565,6 +565,40 @@ class Store:
             c.execute('INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)',(vid,base['run_id'],base_version,'agent',markdown,sha,dump(detail),dump(document) if document is not None else None,now()))
         return self.one('briefs',vid)
 
+    def assessment_context(self, version_id):
+        """Use the exact parent version's assessment, not the run's latest score."""
+        brief = self.one('briefs', version_id)
+        context = {'revision_context': None, 'assessment_checks': [
+            {'id': 'summary_consistency', 'name': '摘要、标题与正文表格一致'},
+            {'id': 'inference_support', 'name': '影响和建议保留来源条件'},
+        ]}
+        parent_id = brief.get('parent_id')
+        if not parent_id:
+            return context
+        parent = self.one('briefs', parent_id)
+        if parent['run_id'] != brief['run_id']:
+            return context
+        rows = self.rows('SELECT id,data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (parent_id,))
+        if not rows:
+            return context
+        previous = json.loads(rows[0]['data'])
+        if previous.get('brief_hash') != parent['hash']:
+            return context
+        findings = previous.get('findings', [])
+        if not findings:
+            return context
+        context['revision_context'] = {'version_id': parent_id, 'brief_hash': parent['hash'], 'assessment_id': rows[0]['id'],
+                'brief': {'markdown': parent['markdown'], 'title': json.loads(parent['detail']).get('title', '')},
+                'findings': [dict(finding, index=index, check_id=f"revision:{rows[0]['id']}:{index}")
+                             for index, finding in enumerate(findings)],
+                'scope': '上一版评价只是待复核的问题记录，不是本版结论或事实真值；对照本版与原文独立判断。'}
+        context['assessment_checks'].extend(
+            {'id': finding['check_id'], 'name': f"修订复核 · {finding['index'] + 1}",
+             'prior_assessment_id': rows[0]['id'], 'prior_finding_index': finding['index'],
+             'prior_description': finding.get('description', '')}
+            for finding in context['revision_context']['findings'])
+        return context
+
     def validate_assessment(self, version_id, value):
         """Read-only admission checks shared by persistence and retry caching."""
         brief = self.one("briefs", version_id)
@@ -578,10 +612,13 @@ class Store:
                 self.one("sources", f.source_id)
         return assessment
 
-    def assess(self, version_id, value, *, basis=None):
+    def assess(self, version_id, value, *, basis=None, expected_checks=None):
         """basis is set by the controller, never by the model's assessment file."""
         assessment = self.validate_assessment(version_id, value)
         data = assessment.model_dump()
+        if expected_checks is not None:
+            from .models import assessment_checks
+            data['checks'] = assessment_checks(data['checks'], data['findings'], expected_checks)
         if basis is not None:
             if basis != 'assessment_without_review':raise ValueError('Unknown assessment basis')
             data['basis'] = basis
