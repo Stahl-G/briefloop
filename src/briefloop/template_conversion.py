@@ -116,6 +116,8 @@ def _word_document(data, notes):
     }
     for element in doc.element.body.iter():
         local = element.tag.rsplit('}', 1)[-1]
+        if local == 'sectPr' and element.getparent().tag == qn('w:pPr'):
+            raise ValueError('Word 含分节符，当前不能可靠转换')
         if local in unsupported:
             raise ValueError('Word 含' + unsupported[local] + '，当前不能可靠转换')
         if element.tag.startswith('{http://schemas.openxmlformats.org/officeDocument/2006/math}'):
@@ -368,7 +370,7 @@ def convert_file(store, name, data, template_id):
     run = store.create_run({'title': title, 'objective': '将用户上传原文按所选模板排版，保留正文内容。',
                             'template_id': template_id, 'allow_web': False, 'fact_check': False,
                             'writing_mode': 'general', 'workflow_id': 'general_report',
-                            'workflow_variant': 'general'}, [source['id']])
+                            'workflow_variant': 'general'}, [source['id']], remember_requirements=False)
     notes = list(dict.fromkeys(notes))
     version = store.publish(run['id'], {'title': title, 'editor_document': document,
                             'research_notes': [{'kind': 'template_conversion', 'source_id': source['id'],

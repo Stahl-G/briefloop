@@ -76,6 +76,8 @@ def test_omitted_cells_do_not_shift_values_under_other_headers(workspace):
 def test_original_word_to_template_preserves_body_and_table_without_model(workspace, monkeypatch):
     store, template_id = workspace
     monkeypatch.setattr(store, 'runtime_config', lambda: pytest.fail('conversion must not require a model'))
+    previous = {'title': '原来的新报告配置', 'allow_web': True, 'template_id': 'unchanged'}
+    store.set_meta('requirements', previous)
     doc = Document()
     doc.add_heading('业务原文', 1)
     p = doc.add_paragraph()
@@ -105,6 +107,8 @@ def test_original_word_to_template_preserves_body_and_table_without_model(worksp
     doc.add_paragraph('用户写下的结尾。')
     original = word_bytes(doc)
     result = convert_file(store, '原稿.docx', original, template_id)
+    assert store.meta('requirements') == previous
+    assert store.one('runs', result['version']['run_id'])['mode'] == 'normal'
     version = result['version']
     assert version['author'] == 'user' and version['parent_id'] is None
     document = json.loads(version['editor_document'])
@@ -159,7 +163,7 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
 
 @pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
                                 'inherited_superscript', 'inherited_hidden', 'wrapped_table_row', 'page_break', 'column_break',
-                                'horizontal_merge', 'multiblock_list'])
+                                'horizontal_merge', 'multiblock_list', 'section_break'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
     if case == 'control':
@@ -177,7 +181,11 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name = 'source.docx'
         doc = Document()
         p = doc.add_paragraph('可读取正文')
-        if case in ('page_break', 'column_break'):
+        if case == 'section_break':
+            from docx.enum.section import WD_SECTION
+            doc.add_section(WD_SECTION.NEW_PAGE)
+            doc.add_paragraph('新节正文')
+        elif case in ('page_break', 'column_break'):
             element = OxmlElement('w:br')
             element.set(qn('w:type'), case.removesuffix('_break'))
             p.add_run()._r.append(element)
