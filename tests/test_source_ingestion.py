@@ -45,7 +45,7 @@ def test_raw_receipt_is_durable_before_real_pdf_extraction_and_progress(tmp_path
     assert store.one('jobs',job_id)['status']=='complete'
     assert store.one('sources',sid)['status']=='ready'
     assert store.source_text(sid)==media.PDF_NOTICE
-    metadata=json.loads((store.root/'sources'/f'{sid}.provenance.json').read_text())
+    metadata=json.loads((store.root/'sources'/f'{sid}.provenance.json').read_text(encoding='utf-8'))
     assert metadata['raw_sha256']==hashlib.sha256(data).hexdigest()
     assert metadata['pages']==3 and metadata['needs_visual'] is True
     events=[json.loads(row['data']) for row in store.rows("SELECT * FROM events WHERE job_id=? AND kind='source_extraction_progress' ORDER BY seq",(job_id,))]
@@ -131,7 +131,7 @@ def test_service_restart_exposes_interrupted_source_and_explicit_resume_reads_or
         assert store.one('jobs',job_id)['status']=='interrupted'
         assert store.one('sources',source['id'])['status']=='interrupted'
         assert store.one('sources',interrupted_settlement['id'])['status']=='failed'
-        metadata=json.loads((store.root/'sources'/f"{source['id']}.provenance.json").read_text())
+        metadata=json.loads((store.root/'sources'/f"{source['id']}.provenance.json").read_text(encoding='utf-8'))
         assert metadata['extraction_status']=='interrupted'
         worker.resume(job_id)
         deadline=time.monotonic()+5
@@ -154,7 +154,7 @@ def test_pdf_fallback_reads_path_without_original_byte_copy(tmp_path,monkeypatch
     result=_extract_pdf(original,output,events.append)
     assert result['extractor']=='pypdf.PdfReader.extract_text'
     assert result['pages']==3 and events[-1]['pages_completed']==3
-    assert output.read_text()==media.PDF_NOTICE
+    assert output.read_text(encoding='utf-8')==media.PDF_NOTICE
 
 
 @pytest.mark.parametrize('phase',['final_progress','process_cleanup','after_commit'])
@@ -216,3 +216,35 @@ def test_source_status_exposes_scanned_pdf_metadata_without_reading_original_or_
         assert result['source']['media_type']=='application/pdf'
         assert '未执行 OCR' in result['progress']['message']
     finally:server.shutdown();server.server_close()
+
+
+def test_state_and_learning_details_decode_utf8_artifacts_on_windows(tmp_path):
+    import http.client
+    from briefloop.server import make_server
+    from briefloop.store import dump
+    server=make_server(tmp_path/'workspace',port=0,paused=True)
+    source=upload(server.store,'中文扫描.pdf',pdf_bytes())
+    server.store.update_job(source['extraction_job_id'],'running')
+    extract_job(server.store,server.store.one('jobs',source['extraction_job_id']),threading.Event())
+    run=server.store.create_run({'title':'合成报告','objective':'检查中文来源'},[source['id']])
+    brief=server.store.publish(run['id'],{'title':'合成报告','markdown':'扫描了三页。'})
+    job=server.store.enqueue('learn',{'skill_id':None,'targets':['analyst'],'k':1})
+    folder=server.store.root/'jobs'/job['id']/'round-1'/'comparison';folder.mkdir(parents=True)
+    case={'baseline':brief,'candidate':brief}
+    (folder/'input.json').write_text(dump([case]),encoding='utf-8')
+    (folder/'comparison.json').write_text(dump({'reason':'引用与数字一致'}),encoding='utf-8')
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    def get(path):
+        connection=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        connection.request('GET',path);response=connection.getresponse()
+        result=response.status,json.loads(response.read());connection.close();return result
+    try:
+        status,state=get('/api/state')
+        listed=next(row for row in state['sources'] if row['id']==source['id'])
+        assert status==200 and listed['media_type']=='application/pdf' and listed['needs_visual'] is True
+        status,details=get('/api/learning-details?job='+job['id'])
+        assert status==200 and details['rounds'][0]['result']['reason']=='引用与数字一致'
+        assert details['rounds'][0]['cases'][0]['baseline']['reader_markdown'].startswith('扫描了三页。')
+    finally:
+        server.shutdown();thread.join();server.harness.close();server.opencode_harness.close()
+        server.server_close();server.workspace_lock.close()
