@@ -327,7 +327,7 @@ class NativeHarness:
                 raise RuntimeError('内置引擎会话创建失败：' + str(exc)) from exc
             turn_params = {
                 'session_id': sid, 'execution_id': execution, 'prompt': text,
-                'expect_json': config.get('native_role') != 'chat', 'require_submit': config.get('native_role') != 'chat',
+                'expect_json': config.get('native_role') not in ('chat','quick_writer'), 'require_submit': config.get('native_role') not in ('chat','quick_writer'),
                 'images': self._visual_inputs(config)}
             # Metadata refresh/session recreation may block while cancel() is
             # accepted. Keep the newly bound transcript, but never start a model

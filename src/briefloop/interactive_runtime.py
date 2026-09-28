@@ -27,6 +27,10 @@ def _message(snapshot, message_id):
 def _usable_output(job, folder, store=None):
     """A completed model turn is not evidence that its required artifact exists."""
     from .models import BriefDraft
+    if job.get('plain_output'):
+        if job['plain_output']!='response.txt':return False
+        try:return bool((folder/'response.txt').read_text(encoding='utf-8').strip())
+        except (OSError,ValueError):return False
     if job.get('readonly_output'):
         try:return isinstance(json.loads((folder/job['readonly_output']).read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
@@ -165,6 +169,8 @@ class InteractiveRuntime:
         configured = payload['runtime'] if 'runtime' in payload else self.store.runtime_config()
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
+        if job.get('plain_output'):
+            runtime.update(permission='read-only')
         if job.get('readonly_output'):
             from .review_capability import require_for_review
             review_mode=payload.get('review_mode','standard')
@@ -336,6 +342,14 @@ class InteractiveRuntime:
                                  if m['role'] == 'assistant' and m.get('turn_id') == message.get('turn_id')]
                     if assistant:
                         (folder / 'last-message.txt').write_text('\n\n'.join(assistant), encoding='utf-8')
+                    if status=='completed' and job.get('plain_output'):
+                        if job['plain_output']!='response.txt':raise ValueError('无效文本输出文件名')
+                        replies=[m for m in snapshot['messages'] if m['role']=='assistant'
+                                 and m.get('turn_id')==message.get('turn_id') and str(m.get('text') or '').strip()]
+                        finals=[m for m in replies if m.get('phase')=='final_answer' or m.get('channel')=='final']
+                        final=(finals or replies)[-1]['text'] if replies else ''
+                        if not final.strip():raise ValueError('模型未返回完整正文，运行记录已保留')
+                        (folder/'response.txt').write_text(final,encoding='utf-8')
                     if status=='completed' and job.get('readonly_output'):
                         name=job['readonly_output']
                         if name not in ('review.json','permission-probe.json'):raise ValueError('无效只读输出文件名')

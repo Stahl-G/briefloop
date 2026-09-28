@@ -315,18 +315,27 @@ class Store:
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
+        if clone is not None and req.completion_mode == 'fast_web':req.completion_mode='fast'
+        if req.completion_mode=='fast_web' and not req.allow_web:
+            raise ValueError('快速联网需要允许公开检索；保持离线请选择已有材料快速模式。')
+        if req.completion_mode in ('fast','fast_web'):
+            if options.get('connector_selection_validated'):
+                raise ValueError('快速模式使用已有材料；请先导入连接器材料或选择完整流程。')
+            req.allow_web = req.completion_mode == 'fast_web'
+            req.research_tier = 'quick'
+            if req.fact_check is None:req.fact_check = False
         if req.target_minutes is None:
-            req.target_minutes = self.settings()['timeout_minutes']
+            req.target_minutes = 10 if req.completion_mode in ('draft_first','fast','fast_web') else self.settings()['timeout_minutes']
         if req.hard_timeout_minutes is None:
             req.hard_timeout_minutes = self.settings()['hard_timeout_minutes']
         if clone is None:
             from .report_time import freeze
             req.time_context = freeze(req.model_dump())
         selected = None
-        if clone is None and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
+        if clone is None and req.completion_mode not in ('fast','fast_web') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
-        if clone is None:req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
-        if clone is None and self.settings().get('company_context_enabled') and not req.company_context_revision:
+        if clone is None:req.company_context_required=req.completion_mode not in ('fast','fast_web') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
+        if clone is None and req.completion_mode not in ('fast','fast_web') and self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
         # The task choice overrides the workspace default; the resolved bool is what
@@ -370,6 +379,8 @@ class Store:
             source=self.one("sources", sid)
             if source['status'] in ('queued','extracting','cancelled','interrupted'):
                 raise ValueError('来源尚未读取完成，请等待或重新读取：'+source['name'])
+        from .fast_reports import validate_request
+        validate_request(self,req,source_ids)
         if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
         rid = uid("run")
@@ -576,6 +587,16 @@ class Store:
             {'id': 'summary_consistency', 'name': '摘要、标题与正文表格一致'},
             {'id': 'inference_support', 'name': '影响和建议保留来源条件'},
         ]}
+        requirements = json.loads(self.one('runs', brief['run_id'])['requirements'])
+        if requirements.get('completion_mode') in ('fast', 'fast_web'):
+            # Reuse the existing background assessment; these are explicit model
+            # checks, not evidence-location success or another generation stage.
+            context['assessment_checks'].extend([
+                {'id': 'fact_qualifiers', 'name': '关键事实的状态、时间与适用范围',
+                 'scope': '对照关键结论和原文：计划/在建/完成、可能/确定、目标/实际；事件发生日/发布日/更新日；部分/全部、适用范围、主体、期间与统计口径。'},
+                {'id': 'evidence_support', 'name': '关键结论与依据的语义支持',
+                 'scope': '正文来源标记、摘录逐字存在和数值位置匹配只是定位证据；回读原文相关上下文，判断是否支持该结论，含表头、单位与限定条件。未实际核对保留 not_checked。'},
+            ])
         parent_id = brief.get('parent_id')
         if not parent_id:
             return context
@@ -699,7 +720,7 @@ class Store:
         if self._job_wakeup is not None:self._job_wakeup()
 
     def enqueue(self, kind, payload, *, before_commit=None):
-        if kind not in ('export_docx','release','audit_bundle','source_refresh'):
+        if kind not in ('export_docx','release','audit_bundle','source_refresh','jev_check'):
             from .backends import require_main_chain,validate_backend
             from .models import normalize_search_provider
             backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))

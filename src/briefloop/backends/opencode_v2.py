@@ -241,6 +241,12 @@ class V2:
         for attempt in range(2):
             providers = _data(self.request('GET', '/api/provider' + query), list)
             models = _data(self.request('GET', '/api/model' + query), list)
+            # A new location can return both empty while its catalog is being
+            # materialized. Empty snapshots are internally consistent, but not
+            # proof that the user's selected model is unavailable. Refresh once
+            # before validation; this only repeats GETs, never a model prompt.
+            if not attempt and (not providers or not models):
+                continue
             provider_ids = {p['id'] for p in providers}
             if all(m['providerID'] in provider_ids for m in models if m.get('enabled', False)):
                 break

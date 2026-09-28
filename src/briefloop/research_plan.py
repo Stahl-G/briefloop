@@ -49,6 +49,36 @@ def is_quality(store, run_id):
     return store.meta(_protocol_key(run_id)) == PROTOCOL
 
 
+def require_writing_closeout(store, run_id):
+    """Read-only admission for a quality_v1 writer, not a semantic quality gate.
+
+    Pending deep-plan rounds have never started and do not require completion.
+    An old closed outcome remains valid without new closeout fields or a summary.
+    """
+    records = {row['key']: json.loads(row['value']) for row in store.rows(
+        'SELECT key,value FROM meta WHERE key IN (?,?)', (_protocol_key(run_id), _plan_key(run_id)))}
+    if records.get(_protocol_key(run_id)) != PROTOCOL:
+        return None
+    plan = records.get(_plan_key(run_id))
+    if not plan:
+        raise AdmissionError('写稿前尚未冻结研究计划。先通过 workspace_action 调用 freeze_research_plan，'
+            '按现有材料保存研究交接，再调用 finish_research_round 明确收轮；不会增加已授权预算。', code='plan_missing')
+    rounds = plan.get('rounds') or {}
+    opened = [(identity, info) for identity, info in rounds.items() if info.get('status') != 'pending']
+    if any(info.get('status') == 'active' for _, info in opened):
+        raise AdmissionError('研究轮次尚未收轮，暂未启动 Analyst。先用 save_research_handoff 保留本轮结论、'
+            '待证问题和补查结果，再通过 workspace_action 调用 finish_research_round，summary 说明重要候选取舍、'
+            '承重二手材料及剩余限制；随后重试 write_report。可保留 open/partial 缺口；预算耗尽也可收轮，'
+            '不必开启下一轮或追加检索。', code='research_round_open')
+    latest = max(opened, key=lambda pair: pair[1].get('index', 0)) if opened else None
+    if latest is None or latest[1].get('status') != 'closed' or not isinstance(latest[1].get('outcome'), dict) or not latest[1]['outcome']:
+        raise AdmissionError('最新已开启研究轮次缺少收轮记录，暂未启动 Analyst。先通过 workspace_action '
+            '调用 research_status 核对轮次，恢复该轮执行并用 finish_research_round 明确收尾；'
+            '不能用较早轮次的记录代替本轮，也不要求消除全部缺口或执行尚未开启的 pending 轮次。',
+            code='research_closeout_missing')
+    return {'round_id': latest[0], 'round_index': latest[1].get('index'), 'outcome': latest[1]['outcome']}
+
+
 def mark_protocol(store, run_id, protocol=PROTOCOL):
     store.set_meta(_protocol_key(run_id), protocol)
 

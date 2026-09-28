@@ -441,6 +441,13 @@ class PendingSources:
                                              source_id=row['id'],connection=connection)
                 connection.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,row['id']))
                 row.update(saved)
+            # Retain source ownership in the same admission transaction. Page
+            # claim rows are later deleted, and provider envelopes do not all
+            # include source IDs; neither alone can authorize a check's scope
+            # expansion after interruption. No new runner/schema is needed.
+            if reservation and reservation.get('request_id'):
+                from .draft_completion import record_admitted_sources
+                record_admitted_sources(self.store,connection,run_id,reservation,self.records)
             if claim_owner:
                 ids={budget.canonical_url(row['url']):row['id'] for row,_ in self.records if row.get('url')}
                 budget.finish_claims(connection,run_id,claim_owner,claimed_urls,

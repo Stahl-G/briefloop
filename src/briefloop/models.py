@@ -2,7 +2,7 @@
 from typing import Literal, get_args
 from datetime import date
 from .industry_data import IndustryData
-from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, field_validator
+from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, field_validator, model_serializer
 
 
 class Model(BaseModel):
@@ -121,6 +121,8 @@ class Requirements(Model):
     # Research tier chosen at task creation; stored on the run so pause/resume and
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
     research_tier: Literal["quick", "standard", "deep"] = "standard"
+    # Explicit lifecycle choice; the historical quick research preset is unchanged.
+    completion_mode: Literal["standard", "draft_first", "fast", "fast_web"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
     # Independent fact-check switch chosen at task creation; None follows the
     # workspace default, which create_run resolves to a concrete bool on the run
@@ -339,6 +341,21 @@ class Citation(Model):
     source_id: str
     locator: str = ""
     excerpt: str = ""
+    # Optional claim/context links do not upgrade an old source reference into
+    # checked evidence. Fast enrichment fills these from the frozen report and
+    # source; exact occurrence is not a verdict on semantic support.
+    report_quote: str = ""
+    source_title: str = ""
+    source_context: str = ""
+    context_locator: str = ""
+
+    @model_serializer(mode='wrap')
+    def preserve_legacy_shape(self, handler):
+        value = handler(self)
+        for key in ('report_quote', 'source_title', 'source_context', 'context_locator'):
+            if not value.get(key):
+                value.pop(key, None)
+        return value
 
 
 class NumberBinding(Model):

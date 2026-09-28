@@ -17,6 +17,7 @@ LABELS = {
     'review': '独立审阅',
     'revise': '按审阅修订',
     'fact_check': '独立事实核查',
+    'jev_check': 'Jev 依据预检',
     'learn': 'WikiSkill 学习',
     'export_docx': '生成工作稿 Word',
     'export_xlsx': '生成报表 Excel',
@@ -31,6 +32,7 @@ LABELS = {
 
 STEPS = ('company_review',)
 REPORTED = ('generate', 'assess', 'review', 'revise', 'fact_check', 'learn',
+            'jev_check',
             'export_docx', 'export_xlsx', 'release', 'audit_bundle',
             'source_refresh', 'source_extract', 'prepare_template')
 

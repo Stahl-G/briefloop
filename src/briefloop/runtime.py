@@ -481,7 +481,7 @@ input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条�
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。
 四项是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误以 report_quote+source_id/locator/evidence 定位。结论为建议修改或存在重大问题时，每个需要修改的问题都写成一条 findings，摘要不能代替。
 分别评价证据、覆盖、分析与表达；内部缺口记录不抵消正文错误或任务未完成。Reviewer工具失败或关键核验未完成应明确记录，不给假分。
-对 input.assessment_checks 中每项返回 checks：id 原样保留，status 用 passed / needs_attention / not_checked / disputed，reason 说明实际比较的位置和依据，可附 report_quote。摘要和标题逐项回查正文、表格及相关原文：不能遗漏表内重要范围或把 preview、预测、最高、限定主体/期间升级为已经实现；影响/建议区分来源事实与作者推论，融资规模不能直接证明客户付费意愿，单项事件不能直接证明整个行业转向。
+对 input.assessment_checks 中每项按 scope 返回 checks：id 原样保留，status 用 passed / needs_attention / not_checked / disputed，reason 说明实际比较的位置和依据，可附 report_quote。快速稿的 fact_qualifiers 检查事实状态、日期含义与适用范围，evidence_support 检查原文是否真正支持关键结论；位置匹配不能代替语义核对，未查用 not_checked，关键核对未完成则 status=incomplete，不新增研究或写稿阶段。摘要和标题逐项回查正文、表格及相关原文：不能遗漏表内重要范围或把 preview、预测、最高、限定主体/期间升级为已经实现；影响/建议区分来源事实与作者推论，融资规模不能直接证明客户付费意愿，单项事件不能直接证明整个行业转向。
 若有 input.revision_context，先读上一版具体 findings 和原稿，再逐项对照本版及来源，检查问题所在段落、摘要/结论、相关表格是否一起修正。原问题已处理用 passed，仍有问题用 needs_attention，未核对用 not_checked，认为原发现不成立用 disputed 并给反证；不要因旧评价说错就机械改判。findings 只列本版仍存在的问题，check_ids 关联对应 checks.id，不得将上一版发现直接复制成新错误。轻微问题可与总评达到要求并存，但相连 checks 不能同时称完全通过。检查记录是本次评价范围，不等同独立审阅或全篇事实核查。
 {output_line}
 '''
@@ -658,8 +658,17 @@ class Worker:
                 payload=json.loads(job['payload'])
                 if payload.get('inline_owner_job_id'):
                     raise ValueError('这是学习任务内部的试写，请恢复对应的学习任务，它会接着跑这一步')
+                if job['kind']=='generate' and c.execute("SELECT id FROM jobs WHERE status IN ('queued','running') AND json_extract(payload,'$.continuation_of')=?",(jid,)).fetchone():
+                    raise ValueError('完整检查仍在执行，请先等待或停止检查任务')
                 if job['kind']=='learn':
                     self._check_feedback_owner(c,jid,payload)
+                if job['kind']=='assess' and payload.get('continuation_of'):
+                    from .draft_completion import resume_cancelled_stage
+                    if c.execute("SELECT id FROM jobs WHERE id<>? AND status IN ('queued','running') AND json_extract(payload,'$.continuation_of')=?",(jid,payload['continuation_of'])).fetchone():
+                        raise ValueError('本报告另一个检查任务仍在执行，请先等待或停止它')
+                    if any(child['id'] in self._review_jobs for child in c.execute("SELECT id FROM jobs WHERE json_extract(payload,'$.parent_job_id')=?",(jid,))):
+                        raise ValueError('关联核查仍在停止，请稍后恢复')
+                    resume_cancelled_stage(c,job)
                 # Resume keeps the frozen configuration and original task identity.
                 payload['attempt']=int(payload.get('attempt',1))+1
                 c.execute("UPDATE jobs SET payload=?,status='queued',error=NULL,updated=? WHERE id=?",(dump(payload),now(),jid))
@@ -853,6 +862,9 @@ class Worker:
                                trigger='manual',allow_private=user_refresh,user_job_id=job['id'] if user_refresh else None)
             elif job['kind']=='generate':result=self.generate(job)
             elif job['kind']=='assess':result=self.assess(job)
+            elif job['kind']=='jev_check':
+                from .jev_checks import run as run_jev_check
+                result=run_jev_check(self.store,job,self.runtime.cancelled)
             elif job['kind']=='revise':
                 brief=self.store.one('briefs',json.loads(job['payload'])['version_id'])
                 result=self.auto_revise(job,brief,self.folder(job))
@@ -1040,10 +1052,15 @@ class Worker:
         pending=self.store.rows("SELECT id FROM jobs WHERE kind='fact_check' AND status IN ('queued','running') AND json_extract(payload,'$.run_id')=?",(run_id,))
         if pending:return admitted
         payload=json.loads(job['payload'])
-        check={'run_id':run_id,'version_id':brief['id'],'parent_job_id':job['id']}
+        if payload.get('continuation_of'):
+            previous=self.store.rows("SELECT * FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? AND json_extract(payload,'$.stage_id')=? ORDER BY rowid DESC LIMIT 1",(job['id'],brief['id'],admitted['stage_id']))
+            if previous:
+                if previous[0]['status'] in ('failed','interrupted','cancelled'):self.resume(previous[0]['id'])
+                return admitted
+        check={'run_id':run_id,'version_id':brief['id'],'parent_job_id':job['id'],'stage_id':admitted['stage_id']}
         # Same frozen model/provider chain as the writing job, and the same
         # conversation for status notes when the task started from a chat.
-        check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models','session_id') if key in payload})
+        check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models','review_runtime','review_mode','session_id') if key in payload})
         queued=self.store.enqueue('fact_check',check)
         self.store.event(job['id'],'fact_check',{'action':'dispatch','stage_id':admitted['stage_id'],'job_id':queued['id']})
         return admitted
@@ -1128,9 +1145,13 @@ class Worker:
 
     def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
+        if json.loads(run['requirements']).get('completion_mode') in ('fast','fast_web'):
+            from .fast_reports import generate
+            return generate(self,job)
         from .backends import validate_backend
         from .models import normalize_search_provider
         backend=validate_backend(payload.get('agent_backend','codex'))
+        draft_first=json.loads(run['requirements']).get('completion_mode')=='draft_first'
         if score and payload.get('single_evaluation') is not False and json.loads(run['requirements']).get('fact_check'):
             # A job queued before this check, or resumed later, stops before any model turn.
             from .review_capability import require_for_fact_check
@@ -1198,7 +1219,7 @@ class Worker:
             latest[0]=record['id']
             if record['id'] not in known:self._remember_generated_sources(folder,record)
             from .review_capability import review_available
-            if (self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
+            if (not draft_first and self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
                     and json.loads(run['requirements']).get('writing_mode')=='internal_report'
                     # The final scoring falls back to an ordinary assessment on a
                     # backend without the restricted Reviewer; a checkpoint review
@@ -1228,6 +1249,18 @@ class Worker:
         brief=self.store.one('briefs',current)
         from .task_notify import notify as _notify_task
         _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
+        if draft_first:
+            from .draft_completion import save_deferred
+            deferred=save_deferred(self.store,job,brief,folder)
+            return {**result,**deferred,**self._generated_sources(folder,brief['id'])}
+        checked=self.complete_draft_checks(job,brief,folder,score=score)
+        result.pop('source_snapshot',None)
+        return {**result,**checked}
+
+    def complete_draft_checks(self,job,brief,folder,*,score=True):
+        """The existing post-writing pipeline, shared with explicit continuation."""
+        payload=json.loads(job['payload']);run=self.store.one('runs',brief['run_id'])
+        backend=payload.get('agent_backend','codex');current=brief['id'];result={}
         # Delivery checks run inside scoring below (refcheck in the evaluation
         # pack); the fact-check stage is admitted before them and never during
         # the writing turn itself.
@@ -1235,16 +1268,27 @@ class Worker:
         if not score or payload.get('single_evaluation') is False:
             return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
         self._wait_fact_check(job,brief)
+        from .draft_completion import verify_input,accept_stage_sources,check_binding,require_fact_check_settled
+        accept_stage_sources(self.store,job)
+        verify_input(self.store,job)
+        require_fact_check_settled(self.store,job)
         scoring=None
         assessed=bool(self.store.rows('SELECT id FROM assessments WHERE version_id=?',(current,)))
+        if payload.get('continuation_of'):
+            # An unrelated score for this version may have used older evidence.
+            grades=self.store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(current,))
+            marker=folder/'checks-assessed.json'
+            assessed=marker.exists() and json.loads(marker.read_text(encoding='utf-8'))==check_binding(self.store,job) and bool(grades and json.loads(grades[0]['data']).get('status')=='complete')
         if json.loads(run['requirements']).get('fact_check'):
             # A checkpoint made before the check cannot skip final review. Reuse
             # only a completed review whose actual packet still covers this input.
             from .review import validate_applicable_review
             assessed=False
             for reviewed in self.store.rows("SELECT id FROM reviews WHERE version_id=? AND status='complete' ORDER BY rowid DESC",(current,)):
-                try:validate_applicable_review(self.store,reviewed['id'],current)
+                try:admitted_review=validate_applicable_review(self.store,reviewed['id'],current)
                 except (ValueError,OSError,KeyError):continue
+                if payload.get('continuation_of') and admitted_review.get('result'):
+                    if (admitted_review['result'].get('assessment') or {}).get('status')!='complete':continue
                 assessed=True;break
         if not assessed:
             legacy=folder/'assessment.json'
@@ -1274,7 +1318,15 @@ class Worker:
                     # unfinished and the review can be re-run on its own.
                     self.store.event(job['id'],'assessment_failed',{'error':str(exc)})
                     scoring={'status':'incomplete','error':str(exc)}
-        outcome={**result,'version_id':brief['id'],**({'scoring':scoring} if scoring else {})}
+        if payload.get('continuation_of'):
+            verify_input(self.store,job)
+            if not scoring or scoring.get('status')!='incomplete':
+                (folder/'checks-assessed.json').write_text(dump(check_binding(self.store,job)),encoding='utf-8')
+            elif scoring.get('status')=='incomplete':
+                raise ValueError(scoring.get('error') or '检查未完成，已保留初稿，可恢复检查任务')
+        outcome={'version_id':brief['id'],**({'scoring':scoring} if scoring else {})}
+        if payload.get('continuation_of') and (self.runtime.cancelled.is_set() or self.stopping.is_set()):
+            raise InterruptedError('检查已停止，初稿保留')
         if payload.get('auto_revision',False):outcome.update(self.auto_revise(job,brief,folder))
         outcome.pop('source_snapshot',None)
         outcome.update(self._generated_sources(folder,outcome['version_id']))
@@ -1311,6 +1363,10 @@ class Worker:
         else:
             latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
             if latest!=brief['id']:return {'revision_status':'user_edit','revision_message':'用户已修改，保留当前人工稿；可按评分手动请求修订'}
+            if payload.get('continuation_of'):
+                from .draft_completion import claim_revision
+                if not claim_revision(self.store,job):
+                    return {'revision_status':'already_used','revision_message':'本次初稿链的一次自动修订已在另一检查任务使用；保留当前稿件，可手动修订。'}
             stage=folder/'revision';stage.mkdir(exist_ok=True)
             from .evidence import inspect_bindings,EvidenceInput,ClaimInput
             from .figures import read_figure
@@ -1369,7 +1425,9 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         if not self._revision_metadata(job,revised,folder,open_findings):
             latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
             return {'version_id':latest,'revision_status':'user_edit','revision_message':'元数据修复期间用户已修改；修复工件保留，未替换人工稿','original_version_id':brief['id']}
-        if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(revision_id,)):
+        revision_grades=self.store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(revision_id,))
+        incomplete_revision=payload.get('continuation_of') and revision_grades and json.loads(revision_grades[0]['data']).get('status')!='complete'
+        if not revision_grades or incomplete_revision:
             evaluation=folder/'revision-evaluation';evaluation.mkdir(exist_ok=True)
             (evaluation/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
             evaluator=stage_job(self.store,{**job,'kind':'assess','payload':dump({**payload,'version_id':revision_id})},'evaluator',mode='single')
@@ -1458,7 +1516,10 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         # An internal report without any route to the restricted Reviewer is still
         # scored, but as ordinary assessment: it is labelled as such and cannot
         # satisfy the delivery gate, which asks for a completed review (#726).
-        without_review=not review_available(backend,review_runtime,review_mode)
+        # Fast background checks score the saved draft; independent review is
+        # still a separate explicit action and remains required for delivery.
+        fast_background=req.get('completion_mode') in ('fast','fast_web') and json.loads(job['payload']).get('fast_evidence')
+        without_review=fast_background or not review_available(backend,review_runtime,review_mode)
         if (req.get('writing_mode')=='internal_report' or req.get('fact_check')) and not without_review:
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
@@ -1478,7 +1539,11 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         # Freeze expected identities before executing a compatibility host. Missing
         # answers remain visible, without regenerating the report or its score.
         expected=json.loads((folder/'input.json').read_text(encoding='utf-8'))['assessment_checks']
-        result=self.runtime.execute(job,prompt,folder)
+        from .draft_completion import resume_incomplete_output
+        resume_incomplete=resume_incomplete_output(job,folder,'assessment.json')
+        if resume_incomplete:
+            prompt+='\n用户已明确恢复本次未完成评价。继续原会话中尚未核对的部分，保留已完成的证据判断；仍无法完成时如实标为 incomplete。'
+        result=self.runtime.execute(job,prompt,folder,**({'resume_on_complete':True} if resume_incomplete else {}))
         basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
         self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis,expected_checks=expected)
         return result
@@ -1493,6 +1558,9 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         selected=json.loads(stage_job(self.store,{**parent,'payload':dump(effective)},'evaluator',mode='single')['payload'])['runtime']
         for child in self.store.rows("SELECT * FROM jobs WHERE kind='review' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC",(parent['id'],brief['id'])):
             previous=json.loads(child['payload'])
+            if (payload.get('continuation_of') and int(payload.get('attempt',1))>int(previous.get('attempt',1))
+                    and child['status']=='complete' and json.loads(child.get('result') or '{}').get('status')=='incomplete'):
+                continue  # User explicitly resumed: retain the old read-only review and create a new one.
             actual=json.loads(stage_job(self.store,child,'evaluator',mode='single')['payload'])['runtime']
             if (actual!=selected or previous.get('agent_backend','codex')!=effective.get('agent_backend','codex')
                     or previous.get('review_mode','standard')!=effective.get('review_mode','standard')):continue
@@ -1521,7 +1589,18 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
             if self.runtime.cancelled.is_set() or self.stopping.is_set():raise InterruptedError('报告已停止')
             return enqueue_review(self.store,brief['id'],payload=payload)
 
+    def continue_checks(self,version_id):
+        from .draft_completion import enqueue,origin
+        with self._claim_lock:
+            parent=origin(self.store,version_id)
+            if parent['id'] in self._generation_jobs or parent['id']==self.current:
+                raise ValueError('原写作任务仍在停止，请稍后继续检查')
+            return enqueue(self.store,version_id)
+
     def assess(self,job):
+        if json.loads(job['payload']).get('continuation_of'):
+            from .draft_completion import execute
+            return execute(self,job)
         payload=json.loads(job['payload']);brief=self.store.one('briefs',payload['version_id']);folder=self.folder(job)
         from .backends import validate_backend
         backend=validate_backend(payload.get('agent_backend','codex'))

@@ -86,6 +86,17 @@ def test_chat_is_available_but_packet_roles_keep_readonly_confinement(tmp_path):
         h.create_session('t', {'model':'fake/m1','review_root':str(tmp_path),'permission':'workspace-write'})
 
 
+def test_quick_writer_has_no_runner_tools_and_does_not_require_json_or_submission(tmp_path):
+    engine=EngineFixture();h=NativeHarness(Store(tmp_path),engine)
+    sid=h.create_session('quick',{'model':'fake/m1','native_role':'quick_writer',
+        'packet_root':str(tmp_path),'run_id':'synthetic'})['id']
+    _wait_status(h,sid,h.send(sid,'Write only the report')['id'],'completed')
+    create=next(params for name,params in engine.calls if name=='session_create')
+    turn=next(params for name,params in engine.calls if name=='turn_start')
+    assert create['runner_tools']==[]
+    assert turn['expect_json'] is False and turn['require_submit'] is False
+
+
 def test_a_retired_engine_process_resumes_the_session_from_its_transcript(tmp_path):
     engine = EngineFixture()
     h = NativeHarness(Store(tmp_path), engine)

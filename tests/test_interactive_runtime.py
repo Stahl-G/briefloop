@@ -52,6 +52,25 @@ def setup(tmp_path):
     return store, job, harness, InteractiveRuntime(store, harness), store.root / 'jobs' / job['id']
 
 
+def test_plain_prose_output_uses_final_reply_not_progress(tmp_path):
+    store,job,harness,runtime,folder=setup(tmp_path)
+    job.update(plain_output='response.txt',allow_web=False)
+    finished=[]
+    def tick():
+        if runtime.session_id is None or finished:return
+        finished.append(True);sid=runtime.session_id
+        harness.finish(sid)
+        snap=harness.sessions[sid];turn=snap['messages'][-1]['turn_id']
+        snap['messages'][-1]['text']='正在准备正文'
+        snap['messages'].append({'id':'final-report','role':'assistant','status':'completed',
+            'turn_id':turn,'phase':'final_answer','text':'# 报告\n\n这是完整正文。'})
+    runtime.execute(job,'Write prose only',folder,tick)
+    assert (folder/'response.txt').read_text()=='# 报告\n\n这是完整正文。'
+    assert harness.starts[0][1]['runtime']['permission']=='read-only'
+    runtime.execute(job,'Write prose only',folder,tick)
+    assert len(harness.starts)==1
+
+
 @pytest.mark.parametrize('ending',['completed','timeout','exception'])
 def test_public_thread_usage_is_latest_and_persisted_on_failure(tmp_path,monkeypatch,ending):
     monkeypatch.setattr('briefloop.interactive_runtime.time.sleep',lambda _:None)

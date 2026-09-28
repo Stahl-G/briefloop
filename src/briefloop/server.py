@@ -461,6 +461,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/source-update-state':
                     from .source_updates import for_version
                     self.send(200,for_version(store,q['version'][0]))
+                elif u.path=='/api/completion-status':
+                    from .draft_completion import status
+                    self.send(200,status(store,q['version'][0]))
+                elif u.path=='/api/jev-checks':
+                    from .jev_checks import view
+                    self.send(200,view(store,q['version'][0]))
+                elif u.path=='/api/jev':
+                    from .jev import key_status
+                    self.send(200,key_status())
                 elif u.path=='/api/review-status':
                     from .review import review_status
                     self.send(200,review_status(store,q['version'][0]))
@@ -632,6 +641,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/jev':
+                    from .jev import save_key,delete_key
+                    result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/jev-checks':
+                    from .jev_checks import enqueue
+                    result=enqueue(store,body['version_id'],body['fingerprint'],allow_external=body.get('allow_external'))
                 elif path=='/api/connectors/task-bind':
                     result=self.server.connector_tasks.bind(body['job_id'],body['selections'],max_calls=body['max_calls'],max_total_bytes=body['max_total_bytes'])
                 elif path in ('/api/connectors/task-status','/api/connectors/task-access','/api/connectors/task-revoke'):
@@ -742,6 +757,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=freeze(Requirements.model_validate(body['requirements']).model_dump())
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
+                    if req.completion_mode in ('fast','fast_web') and body.get('connector_selection'):
+                        raise ValueError('快速模式使用已读取的材料；请先导入连接器材料，或选择完整流程。')
                     if 'connector_selection' in body:
                         result=self.server.connector_tasks.enqueue(req.model_dump(),body.get('source_ids',[]),body['connector_selection'],session_id=body.get('session_id'))
                     else:
@@ -790,6 +807,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/review-response':
                     from .review import respond
                     result=respond(store,body['finding_id'],body['version_id'],body['action'],body['reason'])
+                elif path=='/api/continue-checks':
+                    result=worker.continue_checks(body['version_id'])
                 elif path=='/api/assess':
                     store.one('briefs',body['version_id']);payload={'version_id':body['version_id']}
                     if body.get('session_id'):payload['session_id']=body['session_id']

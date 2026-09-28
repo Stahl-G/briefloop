@@ -109,7 +109,8 @@ def test_file_action_updates_document_and_citations_atomically_and_omission_pres
     assert projection['parent_id']==omitted['id'] and projection['hash']==omitted['hash']
     assert projection['editor_document']==omitted['editor_document']
     schema=workspace_action(store,{'action':'capabilities'})['schemas']['revise_document.citations']
-    assert schema['type']=='array' and set(schema['items']['properties'])=={'source_id','locator','excerpt'}
+    assert schema['type']=='array' and {'source_id','locator','excerpt'}.issubset(schema['items']['properties'])
+    assert schema['items']['required']==['source_id']
     assert '不代表已通过' in schema['description']
 
 
