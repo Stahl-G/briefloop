@@ -20,6 +20,19 @@ def reader_locator(locator, source=None):
     """
     value = locator.strip() if isinstance(locator, str) else ''
     web = str((source or {}).get('url') or '').startswith(('https://', 'http://'))
+    if not web:
+        return value
+    # Evidence accepts both serialized Locator objects and L12-L17 shorthand.
+    # Reuse that parser and retain any authored page/sheet/region context.
+    from .delivery_checks import _number_locator
+    try:
+        parsed = _number_locator(value)
+        if (parsed.kind == 'text' and parsed.start_line is not None
+                and parsed.end_line is not None and parsed.end_line >= parsed.start_line
+                and all(getattr(parsed, field) is None for field in ('page', 'sheet', 'cells', 'region'))):
+            return ''
+    except ValueError:
+        pass
     machine_line = r'(?:lines?\s*[:#]?\s*\d+(?:\s*[-–—]\s*\d+)?|第?\s*\d+(?:\s*[-–—至]\s*\d+)?\s*行)'
     return '' if web and re.fullmatch(machine_line, value, re.IGNORECASE) else value
 

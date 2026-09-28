@@ -122,3 +122,28 @@ def test_saved_citation_locators_survive_plain_template_and_http_word_exports(tm
         assert store.one('briefs',brief['id'])==brief
     finally:
         server.shutdown();thread.join(timeout=5);_close_service(server)
+
+
+def test_structured_web_line_locations_are_hidden_without_changing_saved_evidence():
+    import json
+    from copy import deepcopy
+    from briefloop.document_export import reader_locator
+    web = {'name': 'Web source', 'url': 'https://example.org/source'}
+    locations = ['L12-L17', 'line: 12-17',
+                 json.dumps({'kind': 'text', 'start_line': 12, 'end_line': 17}),
+                 json.dumps({'kind': 'text', 'start_line': 12, 'end_line': 17, 'page': None})]
+    citations = [{'source_id': 'src_one', 'locator': value} for value in locations]
+    original = deepcopy(citations)
+    for value in locations:
+        assert reader_locator(value, web) == ''
+        assert reader_locator(value, {'name': 'Local document'}) == value
+    for value in ['Chapter 2, lines 12-17', 'Page 2', '{invalid json',
+                  json.dumps({'kind': 'pdf', 'page': 2}),
+                  json.dumps({'kind': 'text', 'start_line': 12, 'end_line': 17, 'page': 2})]:
+        assert reader_locator(value, web) == value
+    doc = Document()
+    render_document(doc, fixture(), sources={'src_one': web}, citations=citations)
+    paragraph_text = '\n'.join(''.join(p._p.xpath('.//w:t/text()')) for p in doc.paragraphs)
+    assert '1. Web source' in paragraph_text
+    assert 'start_line' not in paragraph_text and 'L12-L17' not in paragraph_text
+    assert citations == original
