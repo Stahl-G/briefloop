@@ -151,7 +151,7 @@ def workspace_action(store, request):
         return begin_round(store,request['run_id'],target_gap_ids=request.get('target_gap_ids'),tasks=request.get('tasks'),job_id=request.get('job_id'))
     if action=='finish_research_round':
         from .research_plan import finish_round
-        return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),job_id=request.get('job_id'))
+        return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),gap_updates=request.get('gap_updates'),job_id=request.get('job_id'))
     if action=='reconciliation_candidates':
         from .reconciliation import candidates
         return candidates(store,request['run_id'])
@@ -303,7 +303,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
 - {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。
-- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；之后才能 begin 下一轮。
+- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；可选 gap_updates 明确变更已登记缺口状态，每项 gap_id/status(open|partial|resolved)/reason/evidence（source_id/locator/excerpt，partial/resolved 至少一条，open 可为空），partial 另填 remaining_question；covered 不会关闭缺口。之后才能 begin 下一轮。
 - {{"action":"reconciliation_candidates","run_id":"真实run ID"}}：读取本任务冻结的候选清单（来源与来源陈述），用于写作前对照。
 - {{"action":"reconciliation_save","run_id":"真实run ID","reconciliation":{{"status":"complete|partial|not_applicable|failed","examined_claim_ids":[],"unexamined_claim_ids":[],"relations":[{{"member_claim_ids":["真实claim ID","真实claim ID"],"relation":"compatible|different_scope|temporal_sequence|correction|supersession|republication|attributed_difference|contradiction|unknown","scope":"","basis_span_ids":[],"reason":"","proposed_treatment":"","affected_requirement_ids":[]}}],"open_questions":[],"coverage_notes":""}}}}：保存写作前对照快照。必须用 examined ∪ unexamined 明确覆盖候选清单全部来源陈述；关系必须引用真实来源陈述；不判定真假，只登记依据与建议写法。重复相同内容幂等。
 - {{"action":"reconciliation_read","run_id":"真实run ID","reconciliation_id":"真实对照ID"}}：读取对照快照；输入变化时返回 stale 标记。

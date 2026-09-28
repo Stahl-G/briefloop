@@ -3,6 +3,7 @@ import {beginPanel as beginPanelDefault,updatePanel as updatePanelDefault} from 
 import {reviewPending as reviewPendingDefault,factCheckHTML as factCheckHTMLDefault} from './review-status.js';
 import {createFactCheckGrants} from './fact-check-grants.js';
 import {officeIssueLine} from './office-tools.js';
+import {createAssessmentChecks} from './assessment-checks.js';
 import {reviewModeLabel} from './review-controls.js';
 
 const RELATION_LABELS={compatible:'可合并',different_scope:'口径不同',temporal_sequence:'时间演进',correction:'明确更正',supersession:'替代',republication:'转载',attributed_difference:'归属分歧',contradiction:'实质矛盾',unknown:'无法判断'};
@@ -16,6 +17,7 @@ export function createAssessmentPanel(deps){
  const reviewPending=deps.reviewPending||reviewPendingDefault;
  const factCheckHTML=deps.factCheckHTML||factCheckHTMLDefault;
  const factGrants=deps.factGrants||createFactCheckGrants({api});
+ const assessmentChecks=createAssessmentChecks({esc});
  let showSuggestionMarks=false;
 
  async function renderDeliveryChecks(){
@@ -30,6 +32,7 @@ export function createAssessmentPanel(deps){
   const parts=[];
   if(isDirty())parts.push('<span class="tag">有未保存修改；仅检查已保存版本</span>');
   if(c.temporal){const t=c.temporal;parts.push(`<span class="tag ${t.out_of_range_count?'error':''}">时效：${t.status==='not_checked'?(t.reason==='legacy_window'?'旧任务未冻结范围':'未提供事件日期记录，待核实'):`范围外当期事件 ${t.out_of_range_count||0}；日期待核实 ${t.missing_date_count||0}；${t.items?.length||0} 条日期记录，仍需核对原文`}</span>`)}
+  for(const warning of (c.temporal?.warnings||[]))parts.push(`<p class="help">${esc(warning.message||'报告期间需要确认')}</p>`);
   parts.push(c.broken_refs.length?`<span class="tag error">断链引用 ${c.broken_refs.length} 处：${c.broken_refs.map(esc).join('、')}</span>`:'<span class="tag">正文引用可定位；支持关系仍需评价</span>');
   const n=c.numbers;
   parts.push(`<span class="tag">${n.status==='not_checked'?'未做数值核对':n.status==='partial'?'部分绑定已检查':'已检查提交的绑定'}：提交 ${n.total} 项，已检查 ${n.checked} 项，匹配 ${n.matched} 项</span>`);
@@ -168,7 +171,7 @@ export function createAssessmentPanel(deps){
   const highlightKinds=new Map(quotes.map(q=>[String(q.findingIndex),q.kind]));
   applyHighlightState({quotes,findings:highlightFindings,kinds:highlightKinds});
   const toggle=`<label class="finding-toggle help"><input type="checkbox" id="show-suggestions" ${showSuggestionMarks?'checked':''}> 显示建议标记（黄）；必须修正句始终标红</label>`;
-  $('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div>${d.basis==='assessment_without_review'?'<p class="help review-basis">普通评分，不是独立审阅：当前配置未运行所选模式的 Reviewer。正式交付仍需独立审阅完成。</p>':''}<p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(typeof d.expression==='number'&&d.expression<=2&&d.overall==='达到要求')?'<p class="help">表达分偏低但总体仍判为「达到要求」，两者不一致；系统会按此安排一次修订，实际以正文和独立审阅为准。</p>':''}${findings.length?toggle:''}${findings.map((f,i)=>`<details class="finding" data-finding="${i}"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;
+  $('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div>${d.basis==='assessment_without_review'?'<p class="help review-basis">普通评分，不是独立审阅：当前配置未运行所选模式的 Reviewer。正式交付仍需独立审阅完成。</p>':''}<p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(typeof d.expression==='number'&&d.expression<=2&&d.overall==='达到要求')?'<p class="help">表达分偏低但总体仍判为「达到要求」，两者不一致；系统会按此安排一次修订，实际以正文和独立审阅为准。</p>':''}${assessmentChecks.render(d)}${findings.length?toggle:''}${findings.map((f,i)=>`<details class="finding" data-finding="${i}"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;
   bindSources();
   const toggleEl=$('show-suggestions');
   if(toggleEl)toggleEl.onchange=()=>{showSuggestionMarks=toggleEl.checked;assessment()};

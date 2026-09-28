@@ -118,6 +118,8 @@ def action(store, config, args):
     result = workspace_action(store, request)
     if name == 'reconciliation_save' and config.get('packet_root'):
         _save(_folder(config) / 'reconciliation.json', result)
+    if name == 'finish_research_round' and config.get('packet_root'):
+        _refresh_research(store, config)
     return _json_result(result)
 
 
@@ -221,9 +223,20 @@ def run_scouts(store, config, args):
     # All rounds remain available; replayed slots are not duplicated.
     joined = join_scouts(store, paths, run_id=config['run_id']) if paths else {'sources': [], 'gaps': []}
     joined['gaps'] += [r['slot_id'] + ' 未完成：' + r['error'] for r in results if r['status'] != 'complete']
+    from .research_handoff import current_research
+    joined = current_research(store, config['run_id'], joined, register=True)
     _save(folder / 'research.json', joined)
     _save(Path(config['packet_root']) / 'research.json', joined)
-    return _json_result({'tasks': results, 'research_file': 'research.json', 'sources': len(joined['sources']), 'gaps': joined['gaps']})
+    return _json_result({'tasks': results, 'research_file': 'research.json', 'sources': len(joined['sources']), 'gaps': joined['gaps'], 'gap_records': joined.get('gap_records', []), 'gap_history': joined.get('gap_history', [])})
+
+
+def _refresh_research(store, config):
+    from .research_handoff import current_research
+    path = _folder(config) / 'research.json'
+    if path.exists():
+        research = current_research(store, config['run_id'], json.loads(path.read_text(encoding='utf-8')), register=True)
+        _save(path, research)
+        _save(Path(config['packet_root']) / 'research.json', research)
 
 
 def save_handoff(store, config, args):
@@ -237,11 +250,32 @@ def save_handoff(store, config, args):
         raise ToolError('没有已经开始的研究轮次')
     index = max(r['index'] for r in opened)
     value = check_handoff(store, config['run_id'], args.get('handoff'))
-    value['budget'] = snapshot(store, config['run_id'])['remaining']
     path = store.root / 'research' / config['run_id'] / 'rounds' / str(index) / 'handoff.json'
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _save(path, value)
-    return _json_result({'round_index': index, 'saved': True, 'unverified': value['unverified']})
+    from .research_plan import _read_plan
+    from .research_handoff import read_state, apply_updates, save_state, gap_view
+    budget = snapshot(store, config['run_id'])['remaining']
+    with store.tx() as connection:
+        current_plan = _read_plan(connection, config['run_id'])
+        identity, info = next((identity, info) for identity, info in current_plan['rounds'].items() if info['index'] == index)
+        if info['status'] != 'active':
+            previous = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+            if previous is None or check_handoff(store, config['run_id'], previous) != value:
+                raise ToolError('研究轮次已收束，不能改写交接；需要变更时在新轮次明确更新')
+            return _json_result({'round_index': index, 'saved': True, 'idempotent': True,
+                                 'unverified': value['unverified'], **gap_view(store, config['run_id'])})
+        state = read_state(store, config['run_id'], connection=connection, plan=current_plan)
+        value['gap_updates'] = apply_updates(store, config['run_id'], state, value['gap_updates'],
+                                             round_id=identity, round_index=index)
+        save_state(connection, config['run_id'], state)
+        # finish_round takes the same write lock. Keep the closed-state check
+        # and atomic file replacement inside it so a late save cannot overwrite
+        # a handoff after the round has closed. A write failure rolls back gaps.
+        value['budget'] = budget
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _save(path, value)
+    _refresh_research(store, config)
+    return _json_result({'round_index': index, 'saved': True, 'unverified': value['unverified'],
+                         **gap_view(store, config['run_id'])})
 
 
 def write_report(store, config, args):
@@ -418,7 +452,7 @@ def tools(role, config):
             spec('save_plan', save_plan, '保存研究计划 summary 和 reader_contract；先读取 reader_contract.schema.json。', {'plan': OBJ}, ('plan',), sequential=True),
             spec('run_scouts', run_scouts, '按当前研究轮次并行执行 Scout；tasks 各含 slot_id 和具体 assignment，冻结模型、搜索策略及共享预算。等待实际结果，可停止；相同槽位恢复原任务。',
                  {'tasks': {'type': 'array', 'items': OBJ}}, ('tasks',), sequential=True, long_running=True),
-            spec('save_research_handoff', save_handoff, '保存轮间交接：handoff 含 learnings（summary、可选 source_id/locator）、follow_ups、covered、open_questions 数组；缺少引用保留待证，预算由运行器记录。', {'handoff': OBJ}, ('handoff',), sequential=True),
+            spec('save_research_handoff', save_handoff, '保存轮间交接：handoff 含 learnings（summary、可选 source_id/locator）、follow_ups、covered、open_questions 数组；可选 gap_updates 明确更新已有缺口（gap_id/status/reason/evidence，partial 另给 remaining_question），详见研究交接说明；缺少引用保留待证，预算由运行器记录。', {'handoff': OBJ}, ('handoff',), sequential=True),
             spec('write_report', write_report, '将已保存计划、全部研究结果和来源交给独立 Analyst 写稿；沿用冻结主链模型，不自行评分。',
                  {'instructions': TEXT}, sequential=True, long_running=True),
             spec('connector_material', connector, '读取本报告明确授权的 MCP 材料；request 使用既有 read/call/status/receipt 协议。', {'request': OBJ}, ('request',)),
@@ -458,7 +492,7 @@ def prepare(store, job, folder, prompt):
                research=json.loads(research_path.read_text(encoding='utf-8')) if research_path.exists() else {'sources': [], 'gaps': []},
                base_version=data['brief']['id'], feedback=data)
         return {**config, 'role': 'analyst', 'revision': True, 'result_file': str(folder / 'draft.json')}, (WRITING_GUIDE +
-            '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')
+            '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons/revision_focus；修改问题原段后复核摘要、表格和影响段有无同一结论残留。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')
     _save(root / 'input.json', data)
     for name in ('reader_contract.schema.json', 'plan.json', 'research.json', 'analyst-writing.md'):
         if (folder / name).exists():
@@ -468,6 +502,7 @@ def prepare(store, job, folder, prompt):
         # Preserve the complete frozen fact-checking method; replace only tool transport.
         prompt = prompt + '\n本次没有 shell；web_search/add_url/source_read/workspace_action 直接传 JSON 参数。最后使用 submit_fact_check 提交上述结果对象，不写文件或调用 CLI。'
     elif job['kind'] == 'generate':
+        from .research_handoff import PLANNING_GUIDE, GAP_UPDATE_GUIDE
         prompt = ('你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
                   '来源索引里的 source_id 用 source_read 读取；packet_read 只读取本包实际文件，不存在 packet/sources 目录，不猜原文路径。'
                   '开始时保存 reader_contract 与计划（save_plan），按任务需要决定 Scout 分工，用 run_scouts 执行。'
@@ -476,7 +511,8 @@ def prepare(store, job, folder, prompt):
                   '多轮任务结束当前轮时用 save_research_handoff 保留有引用的结论和待证问题，再 finish_research_round；下一轮按真实 gap_id 继续。研究完成后写前对照来源陈述，保留真实关系和未查问题；write_report 调用 Analyst，finish_task 只确认保存。'
                   '程序随后独立执行核查、审阅和最多一次修订，你不递归调用 generate/assess/learn。'
                   '工具已经绑定当前 run_id，不得更改模型、预算、网络权限或读者要求。'
-                  '\n' + data.get('retrieval_strategy', '') + '\n' + data.get('orchestrator_instructions', ''))
+                  '\n' + data.get('retrieval_strategy', '') + '\n' + data.get('orchestrator_instructions', '')
+                  + '\n' + PLANNING_GUIDE + '\n' + GAP_UPDATE_GUIDE)
     else:
         prompt += '\n本次没有 shell；工作区操作使用 workspace_action 直接提交 JSON request。所有路径读取用 packet_read 相对任务包。完成后调用 finish_task（元数据修复用 submit_metadata）。'
     from .chat_tools import chat_instructions

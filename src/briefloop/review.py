@@ -547,6 +547,7 @@ def build_packet(store,version_id,folder):
     # Only this report's persisted public history; never host-global DB queries.
     brief=store.one('briefs',version_id);versions=store.rows('SELECT id,parent_id,author,markdown,hash,created FROM briefs WHERE run_id=? ORDER BY rowid',(brief['run_id'],))
     save('history/versions.json',pack_dump(versions).encode())
+    save('assessment-context.json',pack_dump(store.assessment_context(version_id)).encode())
     prior_reviews=store.rows('SELECT r.id,r.version_id,r.status,r.result,r.created FROM reviews r JOIN briefs b ON b.id=r.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/reviews.json',pack_dump([{**r,'result':json.loads(r['result']) if r['result'] else None} for r in prior_reviews]).encode())
     executions=[]
@@ -597,6 +598,11 @@ def accept_review(store,review_id,value,dry_run=False):
     result=ReviewOutput.model_validate(value);review=get_review(store,review_id)
     if result.version_id!=review['version_id'] or result.fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 输出未绑定本次正文与核查包')
+    if result.assessment is not None and 'assessment-context.json' in review['data'].get('files', {}):
+        packet,_,_=_packet(store,review)
+        context=json.loads((packet/'assessment-context.json').read_text(encoding='utf-8'))
+        from .models import assessment_checks
+        result.assessment.checks=assessment_checks(result.assessment.checks,result.assessment.findings,context['assessment_checks'])
     if review['result']:
         if ReviewOutput.model_validate(review['result']).model_dump()!=result.model_dump():raise ValueError('已保存Review不可覆盖，请建立新审阅')
         if dry_run:return result
@@ -727,7 +733,9 @@ def _save_assessment(connection,review_id,result):
     if result.assessment is None:return
     identity='assessment_'+review_id;serialized=dump(result.assessment.model_dump())
     previous=connection.execute('SELECT version_id,data FROM assessments WHERE id=?',(identity,)).fetchone()
-    if previous and (previous['version_id']!=result.version_id or previous['data']!=serialized):raise ValueError('已保存Review评分不可覆盖')
+    # Optional fields introduced later must not make a saved legacy score look
+    # overwritten. Compare normalized values, but keep the original stored bytes.
+    if previous and (previous['version_id']!=result.version_id or Assessment.model_validate_json(previous['data']).model_dump()!=result.assessment.model_dump()):raise ValueError('已保存Review评分不可覆盖')
     connection.execute('INSERT OR IGNORE INTO assessments VALUES(?,?,?,?)',(identity,result.version_id,serialized,now()))
 
 
@@ -974,6 +982,13 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
+    if (folder/'packet'/'assessment-context.json').exists():
+        prompt+=('\n读取 assessment-context.json；assessment_checks 是本次评分复核清单，revision_context 若非空，包含准确父版本的原稿、父评价 ID 与逐条问题，历史评价不是事实真值。'
+                 '在 assessment.checks 逐项返回清单 id、status(passed/needs_attention/not_checked/disputed)、reason(实际比较的位置与依据)，可附 report_quote。'
+                 '摘要、标题须服从正文表格与原文限定，影响和建议不能把融资当客户付费、个别案例当行业变化。'
+                 '旧问题复核同时看原句、摘要、表格及结尾的残留；修正用 passed，仍存在用 needs_attention，未核对用 not_checked，有反证认为旧发现不成立用 disputed。'
+                 'assessment.findings 只列本版剩余问题，可用 check_ids 关联对应检查，不将旧发现机械复制；轻微问题可保留但相关检查不能全部通过。'
+                 '此处复核不代替 history/responses.json 的 response_checks，也不改变已登记 Reviewer 发现的关闭规则。')
     if target.get('fact_checks'):
         prompt+=('\n本次含可选独立事实核查（观察模式）留下的候选记录：fact_checks[].candidates 是查了什么（主张锚点、查询id、证据span、四态候选与一句依据），selection.unselected 与 unchecked 是没查什么及原因，execution 说明本次执行为何收束。'
                  '候选不是结论：包括 contradicted 在内无权直接创建核心冲突或阻断交付，须由你对照核查包登记原件逐条独立复核——接纳的问题写入 findings 并引用证据 span；你对这些主张本身的判断写入 claim_checks，可与候选不同，并在 reason 说明差异。'

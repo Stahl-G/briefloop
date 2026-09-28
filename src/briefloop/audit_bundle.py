@@ -293,7 +293,13 @@ def generate_bundle(store, job, cancelled):
         if name.endswith('.json'):
             value = json.loads(safe_file(folder, name).read_text(encoding='utf-8'))
             if not all_original and not matching and not name.startswith('packet/figures/') and name != 'packet/output.schema.json':
-                json_blob(name, value)
+                if _project_records(value, permissions, name) == value and _scrub(value) == value:
+                    # A metadata-only input may need no redaction. Preserve its
+                    # frozen formatting/hash instead of silently serializing it
+                    # differently without a permission transformation.
+                    copy(name)
+                else:
+                    json_blob(name, value)
                 continue
             scrubbed = _scrub(value)
             if scrubbed != value:

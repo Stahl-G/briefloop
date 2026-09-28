@@ -378,7 +378,9 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
         index = max([int(r.get('index', 0)) for r in rounds.values() if r.get('status') != 'pending'] or [0]) + 1
         if index > int(plan['structure']['depth']):
             raise AdmissionError('已达到本任务的最大联网轮次', code='depth_reached')
-        known = {gap['id'] for round_info in rounds.values() for gap in round_info.get('gaps', [])}
+        from .research_handoff import read_state
+        gap_state = read_state(store, run_id, connection=connection, plan=plan)
+        known = set(gap_state['records']) | set(gap_state['aliases'])
         unknown = [gap for gap in target if gap not in known]
         if unknown:
             raise ValueError('下一轮引用了不存在的缺口：' + ', '.join(unknown))
@@ -414,7 +416,7 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
 
 
 def _validate_gap(store, run_id, gap):
-    if not isinstance(gap, dict) or not str(gap.get('description', '')).strip():
+    if not isinstance(gap, dict) or not isinstance(gap.get('description'), str) or not gap['description'].strip():
         raise ValueError('缺口需要说明（description）')
     allowed = set(store.source_ids(run_id))
     for source_id in gap.get('source_ids', []):
@@ -426,7 +428,7 @@ def _validate_gap(store, run_id, gap):
             raise ValueError('缺口关联的主张属于另一报告：' + str(claim_id))
 
 
-def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', job_id=None):
+def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None):
     """Close a round, assign real gap ids and freeze its outcome. Idempotent per round."""
     # Admission and mutation share the same write transaction as network reservations.
     with store.tx() as connection:
@@ -445,23 +447,43 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', job_id=
         if not info:
             raise ValueError('轮次不存在：' + str(round_id))
         if info.get('status') != 'active':
-            return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []), 'idempotent': True}
+            previous = (info.get('outcome') or {}).get('gap_updates', [])
+            if gap_updates is not None:
+                from .research_handoff import validate_updates
+                checked = validate_updates(store, run_id, gap_updates)
+                if any(item not in previous for item in checked):
+                    raise ValueError('已关闭轮次不可改写缺口状态；请在新轮次更新')
+            return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
+                    'gap_updates': previous, 'idempotent': True}
+        from .research_handoff import read_state, observe, apply_updates, save_state
+        state = read_state(store, run_id, connection=connection, plan=plan)
         records = []
         for gap in gaps or []:
             _validate_gap(store, run_id, gap)
-            records.append({**gap, 'id': uid('gap'), 'round_id': round_id, 'round_index': info['index'], 'created': now()})
+            identities = observe(state, run_id, [gap['description']])
+            records.append({**gap, 'id': identities[gap['description'].strip()], 'round_id': round_id, 'round_index': info['index'], 'created': now()})
+        if gap_updates is None:
+            handoff_path = _round_dir(store, run_id, info['index']) / 'handoff.json'
+            handoff = json.loads(handoff_path.read_text(encoding='utf-8-sig')) if handoff_path.exists() else {}
+            if not isinstance(handoff, dict):
+                raise ValueError('handoff.json 必须为对象')
+            gap_updates = handoff.get('gap_updates', [])
+        apply_updates(store, run_id, state, gap_updates, round_id=round_id, round_index=info['index'])
+        accepted_updates = [{key: value for key, value in update.items() if key not in ('id', 'round_id', 'round_index')}
+                            for update in state['updates'] if update['round_id'] == round_id]
+        save_state(connection, run_id, state)
         info['gaps'] = records
         info['status'] = 'closed'
         info['closed'] = now()
-        info['outcome'] = {'summary': summary, 'gap_ids': [record['id'] for record in records], 'closed_at': now()}
+        info['outcome'] = {'summary': summary, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now()}
         plan['current_round_id'] = None
         _save_plan(connection, run_id, plan)
     _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json',
-                {'round_id': round_id, 'index': info['index'], 'summary': summary, 'gaps': records, 'closed_at': now()})
+                {'round_id': round_id, 'index': info['index'], 'summary': summary, 'gaps': records, 'gap_updates': accepted_updates, 'closed_at': info['closed']})
     if job_id:
         store.event(job_id, 'research_round', {'action': 'finish', 'round_id': round_id,
                                                'index': info['index'], 'gap_ids': [record['id'] for record in records]})
-    return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'idempotent': False}
+    return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'gap_updates': accepted_updates, 'idempotent': False}
 
 
 def round_usage(store, run_id, round_id):
@@ -710,4 +732,5 @@ def search_slots_left(store, connection, run_id, round_id):
 
 
 def status(store, run_id):
-    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id)}
+    from .research_handoff import gap_view
+    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id), **gap_view(store, run_id)}
