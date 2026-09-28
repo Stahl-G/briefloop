@@ -461,6 +461,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/source-update-state':
                     from .source_updates import for_version
                     self.send(200,for_version(store,q['version'][0]))
+                elif u.path=='/api/completion-status':
+                    from .draft_completion import status
+                    self.send(200,status(store,q['version'][0]))
                 elif u.path=='/api/review-status':
                     from .review import review_status
                     self.send(200,review_status(store,q['version'][0]))
@@ -783,6 +786,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/review-response':
                     from .review import respond
                     result=respond(store,body['finding_id'],body['version_id'],body['action'],body['reason'])
+                elif path=='/api/continue-checks':
+                    result=worker.continue_checks(body['version_id'])
                 elif path=='/api/assess':
                     store.one('briefs',body['version_id']);payload={'version_id':body['version_id']}
                     if body.get('session_id'):payload['session_id']=body['session_id']

@@ -62,7 +62,7 @@ def summary(store, job_id):
         timeline.append({'label': f"第 {r['index']} 轮研究" + ('已收束' if done else '进行中' if running else '未收束'),
                          'detail': public_text((r.get('outcome') or {}).get('summary')),
                          'status': 'done' if done else 'active' if running else 'recorded', 'time': r.get('closed') or r.get('created')})
-    event_labels = {'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
+    event_labels = {'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',
                        'repairing_metadata': '正在修复依据关联与处理说明', 'metadata_repaired': '依据关联已修复'}
@@ -119,10 +119,14 @@ def summary(store, job_id):
     activity_times = [x for x in [p.get('last_activity'), progress_event['created'] if progress_event else None] + [r.get('updated') or r.get('created') for r in requests] if x]
     starts=store.rows("SELECT created FROM events WHERE job_id=? AND kind='job_started' ORDER BY seq DESC LIMIT 1",(job_id,))
     own_start=starts[0]['created'] if starts else None
+    if req.get('completion_mode')=='draft_first' and job['kind']=='generate':
+        if brief:stage='初稿已保存，完整核验待继续' if not running else '正在完成初稿'
+        for item in stages:
+            if item.get('id')=='evaluate':item.update(label='完整核验待继续',status='pending')
     return {'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
             'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,
-            'tier': plan.get('preset_id') or req.get('research_tier'),
+            'tier': plan.get('preset_id') or req.get('research_tier'),'completion_mode':req.get('completion_mode','standard'),
             'round': opened[-1]['index'] if opened else None,
             'sources': sources, 'source_count': len(sources), 'search_counts': search_counts,
             'search_metered': bool(budget and budget['used']['search_requests'] is not None),

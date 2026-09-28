@@ -121,6 +121,8 @@ class Requirements(Model):
     # Research tier chosen at task creation; stored on the run so pause/resume and
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
     research_tier: Literal["quick", "standard", "deep"] = "standard"
+    # Explicit lifecycle choice; the historical quick research preset is unchanged.
+    completion_mode: Literal["standard", "draft_first"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
     # Independent fact-check switch chosen at task creation; None follows the
     # workspace default, which create_run resolves to a concrete bool on the run

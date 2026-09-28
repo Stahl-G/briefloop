@@ -911,6 +911,12 @@ def run_review(store,runtime,job,version_id,folder):
             return run_review(store,runtime,job,version_id,folder/'scope-v3')
         if review['result']:
             validate_applicable_review(store,identity,version_id)
+            if (frozen.get('continuation_of') and int(frozen.get('attempt',1))>1
+                    and review['result'].get('status')=='incomplete'
+                    and folder.name!='continue-'+str(frozen['attempt'])):
+                # Accepted Review records are immutable. An explicit resume gets
+                # a new packet/result with the original incomplete review retained.
+                return run_review(store,runtime,job,version_id,folder/('continue-'+str(frozen['attempt'])))
             return accept_review(store,identity,review['result'])
     else:
         fingerprint,files=build_packet(store,version_id,folder);identity=uid('review')

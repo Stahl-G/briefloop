@@ -316,7 +316,7 @@ class Store:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
         if req.target_minutes is None:
-            req.target_minutes = self.settings()['timeout_minutes']
+            req.target_minutes = 10 if req.completion_mode=='draft_first' else self.settings()['timeout_minutes']
         if req.hard_timeout_minutes is None:
             req.hard_timeout_minutes = self.settings()['hard_timeout_minutes']
         if clone is None:

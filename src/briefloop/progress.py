@@ -42,7 +42,7 @@ def deep_round_note(store, run_id):
     return index,total
 
 
-def _pipeline(folder, workers):
+def _pipeline(folder, workers, *, draft_first=False):
     """Deterministic stage rail with each stage's sub-agents.
 
     Statuses come only from actual files and reported worker states, never from a
@@ -66,7 +66,7 @@ def _pipeline(folder, workers):
         {'id': 'research', 'label': '研究检索', 'status': 'done' if draft or (scouts and not running(scouts)) else 'active' if plan else 'pending',
          'agents': scouts},
         {'id': 'analysis', 'label': '撰写成稿', 'status': 'done' if draft else 'active' if analysts else 'pending', 'agents': analysts},
-        {'id': 'evaluate', 'label': '独立评分', 'status': 'done' if scored else 'active' if evaluators or draft else 'pending', 'agents': evaluators},
+        {'id': 'evaluate', 'label': '完整核验待继续' if draft_first else '独立评分', 'status': 'pending' if draft_first else 'done' if scored else 'active' if evaluators or draft else 'pending', 'agents': evaluators},
     ]
 
 
@@ -82,6 +82,10 @@ class ProgressTracker:
         if not isinstance(payload, dict):
             payload = {}
         self.run_id = payload.get('run_id')
+        self.draft_first = False
+        if self.run_id and context.get('kind') == 'generate':
+            run=store.one('runs',self.run_id)
+            self.draft_first=json.loads(run['requirements']).get('completion_mode')=='draft_first'
         role = context.get('runtime_role')
         self.phase = None
         if context.get('readonly_output') == 'review.json' or context.get('kind') == 'review':
@@ -175,7 +179,7 @@ class ProgressTracker:
         labels=' '.join(w.get('role','') for w in active)
         for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Evaluator · 比较','Evaluator 正在比较新旧稿件'),('Evaluator · 评分','Evaluator 正在独立评分'),('Evaluator','Evaluator 正在核对任务与来源'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能')]:
             if key in labels:stage=label
-        stages = _pipeline(self.folder,workers)
+        stages = _pipeline(self.folder,workers,draft_first=self.draft_first)
         note = deep_round_note(self.store,self.run_id)
         if note:
             # One plan-meta read per recompute; the label changes only between rounds.

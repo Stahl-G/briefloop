@@ -152,6 +152,7 @@ export function createAssessmentPanel(deps){
  function assessment(){
   const current=getCurrent();
   if(!current)return;
+  deps.renderCompletion?.();
   queueMicrotask(()=>{renderDeliveryChecks();renderReportIssues();renderFactChecks()});
   const state=getState();
   const editor=getEditor();
@@ -161,7 +162,8 @@ export function createAssessmentPanel(deps){
   assessment.signature=signature;assessment.editor=editor;
   if(!r){
    applyHighlightState({quotes:[],findings:new Map(),kinds:new Map()});
-   const pending=reviewPending(current,state.jobs);
+   const run=state.runs?.find(r=>r.id===current.run_id);
+   const pending=parse(run?.requirements||'{}').completion_mode!=='draft_first'&&reviewPending(current,state.jobs);
    $('assessment').innerHTML=pending?'<p class="muted">评分将自动进行</p><p class="help">本轮生成完成后，系统会用独立 Evaluator 自动评分，不需要手动点「重新评分」。</p>':'<p class="muted">尚未评分</p><p class="help">你可以先阅读和修改。评分针对这个版本独立运行。</p>';
    return;
   }
