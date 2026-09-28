@@ -26,7 +26,8 @@ _SCALED_UNITS = {**{name: (currency, 1) for name, currency in _CURRENCIES.items(
                      'items', 'unit', 'units', 'vehicle', 'vehicles', 'car', 'cars', '辆', '台')},
                  **{name: ('mass', 1) for name in ('kg', 'kilogram', 'kilograms', '千克', '公斤')},
                  **{name: ('mass', 1000) for name in ('t', '吨', 'tonne', 'tonnes', 'metric ton', 'metric tons')}}
-_EN_SCALE = r'thousand|millions?|billions?|trillions?'
+_EN_SCALE = r'thousands?|millions?|billions?|trillions?'
+_REVERSE_CURRENCY = r'US\$|USD|CNY|RMB|EUR|GBP'
 _ZH_SCALE = r'万亿|十亿|千万|百万|亿|万'
 _NUM = r'[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
 
@@ -75,7 +76,7 @@ def normalized(value, unit):
     scale, base = 1, raw_unit
     english = re.fullmatch(r'(' + _EN_SCALE + r') (.+)', raw_unit, re.I)
     chinese = re.fullmatch(r'(' + _ZH_SCALE + r')(.+)', raw_unit)
-    reverse = re.fullmatch(r'(usd|cny|rmb|eur|gbp) (' + _EN_SCALE + r')', raw_unit, re.I)
+    reverse = re.fullmatch(r'(' + _REVERSE_CURRENCY + r') (' + _EN_SCALE + r')', raw_unit, re.I)
     if english:
         scale, base = _SCALES[english[1].lower().rstrip('s')], english[2]
     elif chinese:
@@ -94,7 +95,7 @@ def normalized(value, unit):
 # Full numeric tokens, including sign, thousands separators and scientific form.
 # Prefix/suffix currency conflicts or compound dimensions remain unsupported.
 _UNIT = '|'.join((
-    r'(?:USD|CNY|RMB|EUR|GBP)\s+(?:' + _EN_SCALE + r')',
+    r'(?:' + _REVERSE_CURRENCY + r')\s+(?:' + _EN_SCALE + r')',
     r'(?:' + _EN_SCALE + r')\s+' + _unit_choices(_SCALED_UNITS),
     r'(?:' + _ZH_SCALE + r')' + _unit_choices(name for name in _SCALED_UNITS if not name.isascii()),
     r'个百分点|百分点|百分之|percentage points?|pp|percent|％|%',
@@ -103,7 +104,7 @@ _UNIT = '|'.join((
     _unit_choices(name for name in _SCALED_UNITS if name != '个'),
     r'个(?!百分点|月)|年|倍',
 ))
-_QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−$€£])(?P<prefix>US\$|\$|€|£|USD\s+|CNY\s+|RMB\s+|EUR\s+|GBP\s+|百分之)?'
+_QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−$€£])(?P<prefix>(?:US\$|\$|€|£)\s*|USD\s+|CNY\s+|RMB\s+|EUR\s+|GBP\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
                        r'(?P<denom>\s*[/／·⋅*×]\s*[\w%]+|每[\w%]+)?', re.I)
 
@@ -122,9 +123,14 @@ def quantities(text):
             continue
         if re.match(r'[.,]\d', text[end:]):
             continue
+        # An unknown English magnitude must not degrade to a bare currency:
+        # '1.2 US$ gazillion' is unsupported, not a checked amount of $1.2.
+        if (unit.lower() in _CURRENCIES or prefix.lower() in _CURRENCIES) and re.match(
+                r'\s*(?:thousand[A-Za-z]*|[A-Za-z]*illion[A-Za-z]*)\b', text[end:], re.I):
+            continue
         if prefix:
             currency = _CURRENCIES.get(prefix.lower(), prefix)
-            if unit.lower() in ('thousand', 'million', 'millions', 'billion', 'billions', 'trillion', 'trillions'):
+            if re.fullmatch(_EN_SCALE, unit, re.I):
                 unit += ' ' + currency
             elif not unit:
                 unit = currency

@@ -96,7 +96,7 @@ def collect(worker, job, run, folder):
     from . import research_plan, websearch
     from .sources import fetch_for_run
     from .research_budget import canonical_url
-    from .fast_reports import material_packet, MAX_MATERIAL_CHARS
+    from .fast_reports import material_packet
     store=worker.store;runtime=worker.runtime;req=json.loads(run['requirements'])
     directory=folder/'fast-web';directory.mkdir(exist_ok=True)
     completed=directory/'research.json'
@@ -193,7 +193,7 @@ def collect(worker, job, run, folder):
                     else:gaps.append('后备正文提取未成功：'+url)
     else:pages=[]
     _stop(worker)
-    ids=list(json.loads(run['source_ids']));used=sum(len(r['text']) for r in material_packet(store,ids)) if ids else 0
+    ids=list(json.loads(run['source_ids']))
     for page in pages:
         result=page.get('result') or {}
         if page['status']!='finished' or result.get('status')!='ready':
@@ -202,9 +202,9 @@ def collect(worker, job, run, folder):
         if sid in ids:continue
         try:text=store.source_text(sid)
         except (ValueError,OSError):gaps.append('网页正文快照不可读：'+result.get('name',sid));continue
-        if not text.strip() or used+len(text)>MAX_MATERIAL_CHARS:
-            gaps.append('原文未纳入写作（文本为空或超出本次10万字符范围，未截断）：'+result.get('name',sid));continue
-        ids.append(sid);used+=len(text)
+        if not text.strip():
+            gaps.append('网页正文为空，未作为写作证据：'+result.get('name',sid));continue
+        ids.append(sid)
     research_plan.finish_round(store,run['id'],summary='快速联网的一轮搜索和原文读取已结束；未声明覆盖完整或事实核验完成。',job_id=job['id'])
     result={'source_ids':ids,'gaps':gaps,'notices':notices,'questions_before_reading':selection['gaps'],'queries':plan['queries'],'candidates':candidates,
             'selection':selection,'limits':budget,'scope':'single_pass_not_fact_check'}

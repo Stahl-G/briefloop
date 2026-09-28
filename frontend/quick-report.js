@@ -26,7 +26,7 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
   if($('completion-mode-help'))$('completion-mode-help').textContent=mode==='fast_web'
    ?'一轮聚焦检索，最多 3 次搜索、读取 6 篇原文，随后直接出稿。无需先上传材料；可在搜索设置选择渠道。保存后在后台补依据和评价，不自动改写正文；十分钟是目标，非保证或截止。'
    :mode==='fast'
-   ?'已有文本材料直接出稿，保存后自动在后台补充依据和评价；可立即编辑、下载。此模式不联网补搜、不维护企业背景、不自动改写正文。材料最多 10 万字符，不保证固定时限。'
+   ?'已有文本材料直接出稿，保存后自动在后台补充依据和评价；可立即编辑、下载。此模式不联网补搜、不维护企业背景、不自动改写正文。材料较多时可能需要更久，不保证固定时限。'
    :'完整流程按所选研究深度检索、写作和检查。先交研究初稿的旧任务仍可手动继续完整检查。';
   if(fast&&$('review-capability-note'))$('review-capability-note').hidden=true;
  }

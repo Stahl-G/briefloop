@@ -39,6 +39,45 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
     assert normalized(1, 'thousand USD') == normalized(1000, 'USD')
 
 
+@pytest.mark.parametrize('token,value,unit,source,found', [
+    ('1200美元', 1.2, 'USD thousands', '1.2 USD thousands', True),
+    ('1200美元', 1.2, 'thousands USD', 'US$1.2 thousands', True),
+    ('120万美元', 1.2, 'US$ million', '1.2 US$ million', True),
+    ('1.2 US$ million', 1200, 'USD thousands', 'USD 1200 thousands', True),
+    ('1.2 US$ million', 1.2, 'USD', '$1.2', False),
+    ('120万元', 1.2, 'US$ million', '1.2 US$ million', False),
+    ('120万美元', 1.2, 'USD million', 'Revenue: US$ 1.2 million.', True),
+    ('US$ 1.2 million', 1.2, 'million USD', '$1.2 million', True),
+    ('US$ 1.2 million', 1.2, 'USD', '$1.2', False),
+])
+def test_currency_scale_aliases_keep_magnitude_and_currency(tmp_path, token, value, unit, source, found):
+    store = Store(tmp_path)
+    quote = f'本期数值：{token}。'
+    row = check_numbers(quote, [bound(store, quote, token, value, unit, source)], store)[0]
+    assert row['checked'] and row['found'] is found, row
+
+
+def test_spaced_currency_prefix_keeps_exact_token_offsets():
+    from briefloop.delivery_checks import quantities
+    cases = [('US$ 1.2 million', 1200000, 'USD'), ('$ 2 thousand', 2000, 'USD'),
+             ('€ 3 million', 3000000, 'EUR'), ('£\u00a01 million', 1000000, 'GBP'),
+             ('20%', 20, '%')]
+    for token, value, unit in cases:
+        text = '前文  ' + token + '；结束。'
+        assert list(quantities(text)) == [(text.index(token), text.index(token) + len(token),
+                                           normalized(value, unit))]
+
+
+@pytest.mark.parametrize('text', [
+    '1.2 US$ millionXYZ', '1.2 USD thousandsXYZ',
+    '1.2 US$ gazillion', '1.2 USD quadrillion', 'US$1.2 quadrillion',
+])
+def test_unknown_currency_magnitudes_never_degrade_to_bare_currency(text):
+    from briefloop.delivery_checks import quantities
+    assert list(quantities(text)) == []
+    assert normalized(1.2, 'US$ gazillion') is None
+
+
 @pytest.mark.parametrize('token,value,unit,source', [
     ('10亿欧元', 1, 'billion EUR', '1 billion EUR'),
     ('120万英镑', '1.2', 'million GBP', '£1.2 million'),

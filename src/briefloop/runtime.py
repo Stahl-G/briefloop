@@ -481,7 +481,7 @@ input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条�
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。
 四项是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误以 report_quote+source_id/locator/evidence 定位。结论为建议修改或存在重大问题时，每个需要修改的问题都写成一条 findings，摘要不能代替。
 分别评价证据、覆盖、分析与表达；内部缺口记录不抵消正文错误或任务未完成。Reviewer工具失败或关键核验未完成应明确记录，不给假分。
-对 input.assessment_checks 中每项返回 checks：id 原样保留，status 用 passed / needs_attention / not_checked / disputed，reason 说明实际比较的位置和依据，可附 report_quote。摘要和标题逐项回查正文、表格及相关原文：不能遗漏表内重要范围或把 preview、预测、最高、限定主体/期间升级为已经实现；影响/建议区分来源事实与作者推论，融资规模不能直接证明客户付费意愿，单项事件不能直接证明整个行业转向。
+对 input.assessment_checks 中每项按 scope 返回 checks：id 原样保留，status 用 passed / needs_attention / not_checked / disputed，reason 说明实际比较的位置和依据，可附 report_quote。快速稿的 fact_qualifiers 检查事实状态、日期含义与适用范围，evidence_support 检查原文是否真正支持关键结论；位置匹配不能代替语义核对，未查用 not_checked，关键核对未完成则 status=incomplete，不新增研究或写稿阶段。摘要和标题逐项回查正文、表格及相关原文：不能遗漏表内重要范围或把 preview、预测、最高、限定主体/期间升级为已经实现；影响/建议区分来源事实与作者推论，融资规模不能直接证明客户付费意愿，单项事件不能直接证明整个行业转向。
 若有 input.revision_context，先读上一版具体 findings 和原稿，再逐项对照本版及来源，检查问题所在段落、摘要/结论、相关表格是否一起修正。原问题已处理用 passed，仍有问题用 needs_attention，未核对用 not_checked，认为原发现不成立用 disputed 并给反证；不要因旧评价说错就机械改判。findings 只列本版仍存在的问题，check_ids 关联对应 checks.id，不得将上一版发现直接复制成新错误。轻微问题可与总评达到要求并存，但相连 checks 不能同时称完全通过。检查记录是本次评价范围，不等同独立审阅或全篇事实核查。
 {output_line}
 '''

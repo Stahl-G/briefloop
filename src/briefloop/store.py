@@ -587,6 +587,16 @@ class Store:
             {'id': 'summary_consistency', 'name': '摘要、标题与正文表格一致'},
             {'id': 'inference_support', 'name': '影响和建议保留来源条件'},
         ]}
+        requirements = json.loads(self.one('runs', brief['run_id'])['requirements'])
+        if requirements.get('completion_mode') in ('fast', 'fast_web'):
+            # Reuse the existing background assessment; these are explicit model
+            # checks, not evidence-location success or another generation stage.
+            context['assessment_checks'].extend([
+                {'id': 'fact_qualifiers', 'name': '关键事实的状态、时间与适用范围',
+                 'scope': '对照关键结论和原文：计划/在建/完成、可能/确定、目标/实际；事件发生日/发布日/更新日；部分/全部、适用范围、主体、期间与统计口径。'},
+                {'id': 'evidence_support', 'name': '关键结论与依据的语义支持',
+                 'scope': '正文来源标记、摘录逐字存在和数值位置匹配只是定位证据；回读原文相关上下文，判断是否支持该结论，含表头、单位与限定条件。未实际核对保留 not_checked。'},
+            ])
         parent_id = brief.get('parent_id')
         if not parent_id:
             return context

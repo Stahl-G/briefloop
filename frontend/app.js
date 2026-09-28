@@ -1801,7 +1801,7 @@ function renderWorkflowChoices(first=false){
  $('workflow-hint').textContent=workflow?`${choice.workflow_id?'已选':'本轮建议'}：${workflow.label} · ${variant?.label||''}。用于规划、写作和评价；Word 版式由报告模板决定。`:'文档方法目录暂不可用，请刷新后再选择。';
  const meeting=workflow?.id==='meeting_minutes',fast=$('completion-mode').value==='fast',fastWeb=$('completion-mode').value==='fast_web'&&!meeting;
  $('source-requirement').textContent=fast?'需要已读取的文本':meeting?'需要本次会议记录':'可选';
- $('source-input-hint').textContent=fastWeb?'可直接输入研究目标，无需先上传材料。会挑选并保存公开网页原文；你选中的已有材料也会用于写作。':fast?'添加并选择可读文本材料后直接写作，合计最多 10 万字符。扫描图片需先完成文字读取；此模式不代为检索资料。':meeting?'请添加并选择本次会议转写或笔记。只有议程时可整理框架，不能生成未发生的讨论或决议。':'可选：图片、PDF、Word、Excel、Markdown、文本、CSV。也可以直接输入目标，让 Agent 联网研究。';
+ $('source-input-hint').textContent=fastWeb?'可直接输入研究目标，无需先上传材料。会挑选并保存公开网页原文；你选中的已有材料也会用于写作。':fast?'添加并选择可读文本材料后直接写作。扫描图片需先完成文字读取；此模式不代为检索资料。':meeting?'请添加并选择本次会议转写或笔记。只有议程时可整理框架，不能生成未发生的讨论或决议。':'可选：图片、PDF、Word、Excel、Markdown、文本、CSV。也可以直接输入目标，让 Agent 联网研究。';
  $('source-web-hint').textContent=fastWeb?'快速联网最多 3 次搜索、读取 6 篇原文；受所选渠道与额度约束，失败和覆盖缺口会保留。':fast?'快速模式只使用已选材料；切回完整流程可恢复联网研究。':meeting?'会议内容来自已选转写或笔记；公开检索只能补充另行要求的背景，不能替代会中记录。':'开启后，无需先上传文件，Agent 会围绕目标查找并保存公开来源。关闭时仍可讨论问题或使用已有材料。';
 }
 function syncWorkflowProfile(changeLength=true){

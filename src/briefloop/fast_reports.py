@@ -10,9 +10,6 @@ from pathlib import Path
 
 from .store import Conflict, dump
 
-MAX_MATERIAL_CHARS = 100_000
-
-
 def material_packet(store, source_ids):
     if not source_ids:
         raise ValueError('快速模式需要已读取的研究材料；请添加材料，或选择完整流程联网研究。')
@@ -26,8 +23,6 @@ def material_packet(store, source_ids):
             raise ValueError('材料没有可读文本，请使用完整流程查看原件：' + source['name'])
         rows.append({'alias': f'S{index}', 'source_id': sid, 'name': source['name'],
                      'hash': source['hash'], 'text': text})
-        if sum(len(r['text']) for r in rows) > MAX_MATERIAL_CHARS:
-            raise ValueError('快速模式本次最多直接读取 10 万字符材料；请减少材料或选择完整流程，不会截断原文。')
     return rows
 
 
@@ -165,9 +160,13 @@ def enrich(worker, job, brief, folder):
     phase = folder / 'evidence'
     prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'
               '只返回一个 JSON 对象，包含 citations 数组及 number_bindings 数组；没有可定位依据时留空，不猜测。'
-              '每条 citation 使用 source_id（下方来源别名，如 S1）、excerpt（连续逐字原文）；无需猜行号。'
+              '每条 citation 使用 source_id（下方来源别名，如 S1）、report_quote（正文连续原句）、excerpt（连续逐字原文）。'
+              'report_quote 必须能在报告正文中逐字找到；摘录应包含对应的主体、期间、单位及限定条件，不能用同来源的无关段落充数。'
+              '无需猜行号；同一摘录在来源中重复时提供更长的唯一摘录。来源标题及相邻上下文由程序从冻结原文补入。'
               '每条 number_binding 使用 label、source_id、report_quote（正文连续原句）、number_text（正文原数值含单位）、'
               'source_excerpt（连续逐字原文）、value（来源原数值）、unit（来源单位）、entity、period。'
+              'value/unit 保留来源真实数值和量级；单位写标准表达，如 USD million、million USD、万元、%。'
+              '不要把 million 写成含糊的 M，不猜缺失的币种，不自行换算或改变来源数值。'
               '正文与来源的数值、主体、期间或单位不一致时保留真实数据供检查，不自动修正文稿。'
               '最多 30 条重要引用、30 条重要数字；多段计算不要伪造单段原文支持。'
               '\n报告正文：\n' + brief['markdown'] + '\n全部来源：\n' + _sources_text(materials))
@@ -176,6 +175,7 @@ def enrich(worker, job, brief, folder):
     data = json.loads(_response(phase))
     if not isinstance(data, dict) or not isinstance(data.get('citations'), list) or not isinstance(data.get('number_bindings'), list):
         raise ValueError('依据补全未返回预期记录，初稿保留；可恢复检查。')
+    from .evidence_context import located_context
     sources = {r['alias']: r for r in materials}
     sources.update({r['source_id']: r for r in materials})
     rejected = []
@@ -185,11 +185,8 @@ def enrich(worker, job, brief, folder):
         quote = item.get(field)
         if not source or not isinstance(quote, str) or not quote.strip() or len(quote) > 8000:
             raise ValueError('缺少有效来源与逐字摘录')
-        start = source['text'].find(quote)
-        if start < 0:
-            raise ValueError('摘录未在冻结原文中找到')
-        first = source['text'][:start].count('\n') + 1
-        return {**item, 'source_id': source['source_id'], 'locator': f'line {first}-{first + quote.count(chr(10))}'}
+        context = located_context(source['text'], quote, item.get('locator', ''))
+        return {**item, 'source_id': source['source_id'], **context, 'source_title': source['name']}
 
     citations, numbers = [], []
     for name, model, quote_field, target in [('citations', Citation, 'excerpt', citations),
@@ -197,9 +194,19 @@ def enrich(worker, job, brief, folder):
         for index, item in enumerate(data[name][:30]):
             try:
                 located = locate(item, quote_field)
-                if name == 'number_bindings' and (not item.get('report_quote') or item['report_quote'] not in brief['markdown']):
-                    raise ValueError('数字绑定没有对应的正文原句')
+                body_quote = item.get('report_quote')
+                if not isinstance(body_quote, str) or not body_quote.strip() or body_quote not in brief['markdown']:
+                    raise ValueError('依据记录没有对应的逐字正文原句')
+                if name == 'number_bindings':
+                    # Keep the number contract unchanged. Its exact excerpt
+                    # receives the same local context through a citation.
+                    citation = Citation.model_validate({key: value for key, value in {**located, 'excerpt': located['source_excerpt']}.items()
+                                                        if key in Citation.model_fields}).model_dump()
+                    for key in ('source_title', 'source_context', 'context_locator'):
+                        located.pop(key, None)
                 target.append(model.model_validate(located).model_dump())
+                if name == 'number_bindings' and citation not in citations:
+                    citations.append(citation)
             except (ValueError, AttributeError, TypeError) as exc:
                 rejected.append({'field': name, 'index': index, 'reason': str(exc)[:500]})
     details = {key:value for key,value in json.loads(brief['detail']).items() if key in BriefDraft.model_fields}

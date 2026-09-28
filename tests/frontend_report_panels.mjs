@@ -63,3 +63,16 @@ test('saved-version numeric occurrence hint stays bounded and does not imply fac
  assert.doesNotMatch(html,/<bad>/);
  assert.match(html,/不代表正文数字已全部核验/);
 });
+
+
+test('claim-bound sources appear without a preexisting inline source marker',()=>{
+ const box={dataset:{},innerHTML:''};
+ const panel=createAssessmentPanel({api:async()=>({}),action:async fn=>fn(),notice(){},$:()=>box,esc:s=>String(s),parse:s=>JSON.parse(s||'{}'),
+  getState:()=>({sources:[{id:'s2',name:'Additional source'}]}),
+  getCurrent:()=>({id:'v1',markdown:'A saved claim.',detail:JSON.stringify({citations:[{source_id:'s2',report_quote:'A saved claim.',excerpt:'Original context'}]})}),
+  getEditor:()=>null,isDirty:()=>false,bindSources(){},applyHighlightState(){},readerHighlights:()=>[],toEditor:x=>x});
+ panel.citations();
+ assert.match(box.innerHTML,/A saved claim/);
+ assert.match(box.innerHTML,/Original context/);
+ assert.match(box.innerHTML,/Additional source/);
+});

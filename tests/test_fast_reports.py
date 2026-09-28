@@ -24,8 +24,8 @@ class Writer:
         elif folder.name=='evidence':
             if self.edit:self.edit()
             (folder/'response.txt').write_text(dump({'citations':[
-                {'source_id':'S1','excerpt':'收入 120 万元，同比增长 20%'},
-                {'source_id':'S1','excerpt':'不存在的引文'}],
+                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'收入 120 万元，同比增长 20%'},
+                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'不存在的引文'}],
                 'number_bindings':[{'source_id':'S1','source_excerpt':'收入 120 万元，同比增长 20%',
                     'report_quote':'收入 120 万元，同比增长 20%。','number_text':'120 万元','value':120,'unit':'万元'}]}))
         elif folder.name=='evaluation':
@@ -83,7 +83,12 @@ def test_background_adds_located_evidence_and_scores_without_rewriting_prose(tmp
     enriched=store.one('briefs',outcome['version_id'])
     assert enriched['parent_id']==original['id'] and enriched['markdown']==original['markdown']
     details=json.loads(enriched['detail'])
-    assert details['citations']==[{'source_id':source['id'],'locator':'line 2-2','excerpt':'收入 120 万元，同比增长 20%'}]
+    assert len(details['citations'])==1
+    citation=details['citations'][0]
+    assert citation['source_id']==source['id'] and citation['locator']=='line 2'
+    assert citation['excerpt']=='收入 120 万元，同比增长 20%'
+    assert citation['report_quote']=='收入 120 万元，同比增长 20%。'
+    assert '以上为本季度实际数。' in citation['source_context']
     assert len(details['number_bindings'])==1
     assert len(details['research_notes'][-1]['rejected'])==1
     assert len(store.rows('SELECT * FROM assessments'))==1
@@ -129,10 +134,12 @@ def test_fast_admission_does_not_silently_truncate_or_start_web_research(tmp_pat
     store=Store(tmp_path);req={'title':'T','objective':'O','completion_mode':'fast','fact_check':False}
     with pytest.raises(ValueError,match='需要已读取'):store.create_run(req,[])
     big=store.add_source('Large','文'*100001)
-    with pytest.raises(ValueError,match='不会截断'):store.create_run(req,[big['id']])
+    run=store.create_run(req,[big['id']])
+    from briefloop.fast_reports import selected_packet
+    assert selected_packet(store,run['id'],[big['id']])[0]['text']=='文'*100001
     small=store.add_source('Small','公开合成材料')
     with pytest.raises(ValueError,match='联网事实核查'):store.create_run({**req,'fact_check':True},[small['id']])
-    assert not store.rows('SELECT * FROM runs')
+    assert len(store.rows('SELECT * FROM runs'))==1
     with pytest.raises(ValueError,match='连接器'):store.create_run(req,[small['id']],connector_selection_validated=True)
     store.set_meta('settings',{**store.settings(),'company_context_enabled':None,'fact_checker':True})
     run=store.create_run({**req,'writing_mode':'internal_report','fact_check':None},[small['id']])

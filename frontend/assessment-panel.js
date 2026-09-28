@@ -4,6 +4,7 @@ import {reviewPending as reviewPendingDefault,factCheckHTML as factCheckHTMLDefa
 import {createFactCheckGrants} from './fact-check-grants.js';
 import {officeIssueLine} from './office-tools.js';
 import {createAssessmentChecks} from './assessment-checks.js';
+import {createCitationEvidence} from './citation-evidence.js';
 import {reviewModeLabel} from './review-controls.js';
 
 const RELATION_LABELS={compatible:'可合并',different_scope:'口径不同',temporal_sequence:'时间演进',correction:'明确更正',supersession:'替代',republication:'转载',attributed_difference:'归属分歧',contradiction:'实质矛盾',unknown:'无法判断'};
@@ -18,6 +19,7 @@ export function createAssessmentPanel(deps){
  const factCheckHTML=deps.factCheckHTML||factCheckHTMLDefault;
  const factGrants=deps.factGrants||createFactCheckGrants({api});
  const assessmentChecks=createAssessmentChecks({esc});
+ const citationEvidence=createCitationEvidence({esc});
  let showSuggestionMarks=false;
 
  async function renderDeliveryChecks(){
@@ -36,6 +38,7 @@ export function createAssessmentPanel(deps){
   parts.push(c.broken_refs.length?`<span class="tag error">断链引用 ${c.broken_refs.length} 处：${c.broken_refs.map(esc).join('、')}</span>`:'<span class="tag">正文引用可定位；支持关系仍需评价</span>');
   const n=c.numbers;
   parts.push(`<span class="tag">${n.status==='not_checked'?'未做数值核对':n.status==='partial'?'部分绑定已检查':'已检查提交的绑定'}：提交 ${n.total} 项，已检查 ${n.checked} 项，匹配 ${n.matched} 项</span>`);
+  if(n.total)parts.push(`<span class="tag">已提交绑定可核对 ${n.checked}/${n.total}（${Math.round(n.checked/n.total*100)}%）；不是全稿正确率</span>`);
   if(n.unmatched.length)parts.push(`<span class="tag error">绑定数值不一致 ${n.unmatched.length} 项：${n.unmatched.map(r=>esc(r.label||r.expected)).join('、')}</span>`);
   if(n.skipped.length)parts.push(`<span class="tag">未检查 ${n.skipped.length} 项：${n.skipped.map(r=>esc((r.label||'未命名')+'：'+r.reason)).join('；')}</span>`);
   const occurrences=n.occurrence_review;
@@ -183,8 +186,9 @@ export function createAssessmentPanel(deps){
   const current=getCurrent();if(!current)return;
   const state=getState();
   const detail=parse(current.detail),derived=new Set((detail.content_citations||[]).map(r=>r.source_id));
-  const refs=(detail.citations||[]).filter(r=>derived.has(r.source_id)||deps.toEditor(current.markdown).includes('#source-'+r.source_id));
-  $('citations').innerHTML=refs.length?'引用来源 '+refs.map(r=>`<button data-source="${esc(r.source_id)}">${esc(state.sources.find(s=>s.id=== r.source_id)?.name||r.source_id)} · ${esc(r.locator)}</button>`).join(''):'尚无引用记录';
+  const refs=(detail.citations||[]).filter(r=>(r.report_quote&&r.excerpt&&current.markdown.includes(r.report_quote))||derived.has(r.source_id)||deps.toEditor(current.markdown).includes('#source-'+r.source_id));
+  beginPanel($('citations'),current.id);
+  updatePanel($('citations'),citationEvidence.render(refs,state.sources,current.markdown));
   bindSources();
  }
 
