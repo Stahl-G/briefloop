@@ -2469,7 +2469,7 @@ if(window.briefloopDesktop?.onPrepareClose){
 const appUpdates=appUpdatesUI({api,notice});
 appUpdates.init();
 
-activity=activityCenter({api,getState:()=>state,page,openBrief,showSettings,settingsView});
+activity=activityCenter({api,getState:()=>state,page,openBrief,showSettings,settingsView,selectChat});
 
 async function showSearchActivity(runId){
  const dialog=$('search-activity-dialog');dialog.showModal();$('search-activity-body').textContent='正在读取…';

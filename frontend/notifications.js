@@ -1,7 +1,7 @@
 import {$,esc} from './dom.js';
 import {moment} from './time.js';
 // Unread state lives in the workspace, not the browser's transient UI state.
-export function activityCenter({api,getState,page,openBrief,showSettings,settingsView}){
+export function activityCenter({api,getState,page,openBrief,showSettings,settingsView,selectChat}){
  let signature='';
  const categoryNames={reports:'报告',templates:'模板',learning:'Wiki',updates:'版本'};
  const nav={reports:'[data-page="reports"]',templates:'[data-page="templates"]',learning:'[data-page="learning"]',updates:'#settings-open'};
@@ -13,6 +13,10 @@ export function activityCenter({api,getState,page,openBrief,showSettings,setting
  }
  async function open(item){
   const state=getState();
+  if(item.target?.request_id&&item.target?.session_id&&selectChat){
+   await selectChat(item.target.session_id);
+   $('notifications-dialog').close();await read(null,item.seq);return;
+  }
   if(item.category==='reports'){
    const target=item.target||{};
    const brief=state.briefs.find(b=>b.id===target.version_id)||state.briefs.find(b=>target.run_id&&b.run_id===target.run_id)||(target.version_id?{id:target.version_id}:null);

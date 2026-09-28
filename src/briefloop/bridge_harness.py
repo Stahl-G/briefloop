@@ -82,6 +82,15 @@ class BridgeHarness(OpencodeHarness):
                 if projected[field] is None:projected[field]=older[field]
         return projected
 
+    def _permission_job(self,sid):
+        """A live, visible task has a UI route for its own permission requests."""
+        from .task_labels import REPORTED
+        rows=self.store.rows("SELECT j.id,j.kind FROM chat_events e JOIN jobs j "
+            "ON j.id=json_extract(e.data,'$.jobId') WHERE e.session_id=? "
+            "AND e.kind='job/attached' AND j.status IN ('queued','running') "
+            "ORDER BY e.seq DESC LIMIT 1",(sid,))
+        return rows[0]['id'] if rows and rows[0]['kind'] in REPORTED else None
+
     def _config(self,runtime):
         value={'permission':'runtime-native','model':'default','backend':self.backend,**(runtime or {})}
         if value['backend']!=self.backend:raise ValueError('请新建会话切换执行引擎')
@@ -237,10 +246,10 @@ class BridgeHarness(OpencodeHarness):
                         from .execution_records import journal_tool
                         journal_tool(self.chat,sid,mid,key,tool.get('name','tool'),tool.get('input',{}),tool.get('output',''),status=tool['status'],native_session=self.chat.session(sid).get('thread_id'))
                 elif kind=='question':
-                    if internal:
-                        # Background runs have no user attached; parking on a host
-                        # permission request would hold the job until its timeout
-                        # (#724). Reject deterministically and fail the turn fast.
+                    permission_job=self._permission_job(sid) if internal else None
+                    if internal and not permission_job:
+                        # Only orphan internal calls lack an answer route. Bound
+                        # jobs expose requests through the task conversation.
                         options=event.get('options',[])
                         reject=next((o for o in options if str(o.get('kind','')).startswith('reject')),None)
                         answer={'execution_id':execution,'request_id':event['request_id']}
@@ -250,14 +259,17 @@ class BridgeHarness(OpencodeHarness):
                         try:self.bridge.call('cancel',{'execution_id':execution})
                         except Exception:pass
                         self.chat.event(sid,'runtime/question',{'auto':'rejected','title':sanitize(event.get('title','宿主请求权限'))})
-                        raise RuntimeError('后台任务没有用户可回答宿主授权请求，已自动拒绝并终止本轮：'
+                        raise RuntimeError('后台调用未绑定可处理授权的任务，已拒绝并终止本轮：'
                                            +sanitize(event.get('title','宿主请求权限')))
                     options=event.get('options',[])
                     rid=self.chat.add_request(sid,{'execution_id':execution,'request_id':event['request_id']},
                         {'questions':[{'id':'permission','question':event.get('title','CLI 请求权限'),
                           'options':[{'label':o.get('name') or o.get('optionId'),'description':o.get('kind','')} for o in options]}],
                          'native_options':options})
-                    self.chat.event(sid,'runtime/question',{'requestId':rid})
+                    self.chat.event(sid,'runtime/question',{'requestId':rid,**({'jobId':permission_job} if permission_job else {})})
+                    if permission_job:
+                        from .notifications import permission_requested
+                        permission_requested(self.store,permission_job,sid,rid)
                 elif kind=='performance':
                     self.chat.event(sid,'runtime/configuration',sanitize(event))
                 elif kind=='usage':
@@ -279,7 +291,10 @@ class BridgeHarness(OpencodeHarness):
                         if message.get('turn_id')==mid and message['status'] in ('sending','delivered','streaming'):
                             self.chat.patch_message(message['id'],status=status)
                     for request in self.snapshot(sid)['requests']:
-                        if request['status']=='pending':self.chat.request_status(request['id'],'expired')
+                        if request['status']=='pending':
+                            self.chat.request_status(request['id'],'expired')
+                            from .notifications import permission_resolved
+                            permission_resolved(self.store,request['id'])
                     self.chat.update(sid,turn_id=None,status='idle' if status=='completed' else status)
                     self.chat.event(sid,'turn/'+status,{'turnId':mid,'status':status})
                     if status=='completed':self._schedule(sid)
@@ -297,7 +312,10 @@ class BridgeHarness(OpencodeHarness):
         if len(matches)!=1:raise ValueError('请选择明确的宿主权限选项')
         option=matches[0]
         result=self.bridge.call('answer',{**request['rpc_id'],'option_id':option['optionId']})
-        self.chat.request_status(request_id,'answered');return result
+        self.chat.request_status(request_id,'answered')
+        from .notifications import permission_resolved
+        permission_resolved(self.store,request_id)
+        return result
 
     def cancel(self,session_id):
         with self._lock:
