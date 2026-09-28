@@ -293,7 +293,7 @@ def test_workspace_tool_inspects_and_enqueues_real_store(tmp_path,monkeypatch,ca
     assert json.loads(job['payload'])['run_id']==result['run_id']
     assert not store.rows('SELECT id FROM briefs')
     instructions=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'})
-    assert 'workspace-action' in instructions and str(store.root) in instructions
+    assert 'workspace-action' in instructions and store.root.as_posix() in instructions
     assert '避免递归入队' in chat_instructions(store,{},internal=True)
 
 def test_session_lifecycle_keeps_reports_and_never_replays(tmp_path):

@@ -72,6 +72,41 @@ def test_unknown_child_does_not_claim_results_returned(tmp_path):
     assert row['agents'][0]['status'] == 'unknown'
 
 
+def test_child_turn_receipts_drive_progress_without_inventing_activity_liveness(tmp_path):
+    store = Store(tmp_path / 'workspace')
+    job = store.enqueue('generate', {})
+    folder = store.root / 'jobs' / job['id']; folder.mkdir(parents=True)
+    (folder / 'plan.json').write_text('{}')
+    log = folder / 'events.jsonl'
+    tracker = ProgressTracker(store, job['id'], folder)
+    def emit(event):
+        with log.open('a', encoding='utf-8') as out:out.write(json.dumps(event) + '\n')
+        tracker.update()
+        raw = store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1", (job['id'],))[0]['data']
+        assert 'PRIVATE' not in raw
+        return json.loads(raw)
+    activity = {'type': 'subagent_activity', 'agentThreadId': 'child', 'kind': 'started',
+                'agentPath': 'PRIVATE PATH', 'prompt': 'PRIVATE PROMPT'}
+    row = emit({'type': 'item.started', 'item': activity})
+    assert row['agents'][0]['status'] == 'unknown'
+    row = emit({'type': 'child.turn.started', 'data': {'threadId': 'child', 'status': 'inProgress'}})
+    assert row['agents'][0]['status'] == 'running' and row['stage'] == '子任务正在执行'
+    row = emit({'type': 'item.completed', 'item': {**activity, 'kind': 'completed'}})
+    assert row['agents'][0]['status'] == 'running'
+    row = emit({'type': 'child.thread.started', 'data': {'threadId': 'child', 'agentRole': 'scout'}})
+    assert row['agents'][0]['role'] == 'Scout' and row['stage'] == 'Scout 正在读取与核对来源'
+    row = emit({'type': 'child.turn.completed', 'data': {'threadId': 'child', 'status': 'completed'}})
+    assert row['agents'][0]['status'] == 'completed'
+    assert row['stage'] == '子任务本轮已结束，正在整理与交接' and not row['draft_ready']
+    row = emit({'type': 'item.started', 'item': {**activity, 'kind': 'interacted'}})
+    assert row['agents'][0]['status'] == 'completed'
+    emit({'type': 'child.turn.started', 'data': {'threadId': 'child'}})
+    row = emit({'type': 'child.turn.completed', 'data': {'threadId': 'child', 'status': 'interrupted'}})
+    assert row['agents'][0]['status'] == 'interrupted'
+    assert row['stage'] == '子任务本轮已结束，正在整理与交接'
+    assert next(s['status'] for s in row['stages'] if s['id'] == 'research') == 'active'
+
+
 @pytest.mark.parametrize('event', [
     {'type':'error','data':{'message':'Reconnecting... waiting for network; Authorization: Bearer secret-test-key'}},
     {'type':'error','message':'Retrying request https://secret-test-key@example.test'},
