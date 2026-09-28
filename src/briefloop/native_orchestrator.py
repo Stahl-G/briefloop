@@ -93,7 +93,13 @@ def action(store, config, args):
             if saved:
                 if saved['fingerprint'] != fingerprint:
                     raise ToolError('本回合已提交报告，请等待该任务；新报告需新一条用户消息')
-                result = saved['result']
+                result = dict(saved['result'])
+                # An older admission receipt may lack fields that its frozen
+                # run already contains. Enrich the response, not the old record.
+                frozen_req = json.loads(view.one('runs', result['run_id'])['requirements'])
+                result['accepted_requirements'] = {**result.get('accepted_requirements', {}),
+                    'length_mode': frozen_req.get('length_mode', 'soft'),
+                    'length_requirement': frozen_req.get('length_requirement')}
             else:
                 from .models import Settings, Requirements, runtime_fields
                 settings = Settings.model_validate({**view.settings(), **request['runtime']})
