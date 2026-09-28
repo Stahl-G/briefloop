@@ -180,17 +180,29 @@ def test_chat_permissions_frozen_runtime_and_submit_replay(tmp_path):
     req['request']['requirements']['allow_web']=True
     assert not run_tool(store,config,'workspace_action',req)['ok']
     req['request']['requirements']['allow_web']=False
-    h.chat.message(sid, '原始请求：10分钟目标，12次搜索，保留四个问题', mid='m1')
+    h.chat.message(sid, '原始请求：10分钟目标，12次搜索，保留四个问题，不得超过100字', mid='m1')
     req['request']['requirements'].update(target_minutes=10, hard_timeout_minutes=0,
-        research_budget={'search_requests':12,'candidate_urls':60,'source_pages':20}, key_questions=['问题一'])
+        research_budget={'search_requests':12,'candidate_urls':60,'source_pages':20}, key_questions=['问题一'],
+        target_words=80, max_words=100, length_mode='strict',
+        length_requirement={'kind':'user_quote','text':'不得超过100字'})
     first=run_tool(store,config,'workspace_action',req)
     assert first['ok'],first
     admitted=json.loads(first['content'][0]['text'])
     assert admitted['accepted_requirements']['target_minutes']==10
     assert admitted['accepted_requirements']['research_budget']['search_requests']==12
     assert admitted['accepted_requirements']['key_questions']==['问题一']
+    assert admitted['accepted_requirements']['length_mode']=='strict'
+    assert admitted['accepted_requirements']['length_requirement']=={'kind':'user_quote','text':'不得超过100字'}
     assert json.loads(store.one('runs',admitted['run_id'])['requirements'])['raw_input'].startswith('原始请求')
     assert json.loads(run_tool(store,config,'workspace_action',req)['content'][0]['text'])==json.loads(first['content'][0]['text'])
+    key = 'native_submit:' + sid + ':m1'
+    legacy_receipt = store.meta(key)
+    legacy_receipt['result']['accepted_requirements'].pop('length_mode')
+    legacy_receipt['result']['accepted_requirements'].pop('length_requirement')
+    store.set_meta(key, legacy_receipt)
+    replay = json.loads(run_tool(store,config,'workspace_action',req)['content'][0]['text'])
+    assert replay == admitted
+    assert store.meta(key) == legacy_receipt, 'response enrichment must preserve the original saved receipt'
     assert len(store.rows('SELECT * FROM jobs'))==1
     payload=json.loads(store.rows('SELECT * FROM jobs')[0]['payload'])
     assert payload['agent_backend']=='briefloop-native' and payload['runtime']['model']=='fixture/model'

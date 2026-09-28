@@ -160,13 +160,13 @@ def _word_document(data, notes):
         num = next((pr.find(qn('w:numPr')) for pr in properties
                     if pr is not None and pr.find(qn('w:numPr')) is not None), None)
         if num is None:
-            return None
+            return None, None
         identifier = num.find(qn('w:numId'))
         if identifier is None:
             raise ValueError('Word 列表缺少编号定义')
         identifier = identifier.get(qn('w:val'))
         if identifier == '0':
-            return None
+            return None, None
         numbering = doc.part.numbering_part.element
         level = num.find(qn('w:ilvl'))
         level = int(level.get(qn('w:val'))) if level is not None else 0
@@ -185,10 +185,13 @@ def _word_document(data, notes):
             definition = override.find(qn('w:lvl'))
         if definition is None:
             raise ValueError('Word 列表层级定义缺失')
+        level_break = definition.find(qn('w:pPr') + '/' + qn('w:pageBreakBefore'))
+        level_break = (level_break.get(qn('w:val'), 'true').lower() not in ('0', 'false', 'off')
+                       if level_break is not None else None)
         fmt = definition.find(qn('w:numFmt'))
         fmt = fmt.get(qn('w:val')) if fmt is not None else ''
         if fmt == 'bullet':
-            return '• '
+            return '• ', level_break
         if fmt != 'decimal':
             raise ValueError('Word 列表含非十进制编号，当前不能可靠转换')
         marker = definition.find(qn('w:lvlText'))
@@ -201,10 +204,24 @@ def _word_document(data, notes):
         value = counters.get(identifier, int(start.get(qn('w:val'))) if start is not None else 1)
         counters[identifier] = value + 1
         notes.append('编号列表的序号保留为正文文字，以避免 Word 自动重新编号。')
-        return marker.replace('%1', str(value)) + ' '
+        return marker.replace('%1', str(value)) + ' ', level_break
 
     def paragraph(element):
         p = Paragraph(element, doc)
+        formats = [p.paragraph_format, *(style.paragraph_format for style in style_chain(p))]
+        page_break = next((fmt.page_break_before for fmt in formats if fmt.page_break_before is not None), None)
+        prefix, level_break = list_prefix(p)
+        # Keep explicit False: paragraph/style overrides numbering, which in
+        # turn overrides document defaults. Only reject an effective boundary.
+        if page_break is None:
+            page_break = level_break
+        if page_break is None:
+            default_break = doc.styles.element.find('/'.join(qn(name) for name in
+                ('w:docDefaults', 'w:pPrDefault', 'w:pPr', 'w:pageBreakBefore')))
+            if default_break is not None:
+                page_break = default_break.get(qn('w:val'), 'true').lower() not in ('0', 'false', 'off')
+        if page_break:
+            raise ValueError('Word 段落含段前分页设置，当前不能可靠转换')
         attrs = {}
         kind = 'paragraph'
         for style in style_chain(p):
@@ -217,7 +234,6 @@ def _word_document(data, notes):
         if alignment:
             attrs['textAlign'] = alignment
         content = []
-        prefix = list_prefix(p)
         if prefix:
             content.append(_text(prefix))
         allowed = {qn('w:pPr'), qn('w:bookmarkStart'), qn('w:bookmarkEnd'), qn('w:proofErr')}
@@ -396,7 +412,7 @@ def convert_request(store, name, data, template_id, request_id):
     from .external_requests import _RequestStore
     from .store import Conflict, dump
     if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', request_id):
-        raise ValueError('转换请求需要稳定的 request_id，请重新选择原稿')
+        raise ValueError('转换请求信息不完整，请刷新页面后重新选择原稿')
     fingerprint = hashlib.sha256(dump({'name': Path(name).name, 'template_id': template_id,
                                        'content': hashlib.sha256(data).hexdigest()}).encode()).hexdigest()
     key = 'template_convert:' + request_id
