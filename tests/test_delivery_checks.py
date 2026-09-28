@@ -89,6 +89,7 @@ def test_unknown_currency_magnitudes_never_degrade_to_bare_currency(text):
     ('1000 MWh', 1, 'GWh', '1 GWh'),
     ('1000千瓦时', 1, '兆瓦时', '1兆瓦时'),
     ('10,000 vehicles', 1, '万辆', '1万辆'),
+    ('120 件', 120, '件', 'Cedar 第二季度处理 120 件'),
 ])
 def test_registered_units_keep_source_and_exact_body_binding(tmp_path, token, value, unit, source):
     store = Store(tmp_path)
