@@ -132,7 +132,7 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
     assert_no_research(store)
 
 
-@pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'control', 'field', 'tracked', 'footnote', 'header',
+@pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
                                 'inherited_superscript', 'inherited_hidden', 'wrapped_table_row'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
@@ -140,6 +140,8 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name, data = 'source.txt', b'Cannot render this: \x00'
     elif case == 'markdown_footnote':
         name, data = 'source.md', '正文[^1]\n\n[^1]: 不能丢失'.encode()
+    elif case == 'nested_list':
+        name, data = 'source.md', '1. 一级事项\n   1. 从属于一级事项的内容\n'.encode()
     elif case in ('html', 'image'):
         name = 'source.md'
         data = ('正文\n\n<div>不可丢失</div>' if case == 'html' else '正文\n\n![不可丢失](photo.png)').encode()

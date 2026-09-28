@@ -55,7 +55,14 @@ def _markdown_document(text, notes):
     tokens = MarkdownIt('commonmark').enable(['table', 'strikethrough']).parse(text, environment)
     if any(label.startswith('^') for label in environment.get('references', {})):
         raise ValueError('Markdown 脚注暂不支持转换')
+    list_depth = 0
     for token in tokens:
+        if token.type in ('ordered_list_open', 'bullet_list_open'):
+            if list_depth:
+                raise ValueError('Markdown 多级列表暂不支持转换，请先整理为单级列表')
+            list_depth += 1
+        elif token.type in ('ordered_list_close', 'bullet_list_close'):
+            list_depth -= 1
         for child in [token, *(token.children or [])]:
             if child.type in ('html_block', 'html_inline'):
                 raise ValueError('Markdown 含原始 HTML，当前不能可靠转换')
