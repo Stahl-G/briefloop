@@ -45,7 +45,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
    +(flow.busy?'<p class="help">关闭面板不会停止已提交的制作任务；再次点击同一模板的套用入口可查看进度。</p>':'');
   $('template-output-close').onclick=close;
   if($('template-output-file'))$('template-output-file').onchange=event=>{
-   flow.file=event.target.files?.[0]||null;flow.version=null;flow.error='';flow.message='';
+   flow.file=event.target.files?.[0]||null;flow.requestId=crypto.randomUUID();flow.version=null;flow.error='';flow.message='';
    if(flow.file&&!/\.(docx|md|markdown|txt)$/i.test(flow.file.name)){flow.file=null;flow.error='请选择 DOCX、Markdown 或 TXT 原稿。'}render(flow);
   };
   if($('template-output-change-file'))$('template-output-change-file').onclick=()=>$('template-output-file').click();
@@ -67,7 +67,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
    finally{if(visible(flow))button.disabled=false}
   };
   if($('template-output-again'))$('template-output-again').onclick=()=>{
-   clearTimeout(flow.timer);clearHistory(flow);flow.job=null;flow.version=null;flow.file=null;flow.pollError=false;flow.error='';flow.message='';flow.notes=[];render(flow);if(flow.mode==='report')fetchReports(flow);
+   clearTimeout(flow.timer);clearHistory(flow);flow.job=null;flow.version=null;flow.file=null;flow.requestId=null;flow.pollError=false;flow.error='';flow.message='';flow.notes=[];render(flow);if(flow.mode==='report')fetchReports(flow);
   };
   if(focusId)(focusId==='template-output-file'&&flow.file?$('template-output-change-file'):$(focusId))?.focus?.();
  }
@@ -135,7 +135,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
   flow.busy=true;flow.error='';flow.message='正在准备原稿…';render(flow);
   try{
    if(flow.mode==='upload'&&!flow.version){
-    const payload=await uploadPayload(flow.file,getUploadLimits(),{template_id:flow.template.id,workspace_id:flow.workspace});
+    const payload=await uploadPayload(flow.file,getUploadLimits(),{template_id:flow.template.id,workspace_id:flow.workspace,request_id:flow.requestId});
     if(!isCurrent(flow))return;
     const result=await api('template-convert',payload);
     if(!isCurrent(flow))return;
@@ -161,7 +161,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
   mode=mode==='report'?'report':'upload';ensureDialog();
   const key=JSON.stringify([state.workspace_id,templateId,mode]);
   let flow=flows.get(key);
-  if(!flow){flow={epoch,workspace:state.workspace_id,template,mode,file:null,items:[],query:'',cursor:'',selectedId:'',reportId:'',versions:[],historyTicket:0,historyCursor:'',historyLoading:false,historyError:'',listTicket:0,loading:false,listError:'',busy:false,pollError:false,job:null,version:null,notes:[],message:'',error:''};flows.set(key,flow)}
+  if(!flow){flow={epoch,workspace:state.workspace_id,template,mode,file:null,requestId:null,items:[],query:'',cursor:'',selectedId:'',reportId:'',versions:[],historyTicket:0,historyCursor:'',historyLoading:false,historyError:'',listTicket:0,loading:false,listError:'',busy:false,pollError:false,job:null,version:null,notes:[],message:'',error:''};flows.set(key,flow)}
   active=flow;if(!dialog.open)dialog.showModal();render(flow);
   ($('template-output-download')||$('template-output-change-file')||$(mode==='upload'?'template-output-file':'template-output-search'))?.focus?.();
   if(mode==='report'&&!flow.job&&!flow.loading)fetchReports(flow);

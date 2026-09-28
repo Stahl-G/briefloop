@@ -43,13 +43,20 @@ def test_template_conversion_http_produces_downloadable_word_without_rewriting(t
         template = server.store.rows("SELECT id FROM templates WHERE name='商业报告·极简蓝'")[0]['id']
         text = '# 原稿标题\n\n这一段必须保留：收入 12，成本 8。\n\n| 指标 | 数值 |\n| --- | --- |\n| 收入 | 12 |\n'
         body = {'name': '合成原稿.md', 'data': base64.b64encode(text.encode()).decode(),
-                'template_id': template, 'workspace_id': workspace}
+                'template_id': template, 'workspace_id': workspace, 'request_id': 'conversion-1'}
         status, _, data = request('template-convert', {**body, 'workspace_id': 'different-workspace'})
         assert status == 400 and '工作区已切换' in data.decode()
         assert server.store.rows('SELECT id FROM briefs') == []
         status, _, data = request('template-convert', body)
         assert status == 200, data.decode()
+        accepted = json.loads(data)
+        status, _, data = request('template-convert', body)
+        assert status == 200, data.decode()
         converted = json.loads(data)
+        assert converted['version']['id'] == accepted['version']['id']
+        assert converted['job']['id'] == accepted['job']['id']
+        assert len(server.store.rows('SELECT id FROM sources')) == 1
+        assert len(server.store.rows('SELECT id FROM briefs')) == 1
         version, job = converted['version'], converted['job']
         assert version['author'] == 'user'
         deadline = time.monotonic() + 15

@@ -34,7 +34,7 @@ async function chooseReport(f,id,versions=[brief(id)]){
 test('file conversion binds original upload and ready template, then offers explicit result actions',async t=>{
  const f=fixture(t);assert.equal(f.ui.open('pending'),false);assert.equal(f.requests.length,0);
  f.ui.open('style');chooseFile(f,'原稿.docx');assert.match(f.html(),/template-output-field" hidden/);assert.match(f.html(),/更换文件/);const submit=f.$('template-output-submit').onclick();await tick();
- assert.deepEqual(f.uploads[0].extra,{template_id:'style',workspace_id:'workspace-A'});
+ assert.equal(f.uploads[0].extra.template_id,'style');assert.equal(f.uploads[0].extra.workspace_id,'workspace-A');assert.match(f.uploads[0].extra.request_id,/^[a-f0-9-]+$/);
  assert.equal(f.requests[0].path,'template-convert');assert.equal(f.requests[0].body.data,'original-bytes');
  const version=brief('converted');f.requests[0].resolve({version,job:{id:'word-1',status:'complete'},notes:['原稿已保存']});await submit;await tick();
  assert.deepEqual(f.opened,[],'completion never changes the visible report');assert.equal(f.refreshes,1);
@@ -136,4 +136,14 @@ test('terminal export failure allows a new original without losing the prior sav
  const second=f.$('template-output-submit').onclick();await tick();assert.equal(f.requests[1].path,'template-convert');assert.equal(f.requests[1].body.name,'replacement.md');
  f.requests[1].resolve({version:brief('replacement'),job:{id:'replacement-word',status:'complete'}});await second;
  assert.equal(f.requests.length,2,'no delete, retry or unrelated mutation of the failed conversion');
+});
+
+
+test('a lost conversion response retries with the same request identity',async t=>{
+ const f=fixture(t);f.ui.open('style');chooseFile(f);const first=f.$('template-output-submit').onclick();await tick();
+ const id=f.requests[0].body.request_id;assert.ok(id);f.requests[0].reject(Error('响应丢失'));await first;
+ const retry=f.$('template-output-submit').onclick();await tick();assert.equal(f.requests[1].body.request_id,id);
+ f.requests[1].resolve({version:brief('only-version'),job:{id:'only-job',status:'complete'}});await retry;
+ f.$('template-output-again').onclick();chooseFile(f);const another=f.$('template-output-submit').onclick();await tick();assert.notEqual(f.requests[2].body.request_id,id);
+ f.requests[2].resolve({version:brief('new-intent'),job:{id:'new-job',status:'complete'}});await another;
 });

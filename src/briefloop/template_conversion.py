@@ -6,6 +6,7 @@ to the uploaded document and must not become citations or learning feedback.
 from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
+import hashlib
 import json
 import re
 from urllib.parse import urlsplit
@@ -22,6 +23,7 @@ class ConversionError(ValueError):
     """An unsupported original remains downloadable as an ordinary source."""
     def __init__(self, message, source_id):
         self.source_id = source_id
+        self.reason = message
         super().__init__(f'{message}；原件已保留（{source_id}），未生成转换稿')
 
 
@@ -128,7 +130,9 @@ def _word_document(data, notes):
         if not rel.is_external and rel.reltype.rsplit('/', 1)[-1] in ('header', 'footer'):
             part = rel.target_part.element
             if any((e.text or '').strip() for e in part.iter(qn('w:t'))) or any(
-                    e.tag.rsplit('}', 1)[-1] in unsupported for e in part.iter()):
+                    e.tag.rsplit('}', 1)[-1] in unsupported or
+                    e.tag.startswith('{http://schemas.openxmlformats.org/officeDocument/2006/math}')
+                    for e in part.iter()):
                 raise ValueError('Word 页眉或页脚含内容，当前不能自动替换为模板')
 
     counters = {}
@@ -381,3 +385,46 @@ def convert_file(store, name, data, template_id):
     job = enqueue_export(store, version['id'], template_override=template_id)
     store.event(job['id'], 'template_file_imported', {'source_id': source['id'], 'version_id': version['id'], 'template_id': template_id})
     return {'version': version, 'job': job, 'notes': notes, 'source_id': source['id']}
+
+
+def convert_request(store, name, data, template_id, request_id):
+    """Persist import admission and its replay receipt in one transaction.
+
+    This path calls only deterministic local operations, with no chat owner or
+    model task. Rejected conversions commit the original and rejection receipt.
+    """
+    from .external_requests import _RequestStore
+    from .store import Conflict, dump
+    if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', request_id):
+        raise ValueError('转换请求需要稳定的 request_id，请重新选择原稿')
+    fingerprint = hashlib.sha256(dump({'name': Path(name).name, 'template_id': template_id,
+                                       'content': hashlib.sha256(data).hexdigest()}).encode()).hexdigest()
+    key = 'template_convert:' + request_id
+    error = None
+    with store.tx() as connection:
+        view = _RequestStore(store, connection)
+        receipt = view.meta(key)
+        if receipt:
+            if receipt['fingerprint'] != fingerprint:
+                raise Conflict('同一个转换请求不能更换原稿或模板，请重新选择')
+            if receipt.get('error'):
+                error = ConversionError(receipt['error'], receipt['source_id'])
+            else:
+                result = {'version': view.one('briefs', receipt['version_id']),
+                          'job': view.one('jobs', receipt['job_id']),
+                          'source_id': receipt['source_id'], 'notes': receipt['notes']}
+        else:
+            try:
+                result = convert_file(view, name, data, template_id)
+            except ConversionError as exc:
+                error = exc
+                receipt = {'error': exc.reason, 'source_id': exc.source_id}
+            else:
+                receipt = {'version_id': result['version']['id'], 'job_id': result['job']['id'],
+                           'source_id': result['source_id'], 'notes': result['notes']}
+            view.set_meta(key, {**receipt, 'fingerprint': fingerprint})
+    if view.jobs_admitted:
+        store.wake_jobs()
+    if error:
+        raise error
+    return result

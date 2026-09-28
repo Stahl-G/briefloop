@@ -163,7 +163,7 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
 
 @pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
                                 'inherited_superscript', 'inherited_hidden', 'wrapped_table_row', 'page_break', 'column_break',
-                                'horizontal_merge', 'multiblock_list', 'section_break'])
+                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
     if case == 'control':
@@ -181,7 +181,14 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name = 'source.docx'
         doc = Document()
         p = doc.add_paragraph('可读取正文')
-        if case == 'section_break':
+        if case in ('header_math', 'footer_math'):
+            target = doc.sections[0].header if case == 'header_math' else doc.sections[0].footer
+            math = OxmlElement('m:oMath')
+            run = OxmlElement('m:r')
+            text = OxmlElement('m:t')
+            text.text = 'x = 12'
+            run.append(text); math.append(run); target.paragraphs[0]._p.append(math)
+        elif case == 'section_break':
             from docx.enum.section import WD_SECTION
             doc.add_section(WD_SECTION.NEW_PAGE)
             doc.add_paragraph('新节正文')
@@ -236,3 +243,34 @@ def test_unready_template_rejected_before_storing_upload(workspace):
         convert_file(store, 'original.txt', b'Preserve this.', template_id)
     assert store.rows('SELECT * FROM sources') == []
     assert list((store.root / 'sources').glob('*.original.*')) == []
+
+
+def test_concurrent_conversion_replays_one_saved_report_and_rejects_key_reuse(workspace):
+    from concurrent.futures import ThreadPoolExecutor
+    from briefloop.store import Conflict
+    from briefloop.template_conversion import convert_request
+    store, template_id = workspace
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: convert_request(store, 'same.md', b'# Preserved original', template_id, 'same-id'), range(2)))
+    assert results[0]['version']['id'] == results[1]['version']['id']
+    assert results[0]['job']['id'] == results[1]['job']['id']
+    assert len(store.rows('SELECT id FROM sources')) == 1
+    assert len(store.rows('SELECT id FROM briefs')) == 1
+    assert len(store.rows('SELECT id FROM jobs')) == 1
+    with pytest.raises(Conflict, match='不能更换'):
+        convert_request(store, 'same.md', b'# Changed', template_id, 'same-id')
+
+
+def test_rejected_conversion_replays_one_retained_original(workspace):
+    from briefloop.template_conversion import convert_request
+    store, template_id = workspace
+    errors = []
+    for _ in range(2):
+        with pytest.raises(ConversionError) as caught:
+            convert_request(store, 'original.md', b'![unsupported](image.png)', template_id, 'rejected-id')
+        errors.append(caught.value)
+    assert errors[0].source_id == errors[1].source_id
+    assert str(errors[0]) == str(errors[1])
+    assert len(store.rows('SELECT id FROM sources')) == 1
+    assert not store.rows('SELECT id FROM briefs')
+    assert not store.rows('SELECT id FROM jobs')
