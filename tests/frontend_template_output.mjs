@@ -25,7 +25,11 @@ function fixture(t){
  return {ui,state,requests,uploads,opened,notices,timers,$:id=>nodes.get(id),html:()=>nodes.get('template-output-dialog')?.innerHTML||'',setCurrent:value=>currentBrief=value,setSave:fn=>save=fn,get refreshes(){return refreshes},runTimer(){const [id,fn]=timers.entries().next().value||[];assert.ok(fn,'a poll is scheduled');timers.delete(id);return fn()}};
 }
 function chooseFile(f,name='source.docx'){f.$('template-output-file').onchange({target:{files:[{name,size:10}]}})}
-function chooseReport(f,id){f.$('template-output-report').onchange({target:{value:id}})}
+async function chooseReport(f,id,versions=[brief(id)]){
+ const index=f.requests.length;f.$('template-output-report').onchange({target:{value:id}});
+ assert.match(f.requests[index].path,/^report-history\?/);
+ f.requests[index].resolve({items:versions,next_cursor:null});await tick();
+}
 
 test('file conversion binds original upload and ready template, then offers explicit result actions',async t=>{
  const f=fixture(t);assert.equal(f.ui.open('pending'),false);assert.equal(f.requests.length,0);
@@ -45,17 +49,17 @@ test('report selection searches and paginates the saved catalog without a curren
  f.requests[0].resolve({items:[brief('recent')],next_cursor:'30'});await tick();
  assert.equal(f.$('template-output-submit').disabled,true);assert.doesNotMatch(f.html(),/unrelated-state-item/);
  const more=f.$('template-output-more').onclick();assert.match(f.requests[1].path,/cursor=30/);f.requests[1].resolve({items:[brief('older')],next_cursor:null});await more;
- assert.match(f.html(),/报告 older/);assert.match(f.html(),/2026\/09\/28/);chooseReport(f,'older');const submit=f.$('template-output-submit').onclick();
- assert.deepEqual(f.requests[2].body,{version_id:'older',template_id:'style',workspace_id:'workspace-A'});
- f.requests[2].resolve({id:'selected-export',status:'complete'});await submit;assert.deepEqual(f.opened,[]);
+ assert.match(f.html(),/报告 older/);assert.match(f.html(),/2026\/09\/28/);await chooseReport(f,'older');const submit=f.$('template-output-submit').onclick();
+ assert.deepEqual(f.requests[3].body,{version_id:'older',template_id:'style',workspace_id:'workspace-A'});
+ f.requests[3].resolve({id:'selected-export',status:'complete'});await submit;assert.deepEqual(f.opened,[]);
 });
 
 test('the selected open report settles edits before export and ignores repeat submissions',async t=>{
  const f=fixture(t),saving=deferred();f.setCurrent(brief('old','run'));f.setSave(()=>saving.promise);
- f.ui.open('style','report');f.requests[0].resolve({items:[brief('old','run')],next_cursor:null});await tick();chooseReport(f,'old');
- const submit=f.$('template-output-submit').onclick();await f.$('template-output-submit').onclick();assert.equal(f.requests.length,1);
- f.setCurrent(brief('just-saved','run'));saving.resolve('just-saved');await tick();assert.equal(f.requests[1].body.version_id,'just-saved');
- f.requests[1].resolve({id:'saved-export',status:'complete'});await submit;
+ f.ui.open('style','report');f.requests[0].resolve({items:[brief('old','run')],next_cursor:null});await tick();await chooseReport(f,'old',[brief('old','run')]);
+ const submit=f.$('template-output-submit').onclick();await f.$('template-output-submit').onclick();assert.equal(f.requests.length,2);
+ f.setCurrent(brief('just-saved','run'));saving.resolve('just-saved');await tick();assert.equal(f.requests[2].body.version_id,'just-saved');
+ f.requests[2].resolve({id:'saved-export',status:'complete'});await submit;
 });
 
 test('closing the dialog keeps one accepted conversion and resumes its result on reopening',async t=>{
@@ -93,4 +97,43 @@ test('invalid file selection is rejected locally, and builtin history creates on
  const old={id:'old',origin:'builtin',name:'商业报告·品牌绿',status:'ready',revision:1,created:'2026-01-01'};
  const input=[old,{...old,id:'new',revision:2,created:'2026-09-28'},{...old,id:'pending',revision:3,status:'pending'},{...old,id:'blue',name:'商业报告·极简蓝'}];
  assert.deepEqual(visibleBuiltinTemplates(input).map(t=>t.id),['new','blue']);assert.equal(input.length,4,'saved template history is not deleted');
+});
+
+
+test('history pagination exports the explicitly selected revision even with another same-run revision open',async t=>{
+ const f=fixture(t);let saves=0;f.setCurrent(brief('open-old','run'));f.setSave(async()=>{saves++;return 'open-old'});
+ f.ui.open('style','report');f.requests[0].resolve({items:[brief('latest','run')]});await tick();
+ f.$('template-output-report').onchange({target:{value:'latest'}});
+ assert.match(f.requests[1].path,/run_id=run&workspace_id=workspace-A/);
+ f.requests[1].resolve({items:[brief('latest','run')],next_cursor:'before-older'});await tick();
+ const more=f.$('template-output-history-more').onclick();assert.match(f.requests[2].path,/cursor=before-older/);
+ f.requests[2].resolve({items:[brief('original','run')],next_cursor:null});await more;
+ assert.match(f.html(),/original/);f.$('template-output-version').onchange({target:{value:'original'}});
+ const submit=f.$('template-output-submit').onclick();assert.equal(saves,0);assert.equal(f.requests[3].body.version_id,'original');
+ f.requests[3].resolve({id:'original-word',status:'failed',error:'转换失败'});await submit;
+ f.$('template-output-again').onclick();assert.equal(f.$('template-output-report').disabled,true,'wait for catalog refresh');
+ f.requests[4].resolve({items:[brief('latest','run')]});await tick();await chooseReport(f,'latest',[brief('latest','run')]);
+ const latestSubmit=f.$('template-output-submit').onclick();assert.equal(saves,0);assert.equal(f.requests[6].body.version_id,'latest');
+ f.requests[6].resolve({id:'latest-word',status:'complete'});await latestSubmit;
+});
+
+test('changing reports ignores stale history and can retry a failed history request',async t=>{
+ const f=fixture(t);f.ui.open('style','report');f.requests[0].resolve({items:[brief('A'),brief('B')]});await tick();
+ f.$('template-output-report').onchange({target:{value:'A'}});f.$('template-output-report').onchange({target:{value:'B'}});
+ f.requests[2].reject(Error('暂时离线'));await tick();assert.match(f.html(),/重新读取版本/);assert.equal(f.$('template-output-submit').disabled,true);
+ const retry=f.$('template-output-history-reload').onclick();f.requests[3].resolve({items:[brief('B')],next_cursor:null});await retry;
+ f.requests[1].resolve({items:[brief('A-old','A')],next_cursor:'stale'});await tick();
+ assert.doesNotMatch(f.html(),/A-old|加载更早版本/);assert.equal(f.$('template-output-submit').disabled,false);
+ const submit=f.$('template-output-submit').onclick();assert.equal(f.requests[4].body.version_id,'B');
+ f.requests[4].resolve({id:'B-word',status:'complete'});await submit;
+});
+
+test('terminal export failure allows a new original without losing the prior saved conversion',async t=>{
+ const f=fixture(t);f.ui.open('style');chooseFile(f);const first=f.$('template-output-submit').onclick();await tick();
+ f.requests[0].resolve({version:brief('retained'),job:{id:'failed',status:'failed',error:'文件无法生成'}});await first;
+ f.ui.close();f.ui.open('style');assert.match(f.html(),/更换原稿/);f.$('template-output-again').onclick();
+ assert.equal(f.$('template-output-file').disabled,false);chooseFile(f,'replacement.md');
+ const second=f.$('template-output-submit').onclick();await tick();assert.equal(f.requests[1].path,'template-convert');assert.equal(f.requests[1].body.name,'replacement.md');
+ f.requests[1].resolve({version:brief('replacement'),job:{id:'replacement-word',status:'complete'}});await second;
+ assert.equal(f.requests.length,2,'no delete, retry or unrelated mutation of the failed conversion');
 });

@@ -26,20 +26,22 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
  }
  function stopStale(flow){clearTimeout(flow.timer);flow.busy=false;return false}
  function isCurrent(flow){return current(flow)||stopStale(flow)}
- function selected(flow){return flow.items.find(item=>item.id===flow.selectedId)}
+ function selected(flow){return flow.versions.find(item=>item.id===flow.selectedId)}
  function render(flow){
   if(!visible(flow))return;
   const complete=flow.job?.status==='complete',hasJob=Boolean(flow.job),disabled=flow.busy||complete;
+  const failed=['failed','cancelled','interrupted'].includes(flow.job?.status);
   const status=flow.error||flow.message||'',focused=document.activeElement,focusId=dialog.contains?.(focused)?focused?.id:null;
   dialog.innerHTML=`<div class="section-title"><h2 id="template-output-title">${flow.mode==='upload'?'上传原稿套用':'从已有报告套用'}</h2><button type="button" id="template-output-close" data-testid="template-output-close" class="ghost" aria-label="关闭套用面板">关闭</button></div>`
    +`<p class="template-output-choice">版式：<strong>${esc(flow.template.name.replace('·',' · '))}</strong><span class="help">输出 Word（.docx）</span></p>`
    +(flow.mode==='upload'?`<p class="help">支持 DOCX、Markdown、TXT 的正文、标题、列表和表格；不联网、不改写。复杂 Word 内容暂不支持，原文件会保留。</p><label class="template-output-field" ${flow.file?'hidden':''}>选择要排版的原稿<input type="file" id="template-output-file" data-testid="template-output-file" accept=".docx,.md,.markdown,.txt" ${disabled||hasJob?'disabled':''}></label>${flow.file?`<div class="template-output-file-choice"><p class="help">已选原稿：${esc(flow.file.name)}</p>${disabled||hasJob?'':'<button type="button" id="template-output-change-file" data-testid="template-output-change-file" class="outline">更换文件</button>'}</div>`:''}`
-   :`<p class="help">选择当前工作区的报告，以选中的已保存版本生成 Word。若该报告正在编辑，会先保存当前修改。</p><form id="template-output-search-form" class="template-output-search"><label for="template-output-search">查找报告</label><input type="search" id="template-output-search" data-testid="template-output-search" placeholder="搜索标题或正文" maxlength="200" value="${esc(flow.query)}" ${disabled||hasJob?'disabled':''}><button type="submit" class="outline" ${disabled||hasJob?'disabled':''}>查找</button></form><label class="template-output-field">选择报告的已保存版本<select id="template-output-report" data-testid="template-output-report" ${disabled||hasJob||flow.loading?'disabled':''}><option value="">${flow.loading?'正在读取报告…':'请选择一份报告'}</option>${flow.items.map(item=>`<option value="${esc(item.id)}" ${flow.selectedId===item.id?'selected':''}>${esc(title(item))} · ${esc(dateTimeSeconds(item.created)||'保存时间未知')}</option>`).join('')}</select></label>${!flow.loading&&!flow.items.length?`<p class="help">${flow.query?'没有找到符合搜索条件的报告。':'当前工作区还没有已保存报告。'}</p>`:''}${flow.listError?`<p class="template-output-error" role="alert">${esc(flow.listError)}</p><button type="button" id="template-output-reload" class="outline">重新读取报告</button>`:''}${flow.cursor?`<button type="button" id="template-output-more" data-testid="template-output-more" class="ghost" ${disabled||hasJob||flow.loading?'disabled':''}>${flow.loading?'正在读取…':'加载更多报告'}</button>`:''}`)
+   :`<p class="help">选择当前工作区的报告，以选中的已保存版本生成 Word。若选中版本正在编辑，会先保存其当前修改。</p><form id="template-output-search-form" class="template-output-search"><label for="template-output-search">查找报告</label><input type="search" id="template-output-search" data-testid="template-output-search" placeholder="搜索标题或正文" maxlength="200" value="${esc(flow.query)}" ${disabled||hasJob?'disabled':''}><button type="submit" class="outline" ${disabled||hasJob?'disabled':''}>查找</button></form><label class="template-output-field">选择报告<select id="template-output-report" data-testid="template-output-report" ${disabled||hasJob||flow.loading?'disabled':''}><option value="">${flow.loading?'正在读取报告…':'请选择一份报告'}</option>${flow.items.map(item=>`<option value="${esc(item.id)}" ${flow.reportId===item.id?'selected':''}>${esc(title(item))} · ${esc(dateTimeSeconds(item.created)||'保存时间未知')}</option>`).join('')}</select></label>${!flow.loading&&!flow.items.length?`<p class="help">${flow.query?'没有找到符合搜索条件的报告。':'当前工作区还没有已保存报告。'}</p>`:''}${flow.listError?`<p class="template-output-error" role="alert">${esc(flow.listError)}</p><button type="button" id="template-output-reload" class="outline">重新读取报告</button>`:''}${flow.cursor?`<button type="button" id="template-output-more" data-testid="template-output-more" class="ghost" ${disabled||hasJob||flow.loading?'disabled':''}>${flow.loading?'正在读取…':'加载更多报告'}</button>`:''}`)
+   +(flow.mode==='report'&&flow.reportId?`<label class="template-output-field">选择已保存版本<select id="template-output-version" data-testid="template-output-version" ${disabled||hasJob||flow.historyLoading?'disabled':''}><option value="">${flow.historyLoading?'正在读取版本…':'请选择版本'}</option>${flow.versions.map((item,index)=>`<option value="${esc(item.id)}" ${flow.selectedId===item.id?'selected':''}>${esc(item.parent_id?'修订稿':'原稿')} · ${esc(dateTimeSeconds(item.created)||'保存时间未知')} · ${esc(item.version_count>index?'第'+(item.version_count-index)+'版':item.author==='user'?'人工保存':'已保存')}</option>`).join('')}</select></label>${flow.historyError?`<p class="template-output-error" role="alert">${esc(flow.historyError)}</p><button type="button" id="template-output-history-reload" class="outline">重新读取版本</button>`:''}${flow.historyCursor?`<button type="button" id="template-output-history-more" class="ghost" ${disabled||hasJob||flow.historyLoading?'disabled':''}>加载更早版本</button>`:''}`:'')
    +`<p id="template-output-status" data-testid="template-output-status" class="template-output-status${flow.error?' template-output-error':''}" role="status" aria-live="polite">${esc(status)}</p>`
    +(flow.notes.length?`<ul class="template-output-notes">${flow.notes.map(note=>`<li>${esc(typeof note==='string'?note:note?.message||note?.description||String(note))}</li>`).join('')}</ul>`:'')
    +`<div class="template-output-actions">${complete?`<a class="primary template-output-download" id="template-output-download" data-testid="template-output-download" href="/api/export-file?${new URLSearchParams({job:flow.job.id,workspace_id:flow.workspace})}" download>下载 Word</a><button type="button" id="template-output-open" data-testid="template-output-open" class="outline">${flow.mode==='upload'?'打开转换稿':'打开所选报告'}</button><button type="button" id="template-output-again" class="ghost">${flow.mode==='upload'?'套用另一份原稿':'套用另一份报告'}</button>`
     :flow.pollError?'<button type="button" id="template-output-poll" data-testid="template-output-poll" class="primary">重新检查进度</button>'
-    :`<button type="button" id="template-output-submit" data-testid="template-output-submit" class="primary" ${flow.busy||flow.loading||!(flow.mode==='upload'?flow.file:flow.selectedId)?'disabled':''}>${flow.busy?'正在制作…':hasJob?'重试生成 Word':'套用并生成 Word'}</button>`}</div>`
+    :`<button type="button" id="template-output-submit" data-testid="template-output-submit" class="primary" ${flow.busy||flow.loading||flow.historyLoading||!(flow.mode==='upload'?flow.file:flow.selectedId)?'disabled':''}>${flow.busy?'正在制作…':hasJob?'重试生成 Word':'套用并生成 Word'}</button>`}${failed?`<button type="button" id="template-output-again" class="outline">${flow.mode==='upload'?'更换原稿':'重新选择报告'}</button>`:''}</div>`
    +(flow.busy?'<p class="help">关闭面板不会停止已提交的制作任务；再次点击同一模板的套用入口可查看进度。</p>':'');
   $('template-output-close').onclick=close;
   if($('template-output-file'))$('template-output-file').onchange=event=>{
@@ -47,8 +49,11 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
    if(flow.file&&!/\.(docx|md|markdown|txt)$/i.test(flow.file.name)){flow.file=null;flow.error='请选择 DOCX、Markdown 或 TXT 原稿。'}render(flow);
   };
   if($('template-output-change-file'))$('template-output-change-file').onclick=()=>$('template-output-file').click();
-  if($('template-output-search-form'))$('template-output-search-form').onsubmit=event=>{event.preventDefault();flow.query=$('template-output-search').value.trim();flow.selectedId='';flow.version=null;fetchReports(flow)};
-  if($('template-output-report'))$('template-output-report').onchange=event=>{flow.selectedId=event.target.value;flow.version=null;flow.error='';render(flow)};
+  if($('template-output-search-form'))$('template-output-search-form').onsubmit=event=>{event.preventDefault();flow.query=$('template-output-search').value.trim();clearHistory(flow);flow.version=null;fetchReports(flow)};
+  if($('template-output-report'))$('template-output-report').onchange=event=>{clearHistory(flow);flow.reportId=event.target.value;flow.version=null;flow.error='';render(flow);if(flow.reportId)fetchHistory(flow)};
+  if($('template-output-version'))$('template-output-version').onchange=event=>{flow.selectedId=event.target.value;flow.version=null;flow.error='';render(flow)};
+  if($('template-output-history-more'))$('template-output-history-more').onclick=()=>fetchHistory(flow,true);
+  if($('template-output-history-reload'))$('template-output-history-reload').onclick=()=>fetchHistory(flow);
   if($('template-output-more'))$('template-output-more').onclick=()=>fetchReports(flow,true);
   if($('template-output-reload'))$('template-output-reload').onclick=()=>fetchReports(flow);
   if($('template-output-submit'))$('template-output-submit').onclick=()=>submit(flow);
@@ -62,7 +67,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
    finally{if(visible(flow))button.disabled=false}
   };
   if($('template-output-again'))$('template-output-again').onclick=()=>{
-   flow.job=null;flow.version=null;flow.file=null;flow.selectedId='';flow.error='';flow.message='';flow.notes=[];render(flow);if(flow.mode==='report')fetchReports(flow);
+   clearTimeout(flow.timer);clearHistory(flow);flow.job=null;flow.version=null;flow.file=null;flow.pollError=false;flow.error='';flow.message='';flow.notes=[];render(flow);if(flow.mode==='report')fetchReports(flow);
   };
   if(focusId)(focusId==='template-output-file'&&flow.file?$('template-output-change-file'):$(focusId))?.focus?.();
  }
@@ -77,9 +82,28 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
    const items=Array.isArray(result.items)?result.items:[];
    flow.items=append?[...flow.items,...items.filter(item=>!flow.items.some(old=>old.id===item.id))]:items;
    flow.cursor=result.next_cursor||'';
-   if(!flow.items.some(item=>item.id===flow.selectedId))flow.selectedId='';
+   if(!flow.items.some(item=>item.id===flow.reportId))clearHistory(flow);
   }catch(error){if(current(flow)&&ticket===flow.listTicket)flow.listError='报告读取失败：'+error.message}
   finally{if(current(flow)&&ticket===flow.listTicket){flow.loading=false;render(flow)}}
+ }
+ function clearHistory(flow){
+  ++flow.historyTicket;flow.reportId='';flow.selectedId='';flow.versions=[];flow.historyCursor='';flow.historyLoading=false;flow.historyError='';
+ }
+ async function fetchHistory(flow,append=false){
+  if(!isCurrent(flow)||flow.busy||flow.job)return;
+  const report=flow.items.find(item=>item.id===flow.reportId);if(!report)return;
+  const ticket=++flow.historyTicket,reportId=flow.reportId;
+  flow.historyLoading=true;flow.historyError='';render(flow);
+  const params=new URLSearchParams({run_id:report.run_id,workspace_id:flow.workspace});if(append&&flow.historyCursor)params.set('cursor',flow.historyCursor);
+  try{
+   const result=await api('report-history?'+params);
+   if(!isCurrent(flow)||ticket!==flow.historyTicket||flow.reportId!==reportId)return;
+   const items=(Array.isArray(result.items)?result.items:[]).filter(item=>item.run_id===report.run_id);
+   flow.versions=append?[...flow.versions,...items.filter(item=>!flow.versions.some(old=>old.id===item.id))]:items;
+   flow.historyCursor=result.next_cursor||'';
+   if(!flow.versions.some(item=>item.id===flow.selectedId))flow.selectedId=flow.versions[0]?.id||'';
+  }catch(error){if(current(flow)&&ticket===flow.historyTicket)flow.historyError='版本读取失败：'+error.message}
+  finally{if(current(flow)&&ticket===flow.historyTicket){flow.historyLoading=false;render(flow)}}
  }
  function acceptJob(flow,job){
   if(!job?.id)throw Error('未收到文件制作任务，请检查报告列表后再试。');
@@ -103,7 +127,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
   catch(error){if(current(flow)){flow.busy=false;flow.pollError=true;flow.error='暂时无法读取制作进度：'+error.message+'。任务可能仍在运行，请重新检查进度。';render(flow)}}
  }
  async function submit(flow){
-  if(!isCurrent(flow)||flow.busy||flow.pollError||flow.job?.status==='complete')return;
+  if(!isCurrent(flow)||flow.busy||flow.loading||flow.historyLoading||flow.pollError||flow.job?.status==='complete')return;
   const template=(getState().templates||[]).find(t=>t.id===flow.template.id);
   if(template?.status!=='ready'){flow.error='所选模板尚不可用，请返回模板页重新选择。';render(flow);return}
   const report=selected(flow);
@@ -119,9 +143,9 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
     flow.version=result.version;flow.notes=Array.isArray(result.notes)?result.notes:[];acceptJob(flow,result.job);
    }else{
     let version=flow.version||report;
-    if(!flow.version&&getCurrent()?.run_id===report.run_id&&savedVersion){
+    if(!flow.version&&getCurrent()?.id===report.id&&savedVersion){
      const id=await savedVersion();if(!isCurrent(flow))return;
-     if(getCurrent()?.run_id!==report.run_id)throw Error('正在编辑的报告已切换，请重新选择报告。');
+     if(getCurrent()?.run_id!==report.run_id||getCurrent()?.id!==id)throw Error('正在编辑的报告已切换，请重新选择报告。');
      version={...getCurrent(),id};
     }
     if(!isCurrent(flow))return;
@@ -137,7 +161,7 @@ export function createTemplateOutput({api,notice,refresh,getState,openBrief,uplo
   mode=mode==='report'?'report':'upload';ensureDialog();
   const key=JSON.stringify([state.workspace_id,templateId,mode]);
   let flow=flows.get(key);
-  if(!flow){flow={epoch,workspace:state.workspace_id,template,mode,file:null,items:[],query:'',cursor:'',selectedId:'',listTicket:0,loading:false,listError:'',busy:false,pollError:false,job:null,version:null,notes:[],message:'',error:''};flows.set(key,flow)}
+  if(!flow){flow={epoch,workspace:state.workspace_id,template,mode,file:null,items:[],query:'',cursor:'',selectedId:'',reportId:'',versions:[],historyTicket:0,historyCursor:'',historyLoading:false,historyError:'',listTicket:0,loading:false,listError:'',busy:false,pollError:false,job:null,version:null,notes:[],message:'',error:''};flows.set(key,flow)}
   active=flow;if(!dialog.open)dialog.showModal();render(flow);
   ($('template-output-download')||$('template-output-change-file')||$(mode==='upload'?'template-output-file':'template-output-search'))?.focus?.();
   if(mode==='report'&&!flow.job&&!flow.loading)fetchReports(flow);

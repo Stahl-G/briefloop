@@ -158,13 +158,16 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
 
 
 @pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
-                                'inherited_superscript', 'inherited_hidden', 'wrapped_table_row'])
+                                'inherited_superscript', 'inherited_hidden', 'wrapped_table_row', 'page_break', 'column_break',
+                                'horizontal_merge', 'multiblock_list'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
     if case == 'control':
         name, data = 'source.txt', b'Cannot render this: \x00'
     elif case == 'markdown_footnote':
         name, data = 'source.md', '正文[^1]\n\n[^1]: 不能丢失'.encode()
+    elif case == 'multiblock_list':
+        name, data = 'source.md', '1. 第一项\n\n   属于第一项的续段\n\n2. 第二项\n'.encode()
     elif case == 'nested_list':
         name, data = 'source.md', '1. 一级事项\n   1. 从属于一级事项的内容\n'.encode()
     elif case in ('html', 'image'):
@@ -174,7 +177,18 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name = 'source.docx'
         doc = Document()
         p = doc.add_paragraph('可读取正文')
-        if case.startswith('inherited_'):
+        if case in ('page_break', 'column_break'):
+            element = OxmlElement('w:br')
+            element.set(qn('w:type'), case.removesuffix('_break'))
+            p.add_run()._r.append(element)
+        elif case == 'horizontal_merge':
+            table = doc.add_table(rows=1, cols=2)
+            table.cell(0, 0).text = '横向合并内容'
+            for cell, value in zip(table.rows[0].cells, ['restart', 'continue']):
+                merge = OxmlElement('w:hMerge')
+                merge.set(qn('w:val'), value)
+                cell._tc.get_or_add_tcPr().append(merge)
+        elif case.startswith('inherited_'):
             base = doc.styles.add_style('Imported Base', WD_STYLE_TYPE.CHARACTER)
             setattr(base.font, case.removeprefix('inherited_'), True)
             derived = doc.styles.add_style('Imported Derived', WD_STYLE_TYPE.CHARACTER)

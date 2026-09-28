@@ -89,7 +89,7 @@ def _markdown_document(text, notes):
         start = node.get('attrs', {}).get('start', 1)
         for offset, item in enumerate(children):
             blocks = item.get('content', [])
-            if not blocks or blocks[0]['type'] not in ('paragraph', 'heading'):
+            if len(blocks) != 1 or blocks[0]['type'] not in ('paragraph', 'heading'):
                 raise ValueError('Markdown 编号列表结构暂不支持转换')
             blocks[0].setdefault('content', []).insert(0, _text(f'{start + offset}. '))
             result.extend(blocks)
@@ -250,6 +250,8 @@ def _word_document(data, notes):
                     elif item.tag == qn('w:tab'):
                         content.append(_text('\t', deepcopy(marks)))
                     elif item.tag in (qn('w:br'), qn('w:cr')):
+                        if item.tag == qn('w:br') and item.get(qn('w:type'), 'textWrapping') != 'textWrapping':
+                            raise ValueError('Word 含分页或分栏符，当前不能可靠转换')
                         content.append({'type': 'hardBreak'})
                     elif item.tag == qn('w:noBreakHyphen'):
                         content.append(_text('\u2011', deepcopy(marks)))
@@ -281,6 +283,8 @@ def _word_document(data, notes):
             header = tr.find(qn('w:trPr') + '/' + qn('w:tblHeader')) is not None
             for tc in tr.findall(qn('w:tc')):
                 props = tc.find(qn('w:tcPr'))
+                if props is not None and props.find(qn('w:hMerge')) is not None:
+                    raise ValueError('Word 含旧式横向合并单元格，当前不能可靠转换')
                 span = props.find(qn('w:gridSpan')) if props is not None else None
                 colspan = int(span.get(qn('w:val'))) if span is not None else 1
                 merge = props.find(qn('w:vMerge')) if props is not None else None
