@@ -184,7 +184,7 @@ function applyRequirements(text){
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
- lengthControls.restore(data,{fromDiscussion:true});
+ if('length_mode' in data||'length_requirement' in data)lengthControls.restore(data,{fromDiscussion:true});else lengthControls.render();
  validateLengthInputs();
  if(Array.isArray(data.writing_preferences))writingPreferencesOverride=[...data.writing_preferences];
  page('setup');notice('已填入材料与需求，请检查后生成');

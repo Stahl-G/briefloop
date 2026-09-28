@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {section} from './source_section.mjs';
+import {createLengthControls} from '../frontend/length-controls.js';
 const source=fs.readFileSync(process.env.BRIEFLOOP_APP_JS||new URL('../frontend/app.js',import.meta.url),'utf8');
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,hidden:false,disabled:false,textContent:'',innerHTML:'',dataset:{},classList:{toggle(){}},closest:()=>({hidden:false}),querySelector:()=>null,append(){}});return elements.get(id)};
@@ -76,6 +77,9 @@ console.log('PASS: explicit document purpose survives template changes');
 // Applying only a few requirements, including the existing outline button path,
 // preserves the selected purpose. An explicit reset is a different operation.
 c.page=()=>{};c.notice=()=>{};c.Event=class{};
+c.lengthControls=createLengthControls({$:el});
+el('max-words').value='200';
+c.lengthControls.restore({length_mode:'strict',max_words:200,length_requirement:{kind:'user_selection',text:'用户选择严格200字'}});
 const manualSections={value:'',dispatchEvent(){}};
 el('requirements').elements={manual_sections_text:manualSections};
 vm.runInContext(section(source,'function applyRequirements(text)','const taskLabel=','frontend/app.js'),c);
@@ -84,6 +88,7 @@ el('workflow-choice').value='business_report/work_progress';
 vm.runInContext('applyRequirements(JSON.stringify({manual_sections:["融资进度"]}))',c);
 assert.equal(el('workflow-choice').value,'business_report/work_progress');
 assert.equal(manualSections.value,'融资进度');
+assert.equal(c.lengthControls.read().length_mode,'strict','an outline or partial requirements update must preserve an explicit length choice');
 el('outline-text').value='## 本期进展\n## 下周计划';
 vm.runInContext('applyOutlineToSetup()',c);
 assert.equal(el('workflow-choice').value,'business_report/work_progress');
