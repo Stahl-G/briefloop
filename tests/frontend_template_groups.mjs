@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import {templatesUI} from '../frontend/templates.js';
 
 // The templates page is a gallery: one icon card per genre with color dots,
-// a selection bar that names the picked genre+theme, and 使用该模板 which
-// persists the default and opens the new-report form. My templates and the
+// a selection bar with explicit output actions. New-report selection applies
+// only to that report form, leaving workspace defaults intact. My templates and the
 // empty state stay below the gallery.
 const handlers = [];
 const elements = {'template-select': {value: 'tpl_biz_g'}, 'templates-page-list': {innerHTML: '', querySelectorAll(sel) {
@@ -38,7 +38,7 @@ const ui = templatesUI({
   setSettings: next => { state.settings = next; },
 });
 // dom.js resolves $ through the document global.
-globalThis.document = {getElementById: id => id === 'template-apply' ? applyElement : elements[id]};
+globalThis.document = {getElementById: id => id === 'template-new-report' ? applyElement : elements[id]};
 ui.render();
 let html = elements['templates-page-list'].innerHTML;
 assert.ok(html.includes('商业报告') && html.includes('券商研报') && html.includes('政府公文'), 'a card per genre');
@@ -46,7 +46,7 @@ assert.ok(html.includes('适用于证券研究、行业分析'), 'genre descript
 assert.equal((html.match(/tpl-card/g) || []).length, 3, 'one card per builtin genre');
 assert.equal((html.match(/color-dot/g) || []).length, 4, 'one dot per theme');
 assert.ok(html.includes('已选：<strong>商业报告 · 品牌绿</strong>'), 'the preselected genre+theme shows in the bar');
-assert.ok(html.includes('使用该模板'), 'the apply button renders');
+assert.ok(['上传原稿套用','从已有报告套用','按模板新建报告'].every(label=>html.includes(label)), 'all three output paths render');
 assert.ok(html.includes('公司模板'), 'my templates stay on the page');
 
 // dot click: switch the pick to the blue theme, bar follows
@@ -56,10 +56,11 @@ html = elements['templates-page-list'].innerHTML;
 assert.ok(html.includes('已选：<strong>商业报告 · 极简蓝</strong>'), 'dot selection updates the bar');
 assert.ok(html.includes('data-id="tpl_biz_b"'), 'the chosen dot stays bound to its template');
 
-// apply: persist the default and open the new-report form
+// New report: choose this form's layout without silently changing workspace defaults
 handlers.find(h => h[0] === 'apply')[2]();
 await new Promise(resolve => setImmediate(resolve));
-assert.equal(JSON.stringify(calls[0]), JSON.stringify(['settings', {default_template_id: 'tpl_biz_b'}]), 'apply persists the default template');
+assert.deepEqual(calls, [], 'choosing a template must not write workspace settings');
+assert.equal(state.settings.default_template_id, '', 'workspace default remains unchanged');
 assert.equal(elements['template-select'].value, 'tpl_biz_b', 'apply selects the template in the form used by generation');
 assert.deepEqual(sectionSelections, ['tpl_biz_b'], 'apply rebuilds the selected template sections');
 assert.deepEqual(pages, ['setup'], 'apply opens the new-report form');
