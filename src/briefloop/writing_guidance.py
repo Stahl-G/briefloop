@@ -4,6 +4,8 @@ Design reference: the user's saved WorkBuddy work-report/industry-analysis
 materials. No plugin code, compulsory review quota or pipeline is imported.
 """
 
+NUMBER_UNIT_GUIDE = 'number_bindings 的 unit 只记录原始计量单位及其尺度，不混入少于/至少等比较条件、目标或实际状态。例：原文“年度目标至少 50 吨”使用 value=50、unit="吨"、number_text="50 吨"；label、source_excerpt、report_quote 及正文/主张保留“目标”“至少”和来源给出的达成状态。不能把阈值当实绩、改动阈值或删除条件来取得匹配；匹配只核对数值定位，比较关系与达成状态仍交独立审阅。复合单位的分母是单位的一部分，USD/kg 等不支持的单位保持原样并标为未检查。'
+
 ANALYST_GUIDE = '''写作方法：
 先根据原始需求确定读者读完后需要理解、比较或决定什么，把篇幅留给这些问题。已有章节及人工分工优先，不因通用框架另增整套章节。
 先写有依据的主体分析，最后从正文提炼摘要。摘要通常给出最重要的几项变化与影响，不能引入正文没有支持的新事实，也不机械凑满条数。

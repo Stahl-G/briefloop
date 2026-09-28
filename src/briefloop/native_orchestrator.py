@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .store import dump
 from .native_roles import ToolError, _atomic, _json_result
+from .revision_metadata import binding_schema, response_schema, validate_arrays
 
 READ_ACTIONS = {'inspect', 'capabilities', 'templates', 'workflows', 'profile_read',
                 'company_read', 'read_report', 'read_run_report', 'review_status',
@@ -346,19 +347,13 @@ def revision_metadata(store, config, args):
     findings = original.get('review_findings', [])
     responses = args.get('responses')
     expected = {f['id'] for f in findings}
-    if not isinstance(responses, list) or len(responses) != len(expected) or {r.get('finding_id') for r in responses} != expected:
-        raise ToolError('responses 必须逐项对应本轮 review_findings，每项恰好一次；没有发现时提交 []')
-    for r in responses:
-        if r.get('action') not in ('corrected', 'removed', 'disagree') or not str(r.get('reason') or '').strip():
-            raise ToolError('每项处理说明需要 action 和具体 reason')
     bindings = args.get('bindings', [])
-    if not isinstance(bindings, list):
-        raise ToolError('bindings 必须是数组；没有已登记主张时提交 []')
+    try:
+        validate_arrays(bindings, responses, expected)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
     from .evidence import record
     for binding in bindings:
-        if not isinstance(binding, dict) or any(not isinstance(binding.get(k), str) or not binding[k].strip()
-                                               for k in ('claim_id', 'block_id', 'quote')):
-            raise ToolError('bindings 每项需要 claim_id/block_id/quote；数字定位请放 draft.number_bindings，没有已登记主张时提交 []')
         if record(store, 'claims', binding['claim_id'])['run_id'] != config['run_id']:
             raise ToolError('bindings 只能引用本报告已登记的主张')
     _save(_folder(config) / 'responses.json', responses)
@@ -389,8 +384,11 @@ def metadata_submit(store, config, args):
     if any(args.get(k) != original[k] for k in ('version_id', 'brief_hash')):
         raise ToolError('元数据必须绑定本次既有版本与 hash')
     bindings, responses = args.get('bindings'), args.get('responses')
-    if not isinstance(bindings, list) or not isinstance(responses, list):
-        raise ToolError('bindings/responses 必须是数组')
+    expected = {f['id'] for f in original.get('findings', [])}
+    try:
+        validate_arrays(bindings, responses, expected)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
     from .evidence import blocks, node_text
     claims = {c['id'] for c in original.get('candidate_claims', [])}
     nodes = blocks(original['document'])
@@ -401,11 +399,6 @@ def metadata_submit(store, config, args):
         quote = binding.get('quote')
         if node is None or not isinstance(quote, str) or not quote or node_text(node).count(quote) != 1:
             raise ToolError('绑定必须指向 input.document 的真实 blockId 和唯一原句')
-    expected = {f['id'] for f in original.get('findings', [])}
-    if any(not isinstance(r, dict) for r in responses) or len(responses) != len(expected) or {r.get('finding_id') for r in responses} != expected:
-        raise ToolError('responses 必须逐项对应 input.findings；为空时为 []')
-    if any(r.get('action') not in ('corrected', 'removed', 'disagree') or not str(r.get('reason') or '').strip() for r in responses):
-        raise ToolError('处理说明需要有效 action 和具体 reason')
     _save(_folder(config) / 'metadata.json', args)
     return {**_json_result({'saved': True}), 'settle': dump({'saved': True})}
 
@@ -433,7 +426,7 @@ ACTION_TOOL = spec('workspace_action', action, '调用当前角色获准的工�
 SOURCE_TOOL = spec('source_read', read_source, '读取已登记来源，按行分页，最多 60000 字符。',
     {'source_id': TEXT, 'start_line': {'type': 'integer', 'minimum': 1}, 'end_line': {'type': 'integer', 'minimum': 1}, 'max_chars': {'type': 'integer', 'minimum': 1}}, ('source_id',))
 METADATA_TOOL = spec('save_revision_metadata', revision_metadata, '保存本轮 review_findings 的逐项处理说明 responses 和已登记主张绑定 bindings；bindings 项须有 claim_id/block_id/quote，不是数字定位。没有已登记主张或发现时相应数组为 []。',
-    {'responses': {'type': 'array', 'items': OBJ}, 'bindings': {'type': 'array', 'items': {'type':'object', 'required':['claim_id','block_id','quote'], 'properties':{'claim_id':TEXT,'block_id':TEXT,'quote':TEXT}}}}, ('responses',), sequential=True)
+    {'responses': response_schema(), 'bindings': binding_schema()}, ('responses',), sequential=True)
 
 
 def tools(role, config):
@@ -452,7 +445,7 @@ def tools(role, config):
              'paragraph_index': {'type':'integer'}, 'fields': {'type':'array','items':OBJ}}, ('sections','paragraph_index'), settles=True)]
     if config['task_kind'] == 'repair_revision_metadata':
         return [spec('submit_metadata', metadata_submit, '提交固定稿件版本的 bindings/responses 元数据，不修改正文。',
-            {'version_id': TEXT, 'brief_hash': TEXT, 'bindings': {'type': 'array', 'items': OBJ}, 'responses': {'type': 'array', 'items': OBJ}},
+            {'version_id': TEXT, 'brief_hash': TEXT, 'bindings': binding_schema(), 'responses': response_schema()},
             ('version_id', 'brief_hash', 'bindings', 'responses'), settles=True)]
     common = [ACTION_TOOL, SOURCE_TOOL]
     if config['task_kind'] == 'company_review':
@@ -505,7 +498,7 @@ def prepare(store, job, folder, prompt):
         return {**config, 'role': 'analyst', 'revision': True, 'result_file': str(folder / 'draft.json')}, (WRITING_GUIDE +
             '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons/revision_focus；修改问题原段后复核摘要、表格和影响段有无同一结论残留。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')
     _save(root / 'input.json', data)
-    for name in ('reader_contract.schema.json', 'plan.json', 'research.json', 'analyst-writing.md'):
+    for name in ('reader_contract.schema.json', 'metadata.schema.json', 'plan.json', 'research.json', 'analyst-writing.md'):
         if (folder / name).exists():
             (root / name).write_bytes((folder / name).read_bytes())
     if job['kind'] == 'fact_check':
