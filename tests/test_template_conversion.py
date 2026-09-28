@@ -48,6 +48,31 @@ def assert_no_research(store):
     assert store.rows('SELECT * FROM assessments') == []
 
 
+def test_omitted_cells_do_not_shift_values_under_other_headers(workspace):
+    store, template_id = workspace
+    doc = Document()
+    table = doc.add_table(rows=2, cols=3)
+    for cell, value in zip(table.rows[0].cells, ['Metric', 'Current', '']):
+        cell.text = value
+    for cell, value in zip(table.rows[1].cells, ['', '120', '130']):
+        cell.text = value
+    # Both rows have two physical cells but different grid offsets. Flattening
+    # them into two columns would put 120 under Metric instead of Current.
+    for row, edge, name in ((table.rows[0], -1, 'w:gridAfter'),
+                            (table.rows[1], 0, 'w:gridBefore')):
+        row._tr.remove(row._tr.tc_lst[edge])
+        omitted = OxmlElement(name)
+        omitted.set(qn('w:val'), '1')
+        row._tr.get_or_add_trPr().append(omitted)
+    original = word_bytes(doc)
+    with pytest.raises(ConversionError, match='列位置') as failure:
+        convert_file(store, 'offset-table.docx', original, template_id)
+    _, _, retained = source_files(store, failure.value.source_id)
+    assert retained.read_bytes() == original
+    assert store.rows('SELECT * FROM briefs') == []
+    assert store.rows('SELECT * FROM jobs') == []
+
+
 def test_original_word_to_template_preserves_body_and_table_without_model(workspace, monkeypatch):
     store, template_id = workspace
     monkeypatch.setattr(store, 'runtime_config', lambda: pytest.fail('conversion must not require a model'))

@@ -267,6 +267,14 @@ def _word_document(data, notes):
         for tr in element.findall(qn('w:tr')):
             if any(child.tag not in (qn('w:trPr'), qn('w:tc')) for child in tr):
                 raise ValueError('Word 表格行含不支持的包装或附加内容')
+            # The editor grid has no omitted leading/trailing cells. Equal
+            # physical cell counts do not imply matching grid positions.
+            row_props = tr.find(qn('w:trPr'))
+            if row_props is not None and any(
+                    int(item.get(qn('w:val'), '0')) != 0
+                    for name in ('w:gridBefore', 'w:gridAfter')
+                    for item in row_props.findall(qn(name))):
+                raise ValueError('Word 表格含省略的行首或行尾单元格，当前不能可靠保留列位置')
             cells = []
             column = 0
             continuing = {}
