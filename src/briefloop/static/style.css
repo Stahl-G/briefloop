@@ -1360,6 +1360,9 @@ h3{font-size:var(--text-lg);line-height:var(--leading-tight);font-weight:var(--f
 #settings-dialog :is(.settings-page-header button,.settings-content button){font-size:var(--text-sm)}
 #settings-dialog .runtime-uninstalled{border-radius:var(--radius);padding:var(--space-4)}
 /* Report identity gets its own row; long action sets cannot squeeze the title. */
+/* Keep sticky report controls and their menus in the report's stacking context.
+   The conversation/source drawers must cover the whole report, including its header. */
+#report{isolation:isolate}
 .report-topbar{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);padding:var(--space-3) 0;min-height:0;z-index:var(--z-sticky)}
 .report-crumbs{display:flex;flex-wrap:wrap;align-items:baseline;min-width:0;gap:var(--space-2)}
 .report-crumbs h1{flex:1 1 auto;min-width:0;max-width:none;white-space:normal;overflow-wrap:anywhere;font-size:var(--text-xl);line-height:var(--leading-tight);font-weight:var(--fw-semibold)}
