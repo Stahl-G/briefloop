@@ -109,7 +109,7 @@ def action(store, config, args):
                 result = {'job_id': job['id'], 'run_id': run['id'], 'status': 'queued',
                           'accepted_requirements': {key: value for key, value in json.loads(run['requirements']).items()
                               if key in ('title', 'target_minutes', 'hard_timeout_minutes', 'research_budget', 'key_questions',
-                                         'writing_preferences', 'target_words', 'max_words', 'period', 'search_policy')}}
+                                         'writing_preferences', 'target_words', 'max_words', 'length_mode', 'length_requirement', 'period', 'search_policy')}}
                 view.set_meta(key, {'fingerprint': fingerprint, 'result': result})
         store.wake_jobs()
         from .task_notify import notify
