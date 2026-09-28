@@ -205,6 +205,10 @@ def _word_document(data, notes):
 
     def paragraph(element):
         p = Paragraph(element, doc)
+        formats = [p.paragraph_format, *(style.paragraph_format for style in style_chain(p))]
+        page_break = next((fmt.page_break_before for fmt in formats if fmt.page_break_before is not None), None)
+        if page_break:
+            raise ValueError('Word 段落含段前分页设置，当前不能可靠转换')
         attrs = {}
         kind = 'paragraph'
         for style in style_chain(p):

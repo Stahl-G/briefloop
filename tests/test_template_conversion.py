@@ -163,7 +163,7 @@ def test_markdown_and_txt_keep_literal_source_markers_without_feedback(workspace
 
 @pytest.mark.parametrize('case', ['html', 'image', 'markdown_footnote', 'nested_list', 'control', 'field', 'tracked', 'footnote', 'header',
                                 'inherited_superscript', 'inherited_hidden', 'wrapped_table_row', 'page_break', 'column_break',
-                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math'])
+                                'horizontal_merge', 'multiblock_list', 'section_break', 'header_math', 'footer_math', 'paragraph_break', 'inherited_paragraph_break'])
 def test_unsupported_objects_retain_original_without_partial_version(workspace, case):
     store, template_id = workspace
     if case == 'control':
@@ -181,7 +181,15 @@ def test_unsupported_objects_retain_original_without_partial_version(workspace, 
         name = 'source.docx'
         doc = Document()
         p = doc.add_paragraph('可读取正文')
-        if case in ('header_math', 'footer_math'):
+        if case == 'paragraph_break':
+            p.paragraph_format.page_break_before = True
+        elif case == 'inherited_paragraph_break':
+            base = doc.styles.add_style('Boundary Base', WD_STYLE_TYPE.PARAGRAPH)
+            base.paragraph_format.page_break_before = True
+            derived = doc.styles.add_style('Boundary Derived', WD_STYLE_TYPE.PARAGRAPH)
+            derived.base_style = base
+            p.style = derived
+        elif case in ('header_math', 'footer_math'):
             target = doc.sections[0].header if case == 'header_math' else doc.sections[0].footer
             math = OxmlElement('m:oMath')
             run = OxmlElement('m:r')
@@ -274,3 +282,14 @@ def test_rejected_conversion_replays_one_retained_original(workspace):
     assert len(store.rows('SELECT id FROM sources')) == 1
     assert not store.rows('SELECT id FROM briefs')
     assert not store.rows('SELECT id FROM jobs')
+
+
+def test_explicitly_disabled_inherited_page_break_can_convert(workspace):
+    store, template_id = workspace
+    doc = Document()
+    style = doc.styles.add_style('Normally Breaks', WD_STYLE_TYPE.PARAGRAPH)
+    style.paragraph_format.page_break_before = True
+    paragraph = doc.add_paragraph('No authored break here', style)
+    paragraph.paragraph_format.page_break_before = False
+    result = convert_file(store, 'disabled-boundary.docx', word_bytes(doc), template_id)
+    assert 'No authored break here' in result['version']['markdown']
