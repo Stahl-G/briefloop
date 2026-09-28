@@ -266,7 +266,7 @@ def update_draft_evidence(store, config, args, *, operation='update_draft_eviden
 
 
 class TextReplacement(Input):
-    old_text: Text
+    old_text: Text = Field(description='同段连续文字中的唯一原文，可跨加粗等样式，不跨引用、换行或段落')
     new_text: str
 
 
@@ -389,7 +389,7 @@ GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格�
 先独立保存正文：短稿 write_report(title, markdown)，长稿 write_sections 后 assemble_report。取得revision后，再一次 assemble_evidence 登记三类证据。兼容同次附证据；如果回执evidence_status=not_saved，正文已保存但证据未保存，按返回revision修正证据，不重交正文。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
 同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
 若 assemble_evidence、assemble_report、update_*、patch_report_text 或 replace_report_blocks 的回执丢失，原样重试同一操作及完整参数；仅当它仍是当前修订时返回 replayed=true。若已被后续修改覆盖，先 read_draft 读取新 revision，不改旧 base_revision 盲目重发。
-取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
+取得 revision 后 check_draft 检查；局部文字用 patch_report_text，old_text 可跨同段加粗等样式，但不跨引用或换行；未改文字样式保留，新增文字沿用改动起点样式。结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
 
 
