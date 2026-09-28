@@ -89,7 +89,7 @@ def accept_stage_sources(store,job):
 def origin(store, version_id):
     brief = store.one('briefs', version_id)
     run = store.one('runs', brief['run_id'])
-    if json.loads(run['requirements']).get('completion_mode') != 'draft_first':
+    if json.loads(run['requirements']).get('completion_mode') not in ('draft_first','fast'):
         raise ValueError('这份报告未选择先交初稿，请使用现有评分或审阅入口')
     rows = store.rows("SELECT * FROM jobs WHERE kind='generate' AND json_extract(payload,'$.run_id')=? ORDER BY rowid DESC",
                       (run['id'],))
@@ -123,9 +123,12 @@ class ExistingContinuation(Exception):
         self.job_id = job_id
 
 
-def enqueue(store, version_id):
+def enqueue(store, version_id, *, automatic=False):
     parent = origin(store, version_id)
-    if parent['status'] in ('queued', 'running'):
+    brief=store.one('briefs',version_id)
+    fast=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode')=='fast'
+    automatic=bool(automatic and fast)
+    if parent['status'] in ('queued', 'running') and not automatic:
         raise ValueError('作者仍在完成初稿，请等本轮写作结束后继续检查')
     # Preserve every execution choice instead of inheriting today's settings.
     original = json.loads(parent['payload'])
@@ -133,6 +136,8 @@ def enqueue(store, version_id):
             'review_mode', 'search_provider', 'search_policy', 'session_id',
             'auto_revision', 'max_parallel')
     payload = {key: original[key] for key in keys if key in original}
+    if fast:
+        payload.update(fast_evidence=True,auto_revision=False)
     snapshot = binding(store, version_id)
     identity = hashlib.sha256(dump([parent['id'], snapshot, payload]).encode()).hexdigest()
     payload.update(version_id=version_id, continuation_of=parent['id'],
@@ -155,7 +160,9 @@ def enqueue(store, version_id):
         if active:
             raise ValueError('这份报告仍有完整检查任务，请先等待或停止它')
         status = connection.execute('SELECT status FROM jobs WHERE id=?', (parent['id'],)).fetchone()
-        if status['status'] in ('queued', 'running'):
+        if automatic and status['status'] in ('cancelled','interrupted','failed'):
+            raise ValueError('原写作任务已停止，未启动后台检查')
+        if status['status'] in ('queued', 'running') and not automatic:
             raise ValueError('原写作任务已恢复，请等它完成')
     try:
         return store.enqueue('assess', payload, before_commit=once)
@@ -250,6 +257,9 @@ def execute(worker, job):
         raise InterruptedError('检查已停止，初稿保留')
     store.event(job['id'], 'checks_started', {'version_id': brief['id'],
                 'origin_job_id': payload['continuation_of']})
+    if payload.get('fast_evidence'):
+        from .fast_reports import enrich
+        brief=enrich(worker,job,brief,folder)
     result = worker.complete_draft_checks(job, brief, folder)
     verify_input(store, job)
     final_id = result['version_id']
@@ -271,10 +281,10 @@ def execute(worker, job):
 def status(store, version_id):
     brief = store.one('briefs', version_id)
     req = json.loads(store.one('runs', brief['run_id'])['requirements'])
-    if req.get('completion_mode') != 'draft_first':
+    if req.get('completion_mode') not in ('draft_first','fast'):
         return {'mode': 'standard'}
     parent = origin(store, version_id)
-    result = {'mode': 'draft_first', 'origin_job_id': parent['id'],
+    result = {'mode': req['completion_mode'], 'origin_job_id': parent['id'],
               'state': 'writing' if parent['status'] in ('queued', 'running') else 'deferred'}
     rows = store.rows("SELECT * FROM jobs WHERE kind='assess' AND json_extract(payload,'$.continuation_of')=? ORDER BY rowid DESC", (parent['id'],))
     # Polling shows saved completion records; never re-read source bodies or
@@ -291,5 +301,6 @@ def status(store, version_id):
             return {**result, 'state': 'checking', 'job_id': row['id'], 'checked_version': task['version_id']}
         if matches(check_binding(store,row)) or matches(outcome.get('checks_input')):
             return {**result, 'state': outcome.get('checks_state', 'incomplete') if row['status'] == 'complete' else row['status'],
-                    'job_id': row['id'], 'error': row.get('error'), 'checked_version': task['version_id']}
+                    'job_id': row['id'], 'error': row.get('error'),
+                    'checked_version': outcome.get('version_id',task['version_id']) if matches(outcome.get('checks_input')) else task['version_id']}
     return result

@@ -1018,6 +1018,17 @@ test('aborting a pending child runner tool does not wait for its natural result'
 });
 
 
+test("quick writer returns prose with no tools, JSON repair or submission round", async () => {
+  const s = await reviewer({role:'quick_writer'});
+  assert.deepEqual(s.tools, []);
+  script(reply.text('# Brief\n\nRevenue was 120 million. [S1]'));
+  const result = await turn(s.session_id, 'quick-prose', {expect_json:false, require_submit:false});
+  assert.equal(ends(result)[0].status, 'completed');
+  assert.equal(ends(result)[0].final_text, '# Brief\n\nRevenue was 120 million. [S1]');
+  assert.equal(provider.requests.length, 1);
+  assert.equal(provider.requests[0].tools?.length || 0, 0);
+});
+
 test("manual compaction retains BriefLoop focus, SDK checkpoints and explicit user focus", async () => {
   const s = await reviewer({role: 'analyst'});
   assert.equal(s.runtime_policy.compaction, true);

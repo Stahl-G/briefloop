@@ -29,7 +29,7 @@ import json
 import os
 from pathlib import Path
 
-ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst', 'orchestrator', 'chat', 'fact_checker')
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst', 'orchestrator', 'chat', 'fact_checker', 'quick_writer')
 
 
 def role_of(config):
@@ -682,7 +682,7 @@ def _scout_tools(config):
     return [*SCOUT_READ_TOOLS, *web, SCOUT_RECORD, SCOUT_SUBMIT]
 
 
-RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS}
+RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS, 'quick_writer': []}
 
 
 def _tools(role, mode=None, config=None):

@@ -24,6 +24,17 @@ test('draft-first is opt-in, with an editable soft target independent of researc
  $('draft-target').value='17';assert.equal(controls.read().target_minutes,17);
 });
 
+test('fast mode uses existing materials and makes automatic background checks explicit',async()=>{
+ const {$,controls,setResult}=view();
+ $('completion-mode').value='fast';$('completion-mode').listeners.change();
+ assert.deepEqual(controls.read(),{completion_mode:'fast',target_minutes:10,research_tier:'quick',allow_web:false,fact_check:false});
+ assert.match($('completion-mode-help').textContent,/后台补充依据和评价/);
+ setResult({mode:'fast',state:'checking',checked_version:'v0'});await controls.render();
+ assert.equal($('draft-completion').hidden,false);
+ assert.match($('draft-completion').innerHTML,/不自动改写正文/);
+ assert.match($('draft-completion').innerHTML,/新修改尚未检查/);
+});
+
 test('continue waits for saved user version and never asks the server to use current defaults',async()=>{
  const {$,controls,calls,setVersion}=view();await controls.render();
  assert.match($('draft-completion').innerHTML,/完整核验尚未开始/);

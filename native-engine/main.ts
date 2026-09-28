@@ -56,6 +56,7 @@ const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
   analyst: ["packet_list", "packet_read", "packet_grep", "calc"],
   orchestrator: ["packet_list", "packet_read", "packet_grep", "calc"],
   chat: [],
+  quick_writer: [],
   fact_checker: ["packet_list", "packet_read", "packet_grep", "calc"],
 };
 const RUNNER_TOOL_TIMEOUT_MS = 180_000;

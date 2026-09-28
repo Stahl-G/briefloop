@@ -33,6 +33,8 @@ def summary(store, job_id):
     running = job['status'] in ACTIVE
     child = next((j for j in reversed(children) if j['status'] in ACTIVE), None) if running else None
     stage = public_text(p.get('stage')) or ('等待开始' if job['status'] == 'queued' else task_label(job['kind'], '处理任务'))
+    if running and req.get('completion_mode')=='fast' and job['kind']=='generate':
+        stage='直接阅读材料并写作'
     if child:
         stage = task_label(child['kind'], '子任务') + ('等待开始' if child['status'] == 'queued' else '进行中')
     if not running:
@@ -62,7 +64,7 @@ def summary(store, job_id):
         timeline.append({'label': f"第 {r['index']} 轮研究" + ('已收束' if done else '进行中' if running else '未收束'),
                          'detail': public_text((r.get('outcome') or {}).get('summary')),
                          'status': 'done' if done else 'active' if running else 'recorded', 'time': r.get('closed') or r.get('created')})
-    event_labels = {'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
+    event_labels = {'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',
                        'repairing_metadata': '正在修复依据关联与处理说明', 'metadata_repaired': '依据关联已修复'}
@@ -70,6 +72,9 @@ def summary(store, job_id):
     for e in events:
         data = json.loads(e['data'])
         label = event_labels.get(e['kind'])
+        if req.get('completion_mode')=='fast' and e['kind']=='checks_deferred':label='快速初稿已保存，后台检查待开始'
+        if running and e['kind']=='fast_evidence' and not store.rows('SELECT id FROM assessments WHERE version_id=?',(payload.get('version_id',''),)):
+            stage='后台补充依据和评价'
         if e['kind'] == 'revision_progress': label = revision_labels.get(data.get('stage'))
         if e['kind'] == 'fact_check':
             label = {'dispatch': '事实核查任务已提交', 'finish': '事实核查阶段已结束',
