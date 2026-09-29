@@ -11,7 +11,7 @@ import signal
 import sys
 import threading
 import time
-from .platform_support import WorkspaceLock
+from .platform_support import WorkspaceLock, filesystem_path
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
 from .models import Requirements, Settings, SaveRevision, Comment
@@ -431,7 +431,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     xlsx=job['kind']=='export_xlsx'
                     if job['kind'] not in ('export_docx','export_xlsx'):raise ValueError('不是导出任务')
                     if job['status']!='complete':raise ValueError('Excel 尚未制作完成' if xlsx else 'Word 尚未制作完成')
-                    data=(output_path_xlsx(store,job) if xlsx else output_path(store,job)).read_bytes()
+                    data=filesystem_path(output_path_xlsx(store,job) if xlsx else output_path(store,job)).read_bytes()
                     import hashlib
                     if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:
                         raise ValueError('Excel 文件已变化，请重新生成' if xlsx else 'Word 文件已变化，请重新生成')

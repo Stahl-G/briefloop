@@ -198,7 +198,7 @@ def _envelope_error(envelope):
 
 
 def _file_sha256(path):
-    with Path(path).open('rb') as stream:
+    with platform_support.filesystem_path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
@@ -270,7 +270,7 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None, canc
     """
     try:
         target = Path(path)
-        if not _enabled(store) or target.suffix.lower() not in OFFICE_SUFFIXES or not target.is_file():
+        if not _enabled(store) or target.suffix.lower() not in OFFICE_SUFFIXES or not platform_support.filesystem_path(target).is_file():
             return None
         binary = find()
         if not binary:

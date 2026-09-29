@@ -101,34 +101,86 @@ def test_process_host_death_reaps_only_its_execution(tmp_path):
             helper.terminate(); helper.wait()
 
 
-def test_word_locked_destination_keeps_old_file_and_saved_revision(tmp_path):
+@pytest.mark.parametrize('long_workspace', [False, True])
+def test_word_locked_destination_keeps_old_file_and_saved_revision(tmp_path, long_workspace):
     import ctypes as c
     from ctypes import wintypes as w
     import threading
-    from briefloop.demo import create_demo
     from briefloop.store import Store
     from briefloop.export_jobs import enqueue_export, generate_word, output_path
-    store=Store(tmp_path/'中文 report')
-    demo=create_demo(store)
-    job=enqueue_export(store,demo['version_id'])
-    target=output_path(store,job);target.parent.mkdir(parents=True)
-    target.write_bytes(b'previous document must survive')
+    from briefloop.platform_support import filesystem_path
+    root=tmp_path/'中文 report'
+    if long_workspace:
+        root=tmp_path/('中文 report-'+'w'*(220-len(str(tmp_path))-1-len('中文 report-')))
+    store=Store(root)
+    source=store.add_source('合成来源','本周两项交付。')
+    run=store.create_run({'title':'合成验收','objective':'核对保存的内容'},[source['id']])
+    brief=store.publish(run['id'],{'title':'合成验收','markdown':'# 合成验收\n\n本周两项交付。'},author='example')
+    job=enqueue_export(store,brief['id'])
+    target=output_path(store,job)
+    filesystem_path(target.parent).mkdir(parents=True)
+    filesystem_path(target).write_bytes(b'previous document must survive')
     from briefloop.windows_process import api, close_handle
     handle=api('CreateFileW',[w.LPCWSTR,w.DWORD,w.DWORD,c.c_void_p,w.DWORD,w.DWORD,w.HANDLE],w.HANDLE)(
-        str(target),0x80000000,1,None,3,0,None)
+        str(filesystem_path(target)),0x80000000,1,None,3,0,None)
     assert handle!=c.c_void_p(-1).value
     try:
         result=generate_word(store,job,threading.Event())
         store.update_job(job['id'],'complete',result=result)
-        assert target.read_bytes()==b'previous document must survive'
+        assert filesystem_path(target).read_bytes()==b'previous document must survive'
         from docx import Document
         saved=output_path(store,store.one('jobs',job['id']))
         assert saved!=target
-        assert Document(saved).paragraphs
-        assert store.one('briefs',demo['version_id'])['author']=='example'
-        assert enqueue_export(store,demo['version_id'])['id']==job['id']
+        from io import BytesIO
+        assert Document(BytesIO(filesystem_path(saved).read_bytes())).paragraphs
+        assert saved.is_relative_to(store.root) and not str(saved).startswith('\\\\?\\')
+        if long_workspace:assert len(str(saved))>260
+        assert store.one('briefs',brief['id'])['author']=='example'
+        assert enqueue_export(store,brief['id'])['id']==job['id']
     finally:
         close_handle(handle)
+
+
+def test_long_word_artifact_is_cached_queryable_and_downloadable(tmp_path):
+    import hashlib
+    import http.client
+    import threading
+    from briefloop import export_jobs
+    from briefloop.external_requests import dispatch
+    from briefloop.platform_support import filesystem_path
+    from briefloop.server import make_server
+    from briefloop.store import Store
+    root=tmp_path/('中文工作区-'+'w'*(220-len(str(tmp_path))-1-len('中文工作区-')))
+    store=Store(root)
+    source=store.add_source('合成来源','本周两项交付。')
+    run=store.create_run({'title':'合成验收','objective':'核对保存的内容'},[source['id']])
+    brief=store.publish(run['id'],{'title':'合成验收','markdown':'# 合成验收\n\n本周两项交付。'},author='example')
+    job=export_jobs.enqueue_export(store,brief['id'])
+    result=export_jobs.generate_word(store,job,threading.Event())
+    store.update_job(job['id'],'complete',result=result)
+    path=export_jobs.output_path(store,store.one('jobs',job['id']))
+    assert len(str(path))>260 and path.is_relative_to(root)
+    blob=filesystem_path(path).read_bytes()
+    assert export_jobs.enqueue_export(store,brief['id'])['id']==job['id']
+    query={'workspace_id':store.meta('workspace_id'),'action':'query','job_id':job['id']}
+    assert dispatch(store,query)['artifact_available'] is True
+    server=make_server(root,port=0,paused=True)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=10)
+    try:
+        connection.request('GET','/api/export-file?job='+job['id'])
+        response=connection.getresponse()
+        assert response.status==200
+        assert response.read()==blob and hashlib.sha256(blob).hexdigest()==result['sha256']
+        filesystem_path(path).write_bytes(b'damaged artifact')
+        connection.request('GET','/api/export-file?job='+job['id'])
+        response=connection.getresponse();response.read()
+        assert response.status==400
+        assert dispatch(store,query)['artifact_available'] is False
+        assert export_jobs.enqueue_export(store,brief['id'])['id']!=job['id']
+        assert store.one('briefs',brief['id'])['hash']==brief['hash']
+    finally:
+        connection.close();server.shutdown();thread.join();server.server_close()
 
 
 def test_unicode_upload_and_original_survive_workspace_reopen(tmp_path):

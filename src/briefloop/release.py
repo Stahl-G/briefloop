@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .deliverable_spec import SOFT_CONTRACT_KINDS, clause_items, requirement_severity
 from .store import dump, now, uid
+from .platform_support import filesystem_path
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS releases(id TEXT PRIMARY KEY,version_id TEXT NOT NULL REFERENCES briefs(id),
@@ -32,9 +33,9 @@ def safe_file(root, relative):
     cursor = root
     for part in name.parts:
         cursor = cursor / part
-        if cursor.is_symlink():
+        if filesystem_path(cursor).is_symlink():
             raise ValueError('交付文件不能通过符号链接读取')
-    if not path.resolve().is_relative_to(root) or not path.is_file():
+    if not path.resolve().is_relative_to(root) or not filesystem_path(path).is_file():
         raise ValueError('交付文件不存在或越界')
     return path
 
