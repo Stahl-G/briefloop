@@ -9,7 +9,7 @@ Node 20+ 运行 `node src/briefloop/static/runtime-bridge.mjs`。分发文件已
 stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}` 或 `{id,error:{message}}`。异步消息 `{method:"event",params:{execution_id,kind,...}}`。
 
 - `discover {paths?:{runtime_id:absolute_path}}`：PATH 与常见用户安装目录检测、限时版本探测；不登录、不安装、不推理。返回已安装与未安装 runtime 列表。
-- `list_models {runtime_id,path?,cwd?}`：ACP initialize/session-new 取得宿主目录；MiMo 使用 `models --verbose`；保留 OpenCode v1 的旧 CLI 目录兼容入口，产品中的 OpenCode 模型及档位查询统一使用 Python 管理的 provider API（v2 已移除 `models --verbose`）。Claude Code CLI 没有机器可读的实时模型目录命令：每次调用重新读取本机路由，显示明确标注的内置建议与由 CLI 实时解析的 `opus` 等别名，并支持直接输入模型 ID；不把 Claude 的本地缓存冒充实时目录。
+- `list_models {runtime_id,path?,cwd?}`：ACP initialize/session-new 取得宿主目录；MiMo 使用 `models --verbose`；保留 OpenCode v1 的旧 CLI 目录兼容入口，产品中的 OpenCode 模型及档位查询统一使用 Python 管理的 provider API（v2 已移除 `models --verbose`）。Claude Code CLI 没有机器可读的实时模型目录命令：每次调用重新读取本机实际路由；没有目录时仅提供“宿主默认”操作和手动输入，不注入固定模型或别名候选。目录及档位读取失败也不回退内置模型列表。
 - `start {execution_id,runtime_id,cwd,prompt,model?,session_id?,images?:[absolute_path],permission:"runtime-native",allow_web:null,path?,timeout_ms?}`：快速应答，随后发送事件。没有成功结果的退出判为失败。
 - `cancel {execution_id}`：发送 ACP cancel 并终止该执行拥有的进程组。
 - `answer {execution_id,request_id,option_id?}`：回应 ACP 权限请求。只接受宿主列出的 optionId；不传代表取消，不自动批准。

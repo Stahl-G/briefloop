@@ -17,13 +17,13 @@ for(const variant of [undefined,null,'','high']){
  assert.equal(view.modelLabel(frozen),view.modelLabel(settings));
  assert.equal(view.modelLabel(frozen),'OpenCode · '+model+' / '+(variant||'模型默认'));
 }
-assert.equal(view.modelLabel({backend:'codex',model:'gpt-5.6-luna',reasoning_effort:'medium'}),'Codex · Luna / medium');
+assert.equal(view.modelLabel({backend:'codex',model:'gpt-5.6-luna',reasoning_effort:'medium'}),'Codex · gpt-5.6-luna / medium');
 assert.equal(view.modelLabel({backend:'other',model:'test-model'}),'Other · test-model');
 // Preserve the existing setting field's precedence and legacy unknown effort.
 assert.equal(view.modelLabel({agent_backend:'opencode',backend:'codex',model}),'OpenCode · '+model+' / 模型默认');
-assert.equal(view.modelLabel({model:'gpt-5.6-luna'}),'Luna / 未记录');
+assert.equal(view.modelLabel({model:'gpt-5.6-luna'}),'gpt-5.6-luna / 未记录');
 assert.equal(view.modelLabel(null),'未指定模型');
-assert.equal(view.modelLabel({backend:'codex',model:'gpt-5.6-luna',reasoning_effort:'medium',service_tier:'fast'}),'Codex · Luna / medium · Fast（请求）');
+assert.equal(view.modelLabel({backend:'codex',model:'gpt-5.6-luna',reasoning_effort:'medium',service_tier:'fast'}),'Codex · gpt-5.6-luna / medium · Fast（请求）');
 console.log('PASS: settings and frozen runtime backend fields display the same model and variant');
 
 // Exercise both rendering call sites using the actual persisted outer backend shape.
@@ -48,6 +48,6 @@ await view.refreshProgress();
 assert.match(view.$('run-progress').innerHTML,/OpenCode · opencode\/muse-spark-1.3-contributor-free \/ 模型默认/);
 // Event backend is a fallback for older jobs; a frozen nested backend takes precedence.
 assert.equal(view.jobModelLabel({payload:'{}'},{backend:'opencode',runtime:{model}}),'OpenCode · '+model+' / 模型默认');
-assert.equal(view.jobModelLabel({payload:JSON.stringify({agent_backend:'other',runtime:{backend:'codex',model:'gpt-5.6-luna',reasoning_effort:'medium',service_tier:'fast'}})}),'Codex · Luna / medium · Fast（请求）');
+assert.equal(view.jobModelLabel({payload:JSON.stringify({agent_backend:'other',runtime:{backend:'codex',model:'gpt-5.6-luna',reasoning_effort:'medium',service_tier:'fast'}})}),'Codex · gpt-5.6-luna / medium · Fast（请求）');
 assert.equal(view.jobModelLabel({payload:JSON.stringify({runtime:{model}})}),model+' / 未记录');
 console.log('PASS: job history and live progress retain the frozen outer backend without guessing from model IDs');

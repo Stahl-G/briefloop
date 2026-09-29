@@ -4,7 +4,7 @@ import hashlib
 import json
 import shutil
 from typing import Literal
-from pydantic import ConfigDict, Field, ValidationError, model_validator
+from pydantic import ConfigDict, Field, StrictInt, ValidationError, model_validator
 from .models import Model, Assessment
 from .store import dump, uid, now
 from .evidence import inspect_bindings, record
@@ -42,6 +42,8 @@ class ReviewFinding(Model):
     # review finding. Keep it rather than failing the whole task on a stray key.
     requirement: str = ''
     source_id: str | None = None
+    assessment_finding_indices: list[StrictInt] = Field(default_factory=list,
+        description='本结果 assessment.findings 的从 0 开始的索引；可关联多条评分问题，不改变其严重程度')
     response_to: str | None = Field(default=None,description='history/responses.json 中的处理说明 id（response_开头），不是 finding_id')
     resolution: Literal['resolved','dismissed_with_evidence'] | None = None
 
@@ -124,10 +126,58 @@ class ReviewOutput(Model):
     assessment: Assessment | None = None
 
 
+def finding_consistency_errors(value, *, requirement_severity=None):
+    """Check explicit cross-list coverage without interpreting or promoting prose.
+
+    Assessment findings and review findings serve different purposes. A complete
+    review must nevertheless account for every declared major assessment issue.
+    Exact descriptions are a conservative compatibility link for older outputs;
+    new outputs can link indices and keep their two descriptions distinct.
+    """
+    assessment=(value.get('assessment') or {}).get('findings',[])
+    findings=value.get('findings',[])
+    errors=[]
+    for index,finding in enumerate(findings):
+        links=finding.get('assessment_finding_indices',[])
+        if any(type(link) is not int or link<0 or link>=len(assessment) for link in links):
+            errors.append({'code':'review_findings_inconsistent',
+                'message':f'findings[{index}].assessment_finding_indices 引用越界或非整数；请使用本结果 assessment.findings 从 0 开始的有效索引'})
+    if value.get('status')!='complete':return errors
+    for index,scored in enumerate(assessment):
+        if scored.get('severity')!='major':continue
+        candidates=[finding for finding in findings
+                    if finding.get('severity')=='major' and not finding.get('response_to') and not finding.get('resolution')
+                    and (index in finding.get('assessment_finding_indices',[]) or
+                         (not finding.get('assessment_finding_indices') and scored.get('description')
+                          and finding.get('description')==scored['description']))]
+        # This is an explicit classification conflict, not a guess about prose:
+        # an evidence issue cannot disappear through any soft-finding exception.
+        if scored.get('dimension')=='evidence':
+            from .release import finding_is_soft
+            candidates=[finding for finding in candidates
+                        if not finding_is_soft(finding,requirement_severity or {})]
+        if not candidates:
+            errors.append({'code':'review_findings_inconsistent','assessment_finding_index':index,
+                'message':f'assessment.findings[{index}] 的 major 问题未被顶层 major 新发现完整承接；'
+                          f'请补全 findings 并用 assessment_finding_indices:[{index}] 关联，'
+                          '保留核查类型和依据（evidence 问题不能仅标为 expression 或软条款的要求/执行缺口）；无法完成请将 review.status 标为 incomplete'})
+    return errors
+
+
 def pack_dump(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,indent=2)
 
 
 def sha(data):return hashlib.sha256(data).hexdigest()
+
+
+def _archive_review_output(folder):
+    """Preserve rejected bytes before a later repair can replace review.json."""
+    output=folder/'review.json'
+    if not output.is_file():return None
+    raw=output.read_bytes();attempts=folder/'attempts';attempts.mkdir(exist_ok=True)
+    archived=attempts/('review-'+sha(raw)+'.json')
+    if not archived.exists():archived.write_bytes(raw)
+    return str(archived.relative_to(folder))
 
 
 def get_review(store,identity):
@@ -609,8 +659,15 @@ def accept_review(store,review_id,value,dry_run=False):
     result=ReviewOutput.model_validate(value);review=get_review(store,review_id)
     if result.version_id!=review['version_id'] or result.fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 输出未绑定本次正文与核查包')
+    packet=current=None
+    severity={}
+    if result.assessment is not None:
+        packet,current,_=_packet(store,review)
+        from .release import finding_severity
+        severity=finding_severity(current['requirements'])
+    consistency=finding_consistency_errors(result.model_dump(),requirement_severity=severity)
+    if consistency:raise ValueError('；'.join(item['message'] for item in consistency))
     if result.assessment is not None and 'assessment-context.json' in review['data'].get('files', {}):
-        packet,_,_=_packet(store,review)
         context=json.loads((packet/'assessment-context.json').read_text(encoding='utf-8'))
         from .models import assessment_checks
         result.assessment.checks=assessment_checks(result.assessment.checks,result.assessment.findings,context['assessment_checks'])
@@ -623,7 +680,7 @@ def accept_review(store,review_id,value,dry_run=False):
         record_verified_corrections(store,review_id)
         return review
     validate_applicable_review(store,review_id,result.version_id)
-    packet,current,_=_packet(store,review)
+    if current is None:packet,current,_=_packet(store,review)
     expected={b['claim_id'] for b in current['evidence']['bindings']}
     allowed_claims=set(expected)
     def include_premises(node):
@@ -940,10 +997,8 @@ def run_review(store,runtime,job,version_id,folder):
         raw=saved_output.read_bytes()
         try:return accept_review(store,identity,json.loads(raw))
         except (ValueError,TypeError) as exc:
-            attempts=folder/'attempts';attempts.mkdir(exist_ok=True)
-            archived=attempts/('review-'+sha(raw)+'.json')
-            if not archived.exists():archived.write_bytes(raw)
-            (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}),encoding='utf-8')
+            archived=_archive_review_output(folder)
+            (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':archived}),encoding='utf-8')
     require_for_review(review_backend,review_mode)
     schema=folder/'packet'/'output.schema.json'
     validate_applicable_review(store,identity,version_id)
@@ -1007,6 +1062,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
+完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression 或软条款的 missing_requirement/execution_gap；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
 '''
     if (folder/'packet'/'assessment-context.json').exists():
         prompt+=('\n读取 assessment-context.json；assessment_checks 是本次评分复核清单，revision_context 若非空，包含准确父版本的原稿、父评价 ID 与逐条问题，历史评价不是事实真值。'
@@ -1052,16 +1108,14 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
         except ValidationError as exc:
             correction=folder/'schema-correction.json'
             if correction.exists():raise
-            raw=saved_output.read_bytes()
-            attempts=folder/'attempts';attempts.mkdir(exist_ok=True)
-            archived=attempts/('review-'+sha(raw)+'.json')
-            if not archived.exists():archived.write_bytes(raw)
-            correction.write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}),encoding='utf-8')
+            archived=_archive_review_output(folder)
+            correction.write_text(dump({'error':str(exc),'original_output':archived}),encoding='utf-8')
             validate_applicable_review(store,identity,version_id)
             repair=prompt+'\n上次回复的 JSON 结构未通过校验：'+str(exc)+'。仅修正字段结构，保留已完成核查的判断和依据，不重新研究或改稿。assessment.checks 是对象数组，可省略或使用 []，不能填写字符串数组。仍只回复完整 JSON。'
             runtime.execute(stage,repair,folder,resume_on_complete=True)
         return accept_review(store,identity,json.loads((folder/'review.json').read_text(encoding='utf-8-sig')))
     except Exception as exc:
         with store.tx() as c:c.execute('UPDATE reviews SET status=?,updated=? WHERE id=? AND result IS NULL',('cancelled' if isinstance(exc,InterruptedError) else 'incomplete',now(),identity))
-        (folder/'admission-error.json').write_text(dump({'error':str(exc)}),encoding='utf-8')
+        archived=_archive_review_output(folder)
+        (folder/'admission-error.json').write_text(dump({'error':str(exc),**({'original_output':archived} if archived else {})}),encoding='utf-8')
         raise

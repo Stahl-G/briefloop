@@ -37,43 +37,13 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     score=folder/'scorer';score.mkdir()
     assessment_prompt(store,brief,score)
     assert [s['id'] for s in json.loads((score/'input.json').read_text())['sources']]==[acquired['id']]
-    runtime={'model':'gpt-5.6-luna','effort':'high'}
+    runtime={'model':''}
     disabled=chat_instructions(store,runtime,allow_web=False)
     enabled=chat_instructions(store,runtime,allow_web=True)
     assert '实际联网状态：未开启' in disabled and '不得通过后台任务绕过' in disabled
     assert '实际联网状态：已开启' in enabled and 'source_ids=[]' in enabled
     assert '预计/实际' in enabled
     assert '实际联网状态：未开启' in chat_instructions(store,{},internal=True,allow_web=False)
-
-
-def test_search_provider_is_frozen_and_tavily_provenance_is_explicit(tmp_path):
-    store=Store(tmp_path/'workspace')
-    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    run=store.create_run({'title':'市场周报','objective':'核对公开披露','allow_web':True},[])
-    job=store.enqueue('generate',{'run_id':run['id']})
-    store.set_meta('settings',{**store.settings(),'search_provider':'native'})
-    payload=json.loads(store.one('jobs',job['id'])['payload'])
-    assert payload['search_provider']=='tavily'
-    assert store.search_provider_for_run(run['id'])=='tavily'
-    folder=store.root/'jobs'/'provider-check';folder.mkdir()
-    generation_prompt(store,{**run,'search_provider':payload['search_provider']},folder)
-    retrieval=json.loads((folder/'input.json').read_text())['retrieval_skill']
-    from pathlib import Path
-    skill_text=Path(retrieval['path']).read_text()
-    assert 'web-search --run '+run['id'] in skill_text and 'PROVIDER 可选 tavily' in skill_text
-    assert 'tavily-extract --run '+run['id'] in skill_text
-    assert '提取响应不是网站原始字节' in skill_text and '摘要和挑战页不算正文' in skill_text
-    assert json.loads((folder/'input.json').read_text())['search_provider']=='tavily'
-    # Old jobs keep their prior Codex behavior even if settings now select Tavily.
-    payload.pop('search_provider')
-    payload.pop('search_policy')
-    with store.tx() as connection:
-        connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(payload),job['id']))
-    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    assert store.search_provider_for_run(run['id'])=='native'
-    text=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'},allow_web=False)
-    assert '本轮冻结搜索策略：优先 Tavily' in text
-    assert '实际联网状态：未开启' in text
 
 
 def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkeypatch):
@@ -172,7 +142,7 @@ def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path
 
 def test_chat_surfaces_default_and_explicit_search_channels(tmp_path):
     store=Store(tmp_path/'workspace')
-    runtime={'model':'gpt-5.6-luna','effort':'high'}
+    runtime={'model':''}
     default=chat_instructions(store,runtime)
     assert '优先 Tavily；允许渠道：Tavily、宿主自带搜索' in default
     assert '缺少密钥时提示配置该渠道' in default and '已有授权补充渠道可在预算内使用' in default

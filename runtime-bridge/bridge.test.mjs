@@ -33,14 +33,24 @@ function bridge(t,extraEnv={}){
 }
 function fixture(t,body,name='cli'){const directories=fixtureDirectories.get(t);assert.ok(directories,'Create the bridge before its fixtures');const d=mkdtempSync(path.join(os.tmpdir(),'bridge-fixture-')),f=path.join(d,name);directories.push(d);writeFileSync(f,'#!/usr/bin/env node\n'+body,{mode:0o755});if(process.platform==='win32'){writeFileSync(path.join(d,'entry.cjs'),body);writeFileSync(f,'exec node "$basedir/entry.cjs" "$@"');writeFileSync(f+'.cmd','@echo off');return {path:f+'.cmd',cwd:d};}return {path:f,cwd:d};}
 const rpcFake=`const rl=require('node:readline').createInterface({input:process.stdin});const send=v=>process.stdout.write(JSON.stringify(v)+'\\n');let promptId;rl.on('line',line=>{const m=JSON.parse(line);const result=r=>send({jsonrpc:'2.0',id:m.id,result:r});if(m.method==='initialize')result({agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}});else if(m.method==='session/new'||m.method==='session/load')result({sessionId:'real-session',models:{availableModels:[{modelId:'test/model',name:'Test'}]}});else if(m.method==='session/set_model')result({});else if(m.method==='session/prompt'){promptId=m.id;send({method:'session/update',params:{update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'HIDDEN'}}}});send({id:90,method:'session/request_permission',params:{options:[{optionId:'yes',kind:'allow_once',name:'Allow once'}],toolCall:{title:'Read fixture'}}});}else if(m.id===90){if(m.result.outcome.optionId!=='yes')process.exit(2);send({method:'session/update',params:{update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'OK'}}}});send({id:promptId,result:{stopReason:'end_turn'}});}});`;
-test('Claude model hints include Opus 5.5 without claiming a live account catalog',async t=>{
- const b=bridge(t),f=fixture(t,'process.exit(0);');
+test('Claude without a live directory does not inject concrete model presets',async t=>{
+ const b=bridge(t,{MMD_MODEL_ROUTES_FILE:path.join(os.tmpdir(),'briefloop-no-route-'+process.pid)}),f=fixture(t,'process.exit(0);');
  b.send(1,'list_models',{runtime_id:'claude',...f});
  const result=(await b.wait(x=>x.id===1)).result;
- assert.equal(result.source,'builtin_hints');
+ assert.ok(['local_routes','host_default_only'].includes(result.source));
  assert.match(result.note,/未提供可读取的实时模型目录/);
- assert.ok(result.models.some(m=>m.id==='claude-opus-5-5'));
- assert.ok(result.models.some(m=>m.id==='opus'));
+ assert.ok(!result.models.some(m=>m.id==='claude-opus-5-5'));
+ assert.ok(result.models.some(m=>m.id==='default'));
+});
+test('failed host discovery keeps only the explicit host-default action',async t=>{
+ const b=bridge(t),f=fixture(t,'process.exit(1);');
+ b.send(1,'list_models',{runtime_id:'codex',...f});
+ const result=(await b.wait(x=>x.id===1)).result;
+ assert.equal(result.source,'host_default_only');
+ assert.equal(result.status,'unavailable');
+ assert.deepEqual(result.models.map(m=>m.id),['default']);
+ b.send(2,'reasoning_options',{runtime_id:'codex',model:'new-model',...f});
+ assert.deepEqual((await b.wait(x=>x.id===2)).result.options,[]);
 });
 test('ACP uses host model/session, asks permission and surfaces reasoning as its own kind',async t=>{const b=bridge(t),f=fixture(t,rpcFake);b.send(1,'list_models',{runtime_id:'kimi',...f});const list=await b.wait(x=>x.id===1);assert.ok(list.result.models.some(x=>x.id==='test/model'));b.send(2,'start',{...f,runtime_id:'kimi',execution_id:'a',prompt:'test',allow_web:true,permission:'runtime-native',model:'test/model'});assert.ok((await b.wait(x=>x.id===2)).result);const q=await b.wait(x=>x.params?.kind==='question');b.send(3,'answer',{execution_id:'a',request_id:q.params.request_id,option_id:'yes'});const end=await b.wait(x=>x.params?.kind==='end');assert.equal(end.params.status,'completed');assert.equal(b.frames.find(x=>x.params?.kind==='session').params.session_id,'real-session');assert.ok(b.frames.some(x=>x.params?.text==='OK'));assert.ok(b.frames.some(x=>x.params?.kind==='reasoning'&&x.params.text==='HIDDEN'));assert.ok(!b.frames.some(x=>x.params?.kind==='text'&&String(x.params.text).includes('HIDDEN')));});
 test('Restriction refused before launching and active turn can cancel',async t=>{const b=bridge(t),f=fixture(t,rpcFake);b.send(1,'start',{...f,runtime_id:'kimi',execution_id:'deny',prompt:'x',permission:'read-only',allow_web:true});assert.ok((await b.wait(x=>x.id===1)).error);b.send(2,'start',{...f,runtime_id:'kimi',execution_id:'c',prompt:'x',permission:'runtime-native',allow_web:true});await b.wait(x=>x.params?.kind==='question');b.send(3,'cancel',{execution_id:'c'});assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'cancelled');});

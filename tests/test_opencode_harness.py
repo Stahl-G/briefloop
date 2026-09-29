@@ -198,7 +198,7 @@ def until(check):
     assert check()
 
 
-def test_list_models_flattens_sorts_and_caches(tmp_path):
+def test_list_models_flattens_sorts_and_reads_current_host_catalog(tmp_path):
     manager = OpencodeHarness(Store(tmp_path), FakeClient)
     first = manager.list_models()
     assert [m['id'] for m in first] == ['a-prov/m0', 'b-prov/m1', 'b-prov/m2']
@@ -206,9 +206,11 @@ def test_list_models_flattens_sorts_and_caches(tmp_path):
     assert first[1]['name'] == 'm1'
     assert manager.client.provider_calls == 1
     manager.list_models()
-    assert manager.client.provider_calls == 1
-    manager.list_models(refresh=True)
     assert manager.client.provider_calls == 2
+    manager.list_models(refresh=True)
+    assert manager.client.provider_calls == 3
+    manager.client.providers = lambda directory=None: {'providers': [{'id': 'new', 'models': {'fresh': {}}}]}
+    assert [row['id'] for row in manager.list_models()] == ['new/fresh']
     manager.close()
 
 
@@ -555,7 +557,7 @@ def test_live_child_activity_reaches_parent_progress_without_repeated_heartbeats
     store = Store(tmp_path)
     manager = OpencodeHarness(store, FakeClient)
     session = manager.create_session('Parent', {'model': 'opencode-go/gpt-5.6-luna'})
-    job = store.enqueue('generate', {})
+    job = store.enqueue('generate', {'runtime': {'backend': 'opencode', 'model': 'fixture/model'}})
     folder = store.root / 'jobs' / job['id']; folder.mkdir(parents=True)
     log = folder / 'events.jsonl'
     tracker = ProgressTracker(store, job['id'], folder)

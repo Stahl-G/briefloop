@@ -57,6 +57,27 @@ def list_releases(store, run_id):
         (run_id,))]
 
 
+def finding_severity(requirements, *, clauses=None):
+    """Resolve the frozen parent/clause delivery rules shared with admission."""
+    if clauses is None:
+        clauses = clause_items(requirements)
+    severity = requirement_severity({'reader_contract': {'clauses': clauses}})
+    severity.update({clause['clause_id']: ('soft' if clause['kind'] in SOFT_CONTRACT_KINDS else 'hard')
+                     for clause in clauses})
+    return severity
+
+
+def finding_is_soft(data, severity):
+    # Only presentation or compliance with purely soft requirements may soften.
+    # Factual and evidence findings retain their blocking power.
+    if data.get('kind') == 'expression':
+        return True
+    if data.get('kind') not in ('missing_requirement', 'execution_gap'):
+        return False
+    identities = data.get('requirement_ids') or []
+    return bool(identities) and all(severity.get(identity) == 'soft' for identity in identities)
+
+
 def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=None):
     """Pure delivery rules; returns named blockers and non-blocking notices."""
     blockers = []
@@ -84,11 +105,11 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
     # Do not derive new IDs from omitted instructions in an offline audit.
     if clauses is None:
         clauses = clause_items(snapshot['requirements'])
-    severity = requirement_severity({'reader_contract': {'clauses': clauses}})
     # A finding can cite a parent or a clause. A mixed parent remains hard, while
     # each clause follows its own kind. Use frozen IDs, including redacted audits.
-    severity.update({clause['clause_id']: ('soft' if clause['kind'] in SOFT_CONTRACT_KINDS else 'hard')
-                     for clause in clauses})
+    severity = finding_severity(snapshot['requirements'], clauses=clauses)
+    from .review import finding_consistency_errors
+    blockers.extend(finding_consistency_errors(review_result, requirement_severity=severity))
     if protocol == 'clauses_v1':
         # The clause results are the only authority for requirement fulfilment; the
         # parent requirement rollup is not consulted, so a soft clause can never make
@@ -150,24 +171,13 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
 
     for binding in snapshot['evidence']['bindings']:
         check_claim(binding)
-    def finding_is_soft(data):
-        # Presentation findings are always soft. Only a compliance-type finding on a
-        # purely soft requirement may soften; factual and evidence findings keep their
-        # blocking power even when they reference a method or writing clause.
-        if data.get('kind') == 'expression':
-            return True
-        if data.get('kind') not in ('missing_requirement', 'execution_gap'):
-            return False
-        identities = data.get('requirement_ids') or []
-        return bool(identities) and all(severity.get(identity) == 'soft' for identity in identities)
-
     for finding in findings:
         data = finding['data']
         if finding['status'] in ('resolved', 'dismissed_with_evidence'):
             continue
         # A writing/method problem must not re-block through a "major" finding; a
         # concrete factual or evidence finding still blocks.
-        if finding_is_soft(data) or data.get('severity') == 'minor':
+        if finding_is_soft(data, severity) or data.get('severity') == 'minor':
             notices.append({'code': 'finding_notice', 'message': data['description'], 'finding_id': finding['id']})
         else:
             issue('finding_unresolved', data['description'], finding_id=finding['id'])
@@ -378,6 +388,15 @@ def validate_release(store, release):
     result = release['result']
     if sha(dump(release['data']).encode()) != release['fingerprint']:
         raise ValueError('正式交付固定输入记录已变化')
+    # Older accepted results can predate admission consistency checks. Keep the
+    # immutable record, but do not serve an unsafe formal artifact as verified.
+    from .review import finding_consistency_errors
+    severity = finding_severity((release['data'].get('snapshot') or {}).get('requirements') or {},
+                                clauses=release['data'].get('review_clauses'))
+    consistency = finding_consistency_errors(release['data'].get('review_result') or {},
+                                             requirement_severity=severity)
+    if consistency:
+        raise ValueError('正式交付审阅记录不完整，请补全独立审阅：' + '；'.join(item['message'] for item in consistency))
     manifest_path = safe_file(store.root, result['manifest_path'])
     if sha(manifest_path.read_bytes()) != result['manifest_hash']:
         raise ValueError('正式交付清单已变化')

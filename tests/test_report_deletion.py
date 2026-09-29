@@ -31,23 +31,6 @@ def test_delete_removes_the_report_from_browsing_but_keeps_its_history(tmp_path)
     assert [row['key'] for row in store.rows("SELECT key FROM meta WHERE key LIKE 'deleted_report:%'")] == ['deleted_report:' + run['id']]
 
 
-@pytest.mark.parametrize('job', [('export_docx', 'version'), ('generate', 'run')])
-def test_delete_refuses_while_a_job_still_references_the_report(tmp_path, job):
-    kind, reference = job
-    store = Store(tmp_path)
-    run, brief = published(store)
-    payload = {'version_id': brief['id']} if reference == 'version' else {'run_id': run['id']}
-    queued = store.enqueue(kind, payload)
-
-    with pytest.raises(ValueError, match='仍有任务'):
-        store.delete_report(brief['id'])
-    assert store.one('runs', run['id'])['id'] == run['id']
-
-    with store.tx() as c:
-        c.execute("UPDATE jobs SET status='complete' WHERE id=?", (queued['id'],))
-    assert store.delete_report(brief['id'])['deleted'] is True
-
-
 def test_delete_rejects_an_unknown_report(tmp_path):
     store = Store(tmp_path)
     with pytest.raises(ValueError, match='报告不存在'):

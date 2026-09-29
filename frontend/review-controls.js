@@ -36,7 +36,7 @@ export function createReviewControls({api,action,$,getState,backendValue,friendl
   const backend=$('review-backend').value,codex=backend==='codex';
   const effortLabel=find('[data-testid="review-effort-label"]');
   if(effortLabel)effortLabel.textContent=codex?'推理强度':'推理档位（Variant）';
-  $('review-model').placeholder=codex?'模型 ID，例如 gpt-6-luna':'provider/model，例如 opencode-go/deepseek-v4.1-flash';
+  $('review-model').placeholder=codex?'输入模型 ID':'输入 provider/model';
   $('review-variant').placeholder='例如 high，留空使用模型默认';
   $('review-model').disabled=$('review-variant').disabled=saving||!backend;
   $('review-backend').disabled=saving;if(modeSelect())modeSelect().disabled=saving;

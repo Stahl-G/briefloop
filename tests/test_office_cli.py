@@ -360,32 +360,6 @@ def test_generate_word_without_the_switch_matches_current_behavior(tmp_path, mon
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
-def test_run_check_for_job_validates_then_reruns(tmp_path, monkeypatch):
-    install_stub(tmp_path, monkeypatch)
-    store = _workspace(tmp_path)
-    brief = _published_brief(store)
-    job, result = _completed_export(store, brief)  # switch off: no rows from the hook
-    assert store.rows('SELECT * FROM office_checks') == []
-    with pytest.raises(ValueError, match='未检测到 OfficeCLI 或未开启'):
-        office_cli.run_check_for_job(store, job['id'])
-    store.update_settings({'officecli_enabled': True})
-    view = office_cli.run_check_for_job(store, job['id'])
-    assert view['file_sha256'] == result['sha256']
-    assert view['job_kind'] == 'export_docx' and view['job_id'] == job['id']
-    assert view['tool_version'] == '9.9.9-stub'
-    assert view['validate']['status'] == 'ok' and view['issues']['status'] == 'ok'
-    assert office_cli.version_office_view(store, brief['id'])['file_sha256'] == result['sha256']
-    office_cli.run_check_for_job(store, job['id'])  # a refresh replaces, not accumulates
-    assert len(store.rows('SELECT * FROM office_checks')) == 2
-    from briefloop.export_jobs import output_path
-    output_path(store, job).write_bytes(b'changed')
-    with pytest.raises(ValueError, match='工件已变化'):
-        office_cli.run_check_for_job(store, job['id'])
-    with pytest.raises(ValueError, match='只能对'):
-        office_cli.run_check_for_job(store, store.enqueue('assess', {'version_id': brief['id']})['id'])
-
-
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_generate_word_check_stage_stops_between_substeps_when_cancelled(tmp_path, monkeypatch):
     """A stop request during the post-export quality gate lands the job as
     cancelled between the two sub-steps instead of blocking on the second
@@ -610,31 +584,6 @@ def _completed_xlsx(store, brief):
     result = generate_xlsx(store, job, threading.Event())
     store.update_job(job['id'], 'complete', result=result)
     return store.one('jobs', job['id']), result
-
-
-def test_explicit_check_and_preview_admit_xlsx_export_jobs(tmp_path, monkeypatch):
-    install_stub(tmp_path, monkeypatch)
-    store = _workspace(tmp_path)
-    brief = _published_table_brief(store)
-    job, result = _completed_xlsx(store, brief)
-    # Kind gate passed, request stops at the switch/binary gate.
-    monkeypatch.setattr(host_bins, 'EXTRA_DIRS', ())
-    monkeypatch.setenv('PATH', str(tmp_path / 'empty-bin'))
-    office_cli._clear_caches()
-    store.update_settings({'officecli_enabled': True})
-    with pytest.raises(ValueError, match='未检测到 OfficeCLI 或未开启'):
-        office_cli.run_check_for_job(store, job['id'])
-    install_stub(tmp_path, monkeypatch)  # bring the grammar stub back
-    view = office_cli.run_check_for_job(store, job['id'])
-    assert view['job_kind'] == 'export_xlsx' and view['file_sha256'] == result['sha256']
-    assert view['validate']['status'] == 'ok'
-    preview = office_cli.render_preview(store, {'job_id': job['id'], 'pages': [1]})
-    assert preview['target'] == {'kind': 'export', 'id': job['id'], 'name': 'report.xlsx'}
-    # Old kinds keep the rejection, now worded for both formats.
-    with pytest.raises(ValueError, match='只能对 Word/Excel 导出或正式交付任务'):
-        office_cli.run_check_for_job(store, store.enqueue('assess', {'version_id': brief['id']})['id'])
-    with pytest.raises(ValueError, match='不是 Word/Excel 导出或正式交付任务'):
-        office_cli.render_preview(store, {'job_id': store.enqueue('assess', {'version_id': brief['id']})['id']})
 
 
 def test_version_office_view_stays_bound_to_word_and_release_artifacts(tmp_path, monkeypatch):

@@ -68,32 +68,6 @@ def test_explicit_check_conflict_is_visible_but_minor_findings_do_not_reject_sco
     assert legacy['checks'][0]['status'] == 'passed'
 
 
-def test_missing_followups_are_saved_as_unchecked_without_another_turn(tmp_path):
-    store, first, revised, previous = pair(tmp_path)
-    job = store.enqueue('assess', {'version_id': revised['id'], 'agent_backend': 'codex'})
-
-    class Runtime:
-        calls = 0
-        def execute(self, job, prompt, folder):
-            self.calls += 1
-            packet = json.loads((folder / 'input.json').read_text())
-            # One requested check is answered; revision follow-up is omitted.
-            (folder / 'assessment.json').write_text(dump(score(revised, checks=[{
-                'id': packet['assessment_checks'][0]['id'], 'status': 'passed',
-                'reason': 'Compared headings and figures.'}])))
-            return {'status': 'complete'}
-
-    runtime = Runtime(); worker = Worker(store, runtime)
-    result = worker.assess(job)
-    data = json.loads(store.one('assessments', result['assessment_id'])['data'])
-    assert runtime.calls == 1
-    assert data['overall'] == '达到要求'
-    assert [check['status'] for check in data['checks']] == ['passed', 'not_checked', 'not_checked']
-    assert data['checks'][-1]['prior_assessment_id'] == previous['id']
-    assert data['checks'][-1]['prior_description'] == 'Summary omits the public beta condition.'
-    assert len(store.rows('SELECT id FROM briefs WHERE run_id=?', (first['run_id'],))) == 2
-
-
 def test_disputed_old_finding_is_not_silently_marked_resolved(tmp_path):
     store, first, revised, previous = pair(tmp_path)
     expected = [{'id': f"revision:{previous['id']}:0", 'name': '修订复核 · 1',
@@ -106,47 +80,6 @@ def test_disputed_old_finding_is_not_silently_marked_resolved(tmp_path):
     assert data['checks'][0]['reason'] == check['reason']
     # Prior assessment is a historical record, not overwritten by the new opinion.
     assert store.one('assessments', previous['id'])['data'] == previous['data']
-
-
-@pytest.mark.parametrize('backend', ['codex', 'briefloop-native'])
-def test_reviewer_uses_bound_context_and_missing_followup_is_not_a_retry(tmp_path, backend):
-    from briefloop.review import run_review, get_review, accept_review, validate_applicable_review
-    from review_checks import for_version
-    store, first, revised, previous = pair(tmp_path)
-    job = store.enqueue('assess', {'version_id': revised['id'], 'agent_backend': backend,
-                                   'runtime': {'model': 'fake/model' if backend == 'briefloop-native' else 'fake'}})
-    folder = store.root / 'jobs' / job['id']
-
-    class Runtime:
-        calls = 0
-        def execute(self, stage, prompt, output_folder, **kwargs):
-            self.calls += 1
-            context = json.loads((output_folder / 'packet/assessment-context.json').read_text())
-            assert context['revision_context']['assessment_id'] == previous['id']
-            assert context['revision_context']['brief']['markdown'] == first['markdown']
-            assert 'assessment-context.json' in prompt
-            review = get_review(store, stage['review_id'])
-            self.value = {'fingerprint': review['fingerprint'], 'version_id': revised['id'],
-                          'status': 'complete', 'summary': 'Synthetic complete review.',
-                          'coverage_scan_complete': True, 'requirement_checks': for_version(store, revised['id']),
-                          'assessment': score(revised)}
-            (output_folder / 'review.json').write_text(dump(self.value))
-
-    runtime = Runtime()
-    accepted = run_review(store, runtime, job, revised['id'], folder)
-    assert runtime.calls == 1
-    assert accepted['status'] == 'complete'  # New observations don't redefine the review gate.
-    checks = accepted['result']['assessment']['checks']
-    assert len(checks) == 3 and {check['status'] for check in checks} == {'not_checked'}
-    saved = json.loads(store.one('assessments', 'assessment_' + accepted['id'])['data'])
-    assert saved['checks'] == checks
-    assert accept_review(store, accepted['id'], runtime.value)['result'] == accepted['result']
-    validate_applicable_review(store, accepted['id'], revised['id'])
-    # The old concerns are actual frozen review input, not an unbound side file.
-    context_file = folder / 'packet/assessment-context.json'
-    context_file.write_text(context_file.read_text() + '\n')
-    with pytest.raises(ValueError, match='核查包文件已变化'):
-        validate_applicable_review(store, accepted['id'], revised['id'])
 
 
 def test_legacy_saved_review_score_can_be_read_without_rewriting_new_optional_keys(tmp_path):

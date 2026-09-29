@@ -118,14 +118,14 @@ class OpencodeHarness:
         self._models_cache = None
         self._models_at = 0.0
 
-    MODELS_CACHE_TTL = 3600.0
+    MODELS_CACHE_TTL = 0.0
     CLIENT_IDLE_SECONDS = 30.0
 
     def list_models(self, refresh=False):
         """Flattened provider/model catalog for the picker.
 
-        Boots the managed serve on first use and caches for an hour; the
-        models themselves are opencode's business, we only relay them.
+        Reads the managed host API on each lookup. The host owns this catalog;
+        it is not a claim that BriefLoop probed every upstream provider.
         """
         now = time.monotonic()
         with self._lock:

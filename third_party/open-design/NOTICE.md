@@ -22,11 +22,9 @@ Model directory reuse:
   and entries with Codex catalog visibility `hide` are skipped like `hidden`.
 - runtime-models/opencode-models.ts ← parser functions/constants before
   opencodeAgentDef in runtimes/defs/opencode.ts; imports narrowed.
-- runtime-models/fallbacks.json ← id/label entries from the five upstream
-  fallbackModels definitions (Claude, Codex, Kimi, Hermes, OpenCode).
 Bridge uses upstream detectAcpModels, parseCodexDebugModels,
-parseOpenCodeModels and local route discovery. Fallbacks are labeled hints,
-not verified account availability. User-entered model IDs remain accepted.
+parseOpenCodeModels and local route discovery. No static fallback model list is
+shipped or used. User-entered model IDs remain accepted.
 No launch permission bypass or design-prompt code is used by these imports.
 
 Runtime card icons (0.20.2):

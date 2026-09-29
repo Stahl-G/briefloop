@@ -84,9 +84,11 @@ def test_legacy_provider_probe_reads_utf8_auth_file_without_losing_credential(tm
     calls=[]
     def open_catalog(request,timeout):
         calls.append(request.get_header('Authorization'))
+        assert request.get_header('User-agent').startswith('BriefLoop/')
         return BytesIO(b'{"data":[{"id":"model-a"}]}')
     monkeypatch.setattr('briefloop.backends.opencode_server.urllib.request.build_opener',
                         lambda *handlers:SimpleNamespace(open=open_catalog))
     result=client.probe_provider_catalog('fixture')
     assert result['status']=='reachable' and result['credential_sent'] is True
+    assert result['source']=='provider_api' and result['refreshed_at']
     assert result['models']==['model-a'] and calls==['Bearer synthetic-token']

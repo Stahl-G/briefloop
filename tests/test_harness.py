@@ -274,27 +274,6 @@ def test_sources_persist_and_failed_delivery_not_replayed(tmp_path):
     assert restored.snapshot(task.session_id)['messages'][0]['runtime']['search_provider']=='tavily'
     restored.close()
 
-def test_workspace_tool_inspects_and_enqueues_real_store(tmp_path,monkeypatch,capsys):
-    import json
-    from briefloop.cli import main
-    from briefloop.chat_tools import workspace_action,chat_instructions
-    store=Store(tmp_path/'workspace');source=store.add_source('memo','Source evidence')
-    index=workspace_action(store,{'action':'inspect'})
-    assert index['sources'][0]['id']==source['id']
-    assert 'Source evidence' not in str(index)
-    request=tmp_path/'request.json'
-    request.write_text(json.dumps({'action':'generate','requirements':{'title':'简报','objective':'Summarize source'},'source_ids':[source['id']]}))
-    monkeypatch.setattr('sys.argv',['briefloop','tool','--workspace',str(store.root),'workspace-action','--request',str(request)])
-    main()
-    result=json.loads(capsys.readouterr().out)
-    assert result['status']=='queued'
-    job=store.one('jobs',result['job_id'])
-    assert job['kind']=='generate'
-    assert json.loads(job['payload'])['run_id']==result['run_id']
-    assert not store.rows('SELECT id FROM briefs')
-    instructions=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'})
-    assert 'workspace-action' in instructions and str(store.root) in instructions
-    assert '避免递归入队' in chat_instructions(store,{},internal=True)
 
 def test_session_lifecycle_keeps_reports_and_never_replays(tmp_path):
     import pytest

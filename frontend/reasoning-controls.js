@@ -1,7 +1,7 @@
 // One visible selector for every host; the backend supplies host/model choices.
 export function settingsEffort(settings,backend){
  if(!['codex','opencode'].includes(backend))return settings.runtime_efforts?.[backend]||'none';
- return Object.hasOwn(settings,'reasoning_effort')?(settings.reasoning_effort||'none'):'high';
+ return Object.hasOwn(settings,'reasoning_effort')?(settings.reasoning_effort||'none'):'none';
 }
 export function reasoningModel(backend,model,effort){
  return backend==='antigravity'&&effort&&effort!=='none'&&/^gemini-/.test(model)
