@@ -504,7 +504,7 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
     staging_io = platform_support.filesystem_path(staging)
     try:
         outcome = run_json([binary, 'view', str(target), 'screenshot', '--page', str(page),
-                            '-o', str(staging), '--json'], timeout=timeout, deadline=deadline)
+                            '-o', str(staging_io), '--json'], timeout=timeout, deadline=deadline)
         if not outcome['ok']:
             if outcome['reason'] == BUDGET_EXHAUSTED:
                 raise BudgetExhausted('预览失败：' + BUDGET_EXHAUSTED)
