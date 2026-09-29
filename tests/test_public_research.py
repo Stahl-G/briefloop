@@ -37,7 +37,7 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     score=folder/'scorer';score.mkdir()
     assessment_prompt(store,brief,score)
     assert [s['id'] for s in json.loads((score/'input.json').read_text())['sources']]==[acquired['id']]
-    runtime={'model':'gpt-5.6-luna','effort':'high'}
+    runtime={'model':''}
     disabled=chat_instructions(store,runtime,allow_web=False)
     enabled=chat_instructions(store,runtime,allow_web=True)
     assert '实际联网状态：未开启' in disabled and '不得通过后台任务绕过' in disabled
@@ -142,7 +142,7 @@ def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path
 
 def test_chat_surfaces_default_and_explicit_search_channels(tmp_path):
     store=Store(tmp_path/'workspace')
-    runtime={'model':'gpt-5.6-luna','effort':'high'}
+    runtime={'model':''}
     default=chat_instructions(store,runtime)
     assert '优先 Tavily；允许渠道：Tavily、宿主自带搜索' in default
     assert '缺少密钥时提示配置该渠道' in default and '已有授权补充渠道可在预算内使用' in default

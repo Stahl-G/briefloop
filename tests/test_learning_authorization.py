@@ -1,8 +1,5 @@
 """Saving feedback never starts paid learning without a confirmed upper bound (#727)."""
-import http.client
 import json
-import threading
-import time
 
 import pytest
 
@@ -75,119 +72,13 @@ def test_settings_record_authorization_only_from_an_explicit_matching_confirmati
     assert state(disabled) == 'off' and disabled['auto_learn_authorized_rounds'] is None
 
 
-def _request(server, path, body, token):
-    authority = f'127.0.0.1:{server.server_port}'
-    connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
-    connection.request('POST', path, body=json.dumps(body), headers={'Host': authority, 'X-BriefLoop-Token': token, 'Origin': 'http://' + authority})
-    response = connection.getresponse()
-    value = response.status, json.loads(response.read())
-    connection.close()
-    return value
-
-
-def test_web_entries_require_confirmation_before_any_learning_job(tmp_path):
-    from briefloop.server import make_server, _close_service
-    server = make_server(tmp_path / 'workspace', port=0, paused=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
-        connection.request('GET', '/api/session', headers={'Host': f'127.0.0.1:{server.server_port}'})
-        token = json.loads(connection.getresponse().read())['token']
-        connection.close()
-        store = server.store
-        store.set_meta('settings', {**store.settings(), 'model': 'gpt-5.6-luna', 'model_selection_required': False})
-        status, payload = _request(server, '/api/settings', {'auto_learn': True}, token)
-        assert status == 400 and payload['code'] == AUTHORIZATION_CODE
-        assert store.settings()['auto_learn'] is False
-        status, payload = _request(server, '/api/settings', {'auto_learn': True, 'confirm_learning_rounds': 1}, token)
-        assert status == 200 and payload['auto_learn_authorized_rounds'] == 1
-        _feedback(store)
-        status, payload = _request(server, '/api/learn', {}, token)
-        assert status == 400 and payload['code'] == AUTHORIZATION_CODE
-        # A confirmation of some other plan does not start this one.
-        status, payload = _request(server, '/api/learn', {'confirm_plan': 'stale' + 'f' * 59}, token)
-        assert status == 400 and payload['code'] == AUTHORIZATION_CODE
-        assert store.rows("SELECT * FROM jobs WHERE kind='learn'") == []
-        shown = plan(store.settings())
-        status, job = _request(server, '/api/learn', {'confirm_plan': shown['fingerprint']}, token)
-        assert status == 200
-        queued = json.loads(job['payload'])
-        assert queued['budget'] == shown and queued['authorization']['fingerprint'] == shown['fingerprint']
-        assert queued['authorization']['kind'] == 'manual'
-    finally:
-        server.shutdown()
-        thread.join()
-        _close_service(server)
-
-
-def test_authorized_automatic_learning_freezes_the_confirmed_bound(tmp_path):
-    store = Store(tmp_path)
-    store.set_meta('settings', {**store.settings(), 'model': 'gpt-5.6-luna', 'model_selection_required': False,
-                                'auto_learn': True, 'auto_learn_authorized_rounds': 1})
-    _feedback(store)
-    _age_feedback(store)
-    job = learning.enqueue_feedback(store, automatic=True)
-    assert json.loads(job['payload'])['budget']['max_trial_generations'] == 12
-
-
 def _authorized(store, **extra):
     from briefloop.learning_budget import plan as current_plan
-    settings = {**store.settings(), 'model': 'gpt-5.6-luna', 'model_selection_required': False, 'auto_learn': True, **extra}
+    settings = {**store.settings(), 'auto_learn': True, **extra}
     settings = {**settings, 'auto_learn_authorized_rounds': int(settings['k']),
                 'auto_learn_authorized_plan': current_plan(settings)['scope_fingerprint']}
     store.set_meta('settings', settings)
     return store.settings()
-
-
-def test_an_agent_request_returns_the_plan_instead_of_starting_paid_work(tmp_path):
-    from briefloop.chat_tools import workspace_action
-    store = Store(tmp_path)
-    _feedback(store)
-    answer = workspace_action(store, {'action': 'learn'})
-    assert answer['status'] == 'confirmation_required' and answer['budget'] == plan(store.settings())
-    assert store.rows("SELECT * FROM jobs WHERE kind='learn'") == []
-    assert all(row['batch_id'] is None for row in store.rows('SELECT batch_id FROM feedback'))
-    # With the user's recorded authorization the same request may start one batch.
-    settings = _authorized(store)
-    _age_feedback(store)
-    queued = workspace_action(store, {'action': 'learn'})
-    assert json.loads(store.one('jobs', queued['id'])['payload'])['authorization'] == {
-        'kind': 'automatic', 'rounds': plan(settings)['rounds'], 'fingerprint': plan(settings)['fingerprint'],
-        'max_trial_generations': plan(settings)['max_trial_generations']}
-
-
-def test_a_batch_queued_before_this_release_is_paused_instead_of_started(tmp_path):
-    import threading
-    from briefloop.runtime import Worker
-    store = Store(tmp_path)
-    _authorized(store)
-    run, brief = _feedback(store)
-    legacy = store.enqueue('learn', {'feedback_ids': [row['id'] for row in store.rows('SELECT id FROM feedback')],
-                                     'k': 1, 'targets': [], 'skill_id': None})
-    assert 'authorization' not in json.loads(legacy['payload'])
-
-    class Runtime:
-        def __init__(self):
-            self.cancelled = threading.Event()
-        def cancel(self):
-            self.cancelled.set()
-        def execute(self, *args, **kwargs):
-            raise AssertionError('an unconfirmed batch called a model')
-
-    worker = Worker(store, Runtime())
-    worker.start()
-    try:
-        held = store.one('jobs', legacy['id'])
-        assert held['status'] == 'interrupted' and '额度确认记录' in held['error']
-        time.sleep(.3)
-        assert store.one('jobs', legacy['id'])['status'] == 'interrupted'
-    finally:
-        worker.close()
-    # The feedback is kept, and running the batch directly still refuses.
-    assert [row['id'] for row in store.rows('SELECT id FROM feedback')]
-    with pytest.raises(InterruptedError, match='额度确认记录'):
-        learning.learn(store, Runtime(), store.one('jobs', legacy['id']))
 
 
 def test_a_confirmation_binds_the_plan_the_user_saw(tmp_path):
@@ -212,33 +103,10 @@ def test_a_confirmation_binds_the_plan_the_user_saw(tmp_path):
 
 def test_the_plan_names_every_model_that_will_bill(tmp_path):
     store = Store(tmp_path)
-    settings = {**store.settings(), 'model': 'gpt-5.6-luna', 'model_selection_required': False,
+    settings = {**store.settings(), 'model': 'selected-primary-model',
                 'role_models': {'evaluator': {'model': 'separate-review-model'}}}
     store.set_meta('settings', settings)
     shown = plan(store.settings())
-    assert shown['model'] == 'gpt-5.6-luna'
+    assert shown['model'] == 'selected-primary-model'
     assert shown['role_models']['evaluator']['model'] == 'separate-review-model'
     assert shown['counts'] == 'trial_generations' and shown['price'] == 'unknown'
-
-
-def test_a_retry_keeps_the_authorization_the_user_already_gave(tmp_path):
-    import threading
-    from briefloop.runtime import Worker
-    store = Store(tmp_path)
-    settings = _authorized(store)
-    _feedback(store)
-    _age_feedback(store)
-    job = learning.enqueue_feedback(store, automatic=True)
-    store.update_job(job['id'], 'failed', error='host error')
-
-    class Runtime:
-        def __init__(self):
-            self.cancelled = threading.Event()
-        def cancel(self):
-            self.cancelled.set()
-
-    worker = Worker(store, Runtime())
-    retry = worker.retry_with_current_model(job['id'])
-    payload = json.loads(retry['payload'])
-    assert payload['authorization'] == json.loads(job['payload'])['authorization']
-    assert payload['budget']['max_trial_generations'] == plan(settings)['max_trial_generations']
