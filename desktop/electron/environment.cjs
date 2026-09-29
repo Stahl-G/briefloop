@@ -310,7 +310,35 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); }
     }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
-    return {manifest, python, previous: recorded && !matches ? active.environmentId : null};
+    return {manifest, python, previous: recorded ? active.environmentId : null};
+  }
+  // Query command lines only (never process environments). If process discovery
+  // fails or a Python process cannot be attributed, defer cleanup conservatively.
+  async function prune(keep, signal) {
+    try {
+      const current = JSON.parse(await fs.readFile(activeFile, 'utf8'));
+      if (current.environmentId !== keep[0]) return;
+      let commands;
+      if (platform === 'win32') {
+        const shell = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+        const script = "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(python|pythonw|briefloop).*' } | ForEach-Object { if (!$_.CommandLine) { throw 'Unavailable process command' }; $_.CommandLine }) | ConvertTo-Json -Compress";
+        const raw = (await run(shell, ['-NoProfile', '-NonInteractive', '-Command', script], signal, 10000)).stdout.trim();
+        const result = raw ? JSON.parse(raw) : [];
+        commands = Array.isArray(result) ? result : [result];
+      } else {
+        commands = (await run('/bin/ps', ['-ww', '-axo', 'command='], signal, 10000)).stdout.split(/\r?\n/).filter(Boolean);
+      }
+      const root = directory.toLowerCase();
+      if (commands.some(command => /(?:^|[\/\\\s])(?:python(?:w|[0-9.]*)?|briefloop)(?:\.exe)?(?:\s|$)/i.test(command) && !command.toLowerCase().includes(root))) return;
+      const used = commands.join('\n').toLowerCase();
+      for (const entry of await fs.readdir(directory, {withFileTypes: true})) {
+        checkAbort(signal);
+        if (!entry.isDirectory() || !UUID.test(entry.name) || keep.includes(entry.name) || used.includes(entry.name.toLowerCase())) continue;
+        const target = path.join(directory, entry.name);
+        if ((await fs.lstat(target)).isSymbolicLink()) continue;
+        await fs.rm(target, {recursive: true, force: true}).catch(() => {});
+      }
+    } catch { /* Cleanup must never turn a successful update into a failure. */ }
   }
   async function prepareImpl(signal, inspected) {
     const {manifest, python, previous} = inspected || await inspectImpl(signal);
@@ -341,8 +369,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         committed = true;
       } finally { await fs.rm(temporary, {force: true}); }
       verified = {python: executable, basePython: python.executable, node: process.execPath, nodeIsElectron: true};
-      // Old environments may still be used by independently running CLI tasks.
-      // Retain them until cleanup can establish that no process owns them.
+      await prune([id, previous].filter(Boolean), signal);
       return publish({state: 'ready', phase: 'ready', error: null, retryable: false});
     } catch (error) {
       if (error.code === 'cleanup_failed') { safeToRemove = false; error.partialDirectory = id && created ? path.join(directory, id) : null; }

@@ -42,7 +42,7 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 {"version":"0.20.0","wheel":"briefloop-0.20.0-py3-none-any.whl","sha256":"wheel 文件的 64 位 SHA-256"}
 ```
 
-每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；新环境激活后保留旧环境，避免删除独立 CLI 任务仍在使用的解释器；自动清理须先具备跨进程占用判断，本版不执行；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。
+每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；新环境激活后保留当前和上一份环境，查询进程命令行并跳过仍被使用的环境，其余 UUID 环境自动清理；进程查询失败或 Python 进程无法归属时暂缓清理，不影响启动；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。
 
 宿主查找只使用 PATH 中的绝对目录和标准安装路径，包括 macOS Homebrew、Python.framework，及 Windows Python 安装目录、`py.exe -0p` launcher 清单。跳过相对 PATH 条目以及可能打开商店的 Python WindowsApps 别名。先列出已有解释器再直接探测，避免新版 Python install manager 在无解释器时自动安装；子进程也显式关闭 manager 自动安装并移除旧 launcher 安装开关。[Windows Python 文档](https://docs.python.org/3/using/windows.html)
 
