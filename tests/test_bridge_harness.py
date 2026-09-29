@@ -1,6 +1,7 @@
 import queue
 import json
 import time
+from threading import Event
 import pytest
 from briefloop.store import Store
 from briefloop.bridge_harness import BridgeHarness, normalize_bridge_usage
@@ -70,7 +71,11 @@ def test_internal_run_rejects_host_permission_question_instead_of_waiting(tmp_pa
 
 
 @pytest.mark.parametrize('backend,decision',[('claude','allow'),('claude','deny'),('claude','cancel'),('codebuddy','allow')])
-def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_path,backend,decision):
+def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_path,backend,decision,monkeypatch):
+    # Deterministically interleave a successful receipt with stale turn cleanup:
+    # cleanup observes answering, the receipt writes answered, cleanup expires.
+    receipt_race=backend=='codebuddy' and decision=='allow'
+    expiring=Event();resume_expiry=Event();expiry_finished=Event()
     class WaitingBridge(QuestionBridge):
         def call(self,method,params,timeout=None):
             if method=='start':
@@ -84,8 +89,19 @@ def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_
             if method in ('answer','cancel'):
                 sink=self.sinks.get(params['execution_id'])
                 if sink:sink.put({'kind':'end','status':'completed' if method=='answer' else 'cancelled'})
+                if receipt_race and method=='answer':
+                    assert expiring.wait(3),'turn cleanup did not reach the pending answer'
             return result
     store=Store(tmp_path);bridge=WaitingBridge();h=BridgeHarness(store,bridge,backend)
+    if receipt_race:
+        request_status=h.chat.request_status
+        def delayed_expiry(rid,status):
+            if status!='expired':return request_status(rid,status)
+            expiring.set()
+            assert resume_expiry.wait(3),'answer receipt did not finish'
+            try:return request_status(rid,status)
+            finally:expiry_finished.set()
+        monkeypatch.setattr(h.chat,'request_status',delayed_expiry)
     job=store.enqueue('generate',{'agent_backend':backend,'runtime':{'model':'default'}})
     run=h.start_internal('合成报告任务',job_id=job['id'],message_id='report-perm')
     try:
@@ -112,13 +128,18 @@ def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_
             assert store.rows('SELECT read_at FROM notifications WHERE event_key=?',('permission:'+request['id'],))[0]['read_at']
             return
         h.answer(run.session_id,request['id'],{'permission':{'answers':[decision]}})
+        if receipt_race:
+            resume_expiry.set()
+            assert expiry_finished.wait(3),'turn cleanup did not finish'
         done=_wait_status(h,run.session_id,run.message_id,'completed')
         assert bridge.calls==[('answer',{'execution_id':'report-perm','request_id':'q1','option_id':decision})]
         assert done['requests'][0]['status']=='answered'
         assert store.rows('SELECT read_at FROM notifications WHERE event_key=?',('permission:'+request['id'],))[0]['read_at']
         with pytest.raises(ValueError,match='问题已结束'):
             h.answer(run.session_id,request['id'],{'permission':{'answers':['allow']}})
-    finally:h.close()
+    finally:
+        resume_expiry.set()
+        h.close()
 
 
 def test_internal_run_without_reject_option_answers_cancelled(tmp_path):

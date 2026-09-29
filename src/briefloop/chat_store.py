@@ -153,4 +153,9 @@ class ChatStore:
             result=self.decode(row);result['rpc_id']=json.loads(result['rpc_id']);return result
 
     def request_status(self,rid,status):
-        with self.store.tx() as c:c.execute('UPDATE chat_requests SET status=? WHERE id=?',(status,rid))
+        # Turn cleanup may hold an older pending/answering snapshot while the
+        # host's successful answer receipt is being committed on another thread.
+        # Check expiration eligibility atomically so it cannot erase that receipt.
+        query='UPDATE chat_requests SET status=? WHERE id=?'
+        if status=='expired':query+=" AND status IN ('pending','answering')"
+        with self.store.tx() as c:c.execute(query,(status,rid))
