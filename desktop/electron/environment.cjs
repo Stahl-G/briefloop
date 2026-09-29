@@ -312,15 +312,6 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
     return {manifest, python, previous: recorded && !matches ? active.environmentId : null};
   }
-  // Keep the active environment and the one it replaced; older ones are only disk usage.
-  async function prune(keep) {
-    let entries = [];
-    try { entries = await fs.readdir(directory, {withFileTypes: true}); } catch { return; }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !UUID.test(entry.name) || keep.includes(entry.name)) continue;
-      await fs.rm(path.join(directory, entry.name), {recursive: true, force: true}).catch(() => {});
-    }
-  }
   async function prepareImpl(signal, inspected) {
     const {manifest, python, previous} = inspected || await inspectImpl(signal);
     if (!python || data.state === 'ready') return status();
@@ -350,7 +341,8 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         committed = true;
       } finally { await fs.rm(temporary, {force: true}); }
       verified = {python: executable, basePython: python.executable, node: process.execPath, nodeIsElectron: true};
-      await prune([id, previous].filter(Boolean));
+      // Old environments may still be used by independently running CLI tasks.
+      // Retain them until cleanup can establish that no process owns them.
       return publish({state: 'ready', phase: 'ready', error: null, retryable: false});
     } catch (error) {
       if (error.code === 'cleanup_failed') { safeToRemove = false; error.partialDirectory = id && created ? path.join(directory, id) : null; }

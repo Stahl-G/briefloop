@@ -107,7 +107,7 @@ test('warm startup uses one lightweight process; explicit inspection still check
   assert.ok(f.changes.some(value=>value.state==='installing'&&value.reason==='update'));
 });
 
-test('first install and repair wait for the user; a new environment keeps only itself and the one it replaced',async t=>{
+test('first install and repair wait for the user; updates preserve environments potentially used by CLI tasks',async t=>{
   const f=await fixture(t),first=await createEnvironment(f.config).startup();
   assert.equal(first.state,'needs-setup');assert.equal(first.reason,'first-install');assert.equal(first.previousVersion,null);
   assert.ok(!f.calls.some(c=>c.args.includes('install')));
@@ -117,7 +117,7 @@ test('first install and repair wait for the user; a new environment keeps only i
   const one=JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).environmentId;
   await f.payload('0.20.0');assert.equal((await createEnvironment(f.config).startup()).state,'ready');
   const two=JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).environmentId;
-  assert.deepEqual((await fs.readdir(directory)).sort(),['active.json','keep-me.txt',one,two].sort());
+  assert.deepEqual((await fs.readdir(directory)).sort(),['active.json','keep-me.txt',path.basename(stale),one,two].sort());
   await fs.unlink(path.join(directory,two,'bin','python3'));f.calls.length=0;
   const repair=await createEnvironment(f.config).startup();
   assert.equal(repair.state,'needs-setup');assert.equal(repair.reason,'repair');
