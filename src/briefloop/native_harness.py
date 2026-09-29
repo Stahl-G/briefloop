@@ -12,6 +12,7 @@ declared are executed here when the engine forwards a call (tool_request).
 """
 from contextlib import contextmanager
 from pathlib import Path
+from .backends import WORKSPACE_SCOPES
 import hashlib
 import json
 import queue
@@ -140,7 +141,7 @@ class NativeHarness:
         from .native_roles import role_of
         role = role_of(value)
         if role == 'chat':
-            if value.get('permission') not in ('read-only', 'workspace-write'):
+            if value.get('permission') not in WORKSPACE_SCOPES:
                 raise ValueError('内置引擎仅支持只读或读写工作区业务工具')
             return value
         if value.get('permission') != 'read-only' or not (value.get('packet_root') or value.get('review_root')):

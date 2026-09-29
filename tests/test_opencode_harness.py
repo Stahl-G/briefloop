@@ -146,6 +146,12 @@ class FakeClient:
         self.created.append(kwargs)
         return {'id': 'ses_fake'}
 
+    def questions(self, session_id, *, directory=None):
+        return []
+
+    def set_permissions(self, session_id, permission, *, directory=None):
+        self.last_permission = permission
+
     def prompt_async(self, session_id, text, **kwargs):
         self.prompts.append((session_id, text, kwargs))
         self.contexts.append(('prompt',session_id,kwargs.get('directory')))
@@ -232,7 +238,7 @@ def test_harness_drives_turn_and_projects_events(tmp_path):
     assert usage['cost'] == 0.001 and usage['backend'] == 'opencode'
     assert manager.client.created[0]['model'] == {'providerID': 'opencode-go', 'id': 'gpt-5.6-luna'}
     assert manager.client.prompts[0][2]['model'] == {'providerID': 'opencode-go', 'modelID': 'gpt-5.6-luna'}
-    with pytest.raises(ValueError, match='提问'):
+    with pytest.raises(ValueError, match='问题'):
         manager.answer(sid, 'q', {})
     manager.close()
 
@@ -850,7 +856,7 @@ def test_unlimited_turn_can_finish_or_be_cancelled_after_long_wait(tmp_path, mon
         def abort(self, owner, *, directory=None): self.aborts.append(owner)
         def children(self, owner, *, directory=None): return []
         def permissions(self, *, directory=None): return []
-        def questions(self, *, directory=None): return []
+        def questions(self, owner, *, directory=None): return []
         def messages(self, owner, *, directory=None):
             return [{'info': {'id': 'reply', 'role': 'assistant', 'time': {'created': 10000,
                 **({'completed': 10001} if phase == 'tool-calls' or clock[0] >= 40000 else {})},

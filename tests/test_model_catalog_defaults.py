@@ -26,7 +26,7 @@ def test_host_without_model_capability_api_does_not_guess_effort(tmp_path):
         def call(self, *args, **kwargs):
             raise AssertionError('No capability endpoint is advertised')
 
-    for backend in ('claude', 'pi', 'codebuddy'):
+    for backend in ('pi', 'codebuddy'):
         result = options(backend, 'provider-new-model', tmp_path, NoProbe())
         assert result['options'] == []
         assert result['availability'] == 'not_advertised'
@@ -39,3 +39,12 @@ def test_host_without_model_capability_api_does_not_guess_effort(tmp_path):
     result = options('briefloop-native', 'fixture/model', tmp_path, NoProbe(), LocalMetadata())
     assert result['options'] == []
     assert result['availability'] == 'not_advertised'
+
+
+def test_claude_effort_uses_host_metadata_instead_of_a_fixed_list(tmp_path):
+    class HostMetadata:
+        def call(self, method, params, **kwargs):
+            assert method=='reasoning_options' and params['runtime_id']=='claude'
+            return {'kind':'levels','source':'host','options':[{'id':'host-level','name':'Host level'}]}
+    result=options('claude','host-chosen-model',tmp_path,HostMetadata())
+    assert result['options']==[{'id':'host-level','name':'Host level'}]

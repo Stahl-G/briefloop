@@ -18,7 +18,7 @@ class NativeEngine(RuntimeBridge):
 
 def discovery():
     from .host_bins import find
-    from .backends import BACKEND_LABELS
+    from .backends import BACKEND_LABELS, WORKSPACE_SCOPES
     from . import __version__
     import os
     node = find(os.environ.get('BRIEFLOOP_NODE') or 'node')
@@ -26,5 +26,5 @@ def discovery():
             'available': bool(node), 'integrated': True, 'version': __version__, 'path': '随 BriefLoop 安装',
             'protocol': 'BriefLoop tools',
             'capabilities': {'chat': True, 'cancel': True, 'resume': True, 'steer': False,
-                             'restricted_reviewer': True, 'permission_modes': ['workspace-write', 'read-only']},
-            'diagnostic': '需要 Node.js 22.19+ 和已配置的模型密钥；实际可用性可点击测试。' if node else '未找到 Node.js 22.19+，请先准备运行环境。'}
+                             'restricted_reviewer': True, 'permission_modes': list(WORKSPACE_SCOPES)},
+            'diagnostic': '需要 Node.js 22.19+ 和已配置的模型密钥；可在普通对话中确认实际可用性。' if node else '未找到 Node.js 22.19+，请先准备运行环境。'}

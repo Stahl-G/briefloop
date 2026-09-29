@@ -25,8 +25,8 @@ assert.equal(calls[0].route,'native/provider');assert.equal(calls[0].body.api_ke
 assert.equal(calls[0].body.supports_reasoning,true);
 assert.equal(el('custom-api-key').value,'');assert.equal(calls[1].route,'models?backend=briefloop-native&refresh=1');
 await el('provider-use').onclick();assert.equal(ctx.chat.nextBackend,'briefloop-native');assert.equal(el('agent-backend').value,'briefloop-native');
-await el('provider-test-model').onclick();assert.equal(calls.at(-1).route,'runtime-test');
-assert.equal(calls.at(-1).body.backend,'briefloop-native');assert.equal(calls.at(-1).body.model,'custom/model');
+assert.ok(!calls.some(call=>['runtime-test','opencode/provider-test'].includes(call.route)),'choosing a model does not launch an independent test');
+assert.doesNotMatch(source,/provider-test-model|data-runtime-test|settings-runtime-tests/);
 const html=runtimeCard({id:'briefloop-native',name:'BriefLoop Agent',installed:true,available:true,version:'test'},{chosen:'briefloop-native',model:'custom/model',esc:x=>x});
 assert.ok(html.includes('BriefLoop Agent')&&html.includes('data-runtime-select="briefloop-native"')&&html.includes('/runtime-briefloop.svg'));
 // Opening the Native tab changes the configuration form, not the saved host.
@@ -39,4 +39,4 @@ vm.runInContext(nativeTab,ctx);
 el('settings-tab-api').onclick();
 assert.equal(el('provider-engine').value,'briefloop-native');assert.equal(opened,1);
 assert.equal(el('custom-api-key').value,'');assert.equal(ctx.state.settings.agent_backend,'opencode');
-console.log('PASS: Native model/permission selection, local provider save and test route use the chosen engine');
+console.log('PASS: Native selection and local provider save use the chosen engine without a separate model test');

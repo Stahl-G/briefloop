@@ -4,10 +4,11 @@ Drives the versioned message adapter (v1 run/attach or the v2 API),
 journals into the same ChatStore tables as the Codex harness with the same
 normalized event kinds, so the web UI and progress projection work unchanged.
 ``chat_sessions.thread_id`` stores the opencode session id; ``turn_id`` stores
-the running BriefLoop message id. Interactive questions never hang a turn:
-sessions are created with a deny ruleset (same shape as the CLI's own
-non-interactive mode), so ``answer()`` is unsupported by design.
+the running BriefLoop message id. Interactive chats surface native questions
+through ChatStore and return validated answers to the owning session. Background
+jobs and reviewers keep the non-interactive deny rule.
 """
+from .backends import WORKSPACE_SCOPES
 import json
 import functools
 import inspect
@@ -52,11 +53,11 @@ def _public_native_error(error):
     return prefix + message.strip()[:300]
 
 
-def _permission_rules(config, allow_web, root):
-    """Deny ruleset in the CLI's own non-interactive shape.
+def _permission_rules(config, allow_web, root, *, interactive=False):
+    """Explicit question policy plus the existing file/network restrictions.
 
-    Denials fail a tool call immediately instead of hanging the turn waiting
-    for approval. ``external_directory`` confines file tools to the workspace
+    Background denials fail a tool call instead of waiting for user input.
+    ``external_directory`` confines file tools to the workspace
     (last matching rule wins); everything else keeps server defaults.
     """
     if config.get('review_root'):
@@ -74,7 +75,7 @@ def _permission_rules(config, allow_web, root):
         rules.append({'permission':'external_directory','action':'allow','pattern':str(packet)+'/**'})
         return rules
     rules = [
-        {'permission': 'question', 'action': 'deny', 'pattern': '*'},
+        {'permission': 'question', 'action': 'allow' if interactive else 'deny', 'pattern': '*'},
         {'permission': 'plan_enter', 'action': 'deny', 'pattern': '*'},
         {'permission': 'plan_exit', 'action': 'deny', 'pattern': '*'},
     ]
@@ -198,25 +199,6 @@ class OpencodeHarness:
                 for row in self.store.rows("SELECT DISTINCT session_id FROM chat_messages WHERE status='queued'"):
                     self._schedule(row['session_id'])
 
-    def test_provider_model(self, body):
-        """An explicitly requested, visible native tool test; no report job."""
-        provider=str(body.get('provider',''));model=str(body.get('model',''))
-        configs=self._client().provider_settings()
-        if not any(c['provider']==provider and c['model']==model for c in configs):
-            raise ValueError('请先保存该 Provider 与模型')
-        root=self.store.root/'provider-tests'/uid('probe')
-        root.mkdir(parents=True)
-        token=uid('fixture')
-        (root/'sample.txt').write_text(token,encoding='utf-8')
-        runtime={'backend':'opencode','model':provider+'/'+model,'permission':'read-only',
-                 'review_root':str(root),'review_worktree':str(root)}
-        session=self.create_session(provider+' · 工具测试',runtime,root)
-        self.chat.event(session['id'],'runtime/test',{'backend':'opencode','model':provider+'/'+model,'kind':'model_tool_call'})
-        message=self.send(session['id'],'使用 read 工具读取 sample.txt，并只回复该文件内容。',
-                          runtime=runtime,allow_web=False)
-        return {'session_id':session['id'],'message_id':message['id'],'kind':'model_tool_call',
-                'status':'submitted'}
-
     # -- sessions ---------------------------------------------------------
 
     def list_sessions(self, view='active'):
@@ -276,7 +258,7 @@ class OpencodeHarness:
             raise ValueError('无效模型 variant')
         value['variant'] = variant.strip() if isinstance(variant, str) and variant.strip() else None
         value.pop('model_variant', None)
-        if value['permission'] not in ('read-only', 'workspace-write'):
+        if value['permission'] not in WORKSPACE_SCOPES:
             raise ValueError('权限必须为仅阅读或工作区读写')
         return value
 
@@ -442,7 +424,115 @@ class OpencodeHarness:
         return InternalRun(session_id, message['id'])
 
     def answer(self, session_id, request_id, answers):
-        raise ValueError('opencode 会话创建时已拒绝交互提问；任务要求 agent 自行决断并记录依据')
+        from .user_input import validate_answers
+        with self._lock:
+            try:
+                request = self.chat.request(request_id)
+            except (KeyError, TypeError):
+                raise ValueError('问题已结束或不属于当前会话') from None
+            session = self.chat.session(session_id)
+            rpc = request['rpc_id']
+            if (request['session_id'] != session_id or request['status'] != 'pending'
+                    or request['data'].get('kind') != 'question' or not isinstance(rpc, dict)
+                    or request['data'].get('turnId') != session.get('turn_id')
+                    or rpc.get('session_id') != self._bound_session(session_id)
+                    or session_id in self._cancel_requested or self._closed):
+                raise ValueError('问题已结束或不属于当前会话')
+            questions = request['data']['questions']
+            normalized = validate_answers(questions, answers)
+            client = self.client
+            if client is None:
+                self.chat.request_status(request_id, 'expired')
+                raise ValueError('OpenCode 连接已结束，请重新发起对话')
+            self.chat.request_status(request_id, 'answering')
+        try:
+            result = client.reply_question(rpc['session_id'], rpc['request_id'], questions, normalized,
+                                           directory=session['cwd'])
+            if result is False:
+                raise OpencodeError('OpenCode 未接受本次回答')
+        except Exception:
+            self.chat.request_status(request_id, 'expired')
+            # Delivery may have reached the host. Do not re-enable an uncertain
+            # request or submit the answer twice; terminate the waiting turn.
+            self.cancel(session_id)
+            raise
+        self.chat.request_status(request_id, 'answered')
+        self.chat.event(session_id, 'input/answered', {'requestId': request_id, 'answers': normalized})
+        return result
+
+    def _expire_questions(self, sid, mid=None):
+        expired = []
+        for request in self.snapshot(sid)['requests']:
+            if (request['status'] in ('pending', 'answering') and request['data'].get('kind') == 'question'
+                    and (mid is None or request['data'].get('turnId') == mid)):
+                self.chat.request_status(request['id'], 'expired')
+                expired.append(self.chat.request(request['id'])['rpc_id'])
+        return expired
+
+    def _reject_questions(self, client, sid, expired):
+        if client is None or not hasattr(client, 'reject_question'):
+            return
+        for rpc in expired:
+            try:
+                client.reject_question(rpc['session_id'], rpc['request_id'], directory=self.chat.session(sid)['cwd'])
+            except OpencodeError:
+                pass  # Abort still follows; stale or disconnected requests remain expired.
+
+    def _poll_questions(self, client, sid, mid, bound, directory, cache=None):
+        if not hasattr(client, 'questions'):
+            return False
+        if cache is not None:
+            if time.monotonic() < cache.get('next_poll', 0):
+                return any(r['status'] in ('pending', 'answering') and r['data'].get('turnId') == mid
+                           for r in self.snapshot(sid)['requests'])
+            cache['next_poll'] = time.monotonic() + 3
+        rows = client.questions(bound, directory=directory)
+        if not isinstance(rows, list):
+            raise OpencodeError('OpenCode 返回了无法识别的提问结构')
+        from .user_input import normalize_questions
+        internal = bool(self.store.rows(
+            "SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1", (sid,)))
+        session = self.chat.session(sid)
+        if internal or session['runtime'].get('review_root'):
+            for row in rows:
+                if isinstance(row, dict) and row.get('sessionID') == bound:
+                    client.reject_question(bound, row['id'], directory=directory)
+                    self.chat.event(sid, 'runtime/question', {'turnId': mid, 'auto': 'rejected'})
+                    raise OpencodeError('后台任务或独立审阅不能等待用户提问；已拒绝并停止本轮')
+            return False
+        with self._lock:
+            if self._closed or sid in self._cancel_requested or self.chat.session(sid).get('turn_id') != mid:
+                return False
+            existing = self.store.rows('SELECT id,rpc_id,data,status FROM chat_requests WHERE session_id=?', (sid,))
+            known = {json.loads(r['rpc_id']).get('request_id'): r for r in existing
+                     if isinstance(json.loads(r['rpc_id']), dict)
+                     and json.loads(r['rpc_id']).get('session_id') == bound}
+            live = set()
+            for row in rows:
+                if not isinstance(row, dict) or row.get('sessionID') != bound:
+                    continue
+                native_id = row.get('id')
+                if not isinstance(native_id, str) or not native_id:
+                    raise OpencodeError('OpenCode 提问缺少标识')
+                live.add(native_id)
+                if native_id in known:
+                    continue
+                raw = row.get('questions')
+                if not isinstance(raw, list) or not all(isinstance(q, dict) for q in raw):
+                    raise OpencodeError('OpenCode 提问格式无效')
+                questions = normalize_questions([
+                    {'id': q.get('id', f'q{i}'), 'question': q.get('question'), 'header': q.get('header', ''),
+                     'options': q.get('options', []), 'multiSelect': q.get('multiple') is True,
+                     'allowCustom': q.get('custom', True) is not False} for i, q in enumerate(raw)])
+                rid = self.chat.add_request(sid, {'session_id': bound, 'request_id': native_id},
+                                            {'kind': 'question', 'turnId': mid, 'questions': questions})
+                self.chat.event(sid, 'runtime/question', {'turnId': mid, 'requestId': rid})
+            for native_id, request in known.items():
+                if (native_id not in live and request['status'] == 'pending'
+                        and json.loads(request['data']).get('turnId') == mid):
+                    self.chat.request_status(request['id'], 'expired')
+            return any(r['status'] in ('pending', 'answering') and r['data'].get('turnId') == mid
+                       for r in self.snapshot(sid)['requests'])
 
     def _schedule(self, sid):
         coordinator = getattr(self, 'coordinator', None)
@@ -612,17 +702,21 @@ class OpencodeHarness:
             config = self._config(message.get('runtime') or session['runtime'])
             if config.get('review_root') and config.get('review_mode','standard')=='strict':
                 raise OpencodeError('OpenCode 暂不支持严格 Reviewer：原生指令发现仍可能读取包外 AGENTS；请明确选择普通审阅或支持严格审阅的引擎。未发送任务。')
+            internal = bool(self.store.rows(
+                "SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1", (sid,)))
+            interactive = not internal and not config.get('review_root')
             bound = self._bound_session(sid)
+            if config.get('review_root'):
+                config['review_worktree'] = client.paths(session['cwd'])['worktree']
+            permissions = _permission_rules(config, bool(message['allow_web']), self.store.root, interactive=interactive)
             if bound is None:
                 # The session carries the frozen model; per-prompt overrides
                 # are still sent (same as the official client) but the session
                 # model is what the turn actually uses.
-                if config.get('review_root'):
-                    config['review_worktree']=client.paths(session['cwd'])['worktree']
                 created = client.create_session(
                     session['title'], agent='build',
                     model=model_ref(config['model'], config.get('variant')),
-                    permission=_permission_rules(config, bool(message['allow_web']), self.store.root),
+                    permission=permissions,
                     directory=session['cwd'],
                     require_permissions=True)
                 if created.pop('_permission_dropped', False):
@@ -637,9 +731,17 @@ class OpencodeHarness:
                     else:
                         self.chat.update(sid, thread_id=created['id'])
                 bound = created['id']
+            else:
+                # Refresh existing native sessions too; old ones denied question.
+                # The same rules preserve read-only, packet and web restrictions.
+                client.set_permissions(bound, permissions, directory=session['cwd'])
+            if interactive:
+                try:
+                    client.questions(bound, directory=session['cwd'])
+                except (AttributeError, OpencodeError) as exc:
+                    raise OpencodeError('当前 OpenCode 不支持提问往返接口；未发送任务，请更新 OpenCode：'
+                                        + _public_native_error({'message': str(exc)})) from None
             from .chat_tools import chat_instructions
-            internal = bool(self.store.rows(
-                "SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1", (sid,)))
             instructions = chat_instructions(self.store, config, internal=internal,
                                              allow_web=bool(message['allow_web']),
                                              backend='opencode')
@@ -672,9 +774,14 @@ class OpencodeHarness:
             # Terminal data first, status last: waiters poll on status and must
             # never observe 'failed' before its error event exists.
             if mid:
+                self._interrupt_once(sid, self._bound_session(sid), mid)
+                self._expire_questions(sid, mid)
                 self.chat.patch_message(mid, status='failed')
             self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
-            self.chat.update(sid, status='failed', turn_id=None)
+            if mid and self.chat.session(sid).get('turn_id') == mid:
+                self._finish(sid, mid, 'failed')
+            else:
+                self.chat.update(sid, status='failed', turn_id=None)
         finally:
             with self._lock:
                 if self._epoch.get(sid) == epoch:
@@ -720,6 +827,7 @@ class OpencodeHarness:
         last_activity = started_at
         execution_started = False
         status_poll = {}
+        question_poll = {}
         last_error = None
         while True:
             deadline = started_at + minutes * 60 if minutes > 0 else float('inf')
@@ -741,6 +849,9 @@ class OpencodeHarness:
                 self.chat.event(sid, 'error', {'message': 'Opencode 已达到本轮执行时限，已请求停止'})
                 self._finish(sid, mid, 'failed')
                 raise TimeoutError('Opencode 已达到本轮执行时限')
+            waiting_input = self._poll_questions(client, sid, mid, bound, directory, question_poll)
+            if waiting_input:
+                last_activity = time.monotonic()
             self._poll_runtime_status(client, sid, mid, bound, directory, status_poll)
             host_idle = (status_poll.get('observed_type') == 'idle' and
                          time.monotonic() - status_poll.get('observed_at', float('-inf')) <= 10)
@@ -817,7 +928,7 @@ class OpencodeHarness:
                     last_activity = time.monotonic()
                 if (info.get('time') or {}).get('completed'):
                     # finish=tool-calls is an intermediate assistant message.
-                    if info.get('finish') == 'stop':
+                    if info.get('finish') == 'stop' and not waiting_input:
                         self._poll_children(sid, mid, bound, admitted_at, child_poll, force=True)
                         self._record_children(sid,mid,bound,admitted_at,client=client)
                         self._record_usage(sid, info)
@@ -833,7 +944,7 @@ class OpencodeHarness:
                         self.chat.event(sid, 'error', {'message': 'Opencode 子步骤完成后 120 秒无后续，已停止等待'})
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行停滞；详情保存在会话与任务日志')
-            if host_idle and not execution_started and time.monotonic() - started_at >= 90:
+            if host_idle and not waiting_input and not execution_started and time.monotonic() - started_at >= 90:
                 # Only a freshly observed idle host with no step events can fail fast
                 # with an actionable message instead of burning the job budget.
                 self._interrupt_once(sid, bound, mid, client=client)
@@ -1084,9 +1195,11 @@ class OpencodeHarness:
             if mid in self._interrupted:
                 return
             self._interrupted.add(mid)
+            expired = self._expire_questions(sid, mid)
         try:
             client=client or self.client
-            if client is not None:client.abort(bound, directory=self.chat.session(sid)['cwd'])
+            self._reject_questions(client, sid, expired)
+            if client is not None and bound:client.abort(bound, directory=self.chat.session(sid)['cwd'])
         except OpencodeError as exc:
             self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
 
@@ -1094,6 +1207,7 @@ class OpencodeHarness:
         with self._lock:
             active=self.chat.session(sid).get('turn_id')
             if active is not None and active!=mid:return
+            self._expire_questions(sid, mid)
             for message in self.snapshot(sid)['messages']:
                 if message['turn_id'] == mid and message['status'] in ('delivered', 'streaming'):
                     self.chat.patch_message(message['id'], status=status)
@@ -1107,19 +1221,25 @@ class OpencodeHarness:
         with self._lock:
             session = self.chat.session(session_id)
             self._cancel_requested.add(session_id)
+            expired = self._expire_questions(session_id)
             for message in self.snapshot(session_id)['messages']:
                 if message['status'] == 'queued':
                     self.chat.patch_message(message['id'], status='cancelled')
             turn=session['turn_id'];bound=self._bound_session(session_id) if turn else None
             if turn or session_id in self._busy:self.chat.update(session_id, status='stopping')
             if turn:self.chat.event(session_id, 'turn/interruptRequested', {'turnId': turn})
+        self._reject_questions(self.client, session_id, expired)
         if bound:self._interrupt_once(session_id,bound,turn)
         return self.snapshot(session_id)
 
     def close(self):
+        for sid in list(self._busy):
+            self.cancel(sid)
         with self._client_lock:
             with self._lock:
                 self._closed=True
+                for sid in list(self._busy):
+                    self._expire_questions(sid)
                 self._idle_epoch += 1
                 if self._idle_timer is not None:
                     self._idle_timer.cancel()

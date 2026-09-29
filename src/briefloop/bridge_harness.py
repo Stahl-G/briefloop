@@ -245,6 +245,15 @@ class BridgeHarness(OpencodeHarness):
                     if complete:
                         from .execution_records import journal_tool
                         journal_tool(self.chat,sid,mid,key,tool.get('name','tool'),tool.get('input',{}),tool.get('output',''),status=tool['status'],native_session=self.chat.session(sid).get('thread_id'))
+                elif kind=='question_cancelled':
+                    for request in self.snapshot(sid)['requests']:
+                        if request['status'] not in ('pending','answering') or request['data'].get('turnId')!=mid:continue
+                        saved=self.chat.request(request['id'])['rpc_id']
+                        if saved.get('execution_id')==execution and str(saved.get('request_id'))==str(event.get('request_id')):
+                            self.chat.request_status(request['id'],'expired')
+                            from .notifications import permission_resolved
+                            permission_resolved(self.store,request['id'])
+                    self.chat.event(sid,'input/expired',{'turnId':mid})
                 elif kind=='question':
                     permission_job=self._permission_job(sid) if internal else None
                     if internal and not permission_job:
@@ -262,14 +271,21 @@ class BridgeHarness(OpencodeHarness):
                         raise RuntimeError('后台调用未绑定可处理授权的任务，已拒绝并终止本轮：'
                                            +sanitize(event.get('title','宿主请求权限')))
                     options=event.get('options',[])
-                    rid=self.chat.add_request(sid,{'execution_id':execution,'request_id':event['request_id']},
-                        {'questions':[{'id':'permission','question':event.get('title','CLI 请求权限'),
-                          'options':[{'label':o.get('name') or o.get('optionId'),'description':o.get('kind','')} for o in options]}],
-                         'native_options':options})
+                    if event.get('type')=='user_input':
+                        from .user_input import normalize_questions
+                        data={'kind':'question','questions':normalize_questions(event.get('questions'))}
+                    else:
+                        data={'kind':'permission',
+                              'questions':[{'id':'permission','question':event.get('title','CLI 请求权限'),
+                                'options':[{'label':o.get('name') or o.get('optionId'),'description':''} for o in options]}],
+                              'native_options':options,
+                              'tool':sanitize(event.get('tool','')),'input':sanitize(event.get('input',{}))}
+                    data['turnId']=mid
+                    rid=self.chat.add_request(sid,{'execution_id':execution,'request_id':event['request_id']},data)
                     self.chat.event(sid,'runtime/question',{'requestId':rid,**({'jobId':permission_job} if permission_job else {})})
                     if permission_job:
                         from .notifications import permission_requested
-                        permission_requested(self.store,permission_job,sid,rid)
+                        permission_requested(self.store,permission_job,sid,rid,question=data['kind']=='question')
                 elif kind=='performance':
                     self.chat.event(sid,'runtime/configuration',sanitize(event))
                 elif kind=='usage':
@@ -291,7 +307,7 @@ class BridgeHarness(OpencodeHarness):
                         if message.get('turn_id')==mid and message['status'] in ('sending','delivered','streaming'):
                             self.chat.patch_message(message['id'],status=status)
                     for request in self.snapshot(sid)['requests']:
-                        if request['status']=='pending':
+                        if request['status'] in ('pending','answering'):
                             self.chat.request_status(request['id'],'expired')
                             from .notifications import permission_resolved
                             permission_resolved(self.store,request['id'])
@@ -302,17 +318,42 @@ class BridgeHarness(OpencodeHarness):
                 if coordinator:coordinator.settle(sid)
 
     def answer(self,session_id,request_id,answers):
-        request=self.chat.request(request_id)
-        if request['session_id']!=session_id or request['status']!='pending':raise ValueError('问题已结束或不属于当前会话')
-        values=(answers.get('permission') or {}).get('answers',[])
-        if not isinstance(values,list) or len(values)!=1:raise ValueError('请选择一个宿主提供的权限选项')
-        options=request['data']['native_options']
-        matches=[o for o in options if o.get('optionId')==values[0]]
-        if not matches:matches=[o for o in options if o.get('name')==values[0]]
-        if len(matches)!=1:raise ValueError('请选择明确的宿主权限选项')
-        option=matches[0]
-        result=self.bridge.call('answer',{**request['rpc_id'],'option_id':option['optionId']})
+        with self._lock:
+            request=self.chat.request(request_id)
+            if request['session_id']!=session_id or request['status']!='pending':raise ValueError('问题已结束或不属于当前会话')
+            if self._closed or session_id in self._cancel_requested:
+                raise ValueError('任务已停止，不能再回答')
+            if request['data'].get('turnId') and request['data']['turnId']!=self.chat.session(session_id).get('turn_id'):
+                raise ValueError('问题所属回合已结束')
+            if request['data'].get('kind')=='question':
+                from .user_input import validate_answers
+                normalized=validate_answers(request['data']['questions'],answers)
+                payload={**request['rpc_id'],'answers':normalized}
+            else:
+                if not isinstance(answers,dict):raise ValueError('请选择一个宿主提供的权限选项')
+                value=answers.get('permission')
+                values=value.get('answers',[]) if isinstance(value,dict) else []
+                if not isinstance(values,list) or len(values)!=1:raise ValueError('请选择一个宿主提供的权限选项')
+                options=request['data']['native_options']
+                matches=[o for o in options if o.get('optionId')==values[0]]
+                if not matches:matches=[o for o in options if o.get('name')==values[0]]
+                if len(matches)!=1:raise ValueError('请选择明确的宿主权限选项')
+                payload={**request['rpc_id'],'option_id':matches[0]['optionId']}
+                normalized={'permission':{'answers':[matches[0]['optionId']]}}
+            self.chat.request_status(request_id,'answering')
+        try:
+            result=self.bridge.call('answer',payload)
+        except Exception:
+            self.chat.request_status(request_id,'expired')
+            from .notifications import permission_resolved
+            permission_resolved(self.store,request_id)
+            try:self.cancel(session_id)
+            except Exception:pass
+            raise
+        # A successful host receipt is authoritative even if the turn finished
+        # immediately after consuming it. Failed/uncertain delivery is not retried.
         self.chat.request_status(request_id,'answered')
+        self.chat.event(session_id,'input/answered',{'requestId':request_id,'answers':normalized})
         from .notifications import permission_resolved
         permission_resolved(self.store,request_id)
         return result

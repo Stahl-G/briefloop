@@ -5,8 +5,8 @@ import {welcomeReady,welcomeAgents,welcomeAgentCard} from '../frontend/welcome.j
 import {section} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{hidden:id!=='welcome'});return elements.get(id)};
-// A factory model, an unavailable CLI or an unfinished selection must not start.
-const settings={agent_backend:'codex',model:'gpt-5.6-luna',model_selection_required:true};
+// An unconfirmed selection or unavailable CLI must not start a conversation.
+const settings={agent_backend:'codex',model:'fixture/user-choice',model_selection_required:true};
 const runtimes=[{id:'codex',name:'Codex CLI',available:true},{id:'briefloop-native',available:true}];
 assert.equal(welcomeReady(settings,runtimes,'cli'),false);
 settings.model_selection_required=false;
@@ -25,7 +25,7 @@ vm.runInContext(section(source,'let welcomeMode=','function applyPendingSetupFie
 await vm.runInContext("chooseWelcomeAgent('briefloop-native')",selection);
 assert.equal(backendChanges,0);
 assert.equal(settings.model_selection_required,false);
-assert.equal(settings.model,'gpt-5.6-luna');
+assert.equal(settings.model,'fixture/user-choice');
 // Compact cards never omit the selection or mix Native into the CLI list.
 const many=['antigravity','hermes','kimi','codex','claude','pi','opencode','deepseek-harness'].map(id=>({id,available:true}));
 many.push({id:'briefloop-native',available:true},{id:'unavailable',available:false});
@@ -37,23 +37,24 @@ assert.match(welcomeAgentCard({id:'deepseek-harness',name:'DeepSeek Harness'},'d
 assert.match(welcomeAgentCard({id:'codex',name:'Codex <CLI>'},'codex'),/Codex &lt;CLI&gt;/);
 console.log('PASS: explicit model choice, selected mode, available Agent and same-card selection');
 
-// The only model entry on welcome must also accept an explicit ID when the
-// provider does not offer a catalogue. IME composition must not submit it.
+// Search only filters/focuses candidates; explicit IDs require the separate
+// confirmation form (covered by frontend_model_catalog_refresh.mjs).
 const picked=[];
+let focused=0;el('model-picker-list').querySelector=()=>({focus(){focused++}});
 const custom=vm.createContext({$:el,pickModel:id=>picked.push(id),renderModelPicker(){}});
 vm.runInContext(source.split('\n').find(line=>line.startsWith("$('model-picker-search').onkeydown=")),custom);
 const input={key:'Enter',target:{value:' vendor/model '},preventDefault(){}};
 el('model-picker-search').onkeydown({...input,isComposing:true});
 assert.equal(picked.length,0);
 el('model-picker-search').onkeydown(input);
-assert.deepEqual(picked,['vendor/model']);
+assert.deepEqual(picked,[]);assert.equal(focused,1);
 
 // Clicking the sidebar cannot bypass the first-run page.
 const pageCode=section(source,'function page(name){',"document.querySelectorAll('[data-page]')",'frontend/app.js');
 const notices=[];
 const p=vm.createContext({
  chat:{id:null},
- state:{settings:{model:'gpt-5.6-luna',model_selection_required:true}},activity:null,
+ state:{settings:{model:'fixture/user-choice',model_selection_required:true}},activity:null,
  $:el,notice:(s)=>notices.push(s),document:{querySelectorAll:()=>[],body:{classList:{contains:()=>false,remove:()=>{}}}},
  renderTasks:()=>{},renderTaskGraph:()=>{},renderReports:()=>{},refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSearchInline:()=>{},applyPendingSetupFields:()=>{},
 });

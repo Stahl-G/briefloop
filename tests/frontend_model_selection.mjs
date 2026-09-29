@@ -41,29 +41,25 @@ assert.equal(c.chat.drafts.get('new-session').model,'default');
 vm.runInContext('restoreDraft()',c);assert.equal(el('chat-input').value,'你是谁');
 console.log('PASS: failed initial send preserves text and model on the created session');
 
-// The permission control follows what the runtime advertises, and a single mode is
-// not presented as a dropdown the user could choose from.
-const permissionCode=section(source,'const PERMISSION_MODES=','function messageTime(','frontend/app.js');
-const select={value:'',hidden:false,title:'',replaceChildren(...options){this.options=options}};
+// The legacy select only stores the exact saved scope. Runtime modes are shown
+// by the dedicated panel; missing discovery must not create fallback labels.
+const permissionCode=section(source,'function renderChatRuntimePermissions(){','function messageTime(','frontend/app.js');
+const select={value:'saved-scope',hidden:false};
 const mode={value:'queue',options:[{value:'queue'},{value:'steer',hidden:false,disabled:false}]};
 const p=vm.createContext({$:id=>id==='chat-permission'?select:id==='chat-mode'?mode:{value:'',hidden:false},
  chat:{session:{runtime:{backend:'claude'}}},state:{settings:{agent_backend:'claude'}},runtimeCatalog:[],
- reasoning:{configure(){}},document:{querySelector:()=>({hidden:false})},JSON,console,
- Option:class{constructor(text,value){this.text=text;this.value=value}}});
+ reasoning:{configure(){}},document:{querySelector:()=>({hidden:false})},JSON,console});
 vm.runInContext(section(source,'function chatBackendChoice(){','function renderChatBackendChoice(){','frontend/app.js'),p);
 vm.runInContext(permissionCode,p);
 vm.runInContext('renderChatRuntimePermissions()',p);
-assert.equal(select.options.length,1);assert.equal(select.hidden,true,'a single permission mode is not a choice');
-assert.equal(select.value,'runtime-native');
+assert.equal(select.hidden,true);assert.equal(select.value,'saved-scope');
 assert.equal(mode.options[1].hidden,true,'a host without in-flight steering must not offer it');
 p.chat.session.runtime.backend='codex';p.state.settings.agent_backend='codex';
 p.runtimeCatalog=[{id:'codex',capabilities:{permission_modes:['workspace-write','read-only'],steer:true}}];
 vm.runInContext('renderChatRuntimePermissions()',p);
-assert.equal(select.hidden,false);assert.deepEqual(select.options.map(option=>option.text),['读写工作区','只读']);
-assert.match(select.title,/只读取和解释资料/);
+assert.equal(select.hidden,true);assert.equal(select.value,'saved-scope','catalog refresh must not replace an explicit scope');
 assert.equal(mode.options[1].hidden,false);
-// Before discovery finishes, a CLI host must not be offered codex-style sandboxes.
-p.chat.session.runtime.backend='kimi';p.runtimeCatalog=[];p.chat.session.runtime.permission='runtime-native';
+p.chat.session.runtime.backend='kimi';p.runtimeCatalog=[];
 vm.runInContext('renderChatRuntimePermissions()',p);
-assert.equal(select.options.length,1);assert.equal(select.hidden,true);assert.equal(select.value,'runtime-native');
-console.log('PASS: chat permission options come from the runtime and hide when there is no choice');
+assert.equal(select.hidden,true);assert.equal(select.value,'saved-scope');
+console.log('PASS: permission state remains hidden and unchanged; the panel owns visible runtime choices');

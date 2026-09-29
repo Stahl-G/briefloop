@@ -156,19 +156,6 @@ def _make_server(workspace, port, *, paused, backend, lock):
         # A chat turn carries the runtime the user just picked; treat it as the choice.
         try:store_.confirm_runtime_choice((runtime or {}).get('backend'),runtime or {})
         except ValueError:pass
-    def test_runtime(body):
-        backend=validate_backend(body.get('backend'))
-        model=str(body.get('model','')).strip()
-        if not model:raise ValueError('请先选择测试模型')
-        manager=managers[backend]
-        root=store.root/'runtime-tests'/secrets.token_hex(8);root.mkdir(parents=True)
-        runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode','briefloop-native') else 'runtime-native'}
-        session=manager.create_session(backend+' · 连接测试',runtime,root)
-        message_id='msg_'+secrets.token_hex(8)
-        manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call','message_id':message_id})
-        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False,message_id=message_id)
-        return {'session_id':session['id'],'message_id':message['id'],'status':'submitted'}
-
     token=secrets.token_urlsafe(24)
     assets=files('briefloop').joinpath('static')
     # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
@@ -357,7 +344,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,options(q.get('backend',['codex'])[0],q.get('model',['default'])[0],store.root,bridge,native=native_harness,opencode=opencode_harness))
                 elif u.path=='/api/runtime/permissions':
                     from .runtime_permissions import catalog
-                    self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge))
+                    self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge,model=q.get('model',[None])[0]))
                 elif u.path=='/api/native/providers':
                     from .native_providers import configurations
                     self.send(200,{'configurations':configurations()})
@@ -666,12 +653,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         raise ValueError('请等待本工作区任务结束后再修改原生规则')
                     from .runtime_permissions import change_antigravity
                     result=change_antigravity(body)
-                elif path=='/api/runtime-test':
-                    result=test_runtime(body)
                 elif path=='/api/opencode/provider-catalog':
                     result=opencode_harness._client().probe_provider_catalog(str(body.get('provider','')))
-                elif path=='/api/opencode/provider-test':
-                    result=opencode_harness.test_provider_model(body)
                 elif path=='/api/opencode/provider':
                     result=opencode_harness.configure_provider(body)
                 elif path=='/api/workspaces/open':

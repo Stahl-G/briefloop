@@ -46,3 +46,13 @@ test('a delayed old model response cannot replace the new host choices or explic
 });
 
 test('Antigravity Gemini tier aliases cannot contradict an explicit effort',()=>{assert.equal(reasoningModel('antigravity','gemini-3.8-flash-high','low'),'gemini-3.8-flash');assert.equal(reasoningModel('antigravity','gemini-3.8-flash-high','none'),'gemini-3.8-flash-high')});
+
+test('Claude only offers advertised effort levels and unknown saved values fall back visibly to the host',async t=>{
+ const {parent,control}=dom(t);control.value='medium';
+ const ui=reasoningControls({api:async()=>({kind:'host',options:[],note:'Long host description'})});
+ await ui.configure(control,'claude','default');
+ assert.deepEqual(control.children.map(option=>option.value),['none']);assert.equal(control.children[0].text,'跟随 Claude Code');assert.equal(control.value,'none');
+ assert.match(parent.querySelector('[data-reasoning-note]').textContent,/medium 未获宿主确认/);
+ const live=reasoningControls({api:async()=>({kind:'levels',options:[{id:'low'},{id:'high'}]})});control.value='high';await live.configure(control,'claude','real-model');
+ assert.deepEqual(control.children.map(option=>option.value),['none','low','high']);assert.equal(control.value,'high');
+});
