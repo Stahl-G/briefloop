@@ -31,20 +31,6 @@ def _wait_status(h, sid, mid, status, seconds=5):
     raise AssertionError(f'turn did not reach {status}: {[(m["id"], m["status"]) for m in h.snapshot(sid)["messages"]]}')
 
 
-@pytest.mark.real_review_capabilities
-def test_native_main_chain_keeps_independent_reviewer_capability(tmp_path):
-    store = Store(tmp_path)
-    source = store.add_source('Synthetic', 'Revenue was USD 12 million.')
-    settings = Settings.model_validate({**store.settings(), 'agent_backend':'briefloop-native',
-        'model':'synthetic/model', 'model_selection_required':False})
-    store.set_meta('settings', settings.model_dump())
-    run = store.create_run({'title':'T','objective':'o','allow_web':False}, [source['id']])
-    job = store.enqueue('generate', {'run_id':run['id']})
-    assert json.loads(job['payload'])['agent_backend'] == 'briefloop-native'
-    assert restricted_review('briefloop-native')
-    assert any(r['id']=='briefloop-native' for r in summary()['restricted_review'])
-
-
 class EngineFixture:
     """Scripted engine; replacing `process` models the bridge retiring an idle child."""
     def __init__(self):

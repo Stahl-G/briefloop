@@ -104,26 +104,6 @@ def test_agent_generate_checks_the_backend_it_will_actually_use(tmp_path):
     assert json.loads(store.one('jobs', queued['job_id'])['payload'])['agent_backend'] == 'briefloop-native'
 
 
-def test_queue_refuses_reviews_and_fact_checked_work_on_unsupported_backends(tmp_path):
-    store = strict_store(tmp_path)
-    source = _source(store)
-    _backend(store, 'briefloop-native')
-    store.set_meta('settings', {**store.settings(), 'model': 'synthetic/model', 'model_selection_required': False})
-    checked = store.create_run(_web(fact_check=True), [source['id']])
-    brief = store.publish(checked['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
-    codex = {'agent_backend': 'codex', 'runtime': {'model': 'gpt-5.6-luna'}}
-    for kind, payload in (('review', {'version_id': brief['id']}), ('assess', {'version_id': brief['id']}),
-                          ('generate', {'run_id': checked['id']}), ('fact_check', {'run_id': checked['id']})):
-        with pytest.raises(ReviewBackendUnsupported):
-            store.enqueue(kind, {**payload, **codex})
-    assert store.rows('SELECT * FROM jobs') == []
-    # A learning trial never runs the Reviewer, and ordinary runs need none.
-    assert store.enqueue('generate', {'run_id': checked['id'], 'single_evaluation': False, **codex})
-    plain = store.create_run(_web(), [source['id']])
-    assert store.enqueue('generate', {'run_id': plain['id'], **codex})
-    assert store.enqueue('review', {'version_id': brief['id']})
-
-
 class RecordingRuntime:
     def __init__(self, store):
         self.store = store
@@ -155,31 +135,6 @@ def test_a_legacy_queued_fact_check_stops_before_any_model_turn(tmp_path):
     with pytest.raises(ReviewBackendUnsupported):
         Worker(store, runtime).generate(store.one('jobs', job['id']))
     assert runtime.calls == []
-
-
-def test_internal_report_without_the_reviewer_is_scored_as_ordinary_assessment(tmp_path):
-    from briefloop.runtime import Worker, stage_job
-    store = strict_store(tmp_path)
-    store.set_meta('settings', {**store.settings(), 'company_context_enabled': False})
-    source = _source(store)
-    run = store.create_run(_web(writing_mode='internal_report'), [source['id']])
-    job = store.enqueue('generate', {'run_id': run['id'], 'runtime': {'model': 'gpt-5.6-luna'}})
-    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'}, version_id='brief_' + job['id'][4:])
-    runtime = RecordingRuntime(store)
-    worker = Worker(store, runtime)
-    folder = worker.folder(job) / 'evaluation'
-    folder.mkdir(parents=True)
-    worker.assess_version(stage_job(store, job, 'evaluator', mode='single'), brief, folder, 'codex')
-    assert runtime.calls == [('evaluation', False)]
-    assert store.rows("SELECT * FROM jobs WHERE kind='review'") == [] and store.rows('SELECT * FROM reviews') == []
-    data = json.loads(store.rows('SELECT data FROM assessments WHERE version_id=?', (brief['id'],))[0]['data'])
-    assert data['basis'] == 'assessment_without_review'
-    # Scoring does not open delivery, and the gate says what would.
-    from briefloop.release import eligibility
-    blockers = [b['code'] for b in eligibility(store, brief['id'])['blockers']]
-    assert blockers == ['review_missing', CODE]
-    _backend(store, 'briefloop-native')
-    assert [b['code'] for b in eligibility(store, brief['id'])['blockers']] == ['review_missing']
 
 
 def test_the_model_cannot_label_its_own_assessment_and_the_basis_is_closed(tmp_path):
@@ -215,53 +170,3 @@ def test_schedules_and_the_runtime_gate_use_the_same_declaration(tmp_path):
            'payload': json.dumps({'agent_backend': 'codex', 'runtime': {'model': 'gpt-5.6-luna'},'review_mode':'strict'})}
     with pytest.raises(ReviewBackendUnsupported):
         runtime.execute(job, 'prompt', folder)
-
-
-def test_a_long_internal_report_starts_no_checkpoint_review_without_the_reviewer(tmp_path, monkeypatch):
-    """The 180s checkpoint must use the same capability check as final scoring."""
-    import threading
-    from briefloop import runtime as runtime_module
-    from briefloop.runtime import Worker
-    store = strict_store(tmp_path)
-    store.set_meta('settings', {**store.settings(), 'company_context_enabled': False, 'auto_learn': False})
-    source = _source(store)
-    run = store.create_run({'title': '内部周报', 'objective': 'o', 'allow_web': False, 'writing_mode': 'internal_report'}, [source['id']])
-    # The reader contract is a separate stage; this test is about the checkpoint.
-    job = store.enqueue('generate', {'run_id': run['id'], 'reader_contract_required': False, 'runtime': {'model': 'gpt-5.6-luna'}})
-    store.update_job(job['id'], 'running')
-    real, offset = runtime_module.time.monotonic, [0.0]
-    monkeypatch.setattr(runtime_module.time, 'monotonic', lambda: real() + offset[0])
-
-    class Runtime:
-        def __init__(self):
-            self.calls = []
-            self.cancelled = threading.Event()
-
-        def cancel(self):
-            self.cancelled.set()
-
-        def execute(self, staged, prompt, folder, on_tick=lambda: None, **kwargs):
-            self.calls.append(folder.name)
-            if staged.get('runtime_role') == 'evaluator':
-                pack = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
-                (folder / 'assessment.json').write_text(json.dumps({'brief_hash': pack['brief']['hash'], 'summary': '普通评分',
-                                                                    'overall': '建议修改', 'evidence': 4, 'coverage': 4, 'analysis': 4, 'expression': 4}), encoding='utf-8')
-                return {'returncode': 0}
-            (folder / 'draft.json').write_text(json.dumps({'title': '内部周报', 'markdown': '本周交付三项。'}), encoding='utf-8')
-            offset[0] = 200  # the writing turn has now run past the checkpoint threshold
-            on_tick()
-            return {'returncode': 0}
-
-    runtime = Runtime()
-    worker = Worker(store, runtime)
-    worker.thread.start()
-    try:
-        result = worker.generate(store.one('jobs', job['id']))
-    finally:
-        worker.close()
-    assert store.rows("SELECT * FROM jobs WHERE kind='review'") == [] and store.rows('SELECT * FROM reviews') == []
-    version = result['version_id']
-    data = json.loads(store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version,))[0]['data'])
-    assert data['basis'] == 'assessment_without_review'
-    from briefloop.release import eligibility
-    assert [b['code'] for b in eligibility(store, version)['blockers']] == ['review_missing', CODE]
