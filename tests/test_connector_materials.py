@@ -78,9 +78,10 @@ class MaterialTests(unittest.TestCase):
         self.assertEqual(self.read(grant)['source_id'], source['id'])  # Reuse, never replay.
         brief = self.store.publish(self.run['id'], {'title': 'Controlled report', 'markdown': 'Eight of ten milestones completed.',
                                                   'citations': [{'source_id': source['id'], 'locator': 'line 1'}]})
-        _, files = build_packet(self.store, brief['id'], self.root / 'review')
+        packet_folder = self.store.root / 'review'
+        _, files = build_packet(self.store, brief['id'], packet_folder)
         self.assertIn('sources/' + source['id'] + '.json', files)
-        self.assertEqual((self.root / 'review/packet/sources' / (source['id'] + '.json')).read_bytes(), original.read_bytes())
+        self.assertEqual((packet_folder / 'packet/sources' / (source['id'] + '.json')).read_bytes(), original.read_bytes())
         original.write_text('{}')
         with self.assertRaises(ValueError):
             source_files(self.store, source['id'])
