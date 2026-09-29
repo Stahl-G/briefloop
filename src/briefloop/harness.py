@@ -9,7 +9,7 @@ from .app_server import AppServerClient
 from .chat_store import ChatStore
 from .store import uid
 
-DEFAULT_RUNTIME={'model':'gpt-5.6-luna','effort':'high','permission':'workspace-write'}
+DEFAULT_RUNTIME={'model':'default','effort':None,'permission':'workspace-write'}
 
 class InternalRun:
     def __init__(self, session_id, message_id):

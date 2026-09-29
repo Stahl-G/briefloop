@@ -25,10 +25,6 @@ from .native_engine import NativeEngine
 from .store import uid
 
 THINKING_LEVELS = {'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
-# Default when no effort is selected. On the seeded slice evaluation (2026-09-18)
-# the Reviewer caught the same defects at low as at high while thinking ~40%
-# less; low was faster and cheaper than Opencode at high on a held-out set.
-DEFAULT_THINKING = 'low'
 
 
 def _thinking(config):
@@ -37,7 +33,8 @@ def _thinking(config):
         return value.strip().lower()
     if value not in (None, '', 'none'):
         raise ValueError('内置引擎不支持所选推理档位：' + str(value))
-    return DEFAULT_THINKING
+    # Leave an unselected level to Pi SDK (or the restored session).
+    return None
 
 
 def _session_identity(config, provider_revision):
@@ -105,7 +102,23 @@ class NativeHarness:
         return self.chat.snapshot(session_id, after, reasoning=reasoning)
 
     def list_models(self, refresh=False):
-        return self.engine.call('list_models', {}, timeout=30).get('models', [])
+        return self.model_catalog(refresh=refresh)['models']
+
+    def model_catalog(self, refresh=False):
+        from .native_providers import model_catalog
+        catalog = model_catalog(refresh=refresh)
+        if catalog['models']:
+            # SDK metadata may describe exact model compatibility, but only the
+            # provider API contributes candidate IDs to the selection list.
+            try:
+                details = self.engine.call('describe_models', {
+                    'models': [row['id'] for row in catalog['models']], 'refresh': refresh,
+                }, timeout=30).get('models', [])
+                by_id = {row['id']: row for row in details}
+                catalog['models'] = [{**by_id.get(row['id'], {}), **row} for row in catalog['models']]
+            except Exception:
+                catalog['metadata_status'] = 'unavailable'
+        return catalog
 
     @staticmethod
     def _config(runtime):

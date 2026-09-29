@@ -278,8 +278,8 @@ class ReviewRuntime(RoleModel):
 
 
 class Settings(RoleModel):
-    model: str = Field(default='gpt-5.6-luna', max_length=100)
-    reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
+    model: str = Field(default='', max_length=100)
+    reasoning_effort: str | None = Field(default=None, min_length=1, max_length=100)
     agent_backend: Literal['codex', 'opencode','briefloop-native','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode'] = 'codex'
     runtime_efforts: dict[str, str | None] = Field(default_factory=dict)
 

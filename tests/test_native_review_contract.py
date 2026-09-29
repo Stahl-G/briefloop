@@ -57,7 +57,7 @@ def test_hosts_get_their_own_instructions_over_one_review_contract(tmp_path):
 def test_check_review_runs_admission_without_saving(tmp_path):
     world = checked(tmp_path)
     store, brief = world['store'], world['brief']
-    job = store.enqueue('review', {'version_id': brief['id']})
+    job = store.enqueue('review', {'version_id': brief['id'], 'runtime': {'model': 'fixture/model'}})
     folder = store.root / 'jobs' / job['id']
     fingerprint, files = review.build_packet(store, brief['id'], folder)
     identity = 'review_dryrun'
@@ -131,7 +131,7 @@ def test_harness_sends_the_layered_prompt_and_answers_admission(tmp_path, monkey
 
 def test_native_review_defaults_to_low_effort_unless_selected():
     from briefloop.native_harness import _thinking
-    assert _thinking({}) == 'low'
+    assert _thinking({}) is None
     assert _thinking({'variant': 'high'}) == 'high'
     assert _thinking({'model_variant': ' MAX '}) == 'max'
     with pytest.raises(ValueError, match='不支持'):

@@ -383,9 +383,14 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .backends import validate_backend
                     backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
                     if backend=='briefloop-native':
-                        models=native_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
+                        catalog=native_harness.model_catalog(refresh=q.get('refresh',[''])[0]=='1')
+                        self.send(200,{'backend':backend,**catalog});return
                     elif backend=='opencode':
                         models=opencode_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
+                        from .provider_catalog import timestamp
+                        self.send(200,{'backend':backend,'models':models,'count':len(models),
+                                       'source':'host_catalog','status':'reachable','refreshed_at':timestamp(),
+                                       'inference_tested':False});return
                     elif backend in bridge_harnesses:
                         catalog=bridge_harnesses[backend].list_models(refresh=q.get('refresh',[''])[0]=='1')
                         self.send(200,{'backend':backend,**catalog});return

@@ -41,6 +41,7 @@ test('a delayed old model response cannot replace the new host choices or explic
  replies.get('claude')({kind:'levels',options:[{id:'high'}]});await old;
  assert.deepEqual(control.children.map(o=>o.value),['none','off','low']);assert.equal(control.value,'none');
  assert.equal(settingsEffort({reasoning_effort:'high'},'claude'),'none');
+ assert.equal(settingsEffort({},'codex'),'none','an unconfigured workspace does not silently select high');
  assert.equal(settingsEffort({runtime_efforts:{pi:'off'}},'pi'),'off');
 });
 

@@ -321,37 +321,8 @@ class OpencodeServerClient:
         try:auth=json.loads(auth_path.read_text(encoding='utf-8')).get(provider,{})
         except (OSError,ValueError):auth={}
         key=auth.get('key','') if auth.get('type')=='api' else ''
-        headers={'Accept':'application/json'}
-        if config['protocol']=='anthropic-messages':
-            headers['anthropic-version']='2023-06-01'
-            if key:headers['x-api-key']=key
-        elif key:headers['Authorization']='Bearer '+key
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self,*args,**kwargs):return None
-        catalog_url=base.rstrip('/')+'/models'
-        if config['protocol']=='anthropic-messages' and urllib.parse.urlsplit(base).hostname=='api.deepseek.com':
-            catalog_url='https://api.deepseek.com/models'
-            headers={'Accept':'application/json',**({'Authorization':'Bearer '+key} if key else {})}
-        request=urllib.request.Request(catalog_url,headers=headers)
-        context=ssl.create_default_context()
-        trust=ssl.get_default_verify_paths()
-        if not trust.cafile and not trust.capath and not os.environ.get('SSL_CERT_FILE') and Path('/etc/ssl/cert.pem').is_file():
-            context.load_verify_locations('/etc/ssl/cert.pem')
-        result={'kind':'catalog','inference_tested':False,'tools_tested':False}
-        try:
-            with urllib.request.build_opener(NoRedirect,urllib.request.HTTPSHandler(context=context)).open(request,timeout=12) as response:
-                raw=response.read(2*1024*1024+1)
-                if len(raw)>2*1024*1024:raise ValueError('模型目录响应过大')
-                data=json.loads(raw)
-            models=sorted({m['id'] for m in data.get('data',[]) if isinstance(m,dict) and isinstance(m.get('id'),str) and len(m['id'])<=200})
-            return {**result,'status':'reachable','models':models,'credential_sent':bool(key),'authenticated':'unknown'}
-        except urllib.error.HTTPError as exc:
-            kinds={401:'auth_failed',402:'insufficient_balance',403:'forbidden',404:'catalog_unavailable',429:'rate_limited'}
-            return {**result,'status':kinds.get(exc.code,'upstream_unavailable' if exc.code>=500 else 'http_error'),'http_status':exc.code,'models':[]}
-        except (urllib.error.URLError,OSError):
-            return {**result,'status':'connection_failed','models':[]}
-        except (ValueError,TypeError,AttributeError):
-            return {**result,'status':'invalid_catalog','models':[]}
+        from ..provider_catalog import read_provider_catalog
+        return read_provider_catalog({**config, 'api_key': key})
 
     def configure_provider(self, directory, provider, model, base_url, api_key=None, supports_images=None, protocol="chat-completions", name=None, context_limit=None, output_limit=None):
         """Use native configuration/auth APIs; never return credentials or config."""

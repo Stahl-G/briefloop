@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
+import {createProviderCatalog} from '../frontend/model-catalog.js';
 import {section} from './source_section.mjs';
 const elements=new Map();
 const $=id=>{if(!elements.has(id))elements.set(id,{value:'',hidden:false});return elements.get(id)};
@@ -38,7 +39,8 @@ for(const declared of [true,false]){
   ];
   const bodies=[];const storage=new Map();
   const context=vm.createContext({$:el,Event,esc:value=>value,settingsView(){},settingsModelTab(){},
-    welcomeFromProvider:false,providerCapabilities:createProviderCapabilities({$:el}),
+    welcomeFromProvider:false,providerCapabilities:createProviderCapabilities({$:el}),createProviderCatalog,
+    modelDirectory:{invalidate(){},fetchModelCatalog:async()=>[],catalogs:new Map([['briefloop-native',{providers:[{provider:'shared',models:['target','other'],status:'reachable',source:'provider_api'}]}]])},
     localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
     api:async(route,body)=>{
       if(route==='native/providers')return {configurations:configs};

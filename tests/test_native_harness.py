@@ -256,6 +256,12 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
     (packet / 'output.schema.json').write_text('{"type": "object"}')
     home = tmp_path / 'home'
     home.mkdir()
+    native_dir = home / '.config/briefloop/native-engine'
+    native_dir.mkdir(parents=True)
+    (native_dir / 'providers.json').write_text(json.dumps({'fake/m1': {
+        'provider': 'fake', 'model': 'm1', 'protocol': 'chat-completions',
+        'base_url': f'http://127.0.0.1:{server.server_port}/v1', 'api_key': 'fixture-native-key',
+    }}))
     import briefloop.runtime_bridge as runtime_bridge
     monkeypatch.setattr(runtime_bridge, 'files', lambda name: package)
     for name, value in (('HOME', str(home)), ('USERPROFILE', str(home)), ('FAKE_PROVIDER_KEY', 'k'), ('NO_PROXY', '*')):
@@ -373,7 +379,7 @@ def test_native_reasoning_catalog_and_workspace_choice_survive_shared_controls(t
 
     class NativeCatalog:
         def list_models(self):
-            return [{'id': 'fake/m1', 'thinking_levels': ['off', 'low', 'high']}]
+            return [{'id': 'fake/m1', 'thinking_levels': ['off', 'low', 'high'], 'thinking_levels_source': 'provider_api'}]
 
     class NoBridge:
         def call(self, *args, **kwargs):
@@ -381,7 +387,7 @@ def test_native_reasoning_catalog_and_workspace_choice_survive_shared_controls(t
 
     result = options('briefloop-native', 'fake/m1', tmp_path, NoBridge(), NativeCatalog())
     assert [o['id'] for o in result['options']] == ['off', 'low', 'high']
-    with pytest.raises(ValueError, match='尚未登记'):
+    with pytest.raises(ValueError, match='目录未返回'):
         options('briefloop-native', 'fake/missing', tmp_path, NoBridge(), NativeCatalog())
     store = Store(tmp_path)
     selected = store.confirm_runtime_choice('briefloop-native', {'model': 'fake/m1', 'model_variant': 'high'})

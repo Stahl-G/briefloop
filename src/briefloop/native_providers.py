@@ -1,5 +1,8 @@
 """Local native-engine provider configuration, never included in workspace data."""
 import json
+import copy
+import hashlib
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 import re
 import threading
@@ -8,6 +11,9 @@ from urllib.parse import urlsplit
 from .connectors.config import atomic_json, ConnectorError
 
 _LOCK = threading.RLock()
+_CATALOG_LOCK = threading.Lock()
+_CATALOG_PENDING = {}
+_CATALOG_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="native-catalog")
 PROTOCOLS = {'chat-completions':'openai-completions', 'responses':'openai-responses', 'anthropic-messages':'anthropic-messages', 'openai': 'openai-completions', 'openai-compatible': 'openai-completions',
              'openai-responses': 'openai-responses', 'anthropic': 'anthropic-messages', 'google': 'google-generative-ai'}
 
@@ -71,7 +77,63 @@ def save(body):
     return {'model': provider + '/' + model, 'saved': True}
 
 
+def _catalog_future(config):
+    # Register before queuing work, so concurrent page loads also coalesce
+    # when all provider workers are occupied. Completed results are not cached.
+    from .provider_catalog import read_provider_catalog
+    identity = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).digest()
+    with _CATALOG_LOCK:
+        if pending := _CATALOG_PENDING.get(identity):
+            return pending
+        pending = Future()
+        _CATALOG_PENDING[identity] = pending
+
+    def read():
+        try:
+            result = read_provider_catalog(config)
+            result.update(provider=config['provider'], name=config.get('name') or config['provider'])
+            pending.set_result(result)
+        except Exception as exc:
+            pending.set_exception(exc)
+        finally:
+            with _CATALOG_LOCK:
+                _CATALOG_PENDING.pop(identity, None)
+
+    _CATALOG_POOL.submit(read)
+    return pending
+
+
+def _catalog_config(config, refresh=False):
+    # No TTL: explicit refresh and ordinary fresh reads both contact the API.
+    return copy.deepcopy(_catalog_future(config).result())
+
+
+def _provider_configs():
+    with _LOCK:
+        configs = {}
+        for row in _read().values():
+            configs.setdefault(row['provider'], dict(row))
+        return configs
+
+
 def catalog(body):
-    provider = body.get('provider')
-    return {'status':'reachable', 'models': [row['model'] for row in configurations() if row['provider'] == provider],
-            'source': 'native_config', 'diagnostic': '显示已登记模型；也可直接输入新的模型 ID 保存。'}
+    config = _provider_configs().get(body.get('provider'))
+    if config is None:
+        raise ValueError('请先保存 Native 提供方连接')
+    return _catalog_config(config, refresh=bool(body.get('refresh', True)))
+
+
+def model_catalog(refresh=False):
+    from .provider_catalog import timestamp
+    configs = _provider_configs()
+    pending = [_catalog_future(config) for config in configs.values()]
+    providers = [copy.deepcopy(future.result()) for future in pending]
+    models = [{'id': item['provider'] + '/' + mid, 'provider': item['provider'], 'name': mid,
+               'catalog_source': item['source'], 'catalog_status': item['status'],
+               'refreshed_at': item['refreshed_at'], 'inference_tested': False}
+              for item in providers if item['status'] == 'reachable' for mid in item['models']]
+    statuses = {item['status'] for item in providers}
+    status = (next(iter(statuses)) if len(statuses) == 1 else 'partial') if providers else 'unconfigured'
+    return {'models': models, 'count': len(models), 'providers': providers,
+            'source': 'provider_api', 'status': status, 'refreshed_at': timestamp(),
+            'inference_tested': False, 'tools_tested': False}

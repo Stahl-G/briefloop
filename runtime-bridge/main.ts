@@ -17,7 +17,6 @@ import {sanitizeCustomModel} from '../third_party/open-design/runtime-models/mod
 import {loadMmdRouteModels,loadMmdRouteLaunchEnv} from '../third_party/open-design/runtime-models/mmd-routes.js';
 import {parseCodexDebugModels} from '../third_party/open-design/runtime-models/codex-models.js';
 import {parseOpenCodeModels} from '../third_party/open-design/runtime-models/opencode-models.js';
-import fallbackModels from '../third_party/open-design/runtime-models/fallbacks.json';
 const rawExec = promisify(execFile);
 // Only processes started by this bridge belong to its shutdown scope.
 const ownedChildren = new Set<any>();
@@ -126,21 +125,22 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
   return models.length?models.map(model=>({id:x.name+'/'+model,label:x.name+' · '+model,provider:x.kind||'configured',model_id:model})):[{id:x.name,label:x.name+(x.model?' · '+x.model:''),provider:x.kind||'configured',model_id:x.model}];
  })],source:'native_config',note:'Models declared by the host; account availability is checked by a model call.'};
  }
- const fallback=[...hostDefaults(p.runtime_id),...(fallbackModels[p.runtime_id]||[])];
+ const configuredDefault=hostDefaults(p.runtime_id);
+ const unavailable=(diagnostic='宿主未提供模型目录；可沿用宿主设置或手动输入模型 ID。')=>({models:configuredDefault,source:'host_default_only',status:'unavailable',diagnostic,refreshed_at:new Date().toISOString()});
  if(p.runtime_id==='pi')return piModels(bin,p,launch,terminate);
  if(p.runtime_id==='zcode')return zcodeModels();
  if(p.runtime_id==='antigravity'){const r=await exec(bin,['models'],{env,cwd:p.cwd||process.cwd(),timeout:20000,maxBuffer:1024*1024});const models=r.stdout.split(/\r?\n/).map(line=>line.trim().split(/\t+/)).filter(([id,label])=>label&&sanitizeCustomModel(id)).map(([id,label])=>({id,label}));return {models:[...defaults,...models],source:models.length?'host':'host_default_only'};}
  if(p.runtime_id==='claude'){
-  const routed=await loadMmdRouteModels(env,fallback);
-  return {models:routed||fallback,source:routed?'local_routes':'builtin_hints',
-   note:'Claude Code 未提供可读取的实时模型目录。opus / sonnet 等别名由 CLI 在运行时解析；具体模型 ID 可手动输入，内置建议不代表账号可用。'};
+  const routed=await loadMmdRouteModels(env,[]);
+  return {models:routed||configuredDefault,source:routed?'local_routes':'host_default_only',status:routed?'configured':'unavailable',refreshed_at:new Date().toISOString(),
+   note:'Claude Code 未提供可读取的实时模型目录。仅显示本机已配置路由；也可沿用宿主默认或手动输入模型 ID。'};
  }
  try{
-  if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
-  if(['mimo','opencode'].includes(p.runtime_id)){const r=await exec(bin,['models','--verbose'],{env,timeout:20000,maxBuffer:8*1024*1024});const models=parseOpenCodeModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
-  if(p.runtime_id in acpArgs){const args=acpArguments(p.runtime_id,bin);const models=await acpSessionModels(bin,args,p.cwd||process.cwd(),p.runtime_id);const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
- }catch{return {models:fallback,source:'builtin_hints',diagnostic:'宿主目录读取失败，已显示内置建议；也可直接输入模型 ID。'};}
- return {models:fallback,source:'builtin_hints'};
+  if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return models?.some(m=>m.id!=='default')?{models,source:'host',status:'reachable',refreshed_at:new Date().toISOString()}:unavailable();}
+  if(['mimo','opencode'].includes(p.runtime_id)){const r=await exec(bin,['models','--verbose'],{env,timeout:20000,maxBuffer:8*1024*1024});const models=parseOpenCodeModels(r.stdout);return models?.some(m=>m.id!=='default')?{models,source:'host',status:'reachable',refreshed_at:new Date().toISOString()}:unavailable();}
+  if(p.runtime_id in acpArgs){const args=acpArguments(p.runtime_id,bin);const models=await acpSessionModels(bin,args,p.cwd||process.cwd(),p.runtime_id);return models.some(m=>m.id!=='default')?{models,source:'host',status:'reachable',refreshed_at:new Date().toISOString()}:unavailable();}
+ }catch{return unavailable('宿主模型目录读取失败；未添加预设模型，可重试或手动输入模型 ID。');}
+ return unavailable();
 }
 
 function validate(p:any){p.effort=validateEffort(p.runtime_id,p.effort);if(p.model&&!sanitizeCustomModel(p.model))throw Error('Invalid model ID');if(!p.execution_id||!p.cwd||typeof p.prompt!=='string')throw Error('execution_id, cwd and prompt required');if(active.has(p.execution_id))throw Error('Execution already active');if((p.permission||'runtime-native')!=='runtime-native')throw Error('This runtime cannot enforce '+p.permission+'; use runtime-native or a restricted native manager');if(p.allow_web===false)throw Error('This runtime cannot enforce network disabled; enable host-native network access or choose a native manager');const d=defFor(p.runtime_id),bin=findBin(d,p.path);if(!bin)throw Error('Runtime not installed');if(!protocol(d.id)||protocol(d.id)==='native-manager')throw Error('Runtime execution belongs to native manager or is not integrated');return bin;}
@@ -169,7 +169,7 @@ async function reasoningOptions(p:any){
    const model=(Array.isArray(data)?data:data.models||[]).find((m:any)=>(m.slug||m.id)===p.model);
    if(Array.isArray(model?.supported_reasoning_levels))return {kind:'levels',source:'host',options:model.supported_reasoning_levels.filter((o:any)=>typeof o.effort==='string'&&o.effort!=='none').map((o:any)=>({id:o.effort,name:o.effort}))};
   }catch{}
-  return {...profile,source:'cli_defaults',note:'宿主未返回所选模型的档位；显示 CLI 常用档位，实际能力取决于模型。'};
+  return {kind:'host',options:[],source:'host',availability:'not_advertised',note:'宿主未返回所选模型的推理档位，沿用模型默认；未添加推测选项。'};
  }
  if(p.runtime_id==='antigravity'&&p.model?.startsWith('gemini-')){
   const family=reasoningModel(p.runtime_id,p.model,'low'),catalog=await listModels(p);
