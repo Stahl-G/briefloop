@@ -494,7 +494,9 @@ def test_windows_long_cache_paths_publish_and_serve_hash_bound_images(tmp_path, 
     def render(args, **kwargs):
         output = Path(args[args.index('-o') + 1])
         assert len(str(output)) > 260
-        filesystem_path(output).write_bytes(payload)
+        # The external renderer must receive an OS-usable long path itself.
+        # Applying our helper inside this stub would hide an invalid CLI arg.
+        output.write_bytes(payload)
         calls.append(output)
         return {'ok': True, 'data': {}, 'reason': None}
 
