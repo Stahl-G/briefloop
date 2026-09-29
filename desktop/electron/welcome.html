@@ -2,13 +2,34 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';"><title>BriefLoop</title><link rel="stylesheet" href="assets/ui-tokens.css"><link rel="stylesheet" href="welcome.css"></head>
 <body><main>
  <a class="brand" aria-label="BriefLoop"><img src="assets/briefloop-mark.svg" width="36" height="36" alt=""><span>BriefLoop</span></a>
- <div class="heading"><h1>从你的工作区继续</h1><p>整理材料、研究和写作，报告与对话都保存在本机。</p></div>
- <section class="workspace-panel" aria-label="打开工作区">
-  <button id="recent" class="recent" hidden disabled><svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 10h18"/></svg><span class="recent-content"><small>最近使用</small><strong id="recent-name"></strong><span id="recent-path"></span></span><span class="recent-arrow" aria-hidden="true">→</span></button>
+ <div class="heading"><h1 id="title">从你的工作区继续</h1><p id="subtitle">整理材料、研究和写作，报告与对话都保存在本机。</p></div>
+ <section id="workspace-panel" class="workspace-panel" aria-label="打开工作区">
+  <button id="recent" class="recent" hidden disabled><span class="recent-icon" aria-hidden="true"><svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 10h18"/></svg></span><span class="recent-content"><strong id="recent-name"></strong><span id="recent-path"></span></span><span class="recent-go">继续 <span aria-hidden="true">→</span></span></button>
   <div id="workspace-actions"><button class="primary" id="create" disabled><span aria-hidden="true">＋</span> 新建工作区</button><button id="open" disabled>打开已有工作区</button></div>
   <p role="status" id="status"></p>
   <p role="status" id="startup-status">正在启动…</p>
  </section>
- <section id="setup" aria-labelledby="setup-title" hidden><h2 id="setup-title">准备运行环境</h2><p>首次准备需要本机 Python 3.11 或更高版本，并联网下载依赖到 App 专属环境。已准备好的环境会在以后启动时复用。</p><p role="status" id="environment-status"></p><progress id="environment-progress" aria-label="正在准备运行环境" hidden></progress><div class="setup-actions"><button class="primary" id="prepare" hidden>下载依赖并准备</button><button id="python-help" hidden>安装 Python</button><button id="cancel-setup" hidden>取消准备</button></div></section>
+ <ol id="setup" class="steps" hidden>
+  <li class="step">
+   <span class="step-marker" aria-hidden="true">1</span>
+   <div class="step-body">
+    <h2 id="setup-title">准备运行环境</h2>
+    <p role="status" id="environment-status"></p>
+    <progress id="environment-progress" aria-label="正在准备运行环境" hidden></progress>
+    <ul id="environment-phases" class="phases" hidden>
+     <li data-phase="verify-payload">校验 App 运行组件</li>
+     <li data-phase="detect-python">检测本机 Python</li>
+     <li data-phase="create-venv">创建 App 专属环境</li>
+     <li data-phase="install-dependencies">下载并安装依赖</li>
+     <li data-phase="verify-imports">验证并启用运行环境</li>
+    </ul>
+    <div class="setup-actions"><button class="primary" id="prepare" hidden>下载依赖并准备</button><button id="python-help" hidden>安装 Python</button><button id="cancel-setup" hidden>取消准备</button></div>
+   </div>
+  </li>
+  <li class="step is-pending">
+   <span class="step-marker" aria-hidden="true">2</span>
+   <div class="step-body"><h2>打开工作区</h2><p id="workspace-next">准备完成后，可以新建或打开工作区。</p></div>
+  </li>
+ </ol>
  <footer><span>文件保存在你选择的文件夹，升级应用不会删除报告。</span><button class="quiet" id="inspect" hidden>检查运行环境</button></footer>
 </main><script src="welcome.js"></script></body></html>
