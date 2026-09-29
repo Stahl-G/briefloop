@@ -198,7 +198,10 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   if (!app || !path.isAbsolute(payloadPath || '')) throw Error('Invalid environment configuration');
   const directory = path.join(app.getPath('userData'), 'environments');
   const activeFile = path.join(directory, 'active.json');
-  let data = {state: 'checking', phase: 'idle', pythonVersion: null, error: null, retryable: false};
+  // reason says why setup is needed: first-install, update (an older App's environment
+  // is active) or repair (the matching environment failed its checks).
+  let data = {state: 'checking', phase: 'idle', pythonVersion: null, error: null, retryable: false,
+    reason: null, version: null, previousVersion: null};
   let verified = null, pending = null, controller = null, cleanupFailure = null;
   const status = () => structuredClone(data);
   const publish = patch => { data = {...data, ...patch}; changed(status()); return status(); };
@@ -274,12 +277,14 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   async function inspectImpl(signal, {startup = false} = {}) {
     verified = null;
     const manifest = await payload(signal);
+    publish({version: manifest.version});
     let active;
     try { if ((await fs.lstat(directory)).isSymbolicLink()) throw new EnvironmentError('unsafe_path', 'App 运行环境目录不可用。'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     try { active = JSON.parse(await fs.readFile(activeFile, 'utf8')); } catch {}
-    const matches = active?.schema === 1 && UUID.test(active.environmentId || '') && active.sha256 === manifest.sha256
-      && active.version === manifest.version && active.wheel === manifest.wheel && active.platform === platform && active.arch === arch;
+    const recorded = active?.schema === 1 && UUID.test(active.environmentId || '') && active.platform === platform && active.arch === arch;
+    const matches = recorded && active.sha256 === manifest.sha256 && active.version === manifest.version && active.wheel === manifest.wheel;
+    publish({reason: matches ? 'repair' : recorded ? 'update' : 'first-install', previousVersion: recorded && !matches ? active.version || null : null});
     if (startup && matches && path.isAbsolute(active.hostPython || '')) {
       try {
         await fs.access(active.hostPython, platform === 'win32' ? constants.F_OK : constants.X_OK);
@@ -305,10 +310,10 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); }
     }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
-    return {manifest, python};
+    return {manifest, python, previous: recorded && !matches ? active.environmentId : null};
   }
-  async function prepareImpl(signal) {
-    const {manifest, python} = await inspectImpl(signal);
+  async function prepareImpl(signal, inspected) {
+    const {manifest, python, previous} = inspected || await inspectImpl(signal);
     if (!python || data.state === 'ready') return status();
     let id, created = false, committed = false, safeToRemove = true;
     try {
@@ -336,6 +341,8 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         committed = true;
       } finally { await fs.rm(temporary, {force: true}); }
       verified = {python: executable, basePython: python.executable, node: process.execPath, nodeIsElectron: true};
+      // Old environments may still be used by independently running CLI tasks.
+      // Retain them until cleanup can establish that no process owns them.
       return publish({state: 'ready', phase: 'ready', error: null, retryable: false});
     } catch (error) {
       if (error.code === 'cleanup_failed') { safeToRemove = false; error.partialDirectory = id && created ? path.join(directory, id) : null; }
@@ -351,7 +358,13 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   }
   return {
     status,
-    startup: () => operation(async signal => {await inspectImpl(signal, {startup: true}); return status();}),
+    // A user who prepared an environment before already agreed to the download; after an
+    // App update the matching environment is rebuilt without asking again.
+    startup: () => operation(async signal => {
+      const inspected = await inspectImpl(signal, {startup: true});
+      if (data.state === 'needs-setup' && data.reason === 'update') return prepareImpl(signal, inspected);
+      return status();
+    }),
     inspect: () => operation(async signal => {await inspectImpl(signal); return status();}),
     prepare: () => operation(prepareImpl),
     runtime: () => {if (!verified || data.state !== 'ready') throw Error('运行环境尚未验证就绪，请先完成环境准备。'); return {...verified};},

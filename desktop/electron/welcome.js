@@ -1,26 +1,61 @@
 const status = document.getElementById('status');
 const api = window.briefloopDesktop;
-let environment = {state: 'checking'}, opening = false;
+let environment = {state: 'checking'}, opening = false, recentName = '';
 const phases = {'verify-payload': '正在校验 App 运行组件…', 'detect-python': '正在检测本机 Python…',
   'create-venv': '正在创建 App 专属环境…', 'install-dependencies': '正在下载并安装依赖，请保持网络连接…',
   'verify-imports': '正在验证运行组件…', 'verify-dependencies': '正在核对依赖完整性…',
   'activate-environment': '正在启用运行环境…'};
+// The checklist groups the environment phases into the steps a person can follow.
+const checklist = ['verify-payload', 'detect-python', 'create-venv', 'install-dependencies', 'verify-imports'];
+const checklistStep = {'check-runtime': 'verify-payload', 'verify-dependencies': 'verify-imports', 'activate-environment': 'verify-imports'};
+function heading(value) {
+  const version = value.version ? ` ${value.version}` : '';
+  if (value.state === 'installing') return value.reason === 'update'
+    ? ['正在更新运行组件', `App 已更新到${version}，正在安装配套的运行组件，完成后即可打开工作区。`]
+    : ['正在准备运行环境', '请保持网络连接，完成后即可打开工作区。'];
+  if (value.state === 'missing-python') return ['需要先安装 Python', '安装完成后回到这里重新检测。'];
+  if (value.state === 'error') return ['运行环境需要处理', '工作区和报告不受影响。'];
+  if (value.state === 'needs-setup') {
+    if (value.reason === 'update') return ['更新运行组件', `App 已更新到${version}，需要安装配套的运行组件。`];
+    if (value.reason === 'repair') return ['运行环境需要修复', '已准备的环境没有通过检查。重新准备即可，工作区和报告不受影响。'];
+    return ['先准备运行环境', '只需要准备一次，以后启动会直接复用。'];
+  }
+  return ['从你的工作区继续', '整理材料、研究和写作，报告与对话都保存在本机。'];
+}
 function renderEnvironment(value) {
   environment = value;
   const busy = ['checking', 'installing'].includes(value.state);
+  const setup = !['checking', 'ready'].includes(value.state);
   const cleanupBlocked = value.error?.code === 'cleanup_failed' && value.retryable === false;
-  const detail = value.phase === 'install-dependencies' ? `使用已有 Python ${value.pythonVersion}，正在下载并安装 BriefLoop 依赖…` : phases[value.phase];
-  document.getElementById('setup').hidden = ['checking', 'ready'].includes(value.state);
+  const python = value.pythonVersion ? `本机 Python ${value.pythonVersion}` : '本机 Python';
+  const detail = value.phase === 'install-dependencies' ? `使用${python}，正在下载并安装 BriefLoop 依赖…` : phases[value.phase];
+  const [title, subtitle] = heading(value);
+  document.getElementById('title').textContent = title;
+  document.getElementById('subtitle').textContent = subtitle;
+  document.getElementById('setup').hidden = !setup;
+  document.getElementById('workspace-panel').hidden = setup;
   document.getElementById('startup-status').hidden = value.state !== 'checking';
-  document.getElementById('setup-title').textContent = value.state === 'error' ? '运行环境需要处理' : '准备运行环境';
-  document.getElementById('environment-status').textContent = value.error?.message || detail
-    || (value.state === 'needs-setup' ? `将使用已有 Python ${value.pythonVersion}，仅下载 BriefLoop 依赖。` : '正在检测运行环境…');
-  document.getElementById('environment-progress').hidden = !busy;
+  document.getElementById('setup-title').textContent = value.state === 'missing-python' ? '安装 Python'
+    : value.reason === 'update' ? '更新运行组件' : '准备运行环境';
+  document.getElementById('environment-status').textContent = value.error?.message
+    || (value.state === 'installing' ? detail : `将使用${python}，联网下载 BriefLoop 依赖到 App 专属环境。`);
+  document.getElementById('environment-progress').hidden = value.state !== 'installing';
+  document.getElementById('environment-phases').hidden = value.state !== 'installing';
+  const current = checklist.indexOf(checklistStep[value.phase] || value.phase);
+  document.querySelectorAll('#environment-phases li').forEach((item, index) => {
+    const position = checklist.indexOf(item.dataset?.phase ?? checklist[index]);
+    item.className = position < current ? 'done' : position === current ? 'current' : '';
+  });
   document.getElementById('prepare').hidden = cleanupBlocked || !['needs-setup', 'error'].includes(value.state);
-  document.getElementById('prepare').textContent = value.state === 'error' ? '重新准备' : '下载依赖并准备';
+  document.getElementById('prepare').textContent = value.state === 'error' || value.reason === 'repair' ? '重新准备'
+    : value.reason === 'update' ? '更新运行组件' : '下载依赖并准备';
   document.getElementById('python-help').hidden = !['missing-python', 'error'].includes(value.state);
-  document.getElementById('inspect').hidden = busy || cleanupBlocked;
+  // The setup step already offers its own action; the footer check is for a ready or failed environment.
+  document.getElementById('inspect').hidden = busy || cleanupBlocked || value.state === 'needs-setup';
+  document.getElementById('inspect').textContent = value.state === 'missing-python' ? '重新检测' : '检查运行环境';
   document.getElementById('cancel-setup').hidden = value.state !== 'installing';
+  document.getElementById('workspace-next').textContent = recentName
+    ? `准备完成后可以继续「${recentName}」，或新建、打开其他工作区。` : '准备完成后，可以新建或打开工作区。';
   document.querySelectorAll('#workspace-actions button, #recent').forEach(button => {button.disabled = opening || value.state !== 'ready';});
 }
 function welcomeErrorMessage(error) {
@@ -41,6 +76,11 @@ async function action(callback) {
   catch (error) { status.textContent = welcomeErrorMessage(error); }
   finally { opening = false; renderEnvironment(environment); }
 }
+// A short location for the card; the full path stays in the tooltip.
+function shortLocation(directory, parts) {
+  const parent = parts.slice(0, -1);
+  return parent.length > 2 ? `…/${parent.slice(-2).join('/')}` : (directory.startsWith('/') ? '/' : '') + parent.join('/');
+}
 document.getElementById('prepare').onclick = () => setupAction(() => api.environment.prepare());
 document.getElementById('inspect').onclick = () => setupAction(() => api.environment.inspect());
 document.getElementById('cancel-setup').onclick = () => setupAction(() => api.environment.cancel());
@@ -53,11 +93,13 @@ api.recentWorkspace().then(directory => {
   if (!directory) return;
   const button = document.getElementById('recent');
   const parts = directory.replace(/\\/g, '/').split('/').filter(Boolean);
-  document.getElementById('recent-name').textContent = parts.at(-1) || directory;
-  document.getElementById('recent-path').textContent = directory;
+  recentName = parts.at(-1) || directory;
+  document.getElementById('recent-name').textContent = recentName;
+  document.getElementById('recent-path').textContent = `上次使用 · ${shortLocation(directory, parts)}`;
   button.title = directory;
-  button.setAttribute('aria-label', '继续工作区：' + (parts.at(-1) || directory));
+  button.setAttribute('aria-label', '继续工作区：' + recentName);
   document.getElementById('create').classList.remove('primary');
   button.hidden = false;
   button.onclick = () => action(() => api.openWorkspace({path: directory, create: false}));
+  renderEnvironment(environment);
 }).catch(error => {status.textContent = welcomeErrorMessage(error);});

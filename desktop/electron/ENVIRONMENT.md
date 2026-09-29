@@ -2,7 +2,7 @@
 
 桌面 App 不内置完整 Python。`environment.cjs` 检测本机 Python 3.11 或更高版本；未找到时明确引导安装 Python，检测本身不安装软件。用户触发准备后，使用随包 wheel 的声明依赖创建 App 专属 venv，不修改系统 Python 或工作区的环境。
 
-正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测；安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
+正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测。状态中的 `reason` 说明原因：`first-install`（没有本平台的已激活记录）、`update`（已激活记录来自另一个随包 wheel）、`repair`（记录一致但检查失败）。`update` 时启动会直接重建环境，因为用户此前已同意过联网准备；`first-install` 与 `repair` 仍等待用户选择。安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
 
 ## 主进程接口
 
@@ -27,6 +27,8 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 - `pythonVersion`: 检测到的 Python 版本或 null。
 - `error`: null 或 `{code,message}`，只有固定安全提示，不复制子进程原始输出、路径、环境变量或网络诊断。
 - `retryable`: 是否可重新检测或准备。
+- `reason`: `first-install`、`update`、`repair` 或 null（尚未检测）。
+- `version`: 随包 BriefLoop 版本；`previousVersion`: `update` 时被替换环境的版本，否则为 null。
 
 没有模拟百分比。重复调用时复用当前操作 Promise；启动检查尚未结束时，界面应禁用准备按钮。`runtime()` 只返回主进程可用的 `{python, node: process.execPath, nodeIsElectron: true}`，不得把这些路径当成 renderer 提供的命令。服务启动层应按约定以 Electron Node 模式启动桥接进程；本模块不修改其环境或启动业务服务。
 
@@ -40,7 +42,7 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 {"version":"0.20.0","wheel":"briefloop-0.20.0-py3-none-any.whl","sha256":"wheel 文件的 64 位 SHA-256"}
 ```
 
-每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。
+每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；新环境激活后保留旧环境，避免删除独立 CLI 任务仍在使用的解释器；自动清理须先具备跨进程占用判断，本版不执行；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。
 
 宿主查找只使用 PATH 中的绝对目录和标准安装路径，包括 macOS Homebrew、Python.framework，及 Windows Python 安装目录、`py.exe -0p` launcher 清单。跳过相对 PATH 条目以及可能打开商店的 Python WindowsApps 别名。先列出已有解释器再直接探测，避免新版 Python install manager 在无解释器时自动安装；子进程也显式关闭 manager 自动安装并移除旧 launcher 安装开关。[Windows Python 文档](https://docs.python.org/3/using/windows.html)
 

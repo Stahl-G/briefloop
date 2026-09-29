@@ -33,47 +33,56 @@ export function createAssessmentPanel(deps){
   beginPanel(box,vid,isDirty()?'有未保存修改；下列检查仅针对已保存版本。':'正在检查已保存版本…');
   let c;try{c=await api('version-checks?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected&&getCurrent()?.id===vid&&ticket===renderDeliveryChecks.ticket)updatePanel(box,'检查暂不可用，请稍后重试；未判定通过。');return}
   if(!getCurrent()||getCurrent().id!==vid||ticket!==renderDeliveryChecks.ticket||!box.isConnected)return;
-  const parts=[];
-  if(isDirty())parts.push('<span class="tag">有未保存修改；仅检查已保存版本</span>');
-  if(c.temporal){const t=c.temporal;parts.push(`<span class="tag ${t.out_of_range_count?'error':''}">时效：${t.status==='not_checked'?(t.reason==='legacy_window'?'旧任务未冻结范围':'未提供事件日期记录，待核实'):`范围外当期事件 ${t.out_of_range_count||0}；日期待核实 ${t.missing_date_count||0}；${t.items?.length||0} 条日期记录，仍需核对原文`}</span>`)}
-  for(const warning of (c.temporal?.warnings||[]))parts.push(`<p class="help">${esc(warning.message||'报告期间需要确认')}</p>`);
-  parts.push(c.broken_refs.length?`<span class="tag error">断链引用 ${c.broken_refs.length} 处：${c.broken_refs.map(esc).join('、')}</span>`:'<span class="tag">正文引用可定位；支持关系仍需评价</span>');
+  // Each line is sorted by what the reader has to do: attention (error/warn), a note, or passed.
+  const lines=[],add=(kind,html)=>lines.push({kind,html}),more=html=>{if(lines.length)lines.at(-1).html+=html};
+  const tag=(kind,text)=>`<span class="tag${kind==='error'||kind==='warn'?' '+kind:''}">${text}</span>`;
+  const line=(kind,text)=>add(kind,tag(kind,text));
+  if(isDirty())line('warn','有未保存修改；仅检查已保存版本');
+  if(c.temporal){const t=c.temporal;const kind=t.out_of_range_count?'error':t.status==='not_checked'||t.missing_date_count?'warn':'ok';line(kind,`时效：${t.status==='not_checked'?(t.reason==='legacy_window'?'旧任务未冻结范围':'未提供事件日期记录，待核实'):`范围外当期事件 ${t.out_of_range_count||0}；日期待核实 ${t.missing_date_count||0}；${t.items?.length||0} 条日期记录，仍需核对原文`}`)}
+  for(const warning of (c.temporal?.warnings||[]))line('warn',esc(warning.message||'报告期间需要确认'));
+  if(c.broken_refs.length)line('error',`断链引用 ${c.broken_refs.length} 处：${c.broken_refs.map(esc).join('、')}`);else line('ok','正文引用可定位；支持关系仍需评价');
   const n=c.numbers;
-  parts.push(`<span class="tag">${n.status==='not_checked'?'未做数值核对':n.status==='partial'?'部分绑定已检查':'已检查提交的绑定'}：提交 ${n.total} 项，已检查 ${n.checked} 项，匹配 ${n.matched} 项</span>`);
-  if(n.total)parts.push(`<span class="tag">已提交绑定可核对 ${n.checked}/${n.total}（${Math.round(n.checked/n.total*100)}%）；不是全稿正确率</span>`);
-  if(n.unmatched.length)parts.push(`<span class="tag error">绑定数值不一致 ${n.unmatched.length} 项：${n.unmatched.map(r=>esc(r.label||r.expected)).join('、')}</span>`);
-  if(n.skipped.length)parts.push(`<span class="tag">未检查 ${n.skipped.length} 项：${n.skipped.map(r=>esc((r.label||'未命名')+'：'+r.reason)).join('；')}</span>`);
+  line('note',`${n.status==='not_checked'?'未做数值核对':n.status==='partial'?'部分绑定已检查':'已检查提交的绑定'}：提交 ${n.total} 项，已检查 ${n.checked} 项，匹配 ${n.matched} 项`);
+  if(n.total)line('note',`已提交绑定可核对 ${n.checked}/${n.total}（${Math.round(n.checked/n.total*100)}%）；不是全稿正确率`);
+  if(n.unmatched.length)line('error',`绑定数值不一致 ${n.unmatched.length} 项：${n.unmatched.map(r=>esc(r.label||r.expected)).join('、')}`);
+  if(n.skipped.length){line('warn',`${n.skipped.length} 个数值未能自动核对`);more(`<details class="help"><summary>查看明细</summary><ul>${n.skipped.map(r=>`<li>${esc(r.label||'未命名')}：${esc(r.reason)}</li>`).join('')}</ul></details>`)}
   const occurrences=n.occurrence_review;
   if(occurrences?.candidate_count){
-   parts.push(`<span class="tag">带明确单位的数值出现 ${occurrences.candidate_count} 处；直接对应已核对绑定 ${occurrences.checked_occurrences} 处；待看 ${occurrences.review_candidate_count} 处</span>`);
+   line(occurrences.review_candidate_count?'warn':'ok',`带明确单位的数值 ${occurrences.candidate_count} 处：直接对应已核对绑定 ${occurrences.checked_occurrences} 处，待看 ${occurrences.review_candidate_count} 处`);
    if(occurrences.review_candidate_count){
     const where=s=>s.kind==='table_cell'?`表 ${s.table} · 第 ${s.row} 行 ${s.column} 列`:`正文第 ${s.paragraph} 段`;
-    parts.push(`<details class="help"><summary>查看待看数值位置</summary><ul>${occurrences.samples.map(s=>`<li>${esc(where(s))}：${esc(s.text)} · ${esc(s.context)}</li>`).join('')}</ul>${occurrences.truncated?`<p>仅显示前 ${occurrences.sample_limit} 处。</p>`:''}<p>${esc(occurrences.scope)}</p></details>`);
+    more(`<details class="help"><summary>查看待看数值位置</summary><ul>${occurrences.samples.map(s=>`<li>${esc(where(s))}：${esc(s.text)} · ${esc(s.context)}</li>`).join('')}</ul>${occurrences.truncated?`<p>仅显示前 ${occurrences.sample_limit} 处。</p>`:''}<p>${esc(occurrences.scope)}</p></details>`);
    }
   }
-  if(c.export.escaped_bold)parts.push('<span class="tag error">存在转义加粗，请检查排版</span>');
-  if(c.export.figure_error)parts.push('<span class="tag error">图表资源不可用：'+esc(c.export.figure_error)+'</span>');
-  else if(c.export.figure_markers.length)parts.push('<span class="tag">含图表：独立交付请下载 Word 或含图片的 Markdown 包</span>');
+  if(c.export.escaped_bold)line('error','存在转义加粗，请检查排版');
+  if(c.export.figure_error)line('error','图表资源不可用：'+esc(c.export.figure_error));
+  else if(c.export.figure_markers.length)line('note','含图表：独立交付请下载 Word 或含图片的 Markdown 包');
   const l=c.layout;
   if(l){
    const findings=[];
    if(l.heading_jumps.length)findings.push('标题层级中断 '+l.heading_jumps.length+' 处（如 '+l.heading_jumps.slice(0,2).map(j=>'第'+j.after+'级后接第'+j.level+'级').join('、')+'）');
    if(l.empty_headings)findings.push('空标题 '+l.empty_headings+' 个');
    if(l.tables_without_header.length)findings.push('缺表头行的表格 '+l.tables_without_header.length+' 张');
-   parts.push(findings.length?`<span class="tag error">版式：${esc(findings.join('；'))}</span>`:'<span class="tag">版式：标题层级、表头与空标题检查通过</span>');
+   if(findings.length)line('error','版式：'+esc(findings.join('；')));else line('ok','版式：标题层级、表头与空标题检查通过');
   }
   // Optional OfficeCLI tool output, composed by the server outside brief_checks.
   // Observation only: it never gates delivery and is absent when never run.
   if(c.office){
    const o=c.office,validate=o.validate||{},issues=o.issues||{},items=Array.isArray(issues.items)?issues.items:[];
    const found=Number(issues.count)||items.length,filtered=Number(issues.noise_filtered)||0,filteredNote=filtered?`（已过滤纯标点类噪音 ${filtered} 项）`:'';
-   if(validate.status==='error'||issues.status==='error')parts.push(`<span class="tag error">OfficeCLI：质检未完成${(validate.reason||issues.reason)?'：'+esc(validate.reason||issues.reason):''}；不影响导出</span>`);
-   else if(validate.status!=='ok')parts.push(`<span class="tag error">OfficeCLI：校验未通过${validate.summary?'：'+esc(validate.summary):''}</span>`);
-   else if(issues.status==='ok'&&!found)parts.push(`<span class="tag">OfficeCLI：结构校验与质检通过${filteredNote}（工具输出，不阻断交付）</span>`);
-   else parts.push(`<span class="tag">OfficeCLI：观察 ${found} 项${filteredNote}</span><details class="help"><summary>查看观察记录</summary><ul>${items.slice(0,10).map(item=>`<li>${esc(officeIssueLine(item))}</li>`).join('')}</ul>${items.length>10?'<p>仅显示前 10 条。</p>':''}<p>工具输出，观察性质检，不阻断交付。</p></details>`);
+   if(validate.status==='error'||issues.status==='error')line('error',`OfficeCLI：质检未完成${(validate.reason||issues.reason)?'：'+esc(validate.reason||issues.reason):''}；不影响导出`);
+   else if(validate.status!=='ok')line('error',`OfficeCLI：校验未通过${validate.summary?'：'+esc(validate.summary):''}`);
+   else if(issues.status==='ok'&&!found)line('ok',`OfficeCLI：结构校验与质检通过${filteredNote}（工具输出，不阻断交付）`);
+   else{line('note',`OfficeCLI：观察 ${found} 项${filteredNote}`);more(`<details class="help"><summary>查看观察记录</summary><ul>${items.slice(0,10).map(item=>`<li>${esc(officeIssueLine(item))}</li>`).join('')}</ul>${items.length>10?'<p>仅显示前 10 条。</p>':''}<p>工具输出，观察性质检，不阻断交付。</p></details>`)}
   }
-  if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
-  updatePanel(box,'<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>');
+  if(c.assessment_overall)line('note',`模型评分：${esc(c.assessment_overall)}`);
+  const attention=lines.filter(item=>['error','warn'].includes(item.kind)),notes=lines.filter(item=>item.kind==='note'),passed=lines.filter(item=>item.kind==='ok');
+  const list=items=>items.map(item=>`<div class="check-line">${item.html}</div>`).join('');
+  updatePanel(box,'<strong>已保存版本检查</strong>'
+   +(attention.length?`<div class="check-group check-attention"><h4>需要处理 · ${attention.length}</h4>${list(attention)}</div>`:'<p class="check-clear">自动检查没有需要处理的项目。</p>')
+   +(notes.length?`<div class="check-group check-notes">${list(notes)}</div>`:'')
+   +(passed.length?`<details class="check-group check-passed"><summary>已通过 · ${passed.length}</summary>${list(passed)}</details>`:'')
+   +'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>');
  }
 
  async function renderReportIssues(){
@@ -115,7 +124,7 @@ export function createAssessmentPanel(deps){
   if(reconciliation&&reconciliation.error)notes.push('对照记录不可用：'+reconciliation.error);
   updatePanel(box,(cards.length||notes.length)
    ? `${cards.length?`<div class="issue-head"><strong>需要处理 ${cards.length} 项</strong></div>`:''}${cards.map(card=>`<details class="issue-card ${card.tone}"><summary><span class="issue-label">${esc(card.label)}</span><strong>${esc(card.title)}</strong></summary>${card.basis?`<p class="issue-basis">${esc(card.basis)}</p>`:''}${card.scope?`<p class="help">关联：${esc(card.scope)}</p>`:''}${card.action?`<p>${esc(card.action)}</p>`:''}<p class="help">状态：${esc(card.state)}</p></details>`).join('')}${notes.length?`<p class="help">${notes.map(esc).join(' · ')}</p>`:''}`
-   : '<p class="help">暂未发现需要处理的问题；独立审阅完成后会更新。</p>');
+   : '<p class="help">审阅与来源分歧：暂无待处理项；独立审阅完成后会更新。</p>');
  }
 
  let factCheckView=null;
