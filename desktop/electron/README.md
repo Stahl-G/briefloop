@@ -16,18 +16,19 @@ Electron 薄壳使用 App 自带的 Node 运行桥；Python 来自用户本机�
 
 构建机准备 Python 3.11+、Node/npm。发布构建前先确认 `pyproject.toml`、本目录 `package.json` / `package-lock.json` 以及待打包 wheel 清单的版本均与 `pyproject.toml` 的版本一致。以下为本地开发构建。正式发行必须先从冻结提交构建一次后端 wheel 和 sdist，验证后将同一 wheel 及其版本/哈希 manifest 放入 `backend/`；桌面与 PyPI 复用它，不再运行准备脚本重建同版本 wheel。
 
-本地开发从仓库根目录执行：
+本地候选先在 `pyproject.toml` 使用明确预发行号（例如 `0.26.4rc1`），再从仓库根目录执行；不得把未发布候选装成正式版本：
 
 ```sh
 npm ci
 npm run build
-python3 desktop/electron/scripts/prepare-backend.py
+python3 scripts/sync_versions.py
+python3 desktop/electron/scripts/prepare-backend.py --artifact-dir private_planning/backend-artifacts
 cd desktop/electron
 npm ci
 npm run dist
 ```
 
-准备脚本在构建专属 venv 中安装 pyproject 声明的构建依赖，再从当前 `src/` 和许可文件生成普通 wheel；不使用 editable 安装或个人源码路径。输出 `backend/manifest.json`（版本、wheel 文件名、SHA-256）和 wheel，整体放在 App 的 `Contents/Resources/backend/`，ASAR 外。每次业务或静态资源变化后重新生成 wheel。
+准备脚本在构建专属 venv 中安装 pyproject 声明的构建依赖，再从当前 `src/` 和许可文件生成普通 wheel；不使用 editable 安装或个人源码路径。输出 `backend/manifest.json`（版本、wheel 文件名、SHA-256）和 wheel，整体放在 App 的 `Contents/Resources/backend/`，ASAR 外。每次业务或静态资源变化后递增预发行编号再生成 wheel；同版本已有工件只复用，不覆盖。正式冻结与共享工件命令见 [0.26.3 发行约束](../../docs/release-0.26.3.md)。
 
 `npm run dist` 生成 `dist/BriefLoop-<版本>-arm64.dmg` 和 `dist/BriefLoop-<版本>-arm64-mac.zip`。Electron 核心仍需随 App 分发；首次运行还会从官方 PyPI 下载 Python 依赖，不能将安装包大小作为完整下载量。Python 环境准备契约见 [ENVIRONMENT.md](ENVIRONMENT.md)。生成目录与构建缓存不进 Git。
 

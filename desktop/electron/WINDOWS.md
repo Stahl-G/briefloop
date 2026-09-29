@@ -4,13 +4,16 @@ This installer packages the same Electron window, WebUI, Python service and Stor
 as the macOS build. It runs on native Windows x64; WSL and development-mode launch
 are not installation acceptance.
 
-From native Windows PowerShell, build the shared frontend and backend wheel,
-then build the installer. Use an installed Python 3.11+ for the build:
+For a local candidate, set an explicit prerelease version in pyproject.toml first.
+From native Windows PowerShell, build the frontend and candidate backend, then the installer.
+For a stable release, download and stage the one frozen shared wheel instead of rebuilding it;
+see [the release contract](../../docs/release-0.26.3.md). Use Python 3.11+:
 
 ```powershell
 npm.cmd ci
 npm.cmd run build
-py -3 -X utf8 desktop/electron/scripts/prepare-backend.py
+py -3 -X utf8 scripts/sync_versions.py
+py -3 -X utf8 desktop/electron/scripts/prepare-backend.py --artifact-dir private_planning/backend-artifacts
 Set-Location desktop/electron
 npm.cmd ci
 node scripts/build-windows.cjs

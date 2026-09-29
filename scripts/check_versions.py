@@ -57,7 +57,10 @@ def source_versions(root):
 
 
 def compare(expected, values):
-    return {'status': 'match' if values and all(v == expected for v in values.values()) else 'mismatch', 'versions': values}
+    def canonical(value):
+        return re.sub(r'-(rc|alpha|beta|dev)\.(\d+)$',
+                      lambda m: {'rc': 'rc', 'alpha': 'a', 'beta': 'b', 'dev': '.dev'}[m[1]] + m[2], value)
+    return {'status': 'match' if values and all(canonical(v) == expected for v in values.values()) else 'mismatch', 'versions': values}
 
 
 def check(args):

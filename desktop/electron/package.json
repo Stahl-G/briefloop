@@ -1,6 +1,6 @@
 {
   "name": "briefloop-desktop",
-  "version": "0.26.2",
+  "version": "0.26.3",
   "private": true,
   "description": "BriefLoop local desktop workspace",
   "author": "Stahl-G",
@@ -20,6 +20,7 @@
     "electron-builder": "26.15.3"
   },
   "build": {
+    "beforePack": "scripts/verify-backend.cjs",
     "appId": "ai.briefloop.desktop",
     "productName": "BriefLoop",
     "directories": {
