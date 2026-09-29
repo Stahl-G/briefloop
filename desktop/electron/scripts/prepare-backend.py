@@ -20,6 +20,14 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 DESKTOP = ROOT / 'desktop' / 'electron'
+FROZEN_BUILD_INPUTS = ('src', 'pyproject.toml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')
+
+
+def frozen_archive(commit: str, root: Path = ROOT) -> bytes:
+    # Git archive also applies core.autocrlf to text, including build metadata.
+    return subprocess.check_output(
+        ['git', '-c', 'core.autocrlf=false', 'archive', '--format=zip', commit, *FROZEN_BUILD_INPUTS],
+        cwd=root)
 
 
 def frozen_source(commit: str, root: Path = ROOT) -> None:
@@ -145,10 +153,10 @@ def main() -> None:
         stage = Path(temporary)
         source = stage / 'source'
         source.mkdir()
-        inputs = ('src', 'pyproject.toml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')
+        inputs = FROZEN_BUILD_INPUTS
         if args.release_commit:
             # Build the committed tree, never ignored files or mutable worktree bytes.
-            data = subprocess.check_output(['git', 'archive', '--format=zip', args.release_commit, *inputs], cwd=ROOT)
+            data = frozen_archive(args.release_commit)
             with zipfile.ZipFile(io.BytesIO(data)) as snapshot:
                 snapshot.extractall(source)
         else:
