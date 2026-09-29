@@ -7,6 +7,7 @@ import json
 import sqlite3
 import uuid
 from .models import Requirements, Settings, BriefDraft, Assessment, ROLE_NAMES, normalize_role_models, runtime_fields
+from .platform_support import filesystem_path
 
 
 def now():
@@ -225,9 +226,9 @@ class Store:
         sid = source_id or uid("src")
         path = self.root/"sources"/(sid+".txt")
         sha = content_hash(text)
-        if path.exists() and path.read_bytes().decode("utf-8") != text:
+        if filesystem_path(path).exists() and filesystem_path(path).read_bytes().decode("utf-8") != text:
             raise Conflict("Source snapshot cannot be overwritten")
-        path.write_bytes(text.encode("utf-8"))
+        filesystem_path(path).write_bytes(text.encode("utf-8"))
         with (self.tx() if connection is None else nullcontext(connection)) as c:
             c.execute("INSERT OR IGNORE INTO sources VALUES(?,?,?,?,?,?,?,?)",
                       (sid, name, str(path.relative_to(self.root)), url, "failed" if error else "ready", error, sha, now()))
@@ -241,9 +242,9 @@ class Store:
         jid=uid('job');created=now()
         with self.tx() as c:
             if c.execute('SELECT id FROM sources WHERE id=?',(source_id,)).fetchone():raise Conflict('Source already exists')
-            path.write_text('',encoding='utf-8')
+            filesystem_path(path).write_text('',encoding='utf-8')
             metadata={**(metadata or {}),'extraction_status':'queued','extraction_job_id':jid}
-            sidecar=self.root/'sources'/(source_id+'.provenance.json');temporary=sidecar.with_suffix('.pending.json');temporary.write_text(dump(metadata),encoding='utf-8');temporary.replace(sidecar)
+            sidecar=self.root/'sources'/(source_id+'.provenance.json');temporary=filesystem_path(sidecar.with_suffix('.pending.json'));temporary.write_text(dump(metadata),encoding='utf-8');temporary.replace(filesystem_path(sidecar))
             c.execute('INSERT INTO sources VALUES(?,?,?,?,?,?,?,?)',(source_id,name,str(path.relative_to(self.root)),None,'queued',None,content_hash(''),created))
             c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'source_extract','queued',dump({'source_id':source_id}),None,None,created,created))
             result=dict(c.execute('SELECT * FROM sources WHERE id=?',(source_id,)).fetchone())
@@ -264,20 +265,20 @@ class Store:
             path=self.root/source['path']
             sidecar=self.root/'sources'/(source_id+'.provenance.json')
             if metadata is None:
-                try:metadata=json.loads(sidecar.read_text(encoding='utf-8'))
+                try:metadata=json.loads(filesystem_path(sidecar).read_text(encoding='utf-8'))
                 except (OSError,ValueError):metadata={}
             if status=='ready':
                 text=str(text or '')
                 extracted=self.root/'sources'/(source_id+'.extracted.txt')
                 # Preserve logical text bytes so the UTF-8 content hash remains
                 # valid on Windows, where the default newline translates LF to CRLF.
-                temporary=extracted.with_suffix('.pending.txt');temporary.write_text(text,encoding='utf-8',newline='');temporary.replace(extracted)
+                temporary=filesystem_path(extracted.with_suffix('.pending.txt'));temporary.write_text(text,encoding='utf-8',newline='');temporary.replace(filesystem_path(extracted))
                 c.execute('UPDATE sources SET status=?,error=?,hash=?,path=? WHERE id=?',(status,error,content_hash(text),str(extracted.relative_to(self.root)),source_id))
             else:c.execute('UPDATE sources SET status=?,error=? WHERE id=?',(status,error,source_id))
             metadata={**metadata,'extraction_status':status,'extraction_job_id':job_id}
             if error:metadata['error']=error
             else:metadata.pop('error',None)
-            temporary=sidecar.with_suffix('.pending.json');temporary.write_text(dump(metadata),encoding='utf-8');temporary.replace(sidecar)
+            temporary=filesystem_path(sidecar.with_suffix('.pending.json'));temporary.write_text(dump(metadata),encoding='utf-8');temporary.replace(filesystem_path(sidecar))
             c.execute('UPDATE jobs SET status=?,result=?,error=?,updated=? WHERE id=?',(terminal,dump({'source_id':source_id}),error,now(),job_id))
         return True
 
@@ -287,11 +288,11 @@ class Store:
         if not path.is_relative_to(self.root):
             raise ValueError("Invalid source path")
         if max_bytes is None:
-            raw = path.read_bytes()
+            raw = filesystem_path(path).read_bytes()
         else:
             if type(max_bytes) is not int or max_bytes < 1:
                 raise ValueError('Invalid source read limit')
-            with path.open('rb') as stream:
+            with filesystem_path(path).open('rb') as stream:
                 raw = stream.read(max_bytes + 1)
             if len(raw) > max_bytes:
                 raise SourceTooLarge('正文超过本次搜索的单份读取上限')

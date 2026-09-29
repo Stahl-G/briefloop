@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 from urllib.parse import urlsplit
 import uuid
+from ..platform_support import filesystem_path
 
 
 class ConnectorError(ValueError):
@@ -17,7 +18,7 @@ class ConnectorError(ValueError):
 
 
 def private_path(path: Path) -> None:
-    if path.is_symlink():
+    if filesystem_path(path).is_symlink():
         raise ConnectorError('连接器配置路径不能是符号链接。')
     try:
         if os.name == 'nt':
@@ -30,14 +31,14 @@ def private_path(path: Path) -> None:
 
 
 def atomic_json(path: Path, value: object) -> None:
-    descriptor, name = tempfile.mkstemp(prefix='.save-', dir=path.parent)
+    descriptor, name = tempfile.mkstemp(prefix='.save-', dir=filesystem_path(path.parent))
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
             private_path(Path(name))
             json.dump(value, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(name, path)
+        os.replace(name, filesystem_path(path))
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -135,37 +136,37 @@ def validate_secrets(value: dict | None) -> dict:
 class LocalConfig:
     def __init__(self, workspace: str | Path):
         self.directory = Path(workspace).resolve() / '.connectors'
-        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if self.directory.is_symlink():
+        filesystem_path(self.directory).mkdir(mode=0o700, parents=True, exist_ok=True)
+        if filesystem_path(self.directory).is_symlink():
             raise ConnectorError('连接器配置目录不能是符号链接。')
         private_path(self.directory)
         ignore = self.directory / '.gitignore'
-        if not ignore.exists():
-            descriptor = os.open(ignore, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        if not filesystem_path(ignore).exists():
+            descriptor = os.open(filesystem_path(ignore), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             with os.fdopen(descriptor, 'w') as stream:
                 private_path(ignore)
                 stream.write('*\n')
         private_path(ignore)
         self.credentials = self.directory / 'credentials'
-        self.credentials.mkdir(mode=0o700, exist_ok=True)
-        if self.credentials.is_symlink():
+        filesystem_path(self.credentials).mkdir(mode=0o700, exist_ok=True)
+        if filesystem_path(self.credentials).is_symlink():
             raise ConnectorError('凭据目录不能是符号链接。')
         private_path(self.credentials)
         # Migrate existing files too: removing inheritance does not remove explicit grants.
-        for credential in self.credentials.iterdir():
+        for credential in filesystem_path(self.credentials).iterdir():
             private_path(credential)
         self.path = self.directory / 'connections.json'
-        if self.path.is_symlink():
+        if filesystem_path(self.path).is_symlink():
             raise ConnectorError('连接器配置文件不能是符号链接。')
-        if self.path.exists():
+        if filesystem_path(self.path).exists():
             private_path(self.path)
         self._records = None
         self._load_records()
 
     def _load_records(self):
         try:
-            if self.path.is_symlink():raise OSError('symlink')
-            records = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {}
+            if filesystem_path(self.path).is_symlink():raise OSError('symlink')
+            records = json.loads(filesystem_path(self.path).read_text(encoding='utf-8')) if filesystem_path(self.path).exists() else {}
             if not isinstance(records, dict):raise ValueError('invalid records')
             if any(not isinstance(record, dict) or not {'id','config','revision','enabled','credential_binding','env_names'} <= record.keys()
                    for record in records.values()):raise ValueError('invalid record')
@@ -193,10 +194,10 @@ class LocalConfig:
 
     def get_secrets(self, record: dict) -> dict:
         path = self.credential_path(record['credential_binding'])
-        if path.is_symlink():
+        if filesystem_path(path).is_symlink():
             raise ConnectorError('凭据文件不能是符号链接。')
         private_path(path)
-        return validate_secrets(json.loads(path.read_text(encoding='utf-8')))
+        return validate_secrets(json.loads(filesystem_path(path).read_text(encoding='utf-8')))
 
     def new_binding(self, secrets: dict) -> str:
         binding = str(uuid.uuid4())

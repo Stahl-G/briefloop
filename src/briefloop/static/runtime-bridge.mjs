@@ -104,6 +104,7 @@ function reasoningModel(runtime, model, effort) {
 function validateEffort(runtime, value) {
   const effort = effortValue(value);
   if (!effort) return null;
+  if (runtime === "claude") return effort;
   const p = reasoningProfile(runtime);
   if (p.kind === "host") throw Error(p.note);
   if (p.kind === "levels" && !p.levels.includes(effort)) throw Error("\u6B64\u5BBF\u4E3B\u4E0D\u652F\u6301\u63A8\u7406\u5F3A\u5EA6\uFF1A" + effort);
@@ -373,6 +374,63 @@ function classifyJsonCandidate(value) {
   return rootComplete && stack.length === 0 ? "complete" : "incomplete";
 }
 
+// runtime-bridge/user-input.ts
+function questionAnswers(questions, answers) {
+  if (!answers || typeof answers !== "object" || Array.isArray(answers) || Object.keys(answers).length !== questions.length) throw Error("\u8BF7\u56DE\u7B54\u6BCF\u4E00\u4E2A\u95EE\u9898");
+  const result = /* @__PURE__ */ Object.create(null);
+  for (const q of questions) {
+    const values2 = answers[q.id]?.answers;
+    if (q.inputType === "editor") {
+      if (!Array.isArray(values2) || values2.length !== 1 || typeof values2[0] !== "string") throw Error("\u7F16\u8F91\u5185\u5BB9\u5FC5\u987B\u4E3A\u6587\u5B57");
+      result[q.id] = { answers: [values2[0]] };
+      continue;
+    }
+    if (!Array.isArray(values2) || !values2.length || values2.length > 100 || values2.some((v) => typeof v !== "string" || !v.trim() || v.length > 1e4)) throw Error("\u56DE\u7B54\u683C\u5F0F\u65E0\u6548");
+    const chosen = [...new Set(values2.map((v) => v.trim()))];
+    if (!q.multiSelect && chosen.length !== 1) throw Error("\u8BE5\u95EE\u9898\u53EA\u80FD\u9009\u62E9\u4E00\u4E2A\u7B54\u6848");
+    if (q.allowCustom === false && chosen.some((v) => !q.options.some((o) => o.label === v))) throw Error("\u8BF7\u9009\u62E9\u95EE\u9898\u63D0\u4F9B\u7684\u9009\u9879");
+    result[q.id] = { answers: chosen };
+  }
+  return result;
+}
+function claudeQuestions(input2) {
+  const raw = input2?.questions;
+  if (!Array.isArray(raw) || !raw.length || raw.length > 20) throw Error("AskUserQuestion \u6CA1\u6709\u6709\u6548\u7684\u95EE\u9898");
+  const texts = /* @__PURE__ */ new Set();
+  return raw.map((q, index) => {
+    if (typeof q?.question !== "string" || !q.question.trim() || texts.has(q.question)) throw Error("AskUserQuestion \u95EE\u9898\u6B63\u6587\u7F3A\u5931\u6216\u91CD\u590D");
+    texts.add(q.question);
+    const options = q.options || [];
+    if (!Array.isArray(options) || options.length > 100 || options.some((o) => typeof o?.label !== "string" || !o.label.trim())) throw Error("AskUserQuestion \u9009\u9879\u683C\u5F0F\u65E0\u6548");
+    return {
+      id: "question_" + index,
+      question: q.question,
+      header: typeof q.header === "string" ? q.header : "",
+      options: options.map((o) => ({ label: o.label, description: typeof o.description === "string" ? o.description : "" })),
+      multiSelect: q.multiSelect === true,
+      allowCustom: !options.length || q.allowCustom !== false
+    };
+  });
+}
+function claudeQuestionInput(input2, questions, answers) {
+  const selected = questionAnswers(questions, answers);
+  return { ...input2, answers: Object.fromEntries(questions.map((q) => [q.question, selected[q.id].answers.join(", ")])) };
+}
+function piQuestion(request) {
+  const confirm = request.method === "confirm", select = request.method === "select";
+  const labels = confirm ? ["\u786E\u8BA4", "\u53D6\u6D88"] : select ? request.options : [];
+  if (!Array.isArray(labels) || labels.length > 100 || labels.some((v) => typeof v !== "string" || !v.trim()) || select && !labels.length) throw Error("Pi \u95EE\u9898\u9009\u9879\u683C\u5F0F\u65E0\u6548");
+  return {
+    id: "answer",
+    header: typeof request.title === "string" ? request.title : "Pi",
+    question: [request.title, request.message].filter((v) => typeof v === "string" && v.trim()).join("\n") || "\u8BF7\u8F93\u5165\u56DE\u7B54",
+    options: labels.map((label) => ({ label, description: "" })),
+    multiSelect: false,
+    allowCustom: !confirm && !select,
+    ...request.method === "editor" ? { inputType: "editor", prefill: typeof request.prefill === "string" ? request.prefill : "" } : {}
+  };
+}
+
 // runtime-bridge/pi.ts
 function piConnection(bin, p, launch2, terminate2, onEvent = () => {
 }) {
@@ -475,18 +533,30 @@ async function runPi(p, state, launch2, terminate2, emit2) {
     if (typeof m.type === "string" && m.type.startsWith("tool_execution_")) emit2(p.execution_id, "tool", { id: m.toolCallId, name: m.toolName, status: m.type === "tool_execution_end" ? m.isError ? "failed" : "completed" : "running", input: m.args, output: m.result || m.partialResult });
     if (m.type === "extension_ui_request") {
       if (!["select", "confirm", "input", "editor"].includes(m.method)) return;
-      const options = m.method === "confirm" ? [{ optionId: "yes", kind: "allow_once", name: "\u5141\u8BB8\u672C\u6B21" }, { optionId: "no", kind: "reject_once", name: "\u62D2\u7EDD" }] : m.method === "select" ? (m.options || []).map((name, i) => ({ optionId: String(i), name, kind: "choice" })) : [];
-      if (!options.length) {
+      try {
+        const questions = [piQuestion(m)];
+        state.questions.set(String(m.id), { type: "user_input", questions, reply: (r) => {
+          if (r.cancelled) {
+            c.send({ type: "extension_ui_response", id: m.id, cancelled: true });
+            return;
+          }
+          const value = questionAnswers(questions, r.answers).answer.answers[0];
+          c.send({ type: "extension_ui_response", id: m.id, ...m.method === "confirm" ? { confirmed: value === "\u786E\u8BA4" } : { value } });
+        } });
+        if (Number.isFinite(m.timeout) && m.timeout > 0) {
+          const pending = state.questions.get(String(m.id));
+          pending.timer = setTimeout(() => {
+            if (state.questions.get(String(m.id)) !== pending) return;
+            state.questions.delete(String(m.id));
+            c.send({ type: "extension_ui_response", id: m.id, cancelled: true });
+            emit2(p.execution_id, "question_cancelled", { request_id: String(m.id) });
+          }, m.timeout);
+        }
+        emit2(p.execution_id, "question", { request_id: String(m.id), type: "user_input", title: m.title || "Pi \u8BF7\u6C42\u56DE\u7B54", questions });
+      } catch {
         c.send({ type: "extension_ui_response", id: m.id, cancelled: true });
-        fail(Error("Pi extension requested unsupported text input"));
-        return;
+        fail(Error("Pi extension question has an invalid format"));
       }
-      state.questions.set(String(m.id), { options, reply: (r) => {
-        const id = r.outcome?.optionId;
-        const value = options.find((o) => o.optionId === id);
-        c.send({ type: "extension_ui_response", id: m.id, ...!value ? { cancelled: true } : m.method === "confirm" ? { confirmed: id === "yes" } : { value: value.name } });
-      } });
-      emit2(p.execution_id, "question", { request_id: String(m.id), type: "permission", title: m.title || m.message || "Pi \u8BF7\u6C42\u786E\u8BA4", options });
     }
     if (m.type === "agent_settled") {
       if (state.cancelled) return finish();
@@ -540,7 +610,95 @@ async function runPi(p, state, launch2, terminate2, emit2) {
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path2 from "node:path";
-var MODES = ["build", "edit", "plan", "yolo"];
+
+// runtime-bridge/permission-catalog.ts
+function optionBlock(help, flag) {
+  const lines = help.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = lines.findIndex((line) => new RegExp("(?:^|\\s|,)" + escaped + "(?=\\s|=|,|$)").test(line));
+  if (start < 0) return "";
+  let end = start + 1;
+  while (end < lines.length && !/^\s*(?:-\w,?\s+)?--[A-Za-z]/.test(lines[end]) && !/^(?:Commands|Options|Examples|Available subcommands|Slash Commands):/.test(lines[end])) end++;
+  return lines.slice(start, end).join("\n");
+}
+function values(raw) {
+  return [...new Set(raw.split(/\s*,\s*(?:or\s+)?|\s+or\s+|\|/).map((value) => value.trim().replace(/^["']|["']$/g, "")).filter((value) => /^[A-Za-z][A-Za-z0-9-]*$/.test(value)))];
+}
+function nativeModes(ids, runtime) {
+  return ids.map((id) => ({
+    id,
+    name: id,
+    native_name: id,
+    description: "",
+    .../bypass|yolo|danger-full-access/i.test(id) ? { advanced: true } : {},
+    ...runtime === "claude" && /bypass/i.test(id) || runtime === "codex" && id === "danger-full-access" ? { disabled: true, disabled_reason: "\u5F53\u524D BriefLoop \u9002\u914D\u5668\u4E0D\u652F\u6301\u6B64\u6743\u9650\u8303\u56F4" } : {}
+  }));
+}
+function unavailablePermissions(runtime, diagnostic) {
+  return { modes: [], source: { kind: "unavailable", label: runtime }, default_mode: "native", auto_available: false, diagnostic };
+}
+function permissionsFromHelp(runtime, help) {
+  let ids = [], flag = "", block = "", nativeDefault;
+  if (runtime === "claude") {
+    flag = "--permission-mode";
+    block = optionBlock(help, flag);
+    const choice = /\(choices:\s*([\s\S]*?)\)/.exec(block);
+    if (choice) ids = [...choice[1].matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
+  } else if (runtime === "zcode") {
+    flag = "--mode";
+    block = optionBlock(help, flag);
+    const choice = /Permission mode for prompts:\s*([^\n(]+)/i.exec(block);
+    if (choice) ids = values(choice[1]);
+    nativeDefault = /\(default:\s*([A-Za-z][\w-]*)/i.exec(block)?.[1];
+  } else if (runtime === "antigravity") {
+    flag = "--mode";
+    block = optionBlock(help, flag);
+    const choice = /execution mode[^\n]*?\(([^)]+)\)/i.exec(block);
+    if (choice) ids = values(choice[1]);
+  } else if (runtime === "codex") {
+    flag = "--sandbox";
+    block = optionBlock(help, flag);
+    const choice = /\[possible values:\s*([^\]]+)\]/i.exec(block);
+    if (choice) ids = values(choice[1]);
+  } else if (runtime === "pi") {
+    const tools = optionBlock(help, "--tools"), none = optionBlock(help, "--no-tools"), extensions = optionBlock(help, "--no-extensions");
+    if (!tools || !none || !extensions) return unavailablePermissions(runtime, "Pi \u5E2E\u52A9\u672A\u58F0\u660E\u6B64\u9002\u914D\u5668\u6240\u9700\u7684\u5DE5\u5177\u96C6\u63A7\u5236\u53C2\u6570\u3002");
+    return {
+      modes: [{ id: "read", name: "--tools read,grep,find,ls", description: "" }, { id: "none", name: "--no-tools", description: "" }],
+      source: { kind: "adapter", label: "BriefLoop \xB7 Pi \u5DE5\u5177\u96C6\u63A7\u5236" },
+      default_mode: "native",
+      auto_available: false,
+      note: "Pi \u672A\u516C\u5F00\u539F\u751F\u6743\u9650\u6A21\u5F0F\u76EE\u5F55\uFF1B\u4EE5\u4E0A\u4E3A\u9002\u914D\u5668\u4F7F\u7528 --tools / --no-tools \u4E0E --no-extensions \u5B9E\u73B0\u7684\u5DE5\u5177\u96C6\u63A7\u5236\u3002"
+    };
+  }
+  if (!ids.length) return unavailablePermissions(runtime, "\u5BBF\u4E3B\u5E2E\u52A9\u672A\u8FD4\u56DE\u53EF\u8BC6\u522B\u7684\u6743\u9650\u6A21\u5F0F\u76EE\u5F55\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u5F0F\u3002");
+  const modes = nativeModes(ids, runtime), automatic = modes.some((mode) => mode.id === "auto" && !mode.disabled);
+  const chosen = automatic ? "auto" : runtime === "zcode" && ids.includes("build") ? "build" : runtime === "codex" && ids.includes("workspace-write") ? "workspace-write" : "native";
+  return {
+    modes,
+    source: { kind: "runtime", label: runtime + " --help " + flag },
+    default_mode: chosen,
+    auto_available: automatic,
+    ...chosen !== "native" ? { default_source: { kind: "adapter", label: "BriefLoop \u9ED8\u8BA4\u542F\u52A8\u9009\u62E9" } } : {},
+    ...nativeDefault ? { native_default_mode: nativeDefault } : {},
+    refreshed_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function selectDiscoveredMode(catalog, requested, runtime) {
+  const mode = requested ?? catalog.default_mode ?? "native";
+  if (mode === "native") {
+    if (runtime === "zcode") {
+      if (catalog.modes.some((entry) => entry.id === "build" && !entry.disabled)) return "build";
+      throw Error("ZCode \u672A\u516C\u5F00\u53EF\u7528\u7684 build \u6A21\u5F0F\uFF1B\u672A\u542F\u7528\u65E0\u754C\u9762\u9ED8\u8BA4\u7684 yolo\u3002");
+    }
+    return mode;
+  }
+  const selected = catalog.modes.find((entry) => entry.id === mode);
+  if (!selected || selected.disabled) throw Error(selected?.disabled_reason || "\u5BBF\u4E3B\u5F53\u524D\u672A\u516C\u5F00\u6743\u9650\u6A21\u5F0F\uFF1A" + String(mode));
+  return mode;
+}
+
+// runtime-bridge/zcode.ts
 var IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp"];
 var PROMPT_LIMIT = 2e5;
 var THINK = /^(think|thinking|reasoning)$/i;
@@ -573,13 +731,13 @@ function toolOutput(payload) {
   if (result && typeof result === "object" && "content" in result) return result.content;
   return result;
 }
-async function runZcode(p, state, launch2, terminate2, emit2) {
+async function runZcode(p, state, launch2, terminate2, emit2, getPermissions) {
   if (p.model && p.model !== "default") throw Error("ZCode \u65E0\u754C\u9762\u8FD0\u884C\u4E0D\u63A5\u53D7\u6A21\u578B\u53C2\u6570\uFF1A\u53EA\u80FD\u4F7F\u7528\u5B83\u81EA\u5DF1\u914D\u7F6E\u7684\u6A21\u578B\uFF0C\u8BF7\u5728 ZCode \u4E2D\u5207\u6362\u540E\u91CD\u8BD5");
   if (p.prompt.length > PROMPT_LIMIT) throw promptTooLong();
   const args = ["--prompt", p.prompt, "--cwd", p.cwd, "--output-format", "stream-json", "--no-color"];
-  const selected = p.host_options?.mode;
-  const mode = !selected || selected === "native" ? "build" : selected;
-  if (!MODES.includes(mode)) throw Error("Invalid ZCode permission mode");
+  const catalog = await getPermissions();
+  if (state.cancelled) return;
+  const mode = selectDiscoveredMode(catalog, p.host_options?.mode, "zcode");
   args.push("--mode", mode);
   if (p.session_id) args.push("--resume", p.session_id);
   for (const image of p.images || []) {
@@ -683,6 +841,111 @@ function quotedLength(argument) {
 function checkWindowsCommandLine(bin, args) {
   const length = [bin, ...args].reduce((size, argument) => size + quotedLength(argument) + 1, 0);
   if (length > 32767) throw Object.assign(new Error("Windows \u547D\u4EE4\u884C\u8D85\u51FA 32767 UTF-16 \u5B57\u7B26\u9650\u5236\uFF08\u5305\u62EC\u7A0B\u5E8F\u8DEF\u5F84\u3001\u53C2\u6570\u8F6C\u4E49\u53CA\u7ED3\u675F\u7B26\uFF09"), { code: "E2BIG" });
+}
+
+// third_party/open-design/runtime-models/models.ts
+var DEFAULT_MODEL_OPTION = {
+  id: "default",
+  label: "Default (CLI config)"
+};
+function sanitizeCustomModel(id) {
+  if (typeof id !== "string") return null;
+  const trimmed = id.trim();
+  if (trimmed.length === 0 || trimmed.length > 200) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+// runtime-bridge/claude.ts
+function sanitizeClaudeModel(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length > 200) return null;
+  return trimmed.endsWith("[1m]") && sanitizeCustomModel(trimmed.slice(0, -4)) ? trimmed : sanitizeCustomModel(trimmed);
+}
+function claudePermissionArgs(options, modes) {
+  const mode = options?.mode ?? "native";
+  if (mode === "native") return [];
+  if (!modes.some((entry) => entry.id === mode && !entry.disabled)) throw Error("Claude \u5F53\u524D\u672A\u516C\u5F00\u53EF\u7528\u7684\u6743\u9650\u6A21\u5F0F\uFF1A" + String(mode));
+  return ["--permission-mode", mode];
+}
+async function claudeModels(bin, p, launch2, terminate2) {
+  const child = launch2(bin, [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-prompt-tool",
+    "stdio",
+    "--no-session-persistence",
+    "--safe-mode",
+    "--strict-mcp-config",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--tools",
+    ""
+  ], p.cwd);
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (error, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        error ? reject(error) : resolve(value);
+      };
+      const timer = setTimeout(() => done(Error("Claude \u6A21\u578B\u5143\u6570\u636E\u521D\u59CB\u5316\u8D85\u65F6")), 15e3);
+      const parser = createJsonLineStream((message) => {
+        if (message.type === "control_request") {
+          child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: message.request_id, error: "Metadata probe cannot execute tools or answer dialogs" } }) + "\n");
+          return;
+        }
+        if (message.type !== "control_response" || message.response?.request_id !== "briefloop-models") return;
+        const response = message.response;
+        if (response.subtype !== "success") return done(Error("Claude \u672A\u63D0\u4F9B\u6A21\u578B\u521D\u59CB\u5316\u5143\u6570\u636E"));
+        const rows = response.response?.models;
+        if (!Array.isArray(rows)) return done(Error("Claude \u521D\u59CB\u5316\u54CD\u5E94\u7F3A\u5C11\u6A21\u578B\u76EE\u5F55"));
+        const seen = /* @__PURE__ */ new Set(), models = [];
+        for (const row of rows) {
+          if (typeof row?.value !== "string" || !row.value.trim() || seen.has(row.value)) continue;
+          seen.add(row.value);
+          const levels = Array.isArray(row.supportedEffortLevels) ? row.supportedEffortLevels.filter((v) => typeof v === "string" && v.length > 0 && v.length < 100) : void 0;
+          models.push({
+            id: row.value,
+            label: typeof row.displayName === "string" ? row.displayName : row.value,
+            description: typeof row.description === "string" ? row.description : "",
+            ...typeof row.resolvedModel === "string" ? { resolved_model: row.resolvedModel } : {},
+            ...typeof row.supportsEffort === "boolean" ? { supports_effort: row.supportsEffort } : {},
+            ...typeof row.supportsAutoMode === "boolean" ? { supports_auto_mode: row.supportsAutoMode } : {},
+            ...levels ? { reasoningOptions: levels.map((id) => ({ id, label: id })), thinking_levels: levels } : {},
+            provider: "Claude Code"
+          });
+        }
+        done(null, {
+          models,
+          source: "host",
+          status: models.length ? "reachable" : "empty",
+          refreshed_at: (/* @__PURE__ */ new Date()).toISOString(),
+          inference_tested: false,
+          note: "Claude Code \u521D\u59CB\u5316\u8FD4\u56DE\u7684\u6A21\u578B\u4E0E\u63A8\u7406\u6863\u4F4D\uFF1B\u522B\u540D\u4FDD\u7559\u5BBF\u4E3B\u539F\u503C\uFF0C\u672A\u8C03\u7528\u6A21\u578B\u3002"
+        });
+      });
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => parser.feed(chunk));
+      child.stderr.resume();
+      child.stdin.on("error", () => done(Error("Claude \u6A21\u578B\u5143\u6570\u636E\u901A\u9053\u5DF2\u5173\u95ED")));
+      child.on("error", () => done(Error("Claude \u6A21\u578B\u5143\u6570\u636E\u8FDB\u7A0B\u65E0\u6CD5\u542F\u52A8")));
+      child.on("close", () => {
+        parser.flush();
+        done(Error("Claude \u672A\u5B8C\u6210\u6A21\u578B\u5143\u6570\u636E\u521D\u59CB\u5316"));
+      });
+      child.stdin.write(JSON.stringify({ type: "control_request", request_id: "briefloop-models", request: { subtype: "initialize", hooks: {} } }) + "\n");
+    });
+  } finally {
+    terminate2(child);
+  }
 }
 
 // runtime-bridge/main.ts
@@ -1034,19 +1297,6 @@ var catalog_default = [
   }
 ];
 
-// third_party/open-design/runtime-models/models.ts
-var DEFAULT_MODEL_OPTION = {
-  id: "default",
-  label: "Default (CLI config)"
-};
-function sanitizeCustomModel(id) {
-  if (typeof id !== "string") return null;
-  const trimmed = id.trim();
-  if (trimmed.length === 0 || trimmed.length > 200) return null;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(trimmed)) return null;
-  return trimmed;
-}
-
 // third_party/open-design/runtime-models/mmd-routes.ts
 import { readFile } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
@@ -1164,8 +1414,8 @@ async function loadMmdRouteLaunchEnv(env2, modelId) {
 // third_party/open-design/runtime-models/codex-models.ts
 function parseCodexStringList(raw) {
   if (!Array.isArray(raw)) return void 0;
-  const values = raw.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean);
-  return values.length > 0 ? values : void 0;
+  const values2 = raw.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean);
+  return values2.length > 0 ? values2 : void 0;
 }
 function parseCodexServiceTiers(raw) {
   if (!Array.isArray(raw)) return void 0;
@@ -1456,7 +1706,7 @@ async function handshake(conn, p) {
 }
 function acpModelOptions(runtime, options) {
   if (!Array.isArray(options)) return options;
-  const flatten2 = (values) => values.flatMap((v) => Array.isArray(v?.options) ? flatten2(v.options) : [v]);
+  const flatten2 = (values2) => values2.flatMap((v) => Array.isArray(v?.options) ? flatten2(v.options) : [v]);
   return options.map((o) => ({ ...o, options: Array.isArray(o.options) ? flatten2(o.options).map((v) => {
     if (runtime !== "deepseek-harness") return v;
     try {
@@ -1509,7 +1759,7 @@ async function listModels(p) {
       return models.length ? models.map((model) => ({ id: x.name + "/" + model, label: x.name + " \xB7 " + model, provider: x.kind || "configured", model_id: model })) : [{ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }];
     })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
-  const configuredDefault = hostDefaults(p.runtime_id);
+  const configuredDefault = p.runtime_id === "claude" ? defaults : hostDefaults(p.runtime_id);
   const unavailable = (diagnostic = "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u6A21\u578B\u76EE\u5F55\uFF1B\u53EF\u6CBF\u7528\u5BBF\u4E3B\u8BBE\u7F6E\u6216\u624B\u52A8\u8F93\u5165\u6A21\u578B ID\u3002") => ({ models: configuredDefault, source: "host_default_only", status: "unavailable", diagnostic, refreshed_at: (/* @__PURE__ */ new Date()).toISOString() });
   if (p.runtime_id === "pi") return piModels(bin, p, launch, terminate);
   if (p.runtime_id === "zcode") return zcodeModels();
@@ -1519,14 +1769,21 @@ async function listModels(p) {
     return { models: [...defaults, ...models], source: models.length ? "host" : "host_default_only" };
   }
   if (p.runtime_id === "claude") {
-    const routed = await loadMmdRouteModels(env, []);
-    return {
-      models: routed || configuredDefault,
-      source: routed ? "local_routes" : "host_default_only",
-      status: routed ? "configured" : "unavailable",
-      refreshed_at: (/* @__PURE__ */ new Date()).toISOString(),
-      note: "Claude Code \u672A\u63D0\u4F9B\u53EF\u8BFB\u53D6\u7684\u5B9E\u65F6\u6A21\u578B\u76EE\u5F55\u3002\u4EC5\u663E\u793A\u672C\u673A\u5DF2\u914D\u7F6E\u8DEF\u7531\uFF1B\u4E5F\u53EF\u6CBF\u7528\u5BBF\u4E3B\u9ED8\u8BA4\u6216\u624B\u52A8\u8F93\u5165\u6A21\u578B ID\u3002"
-    };
+    try {
+      const catalog = await claudeModels(bin, { ...p, cwd: p.cwd || process.cwd() }, launch, terminate);
+      if (!catalog.models.some((m) => m.id === "default")) catalog.models.unshift(...configuredDefault);
+      return catalog;
+    } catch {
+      const routed = await loadMmdRouteModels(env, []);
+      return {
+        models: routed || hostDefaults("claude"),
+        source: routed ? "local_routes" : "host_default_only",
+        status: routed ? "configured" : "unavailable",
+        refreshed_at: (/* @__PURE__ */ new Date()).toISOString(),
+        diagnostic: "Claude Code \u6A21\u578B\u5143\u6570\u636E\u521D\u59CB\u5316\u5931\u8D25\uFF1B\u8BF7\u786E\u8BA4 CLI \u7248\u672C\u652F\u6301\u5F53\u524D\u63A7\u5236\u534F\u8BAE\u3002",
+        note: "\u4EC5\u663E\u793A\u672C\u673A\u5DF2\u914D\u7F6E\u8DEF\u7531\u6216\u5BBF\u4E3B\u9ED8\u8BA4\uFF1B\u53EF\u91CD\u8BD5\u6216\u624B\u52A8\u8F93\u5165\u6A21\u578B ID\uFF0C\u672A\u6CE8\u5165\u9884\u8BBE\u6A21\u578B\u3002"
+      };
+    }
   }
   try {
     if (p.runtime_id === "codex") {
@@ -1551,7 +1808,7 @@ async function listModels(p) {
 }
 function validate(p) {
   p.effort = validateEffort(p.runtime_id, p.effort);
-  if (p.model && !sanitizeCustomModel(p.model)) throw Error("Invalid model ID");
+  if (p.model && !(p.runtime_id === "claude" ? sanitizeClaudeModel(p.model) : sanitizeCustomModel(p.model))) throw Error("Invalid model ID");
   if (!p.execution_id || !p.cwd || typeof p.prompt !== "string") throw Error("execution_id, cwd and prompt required");
   if (active.has(p.execution_id)) throw Error("Execution already active");
   if ((p.permission || "runtime-native") !== "runtime-native") throw Error("This runtime cannot enforce " + p.permission + "; use runtime-native or a restricted native manager");
@@ -1570,22 +1827,65 @@ function acpToolTitle(tool) {
 }
 function acpPermissionModes(session) {
   const modes = session.modes?.availableModes || [];
-  return modes.filter((m) => typeof m.id === "string" && typeof m.name === "string").map((m) => ({ id: m.id, name: m.name }));
+  return modes.filter((m) => typeof m.id === "string" && typeof m.name === "string").map((m) => ({ id: m.id, name: m.name, ...typeof m.description === "string" ? { description: m.description } : {} }));
+}
+function acpAutoMode(session) {
+  return acpPermissionModes(session).find((mode) => mode.id === "auto" && !/bypass|yolo|skip(?:ping)?[ -]permissions|无条件|跳过.*(?:权限|确认)/i.test(mode.name + " " + (mode.description || "")));
 }
 async function permissionOptions(p) {
   const bin = findBin(defFor(p.runtime_id), p.path);
   if (!bin) throw Error("Runtime not installed");
+  if (["claude", "zcode", "antigravity", "codex", "pi"].includes(p.runtime_id)) {
+    let catalog;
+    try {
+      const help = await exec(bin, ["--help"], { env, cwd: p.cwd || process.cwd(), timeout: 8e3, maxBuffer: 512 * 1024 });
+      catalog = permissionsFromHelp(p.runtime_id, help.stdout || help.stderr || "");
+    } catch {
+      return unavailablePermissions(p.runtime_id, "\u5BBF\u4E3B\u6743\u9650\u6A21\u5F0F\u5E2E\u52A9\u8BFB\u53D6\u5931\u8D25\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u5F0F\u3002");
+    }
+    if (p.runtime_id === "claude" && p.model && catalog.modes.length) {
+      try {
+        const metadata = await claudeModels(bin, { ...p, cwd: p.cwd || process.cwd() }, launch, terminate);
+        const selected = metadata.models.find((model) => model.id === p.model || model.resolved_model === p.model);
+        if (typeof selected?.supports_auto_mode === "boolean") catalog.model_supports_auto = selected.supports_auto_mode;
+        if (selected?.supports_auto_mode === false) {
+          catalog.modes = catalog.modes.map((mode) => mode.id === "auto" ? { ...mode, disabled: true, disabled_reason: "\u5BBF\u4E3B\u58F0\u660E\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301 auto" } : mode);
+          catalog.auto_available = false;
+          catalog.default_mode = "native";
+          delete catalog.default_source;
+        }
+      } catch {
+        catalog.model_diagnostic = "\u672A\u80FD\u8BFB\u53D6\u5F53\u524D\u6A21\u578B\u7684 Auto \u80FD\u529B\uFF1B\u76EE\u5F55\u4EC5\u786E\u8BA4 CLI \u652F\u6301\u7684\u6A21\u5F0F\u503C\u3002";
+      }
+    }
+    return catalog;
+  }
+  if (!(p.runtime_id in acpArgs) && p.runtime_id !== "mimo") return unavailablePermissions(p.runtime_id, "\u6B64\u5BBF\u4E3B\u672A\u63A5\u5165\u539F\u751F\u6743\u9650\u6A21\u5F0F\u76EE\u5F55\u3002");
   const conn = connect(bin, p.runtime_id === "mimo" ? ["acp"] : acpArguments(p.runtime_id, bin), p.cwd, () => {
   }, (_m, reply) => reply({ error: "Metadata probe cannot grant permissions" }));
   try {
-    const { session } = await handshake(conn, p);
-    return { modes: acpPermissionModes(session) };
+    const { session } = await handshake(conn, p), automatic = acpAutoMode(session);
+    return {
+      modes: acpPermissionModes(session),
+      default_mode: automatic?.id || "native",
+      auto_available: !!automatic,
+      source: { kind: "runtime", label: p.runtime_id + " ACP session/new" },
+      ...typeof session.modes?.currentModeId === "string" ? { current_mode: session.modes.currentModeId } : {},
+      ...automatic ? { default_source: { kind: "adapter", label: "BriefLoop \u9ED8\u8BA4\u542F\u52A8\u9009\u62E9" } } : {},
+      refreshed_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  } catch {
+    return unavailablePermissions(p.runtime_id, "\u5BBF\u4E3B ACP \u6743\u9650\u6A21\u5F0F\u8BFB\u53D6\u5931\u8D25\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u5F0F\u3002");
   } finally {
     terminate(conn.child);
   }
 }
 async function reasoningOptions2(p) {
   const profile = reasoningProfile(p.runtime_id);
+  if (p.runtime_id === "claude") {
+    const catalog = await listModels(p), selected = catalog.models.find((m) => m.id === (p.model || "default") || m.resolved_model === p.model);
+    return selected && Array.isArray(selected.reasoningOptions) ? { kind: "levels", source: "host", options: selected.reasoningOptions.map((o) => ({ id: o.id, name: o.label || o.id })), note: "Claude Code \u5F53\u524D\u6A21\u578B\u516C\u5F00\u7684\u63A8\u7406\u6863\u4F4D\uFF1B\u6A21\u578B\u9ED8\u8BA4\u4E0D\u8986\u76D6\u5BBF\u4E3B\u9ED8\u8BA4\u8BBE\u7F6E\u3002" } : { kind: "host", source: catalog.source, options: [], availability: "not_advertised", note: "Claude Code \u672A\u8FD4\u56DE\u6240\u9009\u6A21\u578B\u7684\u63A8\u7406\u6863\u4F4D\uFF0C\u6CBF\u7528\u5BBF\u4E3B\u9ED8\u8BA4\uFF1B\u672A\u6DFB\u52A0\u63A8\u6D4B\u9009\u9879\u3002" };
+  }
   if (p.runtime_id === "codex") {
     const bin2 = findBin(defFor("codex"), p.path);
     if (!bin2) throw Error("Runtime not installed");
@@ -1658,9 +1958,10 @@ async function runAcp(p, state) {
     sessionId = p.session_id || session.sessionId;
     if (!sessionId) throw Error("No session ID returned");
     emit(p.execution_id, "session", { session_id: sessionId, capabilities: init.agentCapabilities || {} });
-    if (p.host_options?.mode && p.host_options.mode !== "native") {
-      if (!acpPermissionModes(session).some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this permission mode");
-      await conn.call("session/set_mode", { sessionId, modeId: p.host_options.mode });
+    const mode = p.host_options?.mode ?? acpAutoMode(session)?.id;
+    if (mode && mode !== "native") {
+      if (!acpPermissionModes(session).some((m) => m.id === mode)) throw Error("Host does not advertise this permission mode");
+      await conn.call("session/set_mode", { sessionId, modeId: mode });
     }
     let options = session.configOptions;
     if (p.model && p.model !== "default" && p.runtime_id !== "reasonix") {
@@ -1696,6 +1997,9 @@ async function runAntigravity(p, state) {
   });
   const prompt = imagePaths.length ? p.prompt + "\n\n\u7528\u6237\u9644\u52A0\u7684\u56FE\u7247\uFF08\u8BF7\u8C03\u7528 view_file \u5B9E\u9645\u8BFB\u53D6\u540E\u56DE\u7B54\uFF0C\u4E0D\u8981\u6839\u636E\u6587\u4EF6\u540D\u731C\u6D4B\uFF09\uFF1A\n" + imagePaths.map((f) => JSON.stringify(f)).join("\n") : p.prompt;
   const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
+  const permissionCatalog = await permissionOptions({ ...p, path: state.bin }), mode = selectDiscoveredMode(permissionCatalog, p.host_options?.mode, p.runtime_id);
+  if (state.cancelled) return;
+  if (mode !== "native") args.push("--mode", mode);
   if (p.effort) args.push("--effort", p.effort);
   if (p.model && p.model !== "default") args.push("--model", reasoningModel(p.runtime_id, p.model, p.effort));
   if (p.session_id) args.push("--conversation", p.session_id);
@@ -1770,17 +2074,21 @@ async function runAntigravity(p, state) {
 }
 async function runStream(p, state) {
   const claude = p.runtime_id === "claude";
-  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"] : ["run", "--format", "json"];
-  if (claude && p.host_options?.mode && p.host_options.mode !== "native") {
-    if (!["manual", "acceptEdits", "dontAsk", "plan"].includes(p.host_options.mode)) throw Error("Invalid Claude permission mode");
-    args.push("--permission-mode", p.host_options.mode);
+  let permissionArgs = [];
+  if (claude) {
+    const catalog = await permissionOptions({ ...p, path: state.bin }), mode = selectDiscoveredMode(catalog, p.host_options?.mode, "claude");
+    permissionArgs = claudePermissionArgs({ mode }, catalog.modes);
   }
+  if (state.cancelled) return;
+  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio", ...permissionArgs] : ["run", "--format", "json"];
   if (claude && p.effort) args.push("--effort", p.effort);
   if (!claude && p.effort) args.push("--variant", p.effort);
-  if (!claude && p.host_options?.mode && p.host_options.mode !== "native") {
-    const options = await permissionOptions({ ...p, path: state.bin });
-    if (!options.modes.some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this mode");
-    args.push("--agent", p.host_options.mode);
+  if (!claude && p.host_options?.mode !== "native") {
+    const options = await permissionOptions({ ...p, path: state.bin }), mode = p.host_options?.mode ?? options.default_mode;
+    if (mode && mode !== "native") {
+      if (!options.modes.some((m) => m.id === mode)) throw Error("Host does not advertise this mode");
+      args.push("--agent", mode);
+    }
   }
   if (p.model && p.model !== "default") args.push("--model", p.model);
   if (p.session_id) args.push(claude ? "--resume" : "--session", p.session_id);
@@ -1803,15 +2111,30 @@ async function runStream(p, state) {
         emit(p.execution_id, "session", { session_id: sid });
       }
       if (claude) {
+        if (m.type === "control_cancel_request") {
+          const id = String(m.request_id);
+          if (state.questions.delete(id)) emit(p.execution_id, "question_cancelled", { request_id: id });
+          return;
+        }
         if (m.type === "control_request") {
           const request = m.request || {}, id = String(m.request_id), send = (response) => child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: id, response } }) + "\n");
           if (request.subtype !== "can_use_tool") {
             child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: id, error: "Unsupported control request" } }) + "\n");
             return;
           }
+          if (request.tool_name === "AskUserQuestion") {
+            try {
+              const questions = claudeQuestions(request.input);
+              state.questions.set(id, { type: "user_input", questions, reply: (r) => send(r.cancelled ? { behavior: "deny", message: "\u7528\u6237\u53D6\u6D88\u4E86\u63D0\u95EE" } : { behavior: "allow", updatedInput: claudeQuestionInput(request.input, questions, r.answers) }) });
+              emit(p.execution_id, "question", { request_id: id, type: "user_input", title: "Claude \u8BF7\u6C42\u56DE\u7B54", questions });
+            } catch (error) {
+              send({ behavior: "deny", message: String(error.message || "AskUserQuestion \u683C\u5F0F\u65E0\u6548") });
+            }
+            return;
+          }
           const options = [{ optionId: "allow", name: "\u5141\u8BB8\u672C\u6B21", kind: "allow_once" }, { optionId: "deny", name: "\u62D2\u7EDD", kind: "reject_once" }];
           state.questions.set(id, { options, reply: (r) => send(r.outcome?.optionId === "allow" ? { behavior: "allow", updatedInput: request.input } : { behavior: "deny", message: "\u7528\u6237\u62D2\u7EDD\u4E86\u672C\u6B21\u64CD\u4F5C" }) });
-          emit(p.execution_id, "question", { request_id: id, type: "permission", title: (request.title || request.tool_name || "Claude \u8BF7\u6C42\u6743\u9650") + " \xB7 " + JSON.stringify(request.input || {}), options });
+          emit(p.execution_id, "question", { request_id: id, type: "permission", title: request.title || request.tool_name || "Claude \u8BF7\u6C42\u6743\u9650", tool: request.tool_name, input: request.input || {}, options });
           return;
         }
         if (m.type === "assistant") {
@@ -1892,7 +2215,7 @@ async function execute(p, state) {
     if (p.runtime_id in acpArgs) await runAcp(p, state);
     else if (p.runtime_id === "pi") await runPi(p, state, launch, terminate, emit);
     else if (p.runtime_id === "antigravity") await runAntigravity(p, state);
-    else if (p.runtime_id === "zcode") await runZcode(p, state, launch, terminate, emit);
+    else if (p.runtime_id === "zcode") await runZcode(p, state, launch, terminate, emit, () => permissionOptions({ ...p, path: state.bin }));
     else await runStream(p, state);
     if (!state.cancelled && !state.publicActivity) throw Error("Host ended without visible output or tool activity; verify host configuration");
     emit(p.execution_id, "end", { status: state.cancelled ? "cancelled" : "completed" });
@@ -1900,6 +2223,7 @@ async function execute(p, state) {
     if (!state.cancelled) emit(p.execution_id, "error", { message: String(e.message || e) });
     emit(p.execution_id, "end", { status: state.cancelled ? "cancelled" : "failed", error: state.cancelled ? void 0 : String(e.message || e) });
   } finally {
+    for (const q of state.questions.values()) clearTimeout(q.timer);
     state.questions.clear();
     active.delete(p.execution_id);
   }
@@ -1924,11 +2248,18 @@ async function handle(method, p) {
     return { cancelled: true };
   }
   if (method === "answer") {
-    const s = active.get(p.execution_id), q = s?.questions.get(String(p.request_id));
-    if (!q) throw Error("Request no longer pending");
-    if (p.option_id && !q.options.some((o) => o.optionId === p.option_id)) throw Error("Unknown permission option");
-    q.reply({ outcome: p.option_id ? { outcome: "selected", optionId: p.option_id } : { outcome: "cancelled" } });
-    s.questions.delete(String(p.request_id));
+    const s = active.get(p.execution_id), id = String(p.request_id), q = s?.questions.get(id);
+    if (!q || s.cancelled) throw Error("Request no longer pending");
+    if (q.type === "user_input") {
+      if (p.option_id) throw Error("A user question cannot be answered as a permission");
+      q.reply(p.answers === void 0 ? { cancelled: true } : { answers: questionAnswers(q.questions, p.answers) });
+    } else {
+      if (p.answers !== void 0) throw Error("A permission requires a native permission option");
+      if (p.option_id && !q.options.some((o) => o.optionId === p.option_id)) throw Error("Unknown permission option");
+      q.reply({ outcome: p.option_id ? { outcome: "selected", optionId: p.option_id } : { outcome: "cancelled" } });
+    }
+    clearTimeout(q.timer);
+    s.questions.delete(id);
     return { accepted: true };
   }
   throw Error("Unknown bridge method");

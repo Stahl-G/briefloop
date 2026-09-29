@@ -47,15 +47,17 @@ export function createOfficeTools(deps){
 
  function parsePages(value){
   const raw=String(value??'').trim();
-  if(!/^\d+(?:\s*[,，]\s*\d+)*$/.test(raw))throw Error('请输入页码，例如 1 或 1,3');
+  if(!/^\d+(?:\s*[,，]\s*\d+)*$/.test(raw))throw Error('请输入页码或工作表序号，例如 1 或 1,3');
   const pages=[...new Set(raw.split(/[,，]/).map(Number))];
-  if(pages.some(p=>p<1)||pages.length>4)throw Error('每次请选择 1–4 页，页码从 1 开始');
+  if(pages.some(p=>p<1)||pages.length>4)throw Error('每次请选择 1–4 页或工作表，序号从 1 开始');
   return pages;
  }
 
  function pageFigure(page){
   const figure=document.createElement('figure');
-  const caption=document.createElement('figcaption');caption.textContent='第 '+page.page+' 页';
+  const caption=document.createElement('figcaption');caption.textContent=page.worksheet
+   ?`工作表 ${page.page}：${page.worksheet.name}（${page.worksheet.cells}）`
+   :'第 '+page.page+' 页';
   const img=document.createElement('img');img.className='source-preview-image';img.alt=caption.textContent;img.src=page.url;
   figure.append(caption,img);return figure;
  }
@@ -66,6 +68,8 @@ export function createOfficeTools(deps){
   note.textContent=result.incomplete
    ?'部分页未渲染：请求预算用尽或渲染失败，仅显示已完成页面。'
    :'已用本机 OfficeCLI 完成本地渲染。';
+  const sheet=(result.pages||[]).find(page=>page.worksheet)?.worksheet;
+  if(sheet)note.textContent+=` 共 ${sheet.count} 张可见工作表，按工作表顺序预览单元格范围；范围外的图表和形状可能未显示。`;
  }
 
  function openPreview(target){
@@ -74,7 +78,7 @@ export function createOfficeTools(deps){
   const images=$('office-preview-images'),note=$('office-preview-note'),render=$('office-preview-render'),pages=$('office-preview-pages');
   if(images)images.replaceChildren();
   if(pages)pages.value='1';
-  if(note)note.textContent='输入 1–4 个页码；本地渲染，不调用模型，预览失败不影响文件本身。'+RENDER_DISCLOSURE;
+  if(note)note.textContent='输入 1–4 个页码或可见工作表序号；Excel 按工作表顺序预览单元格范围。本地渲染，不调用模型，预览失败不影响文件本身。'+RENDER_DISCLOSURE;
   if(!dialog.open)dialog.showModal();
   if(!render)return;
   render.onclick=()=>action(async()=>{

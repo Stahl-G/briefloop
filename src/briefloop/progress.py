@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 import json
 import re
 from .store import dump
+from .platform_support import filesystem_path
+
+ENDED = {'completed', 'done', 'closed', 'failed', 'errored', 'interrupted', 'cancelled', 'canceled', 'shutdown'}
 
 
 def role_label(role):
@@ -48,7 +51,7 @@ def _pipeline(folder, workers, *, draft_first=False):
     Statuses come only from actual files and reported worker states, never from a
     model's self-report of progress percentage.
     """
-    folder = Path(folder)
+    folder = filesystem_path(folder)
     plan = (folder / 'plan.json').exists()
     draft = (folder / 'draft.json').exists()
     scored = any((folder / name).exists() for name in ('assessment.json', 'evaluation/assessment.json', 'scorer/assessment.json'))
@@ -58,12 +61,12 @@ def _pipeline(folder, workers, *, draft_first=False):
     analysts = group('Analyst')
     evaluators = group('Evaluator', 'Scorer', 'Assessor')
     assigned = {id(w) for w in scouts + analysts + evaluators}
-    def running(items):
-        return any(w.get('status') not in ('completed', 'done', 'closed', 'failed', 'errored') for w in items)
+    def completed(items):
+        return bool(items) and all(w.get('status') in ('completed', 'done', 'closed') for w in items)
     return [
         {'id': 'intake', 'label': '确认任务与来源', 'status': 'done' if plan else 'active',
          'agents': [w for w in workers if id(w) not in assigned]},
-        {'id': 'research', 'label': '研究检索', 'status': 'done' if draft or (scouts and not running(scouts)) else 'active' if plan else 'pending',
+        {'id': 'research', 'label': '研究检索', 'status': 'done' if draft or completed(scouts) else 'active' if plan else 'pending',
          'agents': scouts},
         {'id': 'analysis', 'label': '撰写成稿', 'status': 'done' if draft else 'active' if analysts else 'pending', 'agents': analysts},
         {'id': 'evaluate', 'label': '完整核验待继续' if draft_first else '独立评分', 'status': 'pending' if draft_first else 'done' if scored else 'active' if evaluators or draft else 'pending', 'agents': evaluators},
@@ -111,14 +114,14 @@ class ProgressTracker:
             version = payload.get('version_id')
             if not version:
                 try:
-                    value = json.loads((self.folder / 'input.json').read_text(encoding='utf-8-sig'))
+                    value = json.loads(filesystem_path(self.folder / 'input.json').read_text(encoding='utf-8-sig'))
                     version = value.get('brief', {}).get('id') if isinstance(value, dict) else None
                 except (ValueError, OSError):pass
             self.has_saved_draft = bool(version and store.rows('SELECT id FROM briefs WHERE id=?', (version,)))
 
     def update(self):
-        paths=[self.folder/n for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]+[
-            self.folder/'evaluation'/'assessment.json',self.folder/'scorer'/'assessment.json']
+        paths=[filesystem_path(self.folder/n) for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]+[
+            filesystem_path(self.folder/'evaluation'/'assessment.json'),filesystem_path(self.folder/'scorer'/'assessment.json')]
         signature=tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in paths)
         if signature==self.signature:return
         self.signature=signature
@@ -134,6 +137,21 @@ class ProgressTracker:
                 item=event.get('item',{})
                 if not isinstance(item,dict):item={}
                 kind=event.get('type')
+                # Activity identifies a child, but does not prove its turn is
+                # running or finished. Only the owned child's turn receipts do.
+                data=event.get('data')
+                data=data if isinstance(data,dict) else {}
+                identity=(item.get('agentThreadId') if item.get('type')=='subagent_activity'
+                          else data.get('threadId') if kind in ('child.thread.started','child.turn.started','child.turn.completed') else None)
+                if isinstance(identity,str) and identity:
+                    row=self.workers.setdefault(identity,{'id':identity,'role':'子任务','status':'unknown'})
+                    if kind=='child.thread.started' and isinstance(data.get('agentRole'),str) and data['agentRole']:
+                        row['role']=role_label(data['agentRole'])
+                    elif kind=='child.turn.started':
+                        row['status']='running'
+                    elif kind=='child.turn.completed':
+                        status=data.get('status')
+                        row['status']=status if isinstance(status,str) and status in ENDED else 'unknown'
                 if kind=='error':
                     # Provider errors may contain request URLs, credentials, or
                     # raw tool output. Classify locally; only fixed text is public.
@@ -167,17 +185,17 @@ class ProgressTracker:
                     if not identity:continue
                     row=self.workers.setdefault(identity,{'id':identity})
                     row['role']=role_label(agent.get('role'))
-                    if row.get('status') not in ('completed','errored','failed'):
+                    if row.get('status') not in ENDED:
                         row['status']=agent.get('status','running')
                     row['task']=str(agent.get('responsibility',''))[:240]
             except (ValueError,OSError):pass
         workers=list(self.workers.values())
-        active=[w for w in workers if w.get('status') not in ('completed','done','closed','failed','errored','unknown')]
+        active=[w for w in workers if w.get('status') not in ENDED | {'unknown'}]
         stage='正在检查并维护企业背景' if self.folder.name=='company-review' else '正在整理任务要求'
         if paths[2].exists():stage='正在分配研究任务'
         if active:stage='子任务正在执行'
         elif any(w.get('status') == 'unknown' for w in workers):stage='子任务状态暂不可确认'
-        elif workers and not active:stage='子任务结果已返回，正在整理与交接'
+        elif workers and not active:stage='子任务本轮已结束，正在整理与交接'
         if paths[3].exists():stage='正文已保存，正在准备评分'
         if any(path.exists() for path in paths[4:]):stage='评分已返回，正在保存结果'
         labels=' '.join(w.get('role','') for w in active)

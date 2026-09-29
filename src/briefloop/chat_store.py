@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS chat_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,ses
 
 BUSY_SQL = """s.status IN ('running','starting','stopping') OR s.turn_id IS NOT NULL
  OR EXISTS(SELECT 1 FROM chat_messages m WHERE m.session_id=s.id AND m.status IN ('queued','sending','delivered','streaming'))
- OR EXISTS(SELECT 1 FROM chat_requests q WHERE q.session_id=s.id AND q.status='pending')"""
+ OR EXISTS(SELECT 1 FROM chat_requests q WHERE q.session_id=s.id AND q.status IN ('pending','answering'))"""
 
 class ChatStore:
     def __init__(self, store):
@@ -33,7 +33,7 @@ class ChatStore:
         marking other sessions interrupted here would silently break a live turn's
         cancel/resume and pending questions."""
         with self.store.tx() as c:
-            c.execute("UPDATE chat_requests SET status='expired' WHERE status='pending'")
+            c.execute("UPDATE chat_requests SET status='expired' WHERE status IN ('pending','answering')")
             c.execute("UPDATE chat_sessions SET status='interrupted',turn_id=NULL WHERE status IN ('running','starting','stopping')")
             c.execute("UPDATE chat_messages SET status='interrupted' WHERE status IN ('sending','streaming','delivered')")
 
@@ -56,16 +56,14 @@ class ChatStore:
         with self.store.tx() as c:return self.decode(c.execute('SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE id=?',(sid,)).fetchone())
 
     def sessions(self,view='active'):
-        if view not in ('active','archived','deleted','tests'):raise ValueError('无效会话分类')
-        lifecycle='active' if view=='tests' else view
-        test_filter=''
-        if view in ('active','tests'):
-            predicate='EXISTS' if view=='tests' else 'NOT EXISTS'
-            test_filter=f"AND {predicate}(SELECT 1 FROM chat_events t WHERE t.session_id=s.id AND t.kind='runtime/test') "
+        # Old bookmarked test-history views now use ordinary history. Keep all
+        # existing events/messages; connection probes no longer define a mode.
+        if view=='tests':view='active'
+        if view not in ('active','archived','deleted'):raise ValueError('无效会话分类')
         with self.store.tx() as c:return [self.decode(r) for r in c.execute(
             'SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE lifecycle=? '
-            "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "+test_filter+
-            'ORDER BY updated DESC',(lifecycle,))]
+            "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "+
+            'ORDER BY updated DESC',(view,))]
 
     def set_lifecycle(self,sid,lifecycle):
         if lifecycle not in ('active','archived','deleted'):raise ValueError('无效会话分类')
@@ -155,4 +153,9 @@ class ChatStore:
             result=self.decode(row);result['rpc_id']=json.loads(result['rpc_id']);return result
 
     def request_status(self,rid,status):
-        with self.store.tx() as c:c.execute('UPDATE chat_requests SET status=? WHERE id=?',(status,rid))
+        # Turn cleanup may hold an older pending/answering snapshot while the
+        # host's successful answer receipt is being committed on another thread.
+        # Check expiration eligibility atomically so it cannot erase that receipt.
+        query='UPDATE chat_requests SET status=? WHERE id=?'
+        if status=='expired':query+=" AND status IN ('pending','answering')"
+        with self.store.tx() as c:c.execute(query,(status,rid))

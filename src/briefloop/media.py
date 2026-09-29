@@ -15,6 +15,7 @@ import zlib
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
+from .platform_support import filesystem_path
 
 IMAGE_NOTICE = '图片原件有效；需视觉读取，无 OCR 文本。请查看本来源的图像附件。'
 PDF_NOTICE = 'PDF 原件有效，但未提取到正文；需视觉读取，无 OCR 文本。请按需渲染并查看指定页面。'
@@ -106,22 +107,22 @@ def safe_source_path(store, value, *, must_exist=True):
     except ValueError as exc:
         raise ValueError('来源路径必须位于 sources 目录') from exc
     cursor = base
-    if cursor.is_symlink():
+    if filesystem_path(cursor).is_symlink():
         raise ValueError('来源目录不能是符号链接')
     for part in relative.parts:
         cursor = cursor / part
-        if cursor.is_symlink():
+        if filesystem_path(cursor).is_symlink():
             raise ValueError('来源路径不能包含符号链接')
     if not path.resolve().is_relative_to(base.resolve()):
         raise ValueError('来源路径不能越界')
-    if must_exist and not path.is_file():
+    if must_exist and not filesystem_path(path).is_file():
         raise ValueError('来源文件不存在或不是普通文件')
     return path
 
 
 def _hash(path):
     # Integrity checks stay on every access; stream so a large original is not held in memory.
-    with path.open('rb') as file:
+    with filesystem_path(path).open('rb') as file:
         return hashlib.file_digest(file, 'sha256').hexdigest()
 
 
@@ -132,11 +133,11 @@ def source_files(store, sid):
     safe_source_path(store, source['path'])
     record = safe_source_path(store, f'sources/{sid}.provenance.json', must_exist=False)
     provenance = None
-    if record.exists():
+    if filesystem_path(record).exists():
         safe_source_path(store, record)
-        if record.stat().st_size > 128_000:
+        if filesystem_path(record).stat().st_size > 128_000:
             raise ValueError('来源元数据过大')
-        provenance = json.loads(record.read_text(encoding='utf-8'))
+        provenance = json.loads(filesystem_path(record).read_text(encoding='utf-8'))
         if not isinstance(provenance, dict):
             raise ValueError('来源元数据格式无效')
     original = None
@@ -149,7 +150,8 @@ def source_files(store, sid):
             raise ValueError('来源原件哈希不匹配')
     elif not source.get('url'):
         extracted = safe_source_path(store, source['path'])
-        for path in sorted((store.root / 'sources').glob(sid + '.*')):
+        for found in sorted(filesystem_path(store.root / 'sources').glob(sid + '.*')):
+            path=store.root/'sources'/found.name
             if path == extracted or path.suffix == '.json':
                 continue
             original = safe_source_path(store, path)
@@ -187,15 +189,15 @@ def pdf_metadata(data):
 
 def _cache_directory(store, digest):
     directory = safe_source_path(store, f'sources/media/{digest}', must_exist=False)
-    directory.mkdir(parents=True, exist_ok=True)
+    filesystem_path(directory).mkdir(parents=True, exist_ok=True)
     return directory
 
 
 def _atomic_bytes(path, data):
-    fd, temporary = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=path.parent)
+    fd, temporary = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=filesystem_path(path.parent))
     try:
         with os.fdopen(fd, 'wb') as handle:handle.write(data)
-        os.replace(temporary, path)
+        os.replace(temporary, filesystem_path(path))
     finally:
         if os.path.exists(temporary):os.unlink(temporary)
 
@@ -238,7 +240,7 @@ def _validated_cached_image(store, path, expected_hash=None):
     path = safe_source_path(store, path)
     if expected_hash and _hash(path) != expected_hash:raise ValueError('缓存图像哈希不匹配')
     try:
-        with Image.open(path) as image:
+        with Image.open(filesystem_path(path)) as image:
             if image.format != 'PNG':raise ValueError('缓存图像不是 PNG')
             width,height=image.size
             if width*height > MAX_IMAGE_PIXELS:raise ValueError('缓存图像尺寸过大')
@@ -266,7 +268,7 @@ def source_attachment(store, sid):
         # source_files verified raw_sha256; do not reread and reparse a large PDF.
         data=None;kind='application/pdf';digest=metadata['raw_sha256']
     else:
-        data=original.read_bytes()
+        data=filesystem_path(original).read_bytes()
         kind=detect_media_type(original.name,data,metadata.get('content_type') or metadata.get('media_type') or '')
         digest=hashlib.sha256(data).hexdigest()
     result['media_type']=kind
@@ -277,7 +279,7 @@ def source_attachment(store, sid):
             return result
         expected=safe_source_path(store,f'sources/media/{digest}/image.png',must_exist=False)
         if metadata.get('image_path') and safe_source_path(store,metadata['image_path'])!=expected:raise ValueError('图像缓存路径与原件不匹配')
-        if expected.exists() and metadata.get('image_sha256'):
+        if filesystem_path(expected).exists() and metadata.get('image_sha256'):
             image,width,height=_validated_cached_image(store,expected,metadata['image_sha256'])
         else:
             prepared=prepare_image(store,data)
@@ -288,8 +290,8 @@ def source_attachment(store, sid):
         text=store.source_text(sid).strip()
         result.update(status='ready',error=None,pages=details['pages'],needs_visual=bool(metadata.get('needs_visual')) or not text or text==PDF_NOTICE)
         directory=safe_source_path(store,f'sources/media/{digest}',must_exist=False)
-        if directory.exists():
-            for path in sorted(directory.glob('page-*.png')):
+        if filesystem_path(directory).exists():
+            for path in sorted(filesystem_path(directory).glob('page-*.png')):
                 match=re.fullmatch(r'page-(\d+)\.png',path.name)
                 if not match:continue
                 page=int(match.group(1))
@@ -302,9 +304,9 @@ def source_attachment(store, sid):
 def _rendered_page(store, digest, page):
     path=safe_source_path(store,f'sources/media/{digest}/page-{page:04d}.png',must_exist=False)
     record=path.with_suffix('.json')
-    if not path.exists() or not record.exists():return None
+    if not filesystem_path(path).exists() or not filesystem_path(record).exists():return None
     safe_source_path(store,record)
-    metadata=json.loads(record.read_text(encoding='utf-8'))
+    metadata=json.loads(filesystem_path(record).read_text(encoding='utf-8'))
     if not isinstance(metadata,dict) or not re.fullmatch(r'[0-9a-f]{64}',str(metadata.get('image_sha256',''))):raise ValueError('PDF 页面缓存元数据无效')
     if metadata.get('source_sha256')!=digest or metadata.get('page')!=page:raise ValueError('PDF 页面缓存绑定不匹配')
     image,width,height=_validated_cached_image(store,path,metadata.get('image_sha256'))
@@ -324,7 +326,7 @@ def _pdf_original(store, sid):
     if original is None:raise ValueError('该来源不是 PDF')
     pages=_recorded_pdf(provenance)
     if pages:return original,pages,provenance['raw_sha256'],None
-    data=original.read_bytes()
+    data=filesystem_path(original).read_bytes()
     if detect_media_type(original.name,data)!='application/pdf':raise ValueError('该来源不是 PDF')
     return original,pdf_metadata(data)['pages'],hashlib.sha256(data).hexdigest(),data
 
@@ -345,7 +347,7 @@ def render_source_pages(store, sid, pages):
     if any(p>count for p in pages):raise ValueError('页码超出 PDF 范围')
     cached={number:_rendered_page(store,digest,number) for number in pages}
     if all(cached.values()):return {'source_id':sid,'pages':[cached[number] for number in pages]}
-    if data is None:data=original.read_bytes()
+    if data is None:data=filesystem_path(original).read_bytes()
     results=[]
     try:import pypdfium2 as pdfium
     except ImportError as exc:raise ValueError('缺少 PDF 页面渲染依赖 pypdfium2，请更新 BriefLoop 安装') from exc

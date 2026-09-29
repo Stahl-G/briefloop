@@ -25,12 +25,13 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         ('容量45,100 MW。', '45,100 MW', 45.1, 'GW', '45.1 GW', True),
         ('收入13.6亿元。', '13.6亿元', 13.6, '亿元', '13.6亿元', True),
         ('亏损0美元。', '0美元', 0, 'USD', '$0', True),
+        ('目标缺陷少于 12 件，尚未确认达成。', '12 件', 12, '件', '目标缺陷少于 12 件，尚未确认达成。', True),
     ]
     for quote, token, value, unit, excerpt, found in cases:
         row = check_numbers(quote, [bound(store, quote, token, value, unit, excerpt)], store)[0]
         assert row['checked'], row
         assert row['found'] is found, (quote, row)
-    for unit in ('USD/MWh', 'B USD', 'kilo EUR', '兆'):
+    for unit in ('USD/MWh', 'B USD', 'kilo EUR', '兆', '件（目标要求少于）'):
         assert normalized(5, unit) is None
     for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh/年', '5MWh/年')]:
         item = bound(store, quote, token, 5, 'USD', '$5')
@@ -89,6 +90,7 @@ def test_unknown_currency_magnitudes_never_degrade_to_bare_currency(text):
     ('1000 MWh', 1, 'GWh', '1 GWh'),
     ('1000千瓦时', 1, '兆瓦时', '1兆瓦时'),
     ('10,000 vehicles', 1, '万辆', '1万辆'),
+    ('120 件', 120, '件', 'Cedar 第二季度处理 120 件'),
 ])
 def test_registered_units_keep_source_and_exact_body_binding(tmp_path, token, value, unit, source):
     store = Store(tmp_path)

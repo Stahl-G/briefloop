@@ -22,7 +22,11 @@ import {copyText} from './clipboard.js';
 import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
 import {preflightSources,uploadPayload,sourceStatusLabel} from './uploads.js';
-import {runtimeCard,runtimeModelSummary} from './runtime-cards.js';
+import {runtimeCard,runtimeModelSummary,runtimeIcon} from './runtime-cards.js';
+import {createNativeRequests,requestKind} from './native-requests.js';
+import {createPermissionDirectory,permissionSelection} from './runtime-permission-modes.js';
+import {createRuntimePermissionPanel} from './runtime-permission-panel.js';
+import {createComposerOptions} from './composer-options.js';
 import {createOfficeTools} from './office-tools.js';
 import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
 import {activityCenter} from './notifications.js';
@@ -334,9 +338,9 @@ function renderWelcome(){
  const selected=(welcomeMode==='native')===(chosen==='briefloop-native')&&runtimeCatalog.some(r=>r.id===chosen&&r.available);
  const model=selected&&!settings.model_selection_required?settings.model:'';
  $('welcome-model-label').textContent='模型'+(selected?' · '+runtimeName(chosen):'');
- $('welcome-model-name').textContent=model||'选择或搜索模型';$('welcome-model').disabled=!selected||welcomeBusy;
+ $('welcome-model-name').textContent=model==='default'?(chosen==='claude'?'跟随 Claude Code 默认':'跟随宿主默认'):model||'选择或搜索模型';$('welcome-model').disabled=!selected||welcomeBusy;
  $('welcome-start').disabled=!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy);
- $('welcome-choice').textContent=welcomeBusy?'正在保存选择…':!selected?'请先选择一个 Agent。':!model?'请选择模型；连接状态可在设置中测试。':'已保存选择；连接状态可在设置中测试。';
+ $('welcome-choice').textContent=welcomeBusy?'正在保存选择…':!selected?'请先选择一个 Agent。':!model?'请选择模型，再开始普通对话。':'已保存选择，可以开始普通对话。';
  if(!model){
   const effort=$('welcome-effort');effort.hidden=false;effort.disabled=true;effort.replaceChildren(new Option('模型默认','none'));
   $('welcome-variant').hidden=true;const choices=$('welcome-variant-choices');if(choices)choices.hidden=true;
@@ -720,7 +724,7 @@ async function refreshProgress(){
  finally{if(progressRequest===request)progressRequest=null}
 }
 
-function friendlyModel(model){return model==='default'?'宿主默认模型':model}
+function friendlyModel(model,backend){return model==='default'?(backend==='claude'?'跟随 Claude Code 默认':'跟随宿主默认'):model}
 function effortValue(runtime,key){return Object.prototype.hasOwnProperty.call(runtime,key)?(runtime[key]||'none'):'none'}
 function assignEffort(id,value){const input=$(id);if(![...input.options].some(o=>o.value===value))input.add(new Option(value,value));input.value=value}
 function activeChatRuntime(){return chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id&&m.runtime)?.runtime||chat.session?.runtime||{}}
@@ -732,7 +736,7 @@ function fastControlConfig(target){const isChat=target==='chat',role=target.star
 const fastCapabilityRequests=new Map();
 async function loadFastCapability(cfg){const key=fastChoiceKey(cfg);if(fastCapabilityRequests.has(key))return fastCapabilityRequests.get(key);const request=(async()=>{try{const query=new URLSearchParams({backend:cfg.backend,model:cfg.model,model_provider:cfg.model_provider||''});const result=await api('runtime/fast-capability?'+query);if(fastChoiceKey(result)===key)fastCapabilities.set(key,result);else fastCapabilities.set(key,{enabled:false});}catch{fastCapabilities.set(key,{enabled:false})}finally{fastCapabilityRequests.delete(key);renderFastControls(false);updateModelLabel()}})();fastCapabilityRequests.set(key,request);return request}
 function renderFastControls(fetchMissing=true){for(const target of ['main','chat','role-evaluator','role-maintainer','role-proposer']){const id=target==='main'?'service-tier':target==='chat'?'chat-service-tier':target+'-service-tier',control=$(id);if(!control)continue;const cfg=fastControlConfig(target),key=fastChoiceKey(cfg),capability=fastCapabilities.get(key),supported=fastAvailable(cfg,capability);control.hidden=!supported;const wrapper=control.closest('[data-fast-control]');if(wrapper)wrapper.hidden=!supported;if(fetchMissing&&cfg.backend==='codex'&&cfg.model&&!capability)loadFastCapability(cfg);}}
-function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const backend=cfg.agent_backend||cfg.backend;const prefix=backend?runtimeName(backend)+' · ':'';if(cfg.model_variant!=null||['opencode','briefloop-native'].includes(backend)){const variant=cfg.model_variant||'模型默认';return prefix+friendlyModel(cfg.model)+' / '+variant}if(backend&&!['codex','opencode'].includes(backend)&&!Object.hasOwn(cfg,'reasoning_effort'))return prefix+friendlyModel(cfg.model);const effort=cfg.reasoning_effort,effortLabel=Object.prototype.hasOwnProperty.call(cfg,'reasoning_effort')?(!effort||effort==='none'?'模型默认':effort):'未记录';return prefix+friendlyModel(cfg.model)+' / '+effortLabel+(cfg.model_provider?' · '+cfg.model_provider:'')+(cfg.service_tier==='fast'?' · Fast（请求）':cfg.service_tier==='default'?' · 标准':'')}
+function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const backend=cfg.agent_backend||cfg.backend;const prefix=backend?runtimeName(backend)+' · ':'';if(cfg.model_variant!=null||['opencode','briefloop-native'].includes(backend)){const variant=cfg.model_variant||'模型默认';return prefix+friendlyModel(cfg.model,backend)+' / '+variant}if(backend&&!['codex','opencode'].includes(backend)&&!Object.hasOwn(cfg,'reasoning_effort'))return prefix+friendlyModel(cfg.model,backend);const effort=cfg.reasoning_effort,effortLabel=Object.prototype.hasOwnProperty.call(cfg,'reasoning_effort')?(!effort||effort==='none'?'模型默认':effort):'未记录';return prefix+friendlyModel(cfg.model,backend)+' / '+effortLabel+(cfg.model_provider?' · '+cfg.model_provider:'')+(cfg.service_tier==='fast'?' · Fast（请求）':cfg.service_tier==='default'?' · 标准':'')}
 function backendValue(){return ($('agent-backend')&&$('agent-backend').value)||state.settings.agent_backend||'codex'}
 function renderBackend(){
  const backend=backendValue(),variant=['opencode','briefloop-native','mimo'].includes(backend),codex=backend==='codex';
@@ -745,7 +749,7 @@ function renderBackend(){
  document.querySelectorAll('.role-effort-select').forEach(e=>{e.style.display=variant?'none':'';reasoning.configure(variant?$(`role-${e.dataset.roleEffort}-variant`):e,backend,$(`role-${e.dataset.roleEffort}-model`).value.trim()||$('model-select').value.trim(),{variant})});
  renderSearchProvider();updateModelLabel();renderFastControls();
 }
-function updateModelLabel(){refreshRuntimeModelSummaries();const op=['opencode','briefloop-native'].includes(backendValue());const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:backendValue()}:{model:$('model-select').value.trim(),reasoning_effort:backendValue()==='mimo'?($('model-variant').value.trim()||null):$('effort-select').value,model_provider:$('model-provider').value.trim(),service_tier:selectedServiceTier('service-tier',fastControlConfig('main')),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
+function updateModelLabel(){refreshRuntimeModelSummaries();const op=['opencode','briefloop-native'].includes(backendValue());const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:backendValue()}:{model:$('model-select').value.trim(),reasoning_effort:backendValue()==='mimo'?($('model-variant').value.trim()||null):$('effort-select').value,model_provider:$('model-provider').value.trim(),service_tier:selectedServiceTier('service-tier',fastControlConfig('main')),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model,cfg.agent_backend)+' · '+cfg.model:'输入模型 ID'}
 async function saveModel(){if(backendValue()==='codex')await loadFastCapability(fastControlConfig('main'));const model=reasoningModel(backendValue(),$('model-select').value.trim(),$('effort-select').value);$('model-select').value=model;if(!model)throw Error('请输入模型 ID');const op=['opencode','briefloop-native'].includes(backendValue());if(op){if(!model.includes('/'))throw Error('模型 ID 必须是 provider/model 形式');await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null,runtime_efforts:{...state.settings.runtime_efforts,[backendValue()]:backendValue()==='mimo'?($('model-variant').value.trim()||null):($('effort-select').value==='none'?null:$('effort-select').value)}});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null,service_tier:selectedServiceTier('service-tier',fastControlConfig('main'),true)});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 let runtimeCatalog=[],runtimeScanned=false;
 function runtimeName(id){return id==='briefloop-native'?'BriefLoop Agent':runtimeCatalog.find(r=>r.id===id)?.name||id}
@@ -783,10 +787,6 @@ function renderRuntimeDiscovery(){
  const selectedCard=roots.flatMap(root=>[...root.querySelectorAll('[data-runtime-card]')]).find(c=>c.dataset.runtimeCard===chosen);
  if(selectedCard)selectedCard.append(modelBlock);else $(chosen==='briefloop-native'?'settings-api':'settings-cli').append(modelBlock);
  for(const root of roots){
-  root.querySelectorAll('[data-runtime-test]').forEach(button=>button.onclick=()=>action(async()=>{
-   const model=$('model-select').value.trim();if(!model)throw Error('请先选择或输入模型 ID');
-   const r=await api('runtime-test',{backend:button.dataset.runtimeTest,model});chat.view='tests';await selectChat(r.session_id);
-  },'已提交模型测试；进展见对话，可随时停止'));
   root.querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
  }
  renderSettingsSessionNote();
@@ -795,15 +795,15 @@ async function refreshRuntimeDiscovery(force=false){
  const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
  if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Agent CLI</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
  $('runtime-discovery-status').textContent='正在检测执行引擎…';$('runtime-discovery-refresh').disabled=true;
- try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();if(typeof office!=='undefined'&&data.capabilities?.officecli)office.renderSettingsCapability(data.capabilities.officecli);$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用，需另行短测试。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
+ try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();if(typeof office!=='undefined'&&data.capabilities?.officecli)office.renderSettingsCapability(data.capabilities.officecli);$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用；选择模型后可在普通对话中使用。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 }
 $('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};assignEffort('effort-select',settingsEffort(state.settings,backend));$('model-variant').value=backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');reasoning.refresh();$('model-select').value='';$('chat-model').value='';renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
-const modelDirectory=createModelCatalog({api,$,getBackend:backendValue,getChatBackend:chatBackendChoice,runtimeName,onCatalogChange:refreshRuntimeModelSummaries});
+const modelDirectory=createModelCatalog({api,$,getBackend:backendValue,getChatBackend:chatBackendChoice,runtimeName,runtimeIcon,onCatalogChange:refreshRuntimeModelSummaries});
 const {catalogs:modelCatalogs,fetchModelCatalog,openModelPicker,refreshCurrentModelPicker,renderModelPicker,pickModel,refreshInlineModelPickers,setupModelPickers}=modelDirectory;
 async function refreshModelSuggestions(force=false){if(force)fastCapabilities.clear();renderFastControls();await modelDirectory.refreshModelSuggestions()}
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
-$('model-picker-search').onkeydown=event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();const id=event.target.value.trim();if(id&&!/\s/.test(id))pickModel(id)}};
+$('model-picker-search').onkeydown=event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();$('model-picker-list').querySelector('[data-model-pick]')?.focus()}};
 $('model-picker-refresh').onclick=()=>refreshCurrentModelPicker();
 $('model-select').onchange=()=>{reasoning.refresh();renderBackend();return action(saveModel,'模型已保存；下一次启动生效')};$('service-tier').onchange=()=>action(saveModel,'速度已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
 $('model-apply-session').onclick=()=>{
@@ -857,6 +857,9 @@ $('close-diff').onclick=()=>$('diff-dialog').close();
 
 // Interactive agent conversations. Artifact editors keep their existing state.
 const chat = {view:'active',home:true,sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
+const nativeRequests=createNativeRequests({api,getSessionId:()=>chat.id,refresh:()=>pollChat(true)});
+const composerOptions=createComposerOptions({$,getChat:()=>chat,getState:()=>state,availability:()=>compactFactAvailability('chat'),rememberDraft,openSettings:name=>{showSettings();settingsView(name)},openReview:()=>{page('setup');const panel=document.querySelector('.review-runtime-settings');panel.open=true;panel.scrollIntoView({block:'center'})}});
+const permissionDirectory=createPermissionDirectory({api,getModel:()=>($('chat-model')?.value||'').trim(),onChange:backend=>{if(backend===chatBackendChoice())renderChatRuntimePermissions()}});
 const chatStates={idle:'准备就绪',starting:'正在启动',running:'正在处理',complete:'已完成',completed:'已完成',failed:'运行失败',interrupted:'已中断',cancelled:'已停止',queued:'已排队',sending:'发送中',delivered:'已发送',streaming:'正在回复'};
 const chatActive=()=>['running','starting'].includes(chat.session?.status);
 function chatBackendChoice(){return chat.nextBackend||chat.session?.runtime?.backend||state?.settings?.agent_backend||'codex'}
@@ -870,10 +873,10 @@ $('chat-backend').onchange=()=>{
  chat.nextBackend=$('chat-backend').value;chat.hostOptions={};reasoning.refresh();$('chat-mode').value='queue';
  const previous=[...chat.messages].reverse().find(m=>m.role==='user'&&m.runtime?.backend===chat.nextBackend)?.runtime;
  $('chat-model').value=previous?.model||'';$('chat-model-provider').value=previous?.model_provider||'';$('chat-service-tier').value=previous?.service_tier||'';assignEffort('chat-effort',previous?effortValue(previous,'effort'):settingsEffort(state.settings,chat.nextBackend));if($('chat-variant'))$('chat-variant').value=previous?.variant||(chat.nextBackend==='mimo'?previous?.effort:'')||'';
- chat.hostOptions=previous?.host_options||{};renderChatRuntimePermissions();if(previous?.permission)$('chat-permission').value=previous.permission;
+ chat.hostOptions=previous?.host_options||{};setChatPermission(previous?.permission||'');renderChatRuntimePermissions();
  chat.request=null;rememberDraft();updateComposer();refreshInlineModelPickers();
 };
-function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,variant:($('chat-variant')?.value||'').trim(),service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
+function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,variant:($('chat-variant')?.value||'').trim(),service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{},report_options:chat.reportOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
 function restoreDraft({preserveNewDraft=false}={}){
  const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
  const backend=((chat.id||preserveNewDraft)&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
@@ -882,33 +885,18 @@ function restoreDraft({preserveNewDraft=false}={}){
  const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:settingsEffort(state.settings,backend),variant:backend==='mimo'?state.settings.runtime_efforts?.mimo:state.settings.model_variant,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
  const runtime=saved||sessionRuntime||fallback;
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
- $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user'&&m.purpose!=='runtime_test')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};
+ $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user'&&m.purpose!=='runtime_test')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};chat.reportOptions=d?.report_options||{};
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',Object.hasOwn(runtime,'effort')?effortValue(runtime,'effort'):'none');if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';
- $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
+ $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';setChatPermission(runtime.permission||'');
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
-const PERMISSION_MODES={
- 'workspace-write':{label:'读写工作区',note:'本轮可以读取并修改工作区文件。'},
- 'read-only':{label:'只读',note:'本轮只读取和解释资料，不修改文件，也不启动生成、评分或学习任务。'},
- 'runtime-native':{label:'由 CLI 自己控制',note:'该 CLI 按自己的权限设置运行，BriefLoop 不限制它的文件与联网范围。'}
-};
-function permissionModes(runtime){
- const caps=((runtimeCatalog||[]).find(r=>r.id===runtime)||{}).capabilities;
- // Before discovery finishes, fall back to what each host family supports.
- const modes=(caps?.permission_modes||(['codex','opencode','briefloop-native'].includes(runtime)?['workspace-write','read-only']:['runtime-native'])).filter(mode=>PERMISSION_MODES[mode]);
- return modes.length?modes:['workspace-write'];
-}
+function setChatPermission(value){const select=$('chat-permission');select.value=value;if(select.value!==value){select.add(new Option(value,value));select.value=value}}
 function renderChatRuntimePermissions(){
- const backend=chatBackendChoice(),select=$('chat-permission'),modes=permissionModes(backend);
- const signature=JSON.stringify([backend,modes]);
- if(renderChatRuntimePermissions.signature!==signature){
-  renderChatRuntimePermissions.signature=signature;
-  select.replaceChildren(...modes.map(mode=>new Option(PERMISSION_MODES[mode].label,mode)));
-  select.title=modes.map(mode=>PERMISSION_MODES[mode].note).join(' ');
-  // One option is not a choice; hide the control instead of showing an abstract label.
-  select.hidden=modes.length<2;
- }
- if(!modes.includes(select.value))select.value=modes[0];
+ const backend=chatBackendChoice(),select=$('chat-permission');
+ // The select remains a hidden draft carrier; visible choices come only from
+ // the current runtime catalog in the permission panel.
+ select.hidden=true;$('chat-permissions-native').hidden=true;
+ if(typeof permissionDirectory!=='undefined'&&!permissionDirectory.get(backend))permissionDirectory.load(backend).catch(()=>{});
  // Only offer mid-run interjection where the runtime can actually take it.
  const declaredCaps=((runtimeCatalog||[]).find(r=>r.id===backend)||{}).capabilities;
  const canSteer=backend===(chat.session?.runtime?.backend||backend)&&(declaredCaps?declaredCaps.steer!==false:backend==='codex');
@@ -920,16 +908,32 @@ function renderChatRuntimePermissions(){
  const effortField=document.querySelector('label[for="chat-effort"]');
  if(effortField)effortField.hidden=['opencode','briefloop-native','mimo'].includes(backend);
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode','briefloop-native'].includes(backend)){return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}}}if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('模型必须是 provider/model 形式');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
+function runtimeChoice(){
+ const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');
+ const backend=chatBackendChoice(),managed=['codex','opencode','briefloop-native'].includes(backend);
+ let permission=managed?$('chat-permission').value:'';
+ if(typeof permissionDirectory!=='undefined'){
+  const catalog=permissionDirectory.get(backend),chosen=managed?permission:chat.hostOptions?.mode;
+  if((managed||chosen)&&!catalog)throw Error('权限目录尚未读取完成，请稍后发送或打开权限面板刷新。');
+  if(catalog){
+   const choice=permissionSelection(catalog,chosen);
+   if(choice.unavailable)throw Error('原权限模式已不可用，请重新选择后发送。');
+   if(managed){permission=choice.selected;if(!permission)throw Error('未取得可用的默认权限，请打开权限面板重新选择。')}
+  }
+ }
+ if(!managed)return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}};
+ if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('模型必须是 provider/model 形式');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission}}
+ return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission};
+}
 function messageTime(value){return clock(value)}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
-function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id)){$(id).disabled=readonly||steering||chat.busy;if($(id+'-choices'))$(id+'-choices').disabled=$(id).disabled;}$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=['opencode','briefloop-native','mimo'].includes(chatBackend)?(($('chat-variant')?.value||'').trim()||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${' / '+effort}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
+function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();setChatPermission(runtime.permission||'workspace-write');$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id)){$(id).disabled=readonly||steering||chat.busy;if($(id+'-choices'))$(id+'-choices').disabled=$(id).disabled;}$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model,chatBackendChoice())||'选择模型';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=['opencode','briefloop-native','mimo'].includes(chatBackend)?(($('chat-variant')?.value||'').trim()||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${' / '+effort}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`;if(typeof modelDirectory!=='undefined')modelDirectory.refreshModelLabels()}
 function sessionBusy(session){if(!session)return false;if(typeof session.busy==='boolean')return session.busy;return ['starting','running','stopping'].includes(session.status)||!!session.turn_id||(session.id===chat.id&&(chat.messages.some(m=>['queued','sending','delivered','streaming'].includes(m.status))||chat.requests.some(r=>r.status==='pending')))}
 function renderSessions(){
  const signature=JSON.stringify([chat.view,chat.id,chat.sessions]);if(renderSessions.signature===signature)return;renderSessions.signature=signature;$('session-view').value=chat.view;
  $('archive-completed').hidden=chat.view!=='active';$('archive-completed').disabled=chat.busy||!chat.sessions.some(s=>!sessionBusy(s));
- const empty={active:'对话会保存在这里。随时回来继续。',archived:'暂无归档对话。',deleted:'回收站为空。',tests:'暂无连接测试；可在设置中测试已配置的模型。'}[chat.view];
+ const empty={active:'对话会保存在这里。随时回来继续。',archived:'暂无归档对话。',deleted:'回收站为空。'}[chat.view];
  $('session-list').innerHTML=chat.sessions.length?chat.sessions.map(s=>`<div class="session-row"><button class="session-item ${s.id===chat.id?'active':''}" data-chat-session="${esc(s.id)}" ${s.id===chat.id?'aria-current="page"':''}><span class="session-name">${esc(s.title||'新对话')}</span><span class="session-meta"><i class="session-dot ${sessionBusy(s)?'running':''}"></i>${esc(chatStates[s.status]||s.status)}<time>${messageTime(s.updated)}</time></span></button><button type="button" class="session-more" data-manage-session="${esc(s.id)}" aria-label="更多操作：${esc(s.title||'新对话')}" aria-haspopup="menu">⋯</button></div>`).join(''):`<p class="sidebar-empty">${empty}</p>`;
  $('session-list').querySelectorAll('[data-chat-session]').forEach(b=>b.onclick=()=>selectChat(b.dataset.chatSession).catch(e=>chatError(e.message)));
  $('session-list').querySelectorAll('[data-manage-session]').forEach(b=>b.onclick=()=>openSessionMenu(b.dataset.manageSession,b));
@@ -1260,7 +1264,16 @@ async function initChat(signal){
 }
 
 $('chat-allow-web').onchange=rememberDraft;
-let permissionPanel=null,permissionLoad=0;
+const permissionPanel=createRuntimePermissionPanel({
+ $,api,directory:permissionDirectory,getBackend:chatBackendChoice,getModel:()=>($('chat-model').value||'').trim(),runtimeName,
+ getSelection:catalog=>['codex','opencode','briefloop-native'].includes(catalog.backend)?$('chat-permission').value:chat.hostOptions?.mode,
+ onSelect:(mode,catalog)=>{
+  if(catalog.kind==='native')setChatPermission(mode)
+  else chat.hostOptions={...chat.hostOptions,mode};
+  rememberDraft();updateComposer();
+ },
+ isLocked:()=>$('chat-permission').disabled||[...chat.events.values()].some(event=>event.kind==='session/internal')
+});
 $('chat-permissions-refresh').onclick=loadPermissionPanel;
 $('chat-permissions-close').onclick=()=>$('chat-permissions-dialog').close();
 $('chat-permissions-open').onclick=async()=>{const dialog=$('chat-permissions-dialog');if(!dialog.open)dialog.showModal();renderPermissionRequests();await loadPermissionPanel()};
@@ -1279,88 +1292,17 @@ $('settings-officecli').onchange=async()=>{
  finally{$('settings-officecli').disabled=false}
 };
 function renderPermissionRequests(){
- const pending=chat.requests.filter(r=>r.status==='pending'&&(r.data?.native_options||String(r.method||'').includes('Approval')));
+ const pending=chat.requests.filter(request=>request.status==='pending'&&requestKind(request)==='permission');
  $('chat-permissions-open').textContent='权限'+(pending.length?' · '+pending.length:'');
  if(!$('chat-permissions-dialog').open)return;
- const box=$('chat-permissions-pending'),signature=JSON.stringify([chat.id,pending]);
- if(box.dataset.signature===signature)return;box.dataset.signature=signature;
- box.innerHTML=pending.length?'<h3>等待你确认的操作</h3>':chatBackendChoice()==='antigravity'?'<p class="help">Antigravity 当前接口不能弹出逐次授权。被拒绝的操作需先在这里明确授权，再重新发送任务。</p>':'<p class="help">当前没有待确认的操作。宿主发起授权请求后会显示在这里。</p>';
- for(const request of pending){
-  const section=document.createElement('section');section.className='permission-request';
-  const title=document.createElement('p');title.textContent=request.data.questions?.[0]?.question||'宿主请求授权';section.append(title);
-  for(const [index,option] of (request.data.questions?.[0]?.options||[]).entries()){
-   const b=document.createElement('button');b.type='button';b.textContent=option.label;b.onclick=async()=>{
-    section.querySelectorAll('button').forEach(x=>x.disabled=true);
-    try{const q=request.data.questions[0];await api('harness/answer',{session_id:chat.id,request_id:request.id,answers:{[q.id]:{answers:[request.data.native_options?.[index]?.optionId||option.label]}}});await pollChat(true)}catch(e){$('chat-permissions-error').textContent=e.message;section.querySelectorAll('button').forEach(x=>x.disabled=false)}
-   };section.append(b);
-  }
-  box.append(section);
- }
+ nativeRequests.render($('chat-permissions-pending'),chat.requests,{permissionsOnly:true,empty:'<p class="help">当前没有待确认的操作。执行授权与补充需求分别处理。</p>'});
 }
-async function loadPermissionPanel(){
- const backend=chatBackendChoice(),token=++permissionLoad;
- permissionPanel=null;$('chat-permissions-host').textContent=runtimeName(backend)+' · 下一回合';$('chat-permissions-error').textContent='';$('chat-permissions-options').textContent='正在读取宿主权限…';$('chat-permissions-note').textContent='';$('chat-permissions-native').hidden=true;
- try{
-  const p=await api('runtime/permissions?backend='+encodeURIComponent(backend));if(token!==permissionLoad||backend!==chatBackendChoice())return;
-  permissionPanel=p;$('chat-permissions-note').textContent=p.note;$('chat-permissions-error').textContent=p.diagnostic||'';
-  const box=$('chat-permissions-options');box.replaceChildren();$('chat-permissions-native').hidden=p.kind!=='native';
-  if(p.kind==='native')return;
-  if(p.kind!=='rules'){
-   const label=document.createElement('label');label.htmlFor='chat-host-permission-mode';label.textContent='下一回合权限';
-   const select=document.createElement('select');select.id='chat-host-permission-mode';
-   for(const mode of p.modes)select.add(new Option(mode.name,mode.id));const selected=chat.hostOptions?.mode||p.default_mode||'native';select.value=p.modes.some(mode=>mode.id===selected)?selected:(p.default_mode||'native');
-   if(!select.value){select.value='native';$('chat-permissions-error').textContent='原权限模式已不在宿主列表中，请重新选择后再发送。'}
-   select.disabled=$('chat-permission').disabled||[...chat.events.values()].some(e=>e.kind==='session/internal');
-   select.onchange=()=>{chat.hostOptions={mode:select.value};rememberDraft();$('chat-permissions-error').textContent='已选择，下一回合生效。'};
-   box.append(label,select);return;
-  }
-  const presets=document.createElement('select'),presetLabel=document.createElement('label'),presetHelp=document.createElement('p'),applyPreset=document.createElement('button');
-  presets.id='antigravity-preset';presetLabel.htmlFor=presets.id;presetLabel.textContent='权限模式';
-  for(const [id,name] of [['default','默认'],['full-machine','全机访问'],['turbo','Turbo'],['custom','自定义']])presets.add(new Option(name,id));
-  presets.value=p.preset||'custom';presetHelp.className='help';applyPreset.type='button';applyPreset.textContent='应用权限模式';
-  const custom=document.createElement('div');
-  const describe=()=>{presetHelp.textContent=({default:'工作区内读写；命令与工作区外访问若需授权，会停止并提示你授权后重发。','full-machine':'允许访问全机文件；命令若需授权，会停止并提示你授权后重发。',turbo:'自动执行文件、命令等操作；已有拒绝、询问规则及沙箱限制继续有效。',custom:'按具体文件、命令或网址管理规则。'})[presets.value];custom.hidden=presets.value!=='custom';applyPreset.hidden=presets.value==='custom';};
-  presets.onchange=describe;applyPreset.onclick=()=>saveNativeRule({operation:'preset',preset:presets.value});
-  box.append(presetLabel,presets,presetHelp,applyPreset,custom);describe();
-  const list=document.createElement('div');list.className='permission-rule-list';
-  for(const row of p.rules){
-   const line=document.createElement('div'),text=document.createElement('code'),remove=document.createElement('button');
-   text.textContent=({allow:'允许',ask:'询问',deny:'拒绝'}[row.decision])+' · '+row.rule;
-   remove.type='button';remove.textContent='移除';remove.setAttribute('aria-label','移除 '+text.textContent);
-   remove.onclick=()=>saveNativeRule({operation:'remove',decision:row.decision,rule:row.rule});line.append(text,remove);list.append(line);
-  }
-  custom.append(list);
-  const denied=[...chat.events.values()].reverse().map(e=>e.data?.item).find(item=>item?.type==='runtime_tool'&&item.status==='failed'&&typeof item.output==='string'&&item.output.includes('user denied permission for '));
-  const match=denied?.output.match(/user denied permission for ((?:read_file|write_file|command|read_url|execute_url|mcp)\([^\r\n()]+\))/);
-  if(match){
-   const recovery=document.createElement('section'),description=document.createElement('p'),approve=document.createElement('button');
-   description.textContent='上次未完成的操作：'+denied.tool+'。授权范围：'+match[1];
-   approve.type='button';approve.textContent='允许此操作并保存授权';
-   approve.onclick=()=>saveNativeRule({operation:'add',decision:'allow',rule:match[1]});
-   recovery.append(description,approve);custom.append(recovery);
-  }
-  const form=document.createElement('form');form.id='permission-rule-form';form.innerHTML='<h3>授权具体操作</h3><label for="permission-rule-decision">处理方式</label><select id="permission-rule-decision"><option value="allow">允许所选操作</option><option value="deny">拒绝</option></select><label for="permission-rule-tool">操作</label><select id="permission-rule-tool"><option value="read_file">读取文件</option><option value="write_file">写入文件</option><option value="command">执行命令</option><option value="read_url">读取网址</option><option value="execute_url">执行网址操作</option><option value="mcp">MCP 工具</option></select><label for="permission-rule-scope">范围</label><input id="permission-rule-scope" required autocomplete="off" placeholder="填写要访问的完整文件路径或网址"><p class="help">此授权会保存到本机 Antigravity，也会影响其他会话。只填写你愿意授权的具体路径；可在上方撤销。</p><button type="submit">保存规则</button>';
-  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};custom.append(form);
- }catch(e){if(token===permissionLoad){$('chat-permissions-options').textContent='';$('chat-permissions-error').textContent=e.message}}
-}
-async function saveNativeRule(change){
- const p=permissionPanel;if(!p||p.backend!==chatBackendChoice())return;
- const controls=[...$('chat-permissions-options').querySelectorAll('button,input,select')];controls.forEach(e=>e.disabled=true);
- try{await api('runtime/permissions',{backend:p.backend,revision:p.revision,...change});await loadPermissionPanel();$('chat-permissions-error').textContent='规则已保存。之后发送的任务使用新规则。'}
- catch(e){$('chat-permissions-error').textContent=e.message;controls.forEach(e=>e.disabled=false)}
-}
+function loadPermissionPanel(){return permissionPanel.load()}
 
 function renderRequests(){
  renderPermissionRequests();
- const requests=chat.requests.filter(r=>r.status==='pending'),signature=JSON.stringify(requests);$('chat-requests').hidden=!requests.length;
- if(renderRequests.signature===signature)return;renderRequests.signature=signature;
- $('chat-requests').innerHTML=requests.map(request=>`<form class="agent-question" data-request-id="${esc(request.id)}"><strong>BriefLoop 需要你的补充</strong>${(request.data?.questions||[]).map((q,i)=>`<fieldset data-question-index="${i}"><legend>${esc(q.question||q.header||'请补充')}</legend>${(q.options||[]).map((option,j)=>`<label class="question-option"><input type="radio" name="answer-${i}" value="${j}"><span><b>${esc(option.label)}</b>${option.description?`<small>${esc(option.description)}</small>`:''}</span></label>`).join('')}<input class="question-text" name="text-${i}" aria-label="${esc(q.question||'补充说明')}" placeholder="${q.options?.length?'或直接输入你的回答':'输入回答'}"></fieldset>`).join('')}<button class="primary" type="submit">提交回答</button><span class="question-error" role="alert"></span></form>`).join('');
- $('chat-requests').querySelectorAll('form').forEach(form=>form.onsubmit=async event=>{
-  event.preventDefault();const request=requests.find(r=>r.id===form.dataset.requestId),answers={};
-  for(const [i,q] of (request.data?.questions||[]).entries()){const custom=form.elements[`text-${i}`].value.trim(),option=form.querySelector(`input[name="answer-${i}"]:checked`);const value=custom||(option?(request.data?.native_options?.[Number(option.value)]?.optionId||q.options[Number(option.value)].label):'');if(!value){form.querySelector('.question-error').textContent='请回答每一个问题后提交。';return}answers[q.id]={answers:[value]}}
-  const button=form.querySelector('button');button.disabled=true;button.textContent='提交中…';form.querySelector('.question-error').textContent='';
-  try{await api('harness/answer',{session_id:chat.id,request_id:request.id,answers});await pollChat(true)}catch(e){form.querySelector('.question-error').textContent=e.message}finally{button.disabled=false;button.textContent='提交回答'}
- });
+ $('chat-requests').hidden=!chat.requests.some(request=>request.status==='pending');
+ nativeRequests.render($('chat-requests'),chat.requests);
 }
 
 function serviceTierOptions(value){return [['','速度：沿用本机'],['default','速度：标准'],['fast','速度：Fast']].map(([id,label])=>`<option value="${id}" ${id===(value||'')?'selected':''}>${label}</option>`).join('')}
@@ -1682,7 +1624,6 @@ function renderSessionLifecycle(){
  $('chat-lifecycle-text').textContent=lifecycle==='deleted'?'这条对话在回收站中，恢复后可继续。':'这条对话已归档，恢复后可继续。';$('restore-current-session').disabled=chat.busy||sessionBusy(chat.session);
 }
 $('restore-current-session').onclick=()=>{if(chat.id)mutateSession('restore',chat.id)};
-$('settings-runtime-tests').onclick=async()=>{closeSessionMenu();chat.view='tests';chat.sessions=[];page('chat');renderSessions();await pollChat(true).catch(e=>notice(e.message,true))};
 $('session-view').onchange=async event=>{closeSessionMenu();chat.view=event.target.value;chat.sessions=[];renderSessions();await pollChat(true).catch(e=>notice(e.message,true))};
 $('archive-completed').onclick=async()=>{
  if(chat.busy)return;closeSessionMenu();const button=$('archive-completed');button.disabled=true;
@@ -1957,11 +1898,6 @@ const loadProviderCatalog=()=>providerDirectory.load();
 $('provider-catalog').onclick=loadProviderCatalog;
 $('custom-model').onfocus=loadProviderCatalog;
 $('custom-provider').oninput=()=>providerDirectory.invalidate();
-$('provider-test-model').onclick=()=>action(async()=>{
- $('provider-result').textContent='正在提交短工具调用…';
- const r=providerEndpoint()==='native'?await api('runtime-test',{backend:'briefloop-native',model:$('custom-provider').value.trim()+'/'+$('custom-model').value.trim()}):await api('opencode/provider-test',{provider:$('custom-provider').value.trim(),model:$('custom-model').value.trim()});
- chat.view='tests';await selectChat(r.session_id);
-},'已提交模型工具测试；进展见对话，可随时停止');
 $('provider-use').onclick=()=>action(async()=>{
  const model=$('provider-use').dataset.model,backend=$('provider-use').dataset.backend;
  if(backend!==backendValue())$('model-variant').value='';
@@ -2398,12 +2334,8 @@ async function showSearchActivity(runId){
 $('search-activity-close').onclick=()=>$('search-activity-dialog').close();
 
 // Compact report controls: same component in the composer and creation form.
-function compactReportInstruction(){
- const row=document.querySelector('[data-report-options="chat"]');if(!row)return '';
- const tier=row.querySelector('[data-option="tier"]').value;
- const fact=row.querySelector('[data-option="fact"]').checked&&compactFactAvailability('chat').enabled;
- return `\n\n本轮报告选项（仅当用户要求生成报告时使用，不因此自动生成）：research_tier=${tier}，fact_check=${fact}。生成时传入 requirements；${tier==='deep'?'深度研究建议 8000–12000 字（英文报告约 6500–8000 词）；不传 target_words/max_words 时按报告语言取默认；':''}用户正文另有明确选择则按正文。`;
-}
+function compactReportInstruction(){return composerOptions.instruction()}
+
 function compactReportControls(where){
  const row=document.createElement('div');row.className='compact-report-options';row.dataset.reportOptions=where;
  row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>目标用时 <select data-option="timeout"><option value="10">约 10 分钟</option><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不设目标</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details><p class="compact-fact-note" data-fact-note role="status" hidden><span data-fact-reason></span> <button type="button" data-fact-action></button></p>';
@@ -2431,6 +2363,7 @@ function compactFactAvailability(where){
 }
 function syncCompactReportControls(){
  if(!state?.settings)return;
+ if(typeof composerOptions!=='undefined')composerOptions.sync();
  document.querySelectorAll('[data-report-options]').forEach(row=>{
   const availability=compactFactAvailability(row.dataset.reportOptions);
   for(const [key,value] of Object.entries({tier:row.dataset.reportOptions==='setup'?$('research-tier').value:state.settings.research_tier||'standard',fact:row.dataset.reportOptions==='setup'?$('requirements').elements.fact_check.checked:state.settings.fact_checker,learn:state.learning_authorization?.state==='authorized',rounds:state.settings.k,timeout:state.settings.timeout_minutes,scouts:state.settings.max_parallel})){
@@ -2446,7 +2379,7 @@ function syncCompactReportControls(){
 }
 function mountCompactReportControls(){
  const paramsPanel=$('composer-params-panel')||$('chat-input').closest('form');
- paramsPanel.append(compactReportControls('chat'));
+ composerOptions.mount(paramsPanel);
  const setup=compactReportControls('setup');const tier=$('research-tier').closest('label');tier.before(setup);tier.classList.add('compact-legacy-option');tier.hidden=true;
  if(tier.nextElementSibling?.classList.contains('help'))tier.nextElementSibling.hidden=true;
  const fact=$('requirements').elements.fact_check.closest('label');fact.classList.add('compact-legacy-option');fact.hidden=true;if(fact.nextElementSibling?.classList.contains('help'))fact.nextElementSibling.hidden=true;

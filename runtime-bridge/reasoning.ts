@@ -17,6 +17,9 @@ export function reasoningModel(runtime:string,model:string,effort:any):string {
 }
 export function validateEffort(runtime:string,value:any):string|null {
  const effort=effortValue(value);if(!effort)return null;
+ // Claude advertises model-specific levels through initialize. Its CLI remains
+ // the execution validator; a frozen local list must not reject a new host level.
+ if(runtime==='claude')return effort;
  const p=reasoningProfile(runtime);
  if(p.kind==='host')throw Error(p.note);
  if(p.kind==='levels'&&!p.levels.includes(effort))throw Error('此宿主不支持推理强度：'+effort);

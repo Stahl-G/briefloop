@@ -9,6 +9,10 @@ export function catalogStatus(catalog){
  if(!catalog)return '尚未读取目录';
  return statusNames[catalog.status]||catalog.status||(catalog.models?.length?'目录已读取':'未读取到模型');
 }
+export function catalogModelName(model,backend){return model.id==='default'?(backend==='claude'?'跟随 Claude Code 默认':'跟随宿主默认'):model.name||model.id}
+export function catalogSummary(catalog,name=''){
+ return [name,catalogStatus(catalog),catalog?.models?.length?catalog.models.length+' 项':''].filter(Boolean).join(' · ');
+}
 export function catalogDescription(catalog,name=''){
  const parts=[name,catalogStatus(catalog)];
  if(catalog){
@@ -27,7 +31,7 @@ export function catalogDescription(catalog,name=''){
 // One live source for every model selector. Settled results are only a display
 // snapshot: every open/refresh queries the backend, while concurrent opens share
 // the same request. A response never writes a selected model or selected backend.
-export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=id=>id,onCatalogChange=()=>{},document:doc=globalThis.document,Option:OptionClass=globalThis.Option,MutationObserver:Observer=globalThis.MutationObserver}){
+export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=id=>id,runtimeIcon=()=>'',onCatalogChange=()=>{},document:doc=globalThis.document,Option:OptionClass=globalThis.Option,MutationObserver:Observer=globalThis.MutationObserver}){
  const catalogs=new Map(),pending=new Map(),generations=new Map();
  let pickerTarget=null,pickerRevision=0;
  const targetBackend=target=>{
@@ -41,7 +45,7 @@ export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=
  }
  function changed(){
   refreshInlineModelPickers();
-  const status=$('runtime-model-status');if(status)status.textContent=catalogDescription(catalogs.get(getBackend()),runtimeName(getBackend()));
+  const status=$('runtime-model-status');if(status)status.textContent=catalogSummary(catalogs.get(getBackend()),runtimeName(getBackend()));
   const suggestions=$('model-suggestions');if(suggestions)suggestions.innerHTML=(catalogs.get(getBackend())?.models||[]).map(m=>`<option value="${esc(m.id)}" label="${esc(m.name)}"></option>`).join('');
   if(pickerTarget&&$('model-picker')?.open)renderModelPicker();
   onCatalogChange();
@@ -69,7 +73,15 @@ export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=
  }
  async function openModelPicker(target){
   pickerTarget=target;pickerRevision++;
-  $('model-picker-search').value='';$('model-picker').showModal();
+  $('model-picker-search').value='';
+  if($('model-picker-custom-form')){
+   const form=$('model-picker-custom-form'),input=$('model-picker-custom-id');form.hidden=true;input.value='';
+   $('model-picker-custom-open').onclick=()=>{form.hidden=false;input.value='';input.focus();$('model-picker-custom-confirm').disabled=true};
+   $('model-picker-custom-cancel').onclick=()=>{form.hidden=true;$('model-picker-custom-open').focus()};
+   input.oninput=()=>{input.setCustomValidity?.('');$('model-picker-custom-confirm').disabled=!input.value.trim()};
+   form.onsubmit=event=>{event.preventDefault();const value=input.value.trim();if(value&&!/\s/.test(value))pickModel(value);else input.setCustomValidity?.('请输入完整模型 ID，不含空白字符。')};
+  }
+  $('model-picker').showModal();
   return refreshCurrentModelPicker();
  }
  async function refreshCurrentModelPicker(){
@@ -82,29 +94,40 @@ export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=
   const backend=targetBackend(pickerTarget),catalog=catalogs.get(backend),models=catalog?.models||[];
   const q=$('model-picker-search').value.trim().toLowerCase();
   const shown=models.filter(m=>[m.id,m.name,m.provider].some(value=>String(value||'').toLowerCase().includes(q)));
-  $('model-picker-status').textContent=catalogDescription(catalog,runtimeName(backend))+(q?` · 筛出 ${shown.length} 个`:'');
+  $('model-picker-status').textContent=catalogSummary(catalog,runtimeName(backend))+(q?` · 筛出 ${shown.length} 个`:'');
+  if($('model-picker-details'))$('model-picker-details').textContent=catalogDescription(catalog);
   $('model-picker-refresh').disabled=!!catalog?.loading;
-  let lastProvider=null,html='';
+  let lastProvider=null,html=$(pickerTarget)?.dataset.roleModel?'<button type="button" class="workspace-choice" data-model-pick=""><span><strong>继承主链模型</strong></span></button>':'';
   for(const model of shown){
    const provider=model.provider||runtimeName(backend);
-   if(provider!==lastProvider){lastProvider=provider;html+=`<h3 class="workspace-list-heading">${esc(provider)}</h3>`}
-   html+=`<button type="button" class="workspace-choice" data-model-pick="${esc(model.id)}"><span><strong>${esc(model.id)}</strong><small>${esc(model.name||'')}</small></span><em>选用</em></button>`;
+   if(provider!==lastProvider){lastProvider=provider;if(new Set(shown.map(item=>item.provider||backend)).size>1)html+=`<h3 class="workspace-list-heading">${esc(provider)}</h3>`}
+   const name=catalogModelName(model,backend),selected=$(pickerTarget)?.value===model.id;
+   html+=`<button type="button" class="workspace-choice ${selected?'selected':''}" data-model-pick="${esc(model.id)}" aria-pressed="${selected}"><span><strong>${esc(name)}</strong>${name!==model.id&&model.id!=='default'?`<small>${esc(model.id)}</small>`:''}</span><em>${selected?'✓':''}</em></button>`;
   }
-  const custom=$('model-picker-search').value.trim();
-  const customChoice=custom&&!/\s/.test(custom)&&!shown.some(m=>m.id===custom)?`<button type="button" class="workspace-choice" data-model-pick="${esc(custom)}"><span><strong>${esc(custom)}</strong><small>使用此模型 ID</small></span><em>选用</em></button>`:'';
-  $('model-picker-list').innerHTML=(html||`<p class="help">${esc(models.length?'没有匹配的模型。可输入完整模型 ID 后按回车选用。':catalogDescription(catalog,runtimeName(backend)))}</p>`)+customChoice;
+  $('model-picker-list').innerHTML=html||`<p class="help">${esc(catalog?.loading?'正在读取模型列表…':models.length?'没有匹配的模型。可在下方单独填写模型 ID。':'暂时没有模型可供选择。请刷新目录，或填写完整模型 ID；当前选择仍保留。')}</p>`;
   $('model-picker-list').querySelectorAll('[data-model-pick]').forEach(button=>button.onclick=()=>pickModel(button.dataset.modelPick));
  }
  function pickModel(id){
   const input=pickerTarget&&$(pickerTarget);$('model-picker').close();pickerRevision++;
-  if(!input)return;input.value=id;input.dispatchEvent(new Event('change',{bubbles:true}));
+  if(!input)return;input.value=id;input.dispatchEvent(new Event('change',{bubbles:true}));refreshModelLabels();
+ }
+ function refreshModelLabels(){
+  doc.querySelectorAll('[data-model-trigger]').forEach(button=>{
+   if(!button.dataset.modelTrigger)return;
+   const input=$(button.dataset.modelTrigger);if(!input)return;
+   const backend=targetBackend(input.id),model=input.value,record=catalogs.get(backend)?.models.find(item=>item.id===model);
+   const label=model==='default'?'默认':record?.name||model||(input.dataset.roleModel?'继承主链模型':'选择模型');
+   button.innerHTML=`<span class="model-trigger-icon" aria-hidden="true">${runtimeIcon(backend)}</span><span class="model-trigger-label">${esc(input.id==='chat-model'?runtimeName(backend)+' · '+label:model==='default'?catalogModelName({id:model},backend):label)}</span><span class="model-trigger-chevron" aria-hidden="true">⌄</span>`;
+   button.disabled=input.disabled;button.title=model==='default'?catalogModelName({id:model},backend):label;
+  });
  }
  function refreshInlineModelPickers(){
+  refreshModelLabels();
   doc.querySelectorAll('.model-picker-select').forEach(select=>{
    const input=select.parentElement.querySelector('input'),backend=targetBackend(input?.id),catalog=catalogs.get(backend);
    select.replaceChildren(new OptionClass('▾',''));
-   const status=new OptionClass(`${catalogSource(catalog?.source)} · ${catalogStatus(catalog)}${catalog?.diagnostic?'：'+catalog.diagnostic:''}`,'__status__');status.disabled=true;select.add(status);
-   for(const model of catalog?.models||[])select.add(new OptionClass(model.name+' · '+model.id,model.id));
+   const status=new OptionClass(catalogStatus(catalog),'__status__');status.disabled=true;select.add(status);
+   for(const model of catalog?.models||[])select.add(new OptionClass(catalogModelName(model,backend),model.id));
    select.add(new OptionClass('输入其他模型 ID…','__custom__'));
    select.add(new OptionClass('搜索 / 刷新模型目录…','__browse__'));
    if(input?.dataset.roleModel)select.add(new OptionClass('继承主链模型','__inherit__'));
@@ -115,24 +138,28 @@ export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=
   for(const input of root.querySelectorAll('input[list="model-suggestions"]')){
    input.removeAttribute('list');
    const wrap=doc.createElement('span');wrap.className='model-picker';input.before(wrap);wrap.append(input);
+   input.hidden=true;input.type='hidden';
+   const button=doc.createElement('button');button.type='button';button.className='model-picker-trigger';button.dataset.modelTrigger=input.id;button.setAttribute('aria-haspopup','dialog');
+   button.onclick=()=>{if(!input.disabled)openModelPicker(input.id)};wrap.append(button);
    const select=doc.createElement('select');select.className='model-picker-select';select.setAttribute('aria-label',input.id==='chat-model'?'选择模型':'选择'+(input.getAttribute('aria-label')||'模型'));select.dataset.testid='model-catalog-select';
+   select.hidden=true;
    // Pointer and keyboard opens refresh equally; a focus event alone does not
    // double-query the following pointer event.
    select.onpointerdown=()=>{if(!input.disabled)fetchModelCatalog(true,targetBackend(input.id))};
    select.onkeydown=event=>{if(['ArrowDown','ArrowUp',' ','Enter','F4'].includes(event.key)&&!input.disabled)fetchModelCatalog(true,targetBackend(input.id))};
    select.onchange=()=>{
     const model=select.value;select.value='';if(input.disabled)return;
-    if(model==='__custom__'){input.focus();input.select();return}
+    if(model==='__custom__'){openModelPicker(input.id).then(()=>{$('model-picker-custom-open')?.onclick?.()});return}
     if(model==='__browse__'){openModelPicker(input.id);return}
     if(!model||model==='__status__')return;input.value=model==='__inherit__'?'':model;
     input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));input.focus();
    };
    wrap.append(select);
-   if(Observer)new Observer(()=>{select.disabled=input.disabled}).observe(input,{attributes:true,attributeFilter:['disabled']});select.disabled=input.disabled;
+   if(Observer)new Observer(()=>{select.disabled=input.disabled;button.disabled=input.disabled}).observe(input,{attributes:true,attributeFilter:['disabled']});select.disabled=input.disabled;
   }
   refreshInlineModelPickers();
  }
- return {catalogs,invalidate,fetchModelCatalog,refreshModelSuggestions,openModelPicker,refreshCurrentModelPicker,renderModelPicker,pickModel,refreshInlineModelPickers,setupModelPickers,targetBackend};
+ return {catalogs,invalidate,fetchModelCatalog,refreshModelSuggestions,openModelPicker,refreshCurrentModelPicker,renderModelPicker,pickModel,refreshInlineModelPickers,refreshModelLabels,setupModelPickers,targetBackend};
 }
 
 // The Native configuration form consumes the same provider response as the

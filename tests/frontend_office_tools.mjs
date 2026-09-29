@@ -109,6 +109,21 @@ test('source view renders office pages through the shared page input',async()=>{
  delete globalThis.document;
 });
 
+test('Excel preview captions identify the selected worksheet and cell scope',async()=>{
+ const worksheet={name:'中文! "明细"',cells:'A1:D5',range:'/中文! \\"明细\\"/A1:D5',count:2};
+ globalThis.document={createElement:element};
+ const {tools,dom}=makeTools({installed:true,enabled:true},async()=>({pages:[{page:2,url:'/image',worksheet}]}));
+ tools.openPreview({job_id:'xlsx_1'});
+ dom.$('office-preview-pages').value='2';
+ await dom.$('office-preview-render').onclick();
+ const [caption,image]=dom.$('office-preview-images').children[0].children;
+ assert.equal(caption.textContent,'工作表 2：中文! "明细"（A1:D5）');
+ assert.equal(image.alt,caption.textContent);
+ assert.match(dom.$('office-preview-note').textContent,/共 2 张可见工作表/);
+ assert.match(dom.$('office-preview-note').textContent,/范围外的图表和形状可能未显示/);
+ delete globalThis.document;
+});
+
 test('word export rows add office summary and preview only when enabled',()=>{
  const job={id:'job_1',kind:'export_docx',status:'complete',payload:JSON.stringify({version_id:'v1',run_id:'r1'}),result:JSON.stringify({download_url:'/saved.docx',office:{tool:'officecli',tool_version:'1.0.152',validate:{status:'ok',summary:'Validation passed: no errors found.'},issues:{status:'ok',count:0,items:[]}}})};
  const code=source.slice(source.indexOf('function renderWordExports(){'),source.indexOf('function renderWordExports(){')+source.slice(source.indexOf('function renderWordExports(){')).indexOf('\n}')+2);

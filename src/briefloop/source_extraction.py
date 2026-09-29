@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 
 from .store import content_hash, dump
+from .platform_support import filesystem_path
 
 MAX_TEXT_BYTES=32*1024*1024
 EXTRACTION_TIMEOUT=600
@@ -35,12 +36,12 @@ def extract_job(store, job, cancelled):
     source,metadata,original=source_files(store,sid)
     if original is None:raise ValueError('原始文件未保留，请重新上传')
     metadata=dict(metadata or {})
-    folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
-    text_path=folder/'extracted.txt';result_path=folder/'extraction.json';progress_path=folder/'extraction-progress.jsonl'
+    folder=store.root/'jobs'/job['id'];filesystem_path(folder).mkdir(exist_ok=True)
+    text_path=filesystem_path(folder/'extracted.txt');result_path=filesystem_path(folder/'extraction.json');progress_path=filesystem_path(folder/'extraction-progress.jsonl')
     for path in (text_path,result_path,progress_path):path.unlink(missing_ok=True)
     _progress(store,job,{'phase':'validating','message':'原件已保存，正在检查文件'})
     command=[sys.executable,'-m','briefloop.source_extraction',str(store.root),str(original),source['name'],str(folder)]
-    with (folder/'extraction.log').open('wb') as log:
+    with filesystem_path(folder/'extraction.log').open('wb') as log:
         process=OwnedProcess(command,parent_death=True,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
         started=time.monotonic();offset=0;committed=False
         try:
@@ -109,6 +110,7 @@ def _extract_pdf(path, output, emit):
     from pypdf import PdfReader
     from .host_bins import find as find_host_bin
     from .media import PDF_NOTICE
+    path=filesystem_path(path);output=filesystem_path(output)
     reader=PdfReader(path)
     if reader.is_encrypted and not reader.decrypt(''):raise ValueError('PDF 已加密，无法读取；原件已保留')
     pages=len(reader.pages)
@@ -146,6 +148,7 @@ def _extract_pdf(path, output, emit):
 def _child(root, original, name, folder):
     from .sources import _source_content
     from .media import detect_media_type
+    original=filesystem_path(original);folder=filesystem_path(folder)
     def emit(data):
         with (folder/'extraction-progress.jsonl').open('a',encoding='utf-8') as stream:
             stream.write(dump(data)+'\n');stream.flush()

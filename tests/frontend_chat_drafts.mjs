@@ -8,7 +8,7 @@ const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8
 const between=(start,end)=>section(source,start,end,'frontend/app.js');
 const code=[
  between('function chatBackendChoice(){','function renderChatBackendChoice(){'),
- between('function rememberDraft(){','const PERMISSION_MODES='),
+ between('function rememberDraft(){','function renderChatRuntimePermissions()'),
  between('async function selectChat(id){','async function pollChat('),
  between('async function sendChat(event){',"$('chat-form').onsubmit="),
 ].join('\n');

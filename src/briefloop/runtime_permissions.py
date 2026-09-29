@@ -7,7 +7,7 @@ import re
 import tempfile
 import threading
 
-from .backends import validate_backend
+from .backends import BACKEND_LABELS, WORKSPACE_SCOPES, validate_backend
 
 PRESETS = {
     'default': {'toolPermission':'request-review','allowNonWorkspaceAccess':False},
@@ -49,30 +49,74 @@ def permission_digest():
         return hashlib.sha256(json.dumps(policy,sort_keys=True).encode()).hexdigest()
 
 
-def catalog(backend,workspace,bridge):
+def _modes(value):
+    """Keep the runtime's names, order and descriptions, never infer synonyms."""
+    result=[]; seen=set()
+    for row in value if isinstance(value,list) else []:
+        if not isinstance(row,dict):continue
+        mode=row.get('id')
+        if not isinstance(mode,str) or not mode or len(mode)>100 or mode in seen:continue
+        seen.add(mode)
+        item={'id':mode,'name':row.get('name') if isinstance(row.get('name'),str) else mode}
+        for key in ('description','native_name','disabled_reason'):
+            if isinstance(row.get(key),str):item[key]=row[key]
+        if row.get('disabled'):item['disabled']=True
+        result.append(item)
+    return result
+
+
+def catalog(backend,workspace,bridge,model=None):
     backend=validate_backend(backend)
-    result={'backend':backend,'workspace':str(workspace),'modes':[], 'interactive':backend in ACP-{'mimo'} or backend in ('claude','pi')}
-    if backend in ('codex','opencode','briefloop-native'):
-        result.update(kind='native',modes=[{'id':'workspace-write','name':'读写工作区'},{'id':'read-only','name':'只读'}],note='选择用于下一回合；已发送的任务保持原权限。')
-    elif backend=='pi':
-        result.update(kind='tools',modes=[{'id':'native','name':'沿用 Pi 工具设置'},{'id':'read','name':'只启用读取工具'},{'id':'none','name':'关闭所有工具'}],note='读取工具模式关闭扩展，仅启用 read、grep、find、ls；它不是文件路径或网络沙箱。Pi 原生工具默认不逐次询问，扩展的确认请求可在这里回答。')
-    elif backend=='claude':
-        result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，接收授权请求'},{'id':'manual','name':'需要时询问'},{'id':'acceptEdits','name':'自动允许文件编辑'},{'id':'dontAsk','name':'拒绝需要询问的操作'},{'id':'plan','name':'规划模式'}],note='使用 Claude 的原生权限模式。已有拒绝规则继续有效；规划模式不是操作系统级只读隔离。')
-    elif backend=='zcode':
-        result.update(kind='host',default_mode='build',modes=[{'id':'build','name':'构建模式（默认）'},{'id':'edit','name':'编辑模式'},{'id':'plan','name':'规划模式'},{'id':'yolo','name':'不再询问（yolo）'}],note='默认明确使用构建模式；只有选择“不再询问”才启用 yolo。下一回合生效。ZCode 无界面运行不提供逐项授权通道：被模式拦下的操作直接失败，规划模式也不是操作系统级只读隔离。')
-    elif backend=='antigravity':
+    result={'backend':backend,'workspace':str(workspace),'modes':[], 'default_mode':'native',
+            'auto_available':False, 'interactive':backend in ACP-{'mimo'} or backend in ('claude','pi')}
+    if backend in ('opencode','briefloop-native'):
+        # OpenCode uses permission rules, not this pair of named modes. Native's
+        # business-tool scopes are BriefLoop's own contract. Expose them honestly.
+        result.update(kind='native',default_mode=WORKSPACE_SCOPES[0],default_source='adapter',
+                      source={'kind':'adapter','label':'BriefLoop 执行范围'},
+                      modes=[{'id':mode,'name':mode} for mode in WORKSPACE_SCOPES],
+                      note=('OpenCode 提供逐工具权限规则，没有公开统一的权限模式目录。以下是 BriefLoop 接入层支持的执行范围。'
+                            if backend=='opencode' else '以下来自 BriefLoop 内置引擎的执行范围定义。')+' 下一回合生效。')
+        return result
+
+    result.update(kind='native' if backend=='codex' else 'host',
+                  source={'kind':'unavailable','label':'未取得运行端权限目录'},
+                  note='保留运行端公布的名称、顺序与说明。更改用于下一回合。')
+    if backend not in ('codex','zcode'):
+        result['inherit_mode']={'id':'native','name':'沿用运行端设置','description':'BriefLoop 不覆盖运行端的权限模式。'}
+    if backend=='antigravity':
         with _lock:
             path,raw,data,permissions=_read()
             rows=[{'decision':decision,'rule':rule} for decision in ('allow','ask','deny') for rule in permissions.get(decision,[]) if isinstance(rule,str)]
-            result.update(kind='rules',preset=preset_for(data),rules=rows,revision=hashlib.sha256(raw).hexdigest(),config_path=str(path),note='应用后对新任务生效，也会影响本机其他 Antigravity 会话。已有自定义规则保留。')
-    else:
-        result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，逐项确认'}],note='宿主通过 ACP 发来的授权请求可在 BriefLoop 中批准或拒绝；模式名称和行为由宿主定义。')
-        if backend=='mimo':result['note']='MiMo 使用宿主提供的运行模式，应用于下一回合。规划模式的文件权限由 MiMo 执行；当前 JSON 运行接口不能在 BriefLoop 逐项回答授权。需要交互批准时请在 MiMo 中配置，或选择可交互授权的宿主。'
-        try:
-            found=bridge.call('permission_options',{'runtime_id':backend,'cwd':str(workspace)},timeout=30)
-            result['modes']+=found.get('modes',[])
-        except (ValueError,RuntimeError,OSError,TimeoutError) as e:
-            result['diagnostic']='未能读取宿主模式：'+str(e)
+            result.update(rules=rows,revision=hashlib.sha256(raw).hexdigest(),config_path=str(path))
+    try:
+        if bridge is None:raise RuntimeError('运行端查询通道不可用')
+        params={'runtime_id':backend,'cwd':str(workspace)}
+        if model:params['model']=model
+        found=bridge.call('permission_options',params,timeout=30)
+        result['modes']=_modes(found.get('modes'))
+        result['source']=found.get('source') if isinstance(found.get('source'),dict) else {'kind':'runtime','label':BACKEND_LABELS[backend]}
+        for key in ('note','diagnostic','refreshed_at','native_default_mode','current_mode','model_diagnostic'):
+            if isinstance(found.get(key),str):result[key]=found[key]
+        if isinstance(found.get('default_source'),(str,dict)):result['default_source']=found['default_source']
+        if isinstance(found.get('model_supports_auto'),bool):result['model_supports_auto']=found['model_supports_auto']
+        if backend=='codex':
+            for mode in result['modes']:
+                if mode['id'] not in WORKSPACE_SCOPES:
+                    mode.update(disabled=True,disabled_reason='BriefLoop 接入层尚未支持此执行范围。')
+            result.update(default_mode=WORKSPACE_SCOPES[0],default_source='adapter')
+        elif backend=='pi':
+            result['kind']='tools'
+            # Pi's original/default tool set is already the first adapter row.
+            if any(mode['id']=='native' for mode in result['modes']):result.pop('inherit_mode',None)
+        allowed={mode['id'] for mode in result['modes'] if not mode.get('disabled')}
+        if found.get('default_mode') in allowed:
+            result['default_mode']=found['default_mode']
+            result['auto_available']=bool(found.get('auto_available'))
+        if not result['modes'] and not result.get('diagnostic'):
+            result['diagnostic']='运行端未返回可选择的权限模式；未添加预设选项。'
+    except (ValueError,RuntimeError,OSError,TimeoutError) as e:
+        result['diagnostic']='未能读取运行端权限：'+str(e)
     return result
 
 
@@ -119,12 +163,21 @@ def change_antigravity(body):
 
 
 def validate_options(backend,options):
-    if options is None:return {}
+    if options is None:options={}
     if not isinstance(options,dict) or set(options)-{'mode'}:raise ValueError('无效宿主权限选项')
+    # Supported modes arrive from the current native runtime. An omitted choice
+    # stays omitted so the bridge can select Auto only if it is advertised.
+    if backend in ACP|{'claude'} and not options:return {}
     mode=options.get('mode','native')
     if backend=='zcode' and mode=='native':mode='build'
     if not isinstance(mode,str) or not mode or len(mode)>100:raise ValueError('无效权限模式')
-    allowed={'pi':{'native','read','none'},'claude':{'native','manual','acceptEdits','dontAsk','plan'},'antigravity':{'native'},'zcode':{'native','build','edit','plan','yolo'}}
+    allowed={'pi':{'native','read','none'},'antigravity':{'native','accept-edits','plan'}}
+    # The bridge checks live CLI/ACP capability before passing a mode. Retain
+    # only syntax/policy validation here instead of a second catalog snapshot.
+    if backend in ('claude','zcode'):
+        if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,99}',mode) or mode=='bypassPermissions' or (backend=='claude' and mode=='yolo'):
+            raise ValueError('此接入不支持跳过权限的模式')
+        return {'mode':mode}
     if backend in allowed and mode not in allowed[backend]:raise ValueError('此宿主不支持该权限模式')
     if backend not in allowed and backend not in ACP and mode!='native':raise ValueError('此宿主不支持该权限模式')
     return {'mode':mode}

@@ -6,25 +6,32 @@ import {section} from './source_section.mjs';
 import {createModelCatalog,createProviderCatalog,catalogDescription} from '../frontend/model-catalog.js';
 
 function harness(api){
- const elements=new Map(),selects=[],inputs=[];
+ const elements=new Map(),selects=[],inputs=[],triggers=[];
  class Node {
   constructor(){this.value='';this.innerHTML='';this.dataset={};this.children=[];this.options=[];this.disabled=false}
   setAttribute(){} removeAttribute(){} getAttribute(){return ''}
   showModal(){this.open=true} close(){this.open=false}
   querySelectorAll(){return []} querySelector(){return this.children.find(c=>c.id)}
-  before(){} append(node){this.children.push(node);node.parentElement=this;if(node.className==='model-picker-select')selects.push(node)}
+  before(){} append(node){this.children.push(node);node.parentElement=this;if(node.className==='model-picker-select')selects.push(node);if(node.className==='model-picker-trigger')triggers.push(node)}
   replaceChildren(...nodes){this.options=nodes} add(node){this.options.push(node)}
   dispatchEvent(){} focus(){} select(){}
  }
  const $=id=>{if(!elements.has(id)){const node=new Node();node.id=id;elements.set(id,node)}return elements.get(id)};
- const document={querySelectorAll:query=>query.startsWith('input[')?inputs:selects,createElement:()=>new Node()};
+ const document={querySelectorAll:query=>query.startsWith('input[')?inputs:query==='[data-model-trigger]'?triggers:selects,createElement:()=>new Node()};
  class Option{constructor(text,value){this.text=text;this.value=value}}
  let backend='codex',chatBackend='claude';
  const directory=createModelCatalog({api,$,getBackend:()=>backend,getChatBackend:()=>chatBackend,document,Option,MutationObserver:null});
- return {directory,$,selects,addInput(id){const input=$(id);inputs.push(input);return input},setBackend(value){backend=value},setChatBackend(value){chatBackend=value}};
+ return {directory,$,selects,triggers,addInput(id){const input=$(id);inputs.push(input);return input},setBackend(value){backend=value},setChatBackend(value){chatBackend=value}};
 }
 const payload=(id,extra={})=>({models:[{id,name:id,provider:'provider'}],source:'host_catalog',status:'ok',checked_at:'2026-09-29T10:00:00Z',...extra});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('the composer uses one friendly button and a hidden model value, with no editable ID beside it',async()=>{
+ const h=harness(async()=>payload('default'));const input=h.addInput('chat-model');input.value='default';h.directory.setupModelPickers();
+ assert.equal(input.hidden,true);assert.equal(input.type,'hidden');assert.equal(h.selects[0].hidden,true);assert.match(h.triggers[0].innerHTML,/claude · 默认/);
+ h.triggers[0].onclick();await tick();assert.equal(h.$('model-picker').open,true);assert.match(h.$('model-picker-list').innerHTML,/跟随 Claude Code 默认/);
+ h.directory.pickModel('custom-id');assert.equal(input.value,'custom-id');assert.match(h.triggers[0].innerHTML,/custom-id/);
+});
 
 test('settings, onboarding and chat picker opens query fresh directories without changing the choice',async()=>{
  const calls=[];let number=0;
@@ -41,8 +48,11 @@ test('settings, onboarding and chat picker opens query fresh directories without
  assert.deepEqual(calls,['models?backend=codex&refresh=1','models?backend=codex&refresh=1','models?backend=claude&refresh=1','models?backend=claude&refresh=1']);
  h.$('model-picker-search').value='manual/model';h.directory.renderModelPicker();
  assert.equal(calls.length,4,'typing only filters the fetched directory');
- assert.match(h.$('model-picker-list').innerHTML,/使用此模型 ID/);
+ assert.doesNotMatch(h.$('model-picker-list').innerHTML,/data-model-pick="manual\/model"/,'search text is never a selectable custom model');
  assert.equal(h.$('model-select').value,'saved-model');assert.equal(h.$('chat-model').value,'saved-chat-model');
+ h.$('model-picker-custom-open').onclick();h.$('model-picker-custom-id').value='manual/model';
+ h.$('model-picker-custom-form').onsubmit({preventDefault(){}});
+ assert.equal(h.$('chat-model').value,'manual/model','explicit confirmation replaces the whole value');
 });
 
 test('inline settings, roles and chat share live requests, including repeated keyboard opens',async()=>{
@@ -66,14 +76,14 @@ test('late host responses cannot replace a newly opened backend or its saved sel
  pending.get('models?backend=briefloop-native&refresh=1')(payload('provider/new',{source:'provider_api'}));await current;
  pending.get('models?backend=codex&refresh=1')(payload('old-host'));await old;
  assert.match(h.$('model-picker-list').innerHTML,/provider\/new/);assert.doesNotMatch(h.$('model-picker-list').innerHTML,/old-host/);
- assert.match(h.$('model-picker-status').textContent,/提供方 API/);assert.equal(h.$('model-select').value,'saved-native');
+ assert.match(h.$('model-picker-details').textContent,/提供方 API/);assert.equal(h.$('model-select').value,'saved-native');
 });
 
 test('failed refresh removes old candidates and static hints but preserves manual choices',async()=>{
  let mode='good';const h=harness(async()=>{if(mode==='error')throw Error('credential unavailable');return mode==='hints'?payload('factory-preset',{source:'builtin_hints'}):payload('old-model')});
  h.$('model-select').value='manual/persisted';await h.directory.openModelPicker('model-select');mode='error';await h.directory.refreshCurrentModelPicker();
  assert.equal(h.directory.catalogs.get('codex').models.length,0);assert.doesNotMatch(h.$('model-picker-list').innerHTML,/old-model/);
- assert.match(h.$('model-picker-status').textContent,/目录读取失败.*credential unavailable/);
+ assert.match(h.$('model-picker-status').textContent,/目录读取失败/);assert.match(h.$('model-picker-details').textContent,/credential unavailable/);
  mode='hints';await h.directory.refreshCurrentModelPicker();assert.equal(h.directory.catalogs.get('codex').models.length,0);
  assert.equal(h.$('model-select').value,'manual/persisted');
  const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
@@ -86,7 +96,7 @@ test('Native provider field and execution picker consume the same API result wit
  const provider=createProviderCatalog({api:()=>assert.fail('Native must use shared catalog'),$:h.$,getEndpoint:()=> 'native',modelDirectory:h.directory});
  await Promise.all([h.directory.openModelPicker('model-select'),provider.load()]);
  assert.equal(calls,1);assert.match(h.$('provider-model-options').innerHTML,/value="live"/);assert.equal(h.$('custom-model').value,'saved-id');
- assert.match(h.$('model-picker-status').textContent,/部分目录读取失败/);assert.match(h.$('model-picker-status').textContent,/missing key/);
+ assert.match(h.$('model-picker-status').textContent,/部分目录读取失败/);assert.match(h.$('model-picker-details').textContent,/missing key/);
  assert.match(catalogDescription(h.directory.catalogs.get('briefloop-native')),/不代表模型调用成功/);
 });
 

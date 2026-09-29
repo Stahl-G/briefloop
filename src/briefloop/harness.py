@@ -1,4 +1,5 @@
 """Persistent, bidirectional conversations backed by Codex CLI app-server."""
+from .backends import WORKSPACE_SCOPES
 import json
 from pathlib import Path
 import threading
@@ -7,7 +8,9 @@ from contextlib import contextmanager
 from queue import Empty
 from .app_server import AppServerClient
 from .chat_store import ChatStore
+from .platform_support import filesystem_path
 from .store import uid
+from .user_input import normalize_questions, validate_answers
 
 DEFAULT_RUNTIME={'model':'default','effort':None,'permission':'workspace-write'}
 
@@ -62,7 +65,7 @@ class HarnessManager:
         provider=value.get('model_provider')
         if provider is not None and not isinstance(provider,str):raise ValueError('model_provider 必须是 Codex 已配置的服务名称')
         value['model_provider']=provider.strip() or None if isinstance(provider,str) else None
-        if value['permission'] not in ('read-only','workspace-write'):raise ValueError('权限必须为仅阅读或工作区读写')
+        if value['permission'] not in WORKSPACE_SCOPES:raise ValueError('权限必须为仅阅读或工作区读写')
         return value
     def fast_capability(self, runtime):
         from .fast_mode import capability
@@ -188,7 +191,7 @@ class HarnessManager:
             image_path=attachment.get('image_path')
             if (attachment.get('media_type') or '').startswith('image/') and not image_path:
                 raise ValueError('图片附件 '+attachment.get('name',sid)+' 没有可发送的有效图像')
-            if image_path and (not Path(image_path).is_absolute() or not Path(image_path).is_file()):
+            if image_path and (not Path(image_path).is_absolute() or not filesystem_path(image_path).is_file()):
                 raise ValueError('图片附件 '+attachment.get('name',sid)+' 的图像文件已丢失或路径无效')
             attachments.append(attachment)
         return attachments
@@ -360,8 +363,13 @@ class HarnessManager:
             if method=='item/tool/requestUserInput':
                 result={'answers':{}}
                 if sid:
-                    questions=[{'id':q.get('id'),'question':q.get('question'),'options':q.get('options',[]),'header':q.get('header','')} for q in params.get('questions',[])]
-                    data={'questions':questions,'turnId':params.get('turnId'),'threadId':params.get('threadId')}
+                    try:questions=normalize_questions(params.get('questions',[]))
+                    except ValueError:
+                        self.chat.event(sid,'error',{'message':'宿主提问格式无效，已拒绝该请求'})
+                        try:self.client.answer(request['id'],result)
+                        except Exception:pass
+                        continue
+                    data={'kind':'question','questions':questions,'turnId':params.get('turnId'),'threadId':params.get('threadId')}
                     rid=self.chat.add_request(sid,request['id'],data)
                     self.chat.event(sid,'input/requested',{'requestId':rid,**data})
                     continue
@@ -382,15 +390,9 @@ class HarnessManager:
             request=self.chat.request(request_id)
             if request['session_id']!=session_id:raise ValueError('问题不属于此会话')
             if request['status']!='pending':raise ValueError('该问题已回答或连接已失效')
-            if not isinstance(answers,dict):raise ValueError('回答格式无效')
-            known={q['id'] for q in request['data']['questions']}
-            if not set(answers)<=known:raise ValueError('回答包含未知问题')
-            normalized={}
-            for key,value in answers.items():
-                values=value.get('answers') if isinstance(value,dict) else value
-                if isinstance(values,str):values=[values]
-                if not isinstance(values,list) or not all(isinstance(v,str) for v in values):raise ValueError('回答必须为文字')
-                normalized[key]={'answers':values}
+            if self._closed.is_set() or session_id in self._cancel_requested:
+                raise ValueError('任务已停止，不能再回答')
+            normalized=validate_answers(request['data']['questions'],answers)
             if self.client is None:raise ValueError('会话连接已失效')
             client=self.client
             self.chat.request_status(request_id,'answering')
@@ -398,11 +400,14 @@ class HarnessManager:
             client.answer(request['rpc_id'],{'answers':normalized})
         except Exception:
             with self._lock:self.chat.request_status(request_id,'expired')
+            try:self.cancel(session_id)
+            except Exception:pass
             raise
         with self._lock:
-            if self.chat.request(request_id)['status']=='answering':
-                self.chat.request_status(request_id,'answered')
-                self.chat.event(session_id,'input/answered',{'requestId':request_id,'answers':normalized})
+            # The host may complete the turn before answer() returns. Its
+            # successful reply receipt still proves these answers were sent.
+            self.chat.request_status(request_id,'answered')
+            self.chat.event(session_id,'input/answered',{'requestId':request_id,'answers':normalized})
         return self.snapshot(session_id)
     def _disconnect(self):
         with self._lock:

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {createJsonLineStream} from '../third_party/open-design/core/json-line-stream.js';
+import {piQuestion,questionAnswers} from './user-input.js';
 
 // Protocol: Pi's distributed docs/rpc.md (agent_settled, not agent_end, is terminal).
 export function piConnection(bin:string,p:any,launch:any,terminate:any,onEvent:any=()=>{}){
@@ -46,10 +47,23 @@ export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
   if(typeof m.type==='string'&&m.type.startsWith('tool_execution_'))emit(p.execution_id,'tool',{id:m.toolCallId,name:m.toolName,status:m.type==='tool_execution_end'?(m.isError?'failed':'completed'):'running',input:m.args,output:m.result||m.partialResult});
   if(m.type==='extension_ui_request'){
    if(!['select','confirm','input','editor'].includes(m.method))return;
-   const options=m.method==='confirm'?[{optionId:'yes',kind:'allow_once',name:'允许本次'},{optionId:'no',kind:'reject_once',name:'拒绝'}]:m.method==='select'?(m.options||[]).map((name:string,i:number)=>({optionId:String(i),name,kind:'choice'})):[];
-   if(!options.length){c.send({type:'extension_ui_response',id:m.id,cancelled:true});fail(Error('Pi extension requested unsupported text input'));return;}
-   state.questions.set(String(m.id),{options,reply:(r:any)=>{const id=r.outcome?.optionId;const value=options.find((o:any)=>o.optionId===id);c.send({type:'extension_ui_response',id:m.id,...(!value?{cancelled:true}:m.method==='confirm'?{confirmed:id==='yes'}:{value:value.name})});}});
-   emit(p.execution_id,'question',{request_id:String(m.id),type:'permission',title:m.title||m.message||'Pi 请求确认',options});
+   try{
+    const questions=[piQuestion(m)];
+    state.questions.set(String(m.id),{type:'user_input',questions,reply:(r:any)=>{
+     if(r.cancelled){c.send({type:'extension_ui_response',id:m.id,cancelled:true});return;}
+     const value=questionAnswers(questions,r.answers).answer.answers[0];
+     c.send({type:'extension_ui_response',id:m.id,...(m.method==='confirm'?{confirmed:value==='确认'}:{value})});
+    }});
+    if(Number.isFinite(m.timeout)&&m.timeout>0){
+     const pending=state.questions.get(String(m.id));
+     pending.timer=setTimeout(()=>{
+      if(state.questions.get(String(m.id))!==pending)return;
+      state.questions.delete(String(m.id));c.send({type:'extension_ui_response',id:m.id,cancelled:true});
+      emit(p.execution_id,'question_cancelled',{request_id:String(m.id)});
+     },m.timeout);
+    }
+    emit(p.execution_id,'question',{request_id:String(m.id),type:'user_input',title:m.title||'Pi 请求回答',questions});
+   }catch{c.send({type:'extension_ui_response',id:m.id,cancelled:true});fail(Error('Pi extension question has an invalid format'));}
   }
   if(m.type==='agent_settled'){if(state.cancelled)return finish();if(!lastMessage||['error','aborted','toolUse'].includes(lastMessage.stopReason))fail(Error(lastMessage?.errorMessage||'Pi ended without a successful final reply'));else finish();}
  });

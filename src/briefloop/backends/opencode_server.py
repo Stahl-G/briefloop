@@ -279,6 +279,44 @@ class OpencodeServerClient:
             return api.paths(directory)
         return self._request('GET','/path?directory='+urllib.parse.quote(str(directory),safe=''))
 
+    def set_permissions(self, session_id, permission, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.set_permissions(session_id, permission, directory=directory)
+        path = '/session/' + urllib.parse.quote(session_id, safe='')
+        if directory is not None:
+            path += '?' + urllib.parse.urlencode({'directory': str(directory)})
+        self._request('PATCH', path, {'permission': permission})
+        saved = self._request('GET', path)
+        if not isinstance(saved, dict) or saved.get('permission') != permission:
+            raise OpencodeError('OpenCode 未保留本轮权限规则；未发送任务')
+
+    def questions(self, session_id, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.questions(session_id, directory=directory)
+        path = '/question'
+        if directory is not None:
+            path += '?' + urllib.parse.urlencode({'directory': str(directory)})
+        rows = self._request('GET', path)
+        if not isinstance(rows, list):
+            raise OpencodeError('OpenCode 返回了无法识别的提问结构')
+        return [row for row in rows if isinstance(row, dict) and row.get('sessionID') == session_id]
+
+    def reply_question(self, session_id, request_id, questions, answers, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.reply_question(session_id, request_id, questions, answers, directory=directory)
+        path = '/question/' + urllib.parse.quote(request_id, safe='') + '/reply'
+        if directory is not None:
+            path += '?' + urllib.parse.urlencode({'directory': str(directory)})
+        return self._request('POST', path, {'answers': [answers[q['id']]['answers'] for q in questions]})
+
+    def reject_question(self, session_id, request_id, *, directory=None):
+        if api := OpencodeServerClient._v2(self):
+            return api.reject_question(session_id, request_id, directory=directory)
+        path = '/question/' + urllib.parse.quote(request_id, safe='') + '/reject'
+        if directory is not None:
+            path += '?' + urllib.parse.urlencode({'directory': str(directory)})
+        return self._request('POST', path)
+
     def providers(self, directory=None):
         """Provider catalog with models (for the model picker, not inference)."""
         if api := OpencodeServerClient._v2(self):

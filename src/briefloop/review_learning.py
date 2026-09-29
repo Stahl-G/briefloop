@@ -1,6 +1,7 @@
 """Feed verified revisions into the existing WikiSkill feedback queue."""
 import hashlib
 import json
+from .platform_support import filesystem_path
 from .store import dump,now
 
 
@@ -15,9 +16,9 @@ def record_verified_corrections(store,review_id):
     # Historical replay validates the exact packet, not today's source set or
     # current responses. A later disclosure cannot rewrite a verified event.
     packet,target_data,_=_packet(store,review)
-    history=json.loads((packet/'history/responses.json').read_text(encoding='utf-8'))
+    history=json.loads(filesystem_path(packet/'history/responses.json').read_text(encoding='utf-8'))
     response_rows={row['id']:row for row in history if row['version_id']==review['version_id']}
-    versions={row['id']:row for row in json.loads((packet/'history/versions.json').read_text(encoding='utf-8'))}
+    versions={row['id']:row for row in json.loads(filesystem_path(packet/'history/versions.json').read_text(encoding='utf-8'))}
     target_hash=review['data']['files']['target.json'];evidence=target_data['evidence']
     for check in result.get('response_checks',[]):decisions[check['response_id']]=(check['decision'],check['reason'])
     for finding in result.get('findings',[]):
@@ -45,7 +46,7 @@ def record_verified_corrections(store,review_id):
                  'sources':target_data['sources'],'source_updates':target_data.get('source_updates',[]),
                  'source_timing':target_data.get('source_timing',[]),'source_update_checks':result.get('conflict_checks',[]),
                  'assessments':[{'version_id':after['id'],'assessment':result['assessment']}],
-                 'execution_records':json.loads((packet/'history/executions.json').read_text(encoding='utf-8')),
+                 'execution_records':json.loads(filesystem_path(packet/'history/executions.json').read_text(encoding='utf-8')),
                  'review_fingerprint':review['fingerprint'],'evidence_snapshot_hash':target_hash,
                  'note':'仅学习经复核的修订方法。verified_revision未判定为原稿事实错误；正常来源更新与correction须按明确时间/更正依据区分。未决怀疑不属于本事件。'}
         with store.tx() as c:
@@ -63,5 +64,5 @@ def source_snapshot(store,run_id,*,source_ids=None):
     for sid in sorted(selected):
         source,_,original=source_files(store,sid);store.source_text(sid)
         items.append({'source_id':sid,'text_hash':source['hash'],
-                      'original_hash':hashlib.sha256(original.read_bytes()).hexdigest() if original else None})
+                      'original_hash':hashlib.sha256(filesystem_path(original).read_bytes()).hexdigest() if original else None})
     return items

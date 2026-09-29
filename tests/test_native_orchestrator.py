@@ -337,6 +337,20 @@ def test_revision_metadata_rejects_number_bindings_before_saving(tmp_path):
     assert json.loads((folder/'revision_bindings.json').read_text(encoding='utf-8'))==[]
 
 
+@pytest.mark.parametrize('bad_response', ['not-an-object', {'finding_id':'finding_1','action':'corrected','reason':{'note':'wrong type'}}])
+def test_revision_metadata_rejects_untyped_response_without_saving(tmp_path,bad_response):
+    from briefloop.native_orchestrator import revision_metadata
+    from briefloop.native_roles import ToolError
+    store=Store(tmp_path/'ws');folder=store.root/'jobs/revision';(folder/'packet').mkdir(parents=True)
+    (folder/'input.json').write_text(dump({'review_findings':[{'id':'finding_1'}]}))
+    config={'packet_root':str(folder/'packet'),'run_id':'run-test'}
+    with pytest.raises(ToolError,match='均须为字符串'):
+        revision_metadata(store,config,{'responses':[bad_response],'bindings':[]})
+    assert not (folder/'responses.json').exists() and not (folder/'revision_bindings.json').exists()
+    revision_metadata(store,config,{'responses':[{'finding_id':'finding_1','action':'corrected','reason':'Fixed the actual sentence'}],'bindings':[]})
+    assert json.loads((folder/'responses.json').read_text())==[{'finding_id':'finding_1','action':'corrected','reason':'Fixed the actual sentence'}]
+
+
 def test_metadata_repair_rejects_source_ids_as_claims_before_settling(tmp_path):
     from briefloop.native_orchestrator import metadata_submit
     from briefloop.native_roles import ToolError
@@ -350,3 +364,38 @@ def test_metadata_repair_rejects_source_ids_as_claims_before_settling(tmp_path):
     assert not (folder/'metadata.json').exists()
     result=metadata_submit(store,config,{**args,'bindings':[]})
     assert result['settle']
+
+
+@pytest.mark.parametrize('stage',['revision','repair'])
+def test_revision_binding_rejects_source_and_foreign_claims_before_saving(tmp_path,stage):
+    from test_evidence import case
+    from briefloop.evidence import create_span,create_claim,blocks,record
+    from briefloop.document_model import brief_document
+    from briefloop.native_orchestrator import revision_metadata,metadata_submit
+    from briefloop.native_roles import ToolError
+    store,source,run,brief=case(tmp_path/'ws')
+    span=create_span(store,{'source_id':source['id'],'locator':{'kind':'text','start_line':1,'end_line':1}})
+    request={'statement':'Revenue was 12 million USD in H1.','kind':'fact',
+        'supports':[{'span_id':span['id'],'supports_quote':'12 million USD in H1.'}]}
+    adopted=create_claim(store,run['id'],{**request,'claim_role':'report_statement'})
+    original=create_claim(store,run['id'],{**request,'claim_role':'source_statement'})
+    other=store.create_run({'title':'Other report','objective':'Separate task'},[])
+    foreign=create_claim(store,other['id'],{'statement':'Revenue was 12 million USD in H1.','kind':'fact'})
+    document=brief_document(brief);bid=next(iter(blocks(document)))
+    folder=store.root/'jobs/revision';(folder/'packet').mkdir(parents=True)
+    packet={'version_id':brief['id'],'brief_hash':brief['hash'],'run_id':run['id'],'document':document,
+        'candidate_claims':[{'id':c['id']} for c in (adopted,original,foreign)],'findings':[]}
+    (folder/'packet/input.json').write_text(dump(packet),encoding='utf-8')
+    (folder/'input.json').write_text(dump({'review_findings':[]}),encoding='utf-8')
+    config={'packet_root':str(folder/'packet'),'run_id':run['id']}
+    args={'version_id':brief['id'],'brief_hash':brief['hash'],'responses':[]}
+    handler=revision_metadata if stage=='revision' else metadata_submit
+    def binding(claim):return {'claim_id':claim['id'],'block_id':bid,'quote':'12 million USD'}
+    for invalid,message in ((original,'来源陈述不能直接绑定正文'),(foreign,'本报告已登记')):
+        with pytest.raises(ToolError,match=message):
+            handler(store,config,{**args,'bindings':[binding(adopted),binding(invalid)]})
+        assert not any((folder/name).exists() for name in ('metadata.json','responses.json','revision_bindings.json'))
+    assert record(store,'claims',original['id'])['data']['claim_role']=='source_statement'
+    handler(store,config,{**args,'bindings':[binding(adopted)]})
+    assert (folder/('revision_bindings.json' if stage=='revision' else 'metadata.json')).exists()
+    assert not store.rows('SELECT id FROM claim_bindings')  # Final publication still belongs to Worker.

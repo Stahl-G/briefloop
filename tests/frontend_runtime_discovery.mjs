@@ -22,7 +22,7 @@ const view=vm.createContext({$:node,esc:String,runtimeCatalog:[],runtimeScanned:
 vm.runInContext(code,view);
 await view.refreshRuntimeDiscovery();
 assert.deepEqual(calls,['runtimes']);
-assert.equal(node('runtime-discovery-status').textContent,'检测到 2 个本机 CLI，其中 1 个可选择；检测未验证账号与模型调用，需另行短测试。');
+assert.equal(node('runtime-discovery-status').textContent,'检测到 2 个本机 CLI，其中 1 个可选择；检测未验证账号与模型调用；选择模型后可在普通对话中使用。');
 assert.doesNotMatch(node('runtime-discovery-status').textContent,/已接入|调用通过/);
 const cards=node('runtime-discovery-details').innerHTML;
 assert.match(cards,/版本未确认.*已检测到/);
@@ -36,6 +36,7 @@ assert.equal(node('agent-backend').options.find(option=>option.value==='codex').
 runtimes[0].diagnostic=null;view.renderRuntimeDiscovery();
 assert.match(node('runtime-discovery-details').innerHTML,/账号与模型的可用性/);
 assert.match(cards,/runtime-hermes.svg/);
+assert.doesNotMatch(cards,/data-runtime-test|短测试/);
 assert.match(cards,/runtime-missing-grid/);
 assert.match(cards,/runtime-codex.svg/);
 assert.doesNotMatch(runtimeCard(runtimes[1],{chosen:'hermes',model:'private-model',esc:String}),/private-model/);

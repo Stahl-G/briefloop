@@ -8,13 +8,14 @@ import base64
 import json
 import os
 import subprocess
+import sys
 import threading
 from io import BytesIO
 from pathlib import Path
 
 import pytest
 
-from briefloop import host_bins, office_cli
+from briefloop import host_bins, office_cli, platform_support
 from briefloop.store import Store
 
 STUB_MODE_VARIABLE = 'OFFICE_STUB_MODE'
@@ -103,6 +104,19 @@ def install_stub(tmp_path, monkeypatch, mode=None):
     binary = directory / 'officecli'
     binary.write_text(_STUB_TEMPLATE.replace('__PNG_B64__', base64.b64encode(_png_bytes()).decode()))
     binary.chmod(0o755)
+    if os.name == 'nt':
+        # Execute this test-only Python renderer directly; the product's
+        # Windows adapter intentionally accepts only standard npm shims.
+        script, binary = binary, directory / 'officecli.cmd'
+        binary.write_text('test-only entry point', encoding='utf-8')
+        command = platform_support.cli_command
+
+        def stub_command(args):
+            if str(args[0]) == str(binary):
+                return [sys.executable, '-X', 'utf8', str(script), *args[1:]]
+            return command(args)
+
+        monkeypatch.setattr(platform_support, 'cli_command', stub_command)
     monkeypatch.setenv('PATH', '/usr/bin:/bin')
     monkeypatch.setattr(host_bins, 'EXTRA_DIRS', (str(directory),))
     monkeypatch.setenv(STUB_LOG_VARIABLE, str(tmp_path / 'stub-calls.log'))
@@ -146,7 +160,6 @@ def _published_brief(store):
     return store.publish(run['id'], {'title': 'Probe report', 'markdown': 'Revenue was USD 12 million.'})
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_find_and_capability_report_the_stub(tmp_path, monkeypatch):
     binary = install_stub(tmp_path, monkeypatch)
     assert Path(office_cli.find()).resolve() == binary.resolve()
@@ -191,7 +204,6 @@ def test_settings_default_off_and_backfilled_for_old_workspaces(tmp_path):
     assert reopened.update_settings({'officecli_enabled': True})['officecli_enabled'] is True
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_disabled_switch_is_a_silent_noop(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -207,7 +219,6 @@ def test_disabled_switch_is_a_silent_noop(tmp_path, monkeypatch):
     assert store.rows("SELECT * FROM events WHERE kind='office_check'") == []
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_check_file_uses_the_real_command_grammar(tmp_path, monkeypatch):
     binary = install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -229,7 +240,6 @@ def test_check_file_uses_the_real_command_grammar(tmp_path, monkeypatch):
                                     ['view', str(docx), 'issues', '--json']]
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_punctuation_noise_is_filtered_and_keeps_both_counts(tmp_path, monkeypatch):
     """Findings are neutral observations, and pure punctuation noise (duplicate
     punctuation, consecutive spaces — normal in CJK prose) only survives as a
@@ -258,7 +268,6 @@ def test_punctuation_noise_is_filtered_and_keeps_both_counts(tmp_path, monkeypat
         == '未发现质检问题（过滤 2 项纯标点类噪音）'
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_wrong_command_forms_fail_against_real_grammar(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     docx = _tiny_docx(tmp_path)
@@ -270,7 +279,6 @@ def test_wrong_command_forms_fail_against_real_grammar(tmp_path, monkeypatch):
     assert missing['ok'] is False and 'File not found' in missing['reason']
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_check_file_records_every_failure_branch_without_raising(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -299,7 +307,6 @@ def test_check_file_records_every_failure_branch_without_raising(tmp_path, monke
     assert summary['issues']['status'] == 'error' and '超时' in summary['issues']['reason']
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_request_budget_skips_remaining_steps(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch, mode='hang')
     store = _workspace(tmp_path)
@@ -323,7 +330,6 @@ def _completed_export(store, brief):
     return job, result
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_generate_word_survives_permanent_officecli_failure(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch, mode='all_fail')
     store = _workspace(tmp_path)
@@ -345,7 +351,6 @@ def test_generate_word_survives_permanent_officecli_failure(tmp_path, monkeypatc
     assert enqueue_export(store, brief['id'])['id'] == job['id']
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_generate_word_without_the_switch_matches_current_behavior(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -387,7 +392,6 @@ def test_generate_word_check_stage_stops_between_substeps_when_cancelled(tmp_pat
     assert not store.rows("SELECT * FROM events WHERE kind='office_check'")
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -450,6 +454,45 @@ def test_render_preview_caches_pages_and_serves_bound_images(tmp_path, monkeypat
         office_cli.render_preview(store, {'source_id': note['id']})
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='regression uses the Windows long-path rename limit')
+def test_windows_long_cache_paths_publish_and_serve_hash_bound_images(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from briefloop.platform_support import filesystem_path
+
+    root = tmp_path
+    while len(str(root)) < 210:
+        root = root / ('预览工作区-' + 'a' * 50)
+    store = SimpleNamespace(root=root)
+    target = tmp_path / 'report.docx'
+    target.write_bytes(b'one frozen Office export')
+    payload, calls = _png_bytes(), []
+
+    def render(args, **kwargs):
+        output = Path(args[args.index('-o') + 1])
+        assert len(str(output)) > 260
+        # The external renderer must receive an OS-usable long path itself.
+        # Applying our helper inside this stub would hide an invalid CLI arg.
+        output.write_bytes(payload)
+        calls.append(output)
+        return {'ok': True, 'data': {}, 'reason': None}
+
+    monkeypatch.setattr(office_cli, 'find', lambda: 'synthetic-renderer')
+    monkeypatch.setattr(office_cli, 'version', lambda *_: 'synthetic')
+    monkeypatch.setattr(office_cli, 'run_json', render)
+    result = office_cli.render_page(store, target, 1)
+    image = Path(result['path'])
+    assert len(str(image)) > 260 and image.is_relative_to(root)
+    assert not str(image).startswith('\\\\?\\')  # API paths stay logical.
+    assert result['cached'] is False
+    assert office_cli.office_image(store, result['digest'], 1) == payload
+    assert office_cli.render_page(store, target, 1)['cached'] is True
+    assert len(calls) == 1 and not filesystem_path(calls[0]).exists()
+    # The same hash-bound checks remain active for long physical paths.
+    filesystem_path(image).write_bytes(b'tampered image')
+    with pytest.raises(ValueError, match='绑定不一致'):
+        office_cli.office_image(store, result['digest'], 1)
+
+
 def test_same_page_concurrent_publication_keeps_each_image_bound(tmp_path, monkeypatch):
     """Force two renders and both manifest publications to overlap, with
     different valid PNGs so a mixed image/metadata pair cannot pass by chance."""
@@ -479,8 +522,12 @@ def test_same_page_concurrent_publication_keeps_each_image_bound(tmp_path, monke
 
     def replace(src, dst):
         if str(dst).endswith('.json'):
-            manifests.append(str(src))
-            publish_barrier.wait(timeout=5)
+            with assignment_lock:
+                first_attempt = str(src) not in manifests
+                if first_attempt:
+                    manifests.append(str(src))
+            if first_attempt:
+                publish_barrier.wait(timeout=5)
         real_replace(src, dst)
         if str(dst).endswith('.json'):
             # Even while another request publishes, the visible manifest must
@@ -503,7 +550,6 @@ def test_same_page_concurrent_publication_keeps_each_image_bound(tmp_path, monke
     assert not list(Path(results[0]['path']).parent.glob('*.tmp'))
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_partial_preview_names_real_failure_apart_from_budget(tmp_path, monkeypatch):
     """A page that actually failed while the budget was also spent must be
     reported as a render failure, not relabelled as budget exhaustion."""
@@ -539,7 +585,6 @@ def test_partial_preview_names_real_failure_apart_from_budget(tmp_path, monkeypa
     assert result['reason'] == '请求时间预算用尽，仅返回已完成页面'
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_preview_and_check_gates(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)

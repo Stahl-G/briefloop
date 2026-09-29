@@ -334,7 +334,7 @@ def test_output_path_xlsx_rejects_wrong_kind_and_suffix(tmp_path):
     for path in (f'exports/{job["id"]}/report.docx', f'../outside/{job["id"]}/report.xlsx'):
         with store.tx() as c:
             c.execute("UPDATE jobs SET result=? WHERE id=?", (dump({'path': path}), job['id']))
-        with pytest.raises(ValueError, match='无效导出结果路径'):
+        with pytest.raises(ValueError, match='无效导出结果路径|导出路径不能为链接'):
             xlsx_export.output_path_xlsx(store, store.one('jobs', job['id']))
 
 

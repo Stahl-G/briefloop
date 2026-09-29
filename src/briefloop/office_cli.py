@@ -6,7 +6,7 @@ disabled workspace switch or any subprocess failure records "not run" without
 touching the export job, the delivery gate or the audit fingerprints. Command
 forms are fixed to the ones the shipped CLI actually speaks — `validate <file>
 --json`, `view <file> issues --json` and `view <file> screenshot --page N -o
-<out> --json`; a top-level `screenshot` subcommand does not exist.
+<out> --json` (Excel uses `--range`); no top-level `screenshot` command exists.
 """
 from io import BytesIO
 from pathlib import Path
@@ -63,6 +63,13 @@ VERSION_TTL_SECONDS = 600
 HINT_TTL_SECONDS = 30
 MAX_ISSUE_ITEMS = 50
 MAX_IMAGE_PIXELS = 40_000_000
+# Older XLSX previews used --page, which OfficeCLI ignores for worksheets.
+# Reject their manifests at both render and image-serving entry points.
+RENDER_CACHE_VERSION = 2
+# OfficeCLI's HTML worksheet grid is capped. A range with a missing corner
+# can return only its other corner as a successful PNG (upstream #246).
+MAX_XLSX_PREVIEW_ROWS = 5000
+MAX_XLSX_PREVIEW_COLUMNS = 200
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS office_checks(id TEXT PRIMARY KEY,kind TEXT NOT NULL,file_sha256 TEXT NOT NULL,
@@ -198,7 +205,7 @@ def _envelope_error(envelope):
 
 
 def _file_sha256(path):
-    with Path(path).open('rb') as stream:
+    with platform_support.filesystem_path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
@@ -270,7 +277,7 @@ def check_file(store, path, *, job_id=None, version_id=None, deadline=None, canc
     """
     try:
         target = Path(path)
-        if not _enabled(store) or target.suffix.lower() not in OFFICE_SUFFIXES or not target.is_file():
+        if not _enabled(store) or target.suffix.lower() not in OFFICE_SUFFIXES or not platform_support.filesystem_path(target).is_file():
             return None
         binary = find()
         if not binary:
@@ -323,7 +330,7 @@ def enhance_workbook(store, path, plan, *, cancelled=None):
             return {'applied': False, 'reason': '未检测到 OfficeCLI 或未开启'}
         binary = find()
         deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
-        outcome = run_json([binary, 'batch', str(path), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
+        outcome = run_json([binary, 'batch', str(platform_support.filesystem_path(path)), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
                            timeout=ENHANCE_BATCH_TIMEOUT, deadline=deadline)
         if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         if not outcome['ok']:
@@ -332,7 +339,7 @@ def enhance_workbook(store, path, plan, *, cancelled=None):
         failed = summary.get('failed') if isinstance(summary, dict) else None
         if type(failed) is int and failed > 0:
             return {'applied': False, 'reason': f'officecli batch 有 {failed} 条命令未成功'}
-        run_json([binary, 'close', str(path)], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
+        run_json([binary, 'close', str(platform_support.filesystem_path(path))], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
         if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         return {'applied': True, 'reason': None}
     except InterruptedError:
@@ -420,31 +427,57 @@ def _png_size(payload):
 
 
 def _render_directory(store, digest):
-    directory = store.root / 'office' / 'renders' / digest
-    directory.mkdir(parents=True, exist_ok=True)
-    if not directory.resolve().is_relative_to((store.root / 'office' / 'renders').resolve()):
+    root = store.root / 'office' / 'renders'
+    directory = root / digest
+    # Concurrent Windows mkdir/resolve can leave only one path with the
+    # extended prefix. Compare the same physical form, including redirects.
+    if not platform_support.filesystem_path(directory).resolve().is_relative_to(
+            platform_support.filesystem_path(root).resolve()):
         raise ValueError('渲染缓存路径无效')
+    platform_support.filesystem_path(directory).mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def _replace_cache_file(source, destination):
+    source_io = platform_support.filesystem_path(source)
+    destination_io = platform_support.filesystem_path(destination)
+    for attempt in range(5):
+        try:
+            os.replace(source_io, destination_io)
+            return
+        except PermissionError as exc:
+            # Windows readers can briefly prevent atomic replacement. Retry
+            # only these sharing/access errors, for at most 100 ms in total;
+            # persistent permission failures still reach the caller.
+            if os.name != 'nt' or getattr(exc, 'winerror', None) not in (5, 32) or attempt == 4:
+                raise
+            time.sleep(0.01 * (attempt + 1))
 
 
 def _atomic_bytes(path, data):
     temporary = path.with_name(path.name + '.' + uid('write') + '.tmp')
+    temporary_io = platform_support.filesystem_path(temporary)
     try:
-        temporary.write_bytes(data)
-        os.replace(temporary, path)
+        temporary_io.write_bytes(data)
+        _replace_cache_file(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        temporary_io.unlink(missing_ok=True)
 
 
-def _cached_render(directory, digest, page):
+def _cached_render(directory, digest, page, *, worksheet=None):
     path = directory / f'page-{page:04d}.png'
-    record = path.with_suffix('.json')
+    record = platform_support.filesystem_path(path.with_suffix('.json'))
     if not record.is_file():
         return None
     try:
         metadata = json.loads(record.read_text(encoding='utf-8'))
-        if not isinstance(metadata, dict) or metadata.get('source_sha256') != digest or metadata.get('page') != page:
+        if (not isinstance(metadata, dict) or metadata.get('cache_version') != RENDER_CACHE_VERSION
+                or metadata.get('source_sha256') != digest or metadata.get('page') != page
+                or (worksheet is not None and metadata.get('worksheet') != worksheet)):
             return None
+        cached_sheet = metadata.get('worksheet')
+        if cached_sheet is not None:
+            _check_xlsx_preview_cells(cached_sheet.get('cells') if isinstance(cached_sheet, dict) else None)
         if 'image_file' in metadata:
             image_hash = metadata.get('image_sha256')
             if not isinstance(image_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', image_hash):
@@ -453,7 +486,7 @@ def _cached_render(directory, digest, page):
             if metadata['image_file'] != name:
                 return None
             path = directory / name
-        payload = path.read_bytes()
+        payload = platform_support.filesystem_path(path).read_bytes()
         if hashlib.sha256(payload).hexdigest() != metadata.get('image_sha256'):
             return None
         width, height = _png_size(payload)
@@ -461,11 +494,48 @@ def _cached_render(directory, digest, page):
         return None
     return {'page': page, 'path': str(path), 'width': width, 'height': height,
             'image_sha256': metadata['image_sha256'], 'digest': digest,
-            'tool_version': metadata.get('tool_version'), 'cached': True}
+            'tool_version': metadata.get('tool_version'), 'cached': True,
+            **({'worksheet': metadata['worksheet']} if metadata.get('worksheet') else {})}
+
+
+def _check_xlsx_preview_cells(cells):
+    from openpyxl.utils.cell import range_boundaries
+    if not isinstance(cells, str) or not re.fullmatch(r'A1:[A-Z]{1,3}[1-9][0-9]*', cells):
+        raise ValueError('工作表预览范围无效')
+    _, _, columns, rows = range_boundaries(cells)
+    if columns > MAX_XLSX_PREVIEW_COLUMNS or rows > MAX_XLSX_PREVIEW_ROWS:
+        raise ValueError(f'工作表范围 {cells} 超出本地预览支持的 {MAX_XLSX_PREVIEW_ROWS} 行、'
+                         f'{MAX_XLSX_PREVIEW_COLUMNS} 列；请下载 Excel 查看完整内容，文件不受影响')
+
+
+def _xlsx_worksheet(path, page):
+    """Select the visible worksheet's cell extent, without rewriting the file.
+
+    OfficeCLI's --page selects document pages/slides, not Excel worksheets.
+    Its --range selects and reveals the worksheet containing the given cells.
+    The slash form also keeps '!' in a worksheet name unambiguous.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    workbook = load_workbook(platform_support.filesystem_path(path), read_only=True)
+    try:
+        sheets = [sheet for sheet in workbook.worksheets if sheet.sheet_state == 'visible']
+        if page > len(sheets):
+            raise ValueError(f'工作表序号 {page} 超出范围；文件有 {len(sheets)} 张可见工作表')
+        sheet = sheets[page - 1]
+        cells = f'A1:{get_column_letter(sheet.max_column or 1)}{sheet.max_row or 1}'
+        _check_xlsx_preview_cells(cells)
+        # OfficeCLI embeds data paths in a double-quoted CSS selector. Excel
+        # names allow quotes, so escape them for that selector, not a shell.
+        selector_name = sheet.title.replace('"', '\\"')
+        return {'name': sheet.title, 'cells': cells,
+                'range': f'/{selector_name}/{cells}', 'count': len(sheets)}
+    finally:
+        workbook.close()
 
 
 def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT):
-    """Render one page via `view <file> screenshot --page N -o <out> --json`.
+    """Render a page/slide, or a visible Excel worksheet's cell range.
 
     Output lands in the content-addressed cache office/renders/<sha>/ with a
     hash-bound sidecar, mirroring the PDF page render cache.
@@ -476,39 +546,43 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
         raise ValueError('未检测到 OfficeCLI 或未开启')
     if type(page) is not int or page < 1:
         raise ValueError('页码必须为从 1 开始的整数')
+    worksheet = _xlsx_worksheet(target, page) if target.suffix.lower() == '.xlsx' else None
     digest = _file_sha256(target)
     directory = _render_directory(store, digest)
-    cached = _cached_render(directory, digest, page)
+    cached = _cached_render(directory, digest, page, worksheet=worksheet)
     if cached:
         return cached
     # Per-request staging name: concurrent renders of the same page must not
     # write into (or clean up) each other's temporary file.
     staging = directory / f'.render-{page:04d}-{uid("render")}.tmp.png'
+    staging_io = platform_support.filesystem_path(staging)
     try:
-        outcome = run_json([binary, 'view', str(target), 'screenshot', '--page', str(page),
-                            '-o', str(staging), '--json'], timeout=timeout, deadline=deadline)
+        selector = ['--range', worksheet['range']] if worksheet else ['--page', str(page)]
+        outcome = run_json([binary, 'view', str(target), 'screenshot', *selector,
+                            '-o', str(staging_io), '--json'], timeout=timeout, deadline=deadline)
         if not outcome['ok']:
             if outcome['reason'] == BUDGET_EXHAUSTED:
                 raise BudgetExhausted('预览失败：' + BUDGET_EXHAUSTED)
             raise ValueError('预览失败，不影响文件本身：' + str(outcome['reason']))
-        payload = staging.read_bytes()
+        payload = staging_io.read_bytes()
         width, height = _png_size(payload)
         image_hash = hashlib.sha256(payload).hexdigest()
         # Publish immutable image bytes first, then atomically replace the page
         # manifest. Concurrent readers/writers never see another image paired
         # with this metadata, including across separate server processes.
         destination = directory / f'page-{page:04d}-{image_hash}.png'
-        os.replace(staging, destination)
+        _replace_cache_file(staging, destination)
     finally:
-        if staging.exists():
-            staging.unlink()
-    metadata = {'source_sha256': digest, 'page': page,
+        staging_io.unlink(missing_ok=True)
+    metadata = {'cache_version': RENDER_CACHE_VERSION, 'source_sha256': digest, 'page': page,
                 'image_sha256': image_hash, 'image_file': destination.name,
-                'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height}
+                'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height,
+                **({'worksheet': worksheet} if worksheet else {})}
     _atomic_bytes(directory / f'page-{page:04d}.json', json.dumps(metadata, sort_keys=True).encode())
     return {'page': page, 'path': str(destination), 'width': width, 'height': height,
             'image_sha256': metadata['image_sha256'], 'digest': digest,
-            'tool_version': metadata['tool_version'], 'cached': False}
+            'tool_version': metadata['tool_version'], 'cached': False,
+            **({'worksheet': worksheet} if worksheet else {})}
 
 
 def _resolve_target(store, kind, identity):
@@ -572,7 +646,8 @@ def render_preview(store, body):
         cached_all = cached_all and found['cached']
         rendered.append({'page': page,
                          'url': f"/api/office-image?digest={found['digest']}&page={page}",
-                         'width': found['width'], 'height': found['height']})
+                         'width': found['width'], 'height': found['height'],
+                         **({'worksheet': found['worksheet']} if found.get('worksheet') else {})})
     return {'target': {'kind': target['kind'], 'id': target['id'], 'name': target['name']},
             'tool': BINARY, 'tool_version': version(binary),
             'cached': bool(rendered) and cached_all, 'pages': rendered,
@@ -592,4 +667,4 @@ def office_image(store, digest, page):
     found = _cached_render(_render_directory(store, digest), digest, number)
     if not found:
         raise ValueError('渲染缓存不存在或绑定不一致')
-    return Path(found['path']).read_bytes()
+    return platform_support.filesystem_path(found['path']).read_bytes()
