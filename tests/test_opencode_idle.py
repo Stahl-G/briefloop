@@ -21,19 +21,6 @@ def expire(h):
     with h._lock:h._client_used_at=time.monotonic()-h.CLIENT_IDLE_SECONDS-1
     h._reap_idle_client(h._idle_epoch)
 
-def test_idle_releases_host_preserves_cache_and_reopens_saved_session(tmp_path):
-    clients=[]
-    def factory(root):
-        c=Client(root);clients.append(c);return c
-    h=OpencodeHarness(Store(tmp_path),factory)
-    try:
-        expected=h.list_models();first=h.client
-        expire(h)
-        assert first.closed and h.client is None
-        assert h.list_models()==expected and h.client is None
-        assert h._client().messages('persisted-session')==[{'session':'persisted-session'}]
-        assert len(clients)==2 and h.client is clients[1]
-    finally:h.close()
 
 def test_directory_request_lease_and_busy_turn_block_idle_cleanup(tmp_path):
     h=OpencodeHarness(Store(tmp_path),Client)
@@ -220,3 +207,19 @@ def test_explicit_close_waits_for_client_startup(tmp_path):
         if starting.ident:starting.join(2)
         if closing.ident:closing.join(2)
         h.close()
+
+
+def test_idle_releases_host_refreshes_directory_and_reopens_saved_session(tmp_path):
+    clients=[]
+    def factory(root):
+        c=Client(root);clients.append(c);return c
+    h=OpencodeHarness(Store(tmp_path),factory)
+    try:
+        expected=h.list_models();first=h.client
+        expire(h)
+        assert first.closed and h.client is None
+        assert h.list_models()==expected and h.client is not None
+        assert h._client().messages('persisted-session')==[{'session':'persisted-session'}]
+        assert len(clients)==2 and h.client is clients[1]
+    finally:h.close()
+

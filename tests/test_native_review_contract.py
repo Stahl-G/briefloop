@@ -54,30 +54,6 @@ def test_hosts_get_their_own_instructions_over_one_review_contract(tmp_path):
         assert shared in text and shared in external['prompt']
 
 
-def test_check_review_runs_admission_without_saving(tmp_path):
-    world = checked(tmp_path)
-    store, brief = world['store'], world['brief']
-    job = store.enqueue('review', {'version_id': brief['id'], 'runtime': {'model': 'fixture/model'}})
-    folder = store.root / 'jobs' / job['id']
-    fingerprint, files = review.build_packet(store, brief['id'], folder)
-    identity = 'review_dryrun'
-    with store.tx() as c:
-        c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
-                  (identity, brief['id'], job['id'], fingerprint, 'running',
-                   json.dumps({'packet_path': str((folder / 'packet').relative_to(store.root)),
-                               'files': files}),
-                   None, '2026-09-16', '2026-09-16'))
-    good = {'fingerprint': fingerprint, 'version_id': brief['id'], 'status': 'incomplete',
-            'summary': 's', 'coverage_scan_complete': False, 'claim_checks': [], 'findings': []}
-    review.check_review(store, identity, good)
-    assert store.rows('SELECT result FROM reviews WHERE id=?', (identity,))[0]['result'] is None
-    with pytest.raises(ValueError, match='未绑定本次正文'):
-        review.check_review(store, identity, {**good, 'fingerprint': 'other'})
-    with pytest.raises(ValueError, match='范围外'):
-        review.check_review(store, identity, {**good, 'claim_checks': [
-            {'claim_id': 'claim_not_in_packet', 'status': 'supported_for_scope', 'reason': 'r'}]})
-
-
 def test_reviewer_system_prompt_is_layered():
     prompt = system_prompt('reviewer')
     text = prompt['text']

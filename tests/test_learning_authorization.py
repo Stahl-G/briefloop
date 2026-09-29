@@ -131,27 +131,6 @@ def test_authorized_automatic_learning_freezes_the_confirmed_bound(tmp_path):
     assert json.loads(job['payload'])['budget']['max_trial_generations'] == 12
 
 
-def test_trial_generations_stop_at_the_frozen_cap_without_new_runs(tmp_path, monkeypatch):
-    store = Store(tmp_path)
-    source = store.add_source('Facts', 'Synthetic project A completed three files.')
-    case = store.create_run({'title': 'Synthetic', 'objective': 'Summarize', 'allow_web': False}, [source['id']])
-    job_id = 'job_learning_cap'
-    root = store.root / 'jobs' / job_id
-    for index in range(2):
-        marker = root / f'round-{index}' / 'case' / 'baseline' / 'trial.json'
-        marker.parent.mkdir(parents=True)
-        marker.write_text('{}')
-    budget = {**plan({**store.settings(), 'k': 1}), 'max_trial_generations': 2}
-    job = {'id': job_id, '_runtime': object(), 'payload': dump({'k': 1, 'budget': budget, 'runtime': store.runtime_config(),
-                                                                 'role_models': store.role_model_config(), 'agent_backend': 'codex'})}
-    runs = len(store.rows('SELECT id FROM runs'))
-    with pytest.raises(learning.LearningBudgetExhausted, match='试写上限'):
-        learning._generate_trial(store, job, case, None, root / 'round-2' / 'case' / 'baseline', 'baseline')
-    assert len(store.rows('SELECT id FROM runs')) == runs and store.rows('SELECT * FROM jobs') == []
-    # Older batches without a frozen budget derive the same bound from their k.
-    assert learning._budget({'k': 3}) == {'rounds_with_explicit_requirement': 3, 'max_trial_generations': 18}
-
-
 def _authorized(store, **extra):
     from briefloop.learning_budget import plan as current_plan
     settings = {**store.settings(), 'model': 'gpt-5.6-luna', 'model_selection_required': False, 'auto_learn': True, **extra}

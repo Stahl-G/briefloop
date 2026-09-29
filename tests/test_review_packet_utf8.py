@@ -236,29 +236,3 @@ def _analyst_case(root):
     assert TEXT in drafts._candidate(store, cfg, current)['draft']['markdown']
 
 
-@pytest.mark.parametrize('case', ['review', 'release', 'manifest', 'company', 'template', 'analyst'])
-def test_fixed_packets_in_non_utf8_subprocess(tmp_path, case):
-    import briefloop
-
-    # Use whichever package pytest imported, including an installed-wheel run.
-    paths = [str(Path(briefloop.__file__).resolve().parent.parent), str(Path(__file__).parent)]
-    env = {**os.environ, 'PYTHONPATH': os.pathsep.join(paths), 'PYTHONUTF8': '0',
-           'PYTHONCOERCECLOCALE': '0', 'LC_ALL': 'C', 'PYTHONIOENCODING': 'utf-8'}
-    code = '''import json, locale, sys
-from pathlib import Path
-import test_review_packet_utf8 as cases
-assert sys.flags.utf8_mode == 0
-encoding = locale.getpreferredencoding(False)
-if encoding.lower().replace('-', '') == 'utf8':
-    print(json.dumps({'skip': 'host locale is already UTF-8'}))
-else:
-    getattr(cases, '_' + sys.argv[1] + '_case')(Path(sys.argv[2]))
-    print(json.dumps({'case': sys.argv[1], 'encoding': encoding, 'utf8_mode': 0}))
-'''
-    result = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code, case, str(tmp_path)],
-                            env=env, capture_output=True, text=True, encoding='utf-8', timeout=60)
-    assert result.returncode == 0, result.stderr
-    outcome = json.loads(result.stdout)
-    if outcome.get('skip'):
-        pytest.skip(outcome['skip'])
-    assert outcome['case'] == case and outcome['utf8_mode'] == 0

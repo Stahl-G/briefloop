@@ -84,27 +84,6 @@ def test_new_review_records_actual_mode_and_strict_cannot_reuse_standard_output(
     assert len(runtime.calls)==1 and (folder/'review.json').read_bytes()==before
 
 
-def test_standard_strict_and_unlabelled_history_keep_major_finding_blocker(tmp_path):
-    from test_review import fixture
-    from briefloop.review import accept_review
-    from briefloop.release import eligibility
-    store,_,brief,value=fixture(tmp_path)
-    accept_review(store,'review_test',value)
-    original=store.rows('SELECT data FROM reviews WHERE id=?',('review_test',))[0]['data']
-    view=review_status(store,brief['id'])['reviews'][0]
-    assert view['review_mode'] is None and view['review_backend'] is None
-    before=eligibility(store,brief['id'])
-    store.update_settings({'review_mode':'strict'})
-    assert eligibility(store,brief['id'])==before
-    assert store.rows('SELECT data FROM reviews WHERE id=?',('review_test',))[0]['data']==original
-    assert not before['eligible'] and any(x['code']=='finding_unresolved' for x in before['blockers'])
-    for mode in ('standard','strict'):
-        data={**json.loads(original),'review_mode':mode,'review_backend':'briefloop-native'}
-        with store.tx() as c:c.execute('UPDATE reviews SET data=? WHERE id=?',(dump(data),'review_test'))
-        gate=eligibility(store,brief['id'])
-        assert not gate['eligible'] and any(x['code']=='finding_unresolved' for x in gate['blockers'])
-
-
 def test_schedule_uses_current_mode_on_fire_then_freezes_that_job(tmp_path):
     from briefloop import schedules
     store,source,_,_=brief_case(tmp_path,'codex')

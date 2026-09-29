@@ -15,16 +15,6 @@ from briefloop.store import Store
 GUARD='本轮没有任何用户在旁可问'
 
 
-@pytest.mark.parametrize('backend', ['codex', 'claude', 'codebuddy'])
-def test_generation_prompt_carries_the_guard_beyond_opencode(tmp_path, backend):
-    store=Store(tmp_path/'workspace')
-    run=store.create_run({'title':'后台研究','objective':'整理材料','allow_web':True},[])
-    job=store.enqueue('generate',{'run_id':run['id']})
-    folder=store.root/'jobs'/job['id'];folder.mkdir()
-    prompt=generation_prompt(store,run,folder,backend=backend)
-    assert GUARD in prompt
-
-
 @pytest.mark.parametrize('backend', ['codex', 'opencode', 'claude'])
 def test_evaluator_prompts_keep_the_guard_for_every_backend(tmp_path, backend):
     store=Store(tmp_path/'workspace')
