@@ -59,7 +59,7 @@ jobs:
           if (!$release.isDraft -or $release.targetCommitish -ne $env:SOURCE_SHA) { throw 'Expected a draft tied to the frozen commit' }
           New-Item -ItemType Directory -Force desktop/electron/backend | Out-Null
           gh release download $env:RELEASE_TAG --pattern "briefloop-$version-py3-none-any.whl" --dir desktop/electron/backend
-          python -c "import os,json,hashlib,pathlib,tomllib; p=pathlib.Path('desktop/electron/backend'); w=next(p.glob('*.whl')); h=hashlib.sha256(w.read_bytes()).hexdigest(); assert h==os.environ['WHEEL_SHA256']; v=tomllib.load(open('pyproject.toml','rb'))['project']['version']; (p/'manifest.json').write_text(json.dumps({'version':v,'wheel':w.name,'sha256':h})+'\n')"
+          python desktop/electron/scripts/prepare-backend.py --wheel "desktop/electron/backend/briefloop-$version-py3-none-any.whl" --sha256 $env:WHEEL_SHA256 --release-commit $env:SOURCE_SHA
           python tests/check_distribution.py "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
           python -m pip install "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
       - name: Build native installer and differential update metadata
