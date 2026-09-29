@@ -380,6 +380,11 @@ function questionAnswers(questions, answers) {
   const result = /* @__PURE__ */ Object.create(null);
   for (const q of questions) {
     const values2 = answers[q.id]?.answers;
+    if (q.inputType === "editor") {
+      if (!Array.isArray(values2) || values2.length !== 1 || typeof values2[0] !== "string") throw Error("\u7F16\u8F91\u5185\u5BB9\u5FC5\u987B\u4E3A\u6587\u5B57");
+      result[q.id] = { answers: [values2[0]] };
+      continue;
+    }
     if (!Array.isArray(values2) || !values2.length || values2.length > 100 || values2.some((v) => typeof v !== "string" || !v.trim() || v.length > 1e4)) throw Error("\u56DE\u7B54\u683C\u5F0F\u65E0\u6548");
     const chosen = [...new Set(values2.map((v) => v.trim()))];
     if (!q.multiSelect && chosen.length !== 1) throw Error("\u8BE5\u95EE\u9898\u53EA\u80FD\u9009\u62E9\u4E00\u4E2A\u7B54\u6848");
@@ -421,7 +426,8 @@ function piQuestion(request) {
     question: [request.title, request.message].filter((v) => typeof v === "string" && v.trim()).join("\n") || "\u8BF7\u8F93\u5165\u56DE\u7B54",
     options: labels.map((label) => ({ label, description: "" })),
     multiSelect: false,
-    allowCustom: !confirm && !select
+    allowCustom: !confirm && !select,
+    ...request.method === "editor" ? { inputType: "editor", prefill: typeof request.prefill === "string" ? request.prefill : "" } : {}
   };
 }
 

@@ -219,15 +219,24 @@ test('Pi extension selection, free text, confirmation and editor use native ques
    else if(m.type==='extension_ui_response'){
     if(m.id==='select'){if(m.value!=='蓝'||m.confirmed!==undefined)process.exit(2);send({type:'extension_ui_request',id:'input',method:'input',title:'输入名称'});}
     else if(m.id==='input'){if(m.value!=='测试')process.exit(3);send({type:'extension_ui_request',id:'confirm',method:'confirm',title:'确认继续',message:'这是扩展确认'});}
-    else if(m.id==='confirm'){if(m.confirmed!==false||m.value!==undefined)process.exit(4);send({type:'extension_ui_request',id:'editor',method:'editor',title:'编辑正文'});}
-    else{if(m.value!=='第一行\\n第二行')process.exit(5);send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'OK'}],stopReason:'stop'}});send({type:'agent_settled'});}
+    else if(m.id==='confirm'){if(m.confirmed!==false||m.value!==undefined)process.exit(4);send({type:'extension_ui_request',id:'editor',method:'editor',title:'编辑正文',prefill:'  原始正文\\n'});}
+    else if(m.id==='editor'){if(m.value!=='  第一行\\n第二行\\n')process.exit(5);send({type:'extension_ui_request',id:'empty-editor',method:'editor',title:'清空正文',prefill:'待清空'});}
+    else{if(m.value!==''||m.cancelled!==undefined)process.exit(6);send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'OK'}],stopReason:'stop'}});send({type:'agent_settled'});}
    }
   });`);
  b.send(1,'start',{...f,runtime_id:'pi',execution_id:'pi-questions',prompt:'fixture',permission:'runtime-native'});
  let next=2;
- for(const [id,value] of [['select','蓝'],['input','测试'],['confirm','取消'],['editor','第一行\n第二行']]){
+ for(const [id,value] of [['select','蓝'],['input','测试'],['confirm','取消'],['editor','  第一行\n第二行\n'],['empty-editor','']]){
   const q=(await b.wait(x=>x.params?.request_id===id)).params;
-  assert.equal(q.type,'user_input');assert.equal(q.questions[0].allowCustom,['input','editor'].includes(id));
+  assert.equal(q.type,'user_input');assert.equal(q.questions[0].allowCustom,['input','editor','empty-editor'].includes(id));
+  if(id.endsWith('editor')){
+   assert.equal(q.questions[0].inputType,'editor');
+   assert.equal(q.questions[0].prefill,id==='editor'?'  原始正文\n':'待清空');
+   for(const invalid of [[],['a','b'],[null]]){
+    const invalidId=next++;b.send(invalidId,'answer',{execution_id:'pi-questions',request_id:id,answers:{answer:{answers:invalid}}});
+    assert.ok((await b.wait(x=>x.id===invalidId)).error,'editor requires exactly one string');
+   }
+  }
   b.send(next++,'answer',{execution_id:'pi-questions',request_id:id,answers:{answer:{answers:[value]}}});
  }
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');

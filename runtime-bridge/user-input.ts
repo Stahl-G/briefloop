@@ -5,6 +5,12 @@ export function questionAnswers(questions:any[],answers:any):Record<string,{answ
  const result=Object.create(null);
  for(const q of questions){
   const values=answers[q.id]?.answers;
+  // Editor text is a document, not a choice label. Preserve whitespace and an
+  // intentionally empty document at both bridge validation boundaries.
+  if(q.inputType==='editor'){
+   if(!Array.isArray(values)||values.length!==1||typeof values[0]!=='string')throw Error('编辑内容必须为文字');
+   result[q.id]={answers:[values[0]]};continue;
+  }
   if(!Array.isArray(values)||!values.length||values.length>100||values.some(v=>typeof v!=='string'||!v.trim()||v.length>10000))throw Error('回答格式无效');
   const chosen=[...new Set(values.map((v:string)=>v.trim()))];
   if(!q.multiSelect&&chosen.length!==1)throw Error('该问题只能选择一个答案');
@@ -42,5 +48,6 @@ export function piQuestion(request:any){
  if(!Array.isArray(labels)||labels.length>100||labels.some(v=>typeof v!=='string'||!v.trim())||(select&&!labels.length))throw Error('Pi 问题选项格式无效');
  return {id:'answer',header:typeof request.title==='string'?request.title:'Pi',
   question:[request.title,request.message].filter(v=>typeof v==='string'&&v.trim()).join('\n')||'请输入回答',
-  options:labels.map(label=>({label,description:''})),multiSelect:false,allowCustom:!confirm&&!select};
+  options:labels.map(label=>({label,description:''})),multiSelect:false,allowCustom:!confirm&&!select,
+  ...(request.method==='editor'?{inputType:'editor',prefill:typeof request.prefill==='string'?request.prefill:''}:{})};
 }
