@@ -4,6 +4,7 @@ import {runZcode,zcodeModels} from './zcode.js';
 import {checkWindowsCommandLine} from './windows-command.js';
 import {claudeModels,claudePermissionArgs,sanitizeClaudeModel} from './claude.js';
 import {claudeQuestions,claudeQuestionInput,questionAnswers} from './user-input.js';
+import {permissionsFromHelp,unavailablePermissions,selectDiscoveredMode} from './permission-catalog.js';
 // BriefLoop protocol glue. Upstream Apache helpers: third_party/open-design/NOTICE.md.
 import {spawn, execFile} from 'node:child_process';
 import {accessSync, constants, readFileSync, existsSync} from 'node:fs';
@@ -169,9 +170,31 @@ function acpAutoMode(session:any){
 }
 async function permissionOptions(p:any){
  const bin=findBin(defFor(p.runtime_id),p.path);if(!bin)throw Error('Runtime not installed');
+ if(['claude','zcode','antigravity','codex','pi'].includes(p.runtime_id)){
+  let catalog;
+  try{const help=await exec(bin,['--help'],{env,cwd:p.cwd||process.cwd(),timeout:8000,maxBuffer:512*1024});catalog=permissionsFromHelp(p.runtime_id,help.stdout||help.stderr||'')}
+  catch{return unavailablePermissions(p.runtime_id,'宿主权限模式帮助读取失败；未添加预设模式。')}
+  if(p.runtime_id==='claude'&&p.model&&catalog.modes.length){
+   try{
+    const metadata=await claudeModels(bin,{...p,cwd:p.cwd||process.cwd()},launch,terminate);
+    const selected=metadata.models.find((model:any)=>model.id===p.model||model.resolved_model===p.model);
+    if(typeof selected?.supports_auto_mode==='boolean')catalog.model_supports_auto=selected.supports_auto_mode;
+    if(selected?.supports_auto_mode===false){
+     catalog.modes=catalog.modes.map((mode:any)=>mode.id==='auto'?{...mode,disabled:true,disabled_reason:'宿主声明当前模型不支持 auto'}:mode);
+     catalog.auto_available=false;catalog.default_mode='native';delete catalog.default_source;
+    }
+   }catch{catalog.model_diagnostic='未能读取当前模型的 Auto 能力；目录仅确认 CLI 支持的模式值。'}
+  }
+  return catalog;
+ }
+ if(!(p.runtime_id in acpArgs)&&p.runtime_id!=='mimo')return unavailablePermissions(p.runtime_id,'此宿主未接入原生权限模式目录。');
  const conn=connect(bin,p.runtime_id==='mimo'?['acp']:acpArguments(p.runtime_id,bin),p.cwd,()=>{},(_m,reply)=>reply({error:'Metadata probe cannot grant permissions'}));
  try{const {session}=await handshake(conn,p),automatic=acpAutoMode(session);return {modes:acpPermissionModes(session),default_mode:automatic?.id||'native',auto_available:!!automatic,
-  note:automatic?'Auto 使用宿主公开的自动审批模式；需要询问的操作仍交给用户。':'宿主未公开 Auto 模式，保留原生权限；不会改用跳过权限或 yolo。'};}finally{terminate(conn.child);}
+  source:{kind:'runtime',label:p.runtime_id+' ACP session/new'},
+  ...(typeof session.modes?.currentModeId==='string'?{current_mode:session.modes.currentModeId}:{}),
+  ...(automatic?{default_source:{kind:'adapter',label:'BriefLoop 默认启动选择'}}:{}),refreshed_at:new Date().toISOString()};}
+ catch{return unavailablePermissions(p.runtime_id,'宿主 ACP 权限模式读取失败；未添加预设模式。')}
+ finally{terminate(conn.child);}
 }
 async function reasoningOptions(p:any){
  const profile=reasoningProfile(p.runtime_id);
@@ -235,6 +258,9 @@ async function runAntigravity(p:any,state:any){
  });
  const prompt=imagePaths.length?p.prompt+'\n\n用户附加的图片（请调用 view_file 实际读取后回答，不要根据文件名猜测）：\n'+imagePaths.map((f:string)=>JSON.stringify(f)).join('\n'):p.prompt;
  const args=['--input-format','stream-json','--output-format','stream-json','--disable-slash-commands'];
+ const permissionCatalog=await permissionOptions({...p,path:state.bin}),mode=selectDiscoveredMode(permissionCatalog,p.host_options?.mode,p.runtime_id);
+ if(state.cancelled)return;
+ if(mode!=='native')args.push('--mode',mode);
  if(p.effort)args.push('--effort',p.effort);
  if(p.model&&p.model!=='default')args.push('--model',reasoningModel(p.runtime_id,p.model,p.effort));
  if(p.session_id)args.push('--conversation',p.session_id);
@@ -267,7 +293,11 @@ async function runAntigravity(p:any,state:any){
   child.stdin.end(JSON.stringify({event:'user',message:{content:prompt}})+'\n');
  });
 }
-async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';let args=claude?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--permission-prompt-tool','stdio',...claudePermissionArgs(p.host_options)]:['run','--format','json'];
+async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';
+ let permissionArgs:string[]=[];
+ if(claude){const catalog=await permissionOptions({...p,path:state.bin}),mode=selectDiscoveredMode(catalog,p.host_options?.mode,'claude');permissionArgs=claudePermissionArgs({mode},catalog.modes);}
+ if(state.cancelled)return;
+ let args=claude?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--permission-prompt-tool','stdio',...permissionArgs]:['run','--format','json'];
  if(claude&&p.effort)args.push('--effort',p.effort);
  if(!claude&&p.effort)args.push('--variant',p.effort);
  if(!claude&&p.host_options?.mode!=='native'){const options=await permissionOptions({...p,path:state.bin}),mode=p.host_options?.mode??options.default_mode;if(mode&&mode!=='native'){if(!options.modes.some((m:any)=>m.id===mode))throw Error('Host does not advertise this mode');args.push('--agent',mode);}}
@@ -288,7 +318,7 @@ async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';l
  emit(p.execution_id,'question',{request_id:id,type:'permission',title:request.title||request.tool_name||'Claude 请求权限',tool:request.tool_name,input:request.input||{},options});return;
  }if(m.type==='assistant'){for(const b of m.message?.content||[]){if(b.type==='text')emit(p.execution_id,'text',{text:b.text,delta:true});if(b.type==='thinking'&&b.thinking)emit(p.execution_id,'reasoning',{text:b.thinking,delta:true});if(b.type==='tool_use'&&!/^(think|thinking|reasoning)$/i.test(b.name))emit(p.execution_id,'tool',{id:b.id,name:b.name,status:'running',input:b.input});}}if(m.type==='user')for(const b of m.message?.content||[])if(b.type==='tool_result')emit(p.execution_id,'tool',{id:b.tool_use_id,status:b.is_error?'failed':'completed',output:b.content});if(m.type==='result'){resultSeen=true;child.stdin.end();if(m.usage)emit(p.execution_id,'usage',{usage:m.usage});if(m.is_error){reject(Error('Host reported unsuccessful result'));terminate(child);}}}else{const part=m.part||{};if(m.type==='text')emit(p.execution_id,'text',{text:part.text||m.text||'',delta:true});if(m.type==='reasoning'||part.type==='reasoning')emit(p.execution_id,'reasoning',{text:part.text||m.text||'',delta:true});if(m.type==='tool_use'&&!/^(think|thinking|reasoning)$/i.test(part.tool))emit(p.execution_id,'tool',{id:part.callID,name:part.tool,status:part.state?.status,input:part.state?.input,output:part.state?.output});if(m.type==='step_finish'){resultSeen=true;emit(p.execution_id,'usage',{usage:part.tokens||{},cost:part.cost});}if(m.type==='error'){reject(Error([m.error?.name||'Host error',m.error?.data?.statusCode?'HTTP '+m.error.data.statusCode:''].filter(Boolean).join(' · ')));terminate(child);}}});child.stdout.setEncoding('utf8');child.stdout.on('data',c=>parser.feed(c));child.stderr.resume();child.on('error',e=>{clearTimeout(timer);reject(e);});child.stdin.on('error',()=>{});child.on('close',code=>{clearTimeout(timer);parser.flush();if(state.cancelled)resolve();else if(code===0&&resultSeen)resolve();else reject(Error('Runtime exited without successful result (code '+code+')'));});
  if(claude){const content:any[]=[{type:'text',text:p.prompt}];for(const img of p.images||[]){const f=typeof img==='string'?img:img.path;const mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'})[path.extname(f).toLowerCase()];if(!mime){terminate(child);reject(Error('Unsupported image'));return;}const data=readFileSync(f);if(data.length>20*1024*1024){terminate(child);reject(Error('Image exceeds 20 MiB'));return;}content.push({type:'image',source:{type:'base64',media_type:mime,data:data.toString('base64')}});}child.stdin.write(JSON.stringify({type:'user',message:{role:'user',content}})+'\n');}else child.stdin.end(p.prompt);});}
-async function execute(p:any,state:any){try{if(state.cancelled)return;if(p.runtime_id in acpArgs)await runAcp(p,state);else if(p.runtime_id==='pi')await runPi(p,state,launch,terminate,emit);else if(p.runtime_id==='antigravity')await runAntigravity(p,state);else if(p.runtime_id==='zcode')await runZcode(p,state,launch,terminate,emit);else await runStream(p,state);if(!state.cancelled&&!state.publicActivity)throw Error('Host ended without visible output or tool activity; verify host configuration');emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'completed'});}catch(e){if(!state.cancelled)emit(p.execution_id,'error',{message:String(e.message||e)});emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'failed',error:state.cancelled?undefined:String(e.message||e)});}finally{for(const q of state.questions.values())clearTimeout(q.timer);state.questions.clear();active.delete(p.execution_id);}}
+async function execute(p:any,state:any){try{if(state.cancelled)return;if(p.runtime_id in acpArgs)await runAcp(p,state);else if(p.runtime_id==='pi')await runPi(p,state,launch,terminate,emit);else if(p.runtime_id==='antigravity')await runAntigravity(p,state);else if(p.runtime_id==='zcode')await runZcode(p,state,launch,terminate,emit,()=>permissionOptions({...p,path:state.bin}));else await runStream(p,state);if(!state.cancelled&&!state.publicActivity)throw Error('Host ended without visible output or tool activity; verify host configuration');emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'completed'});}catch(e){if(!state.cancelled)emit(p.execution_id,'error',{message:String(e.message||e)});emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'failed',error:state.cancelled?undefined:String(e.message||e)});}finally{for(const q of state.questions.values())clearTimeout(q.timer);state.questions.clear();active.delete(p.execution_id);}}
 async function handle(method:string,p:any){
  if(method==='discover')return discover(p);
  if(method==='list_models')return listModels(p);

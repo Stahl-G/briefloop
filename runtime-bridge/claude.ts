@@ -8,10 +8,10 @@ export function sanitizeClaudeModel(value:any):string|null{
  return trimmed.endsWith('[1m]')&&sanitizeCustomModel(trimmed.slice(0,-4))?trimmed:sanitizeCustomModel(trimmed);
 }
 
-export function claudePermissionArgs(options:any):string[]{
- const mode=options?.mode??'auto';
+export function claudePermissionArgs(options:any,modes:any[]):string[]{
+ const mode=options?.mode??'native';
  if(mode==='native')return [];
- if(!['auto','manual','acceptEdits','dontAsk','plan'].includes(mode))throw Error('Invalid Claude permission mode');
+ if(!modes.some(entry=>entry.id===mode&&!entry.disabled))throw Error('Claude 当前未公开可用的权限模式：'+String(mode));
  return ['--permission-mode',mode];
 }
 
@@ -45,6 +45,7 @@ export async function claudeModels(bin:string,p:any,launch:any,terminate:any){
       description:typeof row.description==='string'?row.description:'',
       ...(typeof row.resolvedModel==='string'?{resolved_model:row.resolvedModel}:{}),
       ...(typeof row.supportsEffort==='boolean'?{supports_effort:row.supportsEffort}:{}),
+      ...(typeof row.supportsAutoMode==='boolean'?{supports_auto_mode:row.supportsAutoMode}:{}),
       ...(levels?{reasoningOptions:levels.map((id:string)=>({id,label:id})),thinking_levels:levels}:{}),
       provider:'Claude Code'});
     }

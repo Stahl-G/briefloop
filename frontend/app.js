@@ -25,6 +25,7 @@ import {preflightSources,uploadPayload,sourceStatusLabel} from './uploads.js';
 import {runtimeCard,runtimeModelSummary,runtimeIcon} from './runtime-cards.js';
 import {createNativeRequests,requestKind} from './native-requests.js';
 import {createPermissionDirectory,permissionSelection} from './runtime-permission-modes.js';
+import {createRuntimePermissionPanel} from './runtime-permission-panel.js';
 import {createComposerOptions} from './composer-options.js';
 import {createOfficeTools} from './office-tools.js';
 import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
@@ -858,7 +859,7 @@ $('close-diff').onclick=()=>$('diff-dialog').close();
 const chat = {view:'active',home:true,sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
 const nativeRequests=createNativeRequests({api,getSessionId:()=>chat.id,refresh:()=>pollChat(true)});
 const composerOptions=createComposerOptions({$,getChat:()=>chat,getState:()=>state,availability:()=>compactFactAvailability('chat'),rememberDraft,openSettings:name=>{showSettings();settingsView(name)},openReview:()=>{page('setup');const panel=document.querySelector('.review-runtime-settings');panel.open=true;panel.scrollIntoView({block:'center'})}});
-const permissionDirectory=createPermissionDirectory({api,onChange:(backend,catalog)=>{if(backend!==chatBackendChoice())return;if(catalog.kind!=='native'&&!chat.hostOptions?.mode&&catalog.default_mode)chat.hostOptions={...chat.hostOptions,mode:catalog.default_mode};renderChatRuntimePermissions()}});
+const permissionDirectory=createPermissionDirectory({api,getModel:()=>($('chat-model')?.value||'').trim(),onChange:backend=>{if(backend===chatBackendChoice())renderChatRuntimePermissions()}});
 const chatStates={idle:'准备就绪',starting:'正在启动',running:'正在处理',complete:'已完成',completed:'已完成',failed:'运行失败',interrupted:'已中断',cancelled:'已停止',queued:'已排队',sending:'发送中',delivered:'已发送',streaming:'正在回复'};
 const chatActive=()=>['running','starting'].includes(chat.session?.status);
 function chatBackendChoice(){return chat.nextBackend||chat.session?.runtime?.backend||state?.settings?.agent_backend||'codex'}
@@ -872,7 +873,7 @@ $('chat-backend').onchange=()=>{
  chat.nextBackend=$('chat-backend').value;chat.hostOptions={};reasoning.refresh();$('chat-mode').value='queue';
  const previous=[...chat.messages].reverse().find(m=>m.role==='user'&&m.runtime?.backend===chat.nextBackend)?.runtime;
  $('chat-model').value=previous?.model||'';$('chat-model-provider').value=previous?.model_provider||'';$('chat-service-tier').value=previous?.service_tier||'';assignEffort('chat-effort',previous?effortValue(previous,'effort'):settingsEffort(state.settings,chat.nextBackend));if($('chat-variant'))$('chat-variant').value=previous?.variant||(chat.nextBackend==='mimo'?previous?.effort:'')||'';
- chat.hostOptions=previous?.host_options||{};renderChatRuntimePermissions();if(previous?.permission)$('chat-permission').value=previous.permission;
+ chat.hostOptions=previous?.host_options||{};setChatPermission(previous?.permission||'');renderChatRuntimePermissions();
  chat.request=null;rememberDraft();updateComposer();refreshInlineModelPickers();
 };
 function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,variant:($('chat-variant')?.value||'').trim(),service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{},report_options:chat.reportOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
@@ -886,36 +887,16 @@ function restoreDraft({preserveNewDraft=false}={}){
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
  $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user'&&m.purpose!=='runtime_test')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};chat.reportOptions=d?.report_options||{};
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',Object.hasOwn(runtime,'effort')?effortValue(runtime,'effort'):'none');if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';
- $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
+ $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';setChatPermission(runtime.permission||'');
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
-const PERMISSION_MODES={
- 'workspace-write':{label:'读写工作区',note:'本轮可以读取并修改工作区文件。'},
- 'read-only':{label:'只读',note:'本轮只读取和解释资料，不修改文件，也不启动生成、评分或学习任务。'},
- 'runtime-native':{label:'由 CLI 自己控制',note:'该 CLI 按自己的权限设置运行，BriefLoop 不限制它的文件与联网范围。'}
-};
-function permissionModes(runtime){
- const caps=((runtimeCatalog||[]).find(r=>r.id===runtime)||{}).capabilities;
- // Before discovery finishes, fall back to what each host family supports.
- const modes=(caps?.permission_modes||(['codex','opencode','briefloop-native'].includes(runtime)?['workspace-write','read-only']:['runtime-native'])).filter(mode=>PERMISSION_MODES[mode]);
- return modes.length?modes:['workspace-write'];
-}
+function setChatPermission(value){const select=$('chat-permission');select.value=value;if(select.value!==value){select.add(new Option(value,value));select.value=value}}
 function renderChatRuntimePermissions(){
- const backend=chatBackendChoice(),select=$('chat-permission'),modes=permissionModes(backend);
- const catalog=typeof permissionDirectory==='undefined'?null:permissionDirectory.catalogs.get(backend),choice=catalog?.kind==='native'?permissionSelection(catalog,select.value):null;
- if(typeof permissionDirectory!=='undefined'&&!catalog)permissionDirectory.load(backend).catch(()=>{});
- const available=choice?.modes.length?[...choice.modes,...(choice.unavailable?[{id:choice.selected,name:choice.selected+' · 需要重选',disabled:true}]:[])]:modes.map(id=>({id,name:PERMISSION_MODES[id].label,description:PERMISSION_MODES[id].note}));
- const signature=JSON.stringify([backend,available]);
- if(renderChatRuntimePermissions.signature!==signature){
-  renderChatRuntimePermissions.signature=signature;
-  const previous=select.value;
-  select.replaceChildren(...available.map(mode=>{const option=new Option(mode.name||mode.id,mode.id);option.disabled=!!mode.disabled;return option}));
-  select.value=available.some(mode=>mode.id===previous)?previous:choice?.selected||available[0]?.id||'';
-  select.title=available.map(mode=>mode.description||'').filter(Boolean).join(' ');
-  // One option is not a choice; hide the control instead of showing an abstract label.
-  select.hidden=available.length<2;
- }
- if(!available.some(mode=>mode.id===select.value))select.value=choice?.selected||available[0]?.id||'';
+ const backend=chatBackendChoice(),select=$('chat-permission');
+ // The select remains a hidden draft carrier; visible choices come only from
+ // the current runtime catalog in the permission panel.
+ select.hidden=true;$('chat-permissions-native').hidden=true;
+ if(typeof permissionDirectory!=='undefined'&&!permissionDirectory.get(backend))permissionDirectory.load(backend).catch(()=>{});
  // Only offer mid-run interjection where the runtime can actually take it.
  const declaredCaps=((runtimeCatalog||[]).find(r=>r.id===backend)||{}).capabilities;
  const canSteer=backend===(chat.session?.runtime?.backend||backend)&&(declaredCaps?declaredCaps.steer!==false:backend==='codex');
@@ -927,11 +908,27 @@ function renderChatRuntimePermissions(){
  const effortField=document.querySelector('label[for="chat-effort"]');
  if(effortField)effortField.hidden=['opencode','briefloop-native','mimo'].includes(backend);
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(typeof permissionDirectory!=='undefined'){const catalog=permissionDirectory.catalogs.get(backend),chosen=catalog?.kind==='native'?$('chat-permission').value:chat.hostOptions?.mode;if(catalog?.modes?.length&&chosen&&!catalog.modes.some(mode=>mode.id===chosen))throw Error('原权限模式已不可用，请重新选择后发送。')}if(!['codex','opencode','briefloop-native'].includes(backend)){return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}}}if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('模型必须是 provider/model 形式');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
+function runtimeChoice(){
+ const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');
+ const backend=chatBackendChoice(),managed=['codex','opencode','briefloop-native'].includes(backend);
+ let permission=managed?$('chat-permission').value:'';
+ if(typeof permissionDirectory!=='undefined'){
+  const catalog=permissionDirectory.get(backend),chosen=managed?permission:chat.hostOptions?.mode;
+  if((managed||chosen)&&!catalog)throw Error('权限目录尚未读取完成，请稍后发送或打开权限面板刷新。');
+  if(catalog){
+   const choice=permissionSelection(catalog,chosen);
+   if(choice.unavailable)throw Error('原权限模式已不可用，请重新选择后发送。');
+   if(managed){permission=choice.selected;if(!permission)throw Error('未取得可用的默认权限，请打开权限面板重新选择。')}
+  }
+ }
+ if(!managed)return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}};
+ if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('模型必须是 provider/model 形式');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission}}
+ return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission};
+}
 function messageTime(value){return clock(value)}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
-function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id)){$(id).disabled=readonly||steering||chat.busy;if($(id+'-choices'))$(id+'-choices').disabled=$(id).disabled;}$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model,chatBackendChoice())||'选择模型';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=['opencode','briefloop-native','mimo'].includes(chatBackend)?(($('chat-variant')?.value||'').trim()||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${' / '+effort}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`;if(typeof modelDirectory!=='undefined')modelDirectory.refreshModelLabels()}
+function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();setChatPermission(runtime.permission||'workspace-write');$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id)){$(id).disabled=readonly||steering||chat.busy;if($(id+'-choices'))$(id+'-choices').disabled=$(id).disabled;}$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model,chatBackendChoice())||'选择模型';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=['opencode','briefloop-native','mimo'].includes(chatBackend)?(($('chat-variant')?.value||'').trim()||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${' / '+effort}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`;if(typeof modelDirectory!=='undefined')modelDirectory.refreshModelLabels()}
 function sessionBusy(session){if(!session)return false;if(typeof session.busy==='boolean')return session.busy;return ['starting','running','stopping'].includes(session.status)||!!session.turn_id||(session.id===chat.id&&(chat.messages.some(m=>['queued','sending','delivered','streaming'].includes(m.status))||chat.requests.some(r=>r.status==='pending')))}
 function renderSessions(){
  const signature=JSON.stringify([chat.view,chat.id,chat.sessions]);if(renderSessions.signature===signature)return;renderSessions.signature=signature;$('session-view').value=chat.view;
@@ -1267,7 +1264,16 @@ async function initChat(signal){
 }
 
 $('chat-allow-web').onchange=rememberDraft;
-let permissionPanel=null,permissionLoad=0;
+const permissionPanel=createRuntimePermissionPanel({
+ $,api,directory:permissionDirectory,getBackend:chatBackendChoice,getModel:()=>($('chat-model').value||'').trim(),runtimeName,
+ getSelection:catalog=>['codex','opencode','briefloop-native'].includes(catalog.backend)?$('chat-permission').value:chat.hostOptions?.mode,
+ onSelect:(mode,catalog)=>{
+  if(catalog.kind==='native')setChatPermission(mode)
+  else chat.hostOptions={...chat.hostOptions,mode};
+  rememberDraft();updateComposer();
+ },
+ isLocked:()=>$('chat-permission').disabled||[...chat.events.values()].some(event=>event.kind==='session/internal')
+});
 $('chat-permissions-refresh').onclick=loadPermissionPanel;
 $('chat-permissions-close').onclick=()=>$('chat-permissions-dialog').close();
 $('chat-permissions-open').onclick=async()=>{const dialog=$('chat-permissions-dialog');if(!dialog.open)dialog.showModal();renderPermissionRequests();await loadPermissionPanel()};
@@ -1291,58 +1297,7 @@ function renderPermissionRequests(){
  if(!$('chat-permissions-dialog').open)return;
  nativeRequests.render($('chat-permissions-pending'),chat.requests,{permissionsOnly:true,empty:'<p class="help">当前没有待确认的操作。执行授权与补充需求分别处理。</p>'});
 }
-async function loadPermissionPanel(){
- const backend=chatBackendChoice(),token=++permissionLoad;
- permissionPanel=null;$('chat-permissions-host').textContent=runtimeName(backend)+' · 下一回合';$('chat-permissions-error').textContent='';$('chat-permissions-options').textContent='正在读取宿主权限…';$('chat-permissions-note').textContent='';$('chat-permissions-native').hidden=true;
- try{
-  const p=await permissionDirectory.load(backend,{refresh:true});if(token!==permissionLoad||backend!==chatBackendChoice())return;
-  permissionPanel=p;$('chat-permissions-note').textContent=p.note;$('chat-permissions-error').textContent=p.diagnostic||'';
-  const box=$('chat-permissions-options');box.replaceChildren();$('chat-permissions-native').hidden=p.kind!=='native';
-  if(p.kind==='native'){renderChatRuntimePermissions();return}
-  if(p.kind!=='rules'){
-   const label=document.createElement('label');label.htmlFor='chat-host-permission-mode';label.textContent='下一回合权限';
-   const select=document.createElement('select');select.id='chat-host-permission-mode';
-   const choice=permissionSelection(p,chat.hostOptions?.mode);for(const mode of choice.modes)select.add(new Option(mode.name,mode.id));if(choice.unavailable){const missing=new Option(choice.selected+' · 需要重选',choice.selected);missing.disabled=true;select.add(missing);$('chat-permissions-error').textContent='原权限模式已不在宿主列表中，请重新选择后发送。'}select.value=choice.selected;
-   if(!select.value){select.value='native';$('chat-permissions-error').textContent='原权限模式已不在宿主列表中，请重新选择后再发送。'}
-   select.disabled=$('chat-permission').disabled||[...chat.events.values()].some(e=>e.kind==='session/internal');
-   select.onchange=()=>{chat.hostOptions={mode:select.value};rememberDraft();$('chat-permissions-error').textContent='已选择，下一回合生效。'};
-   box.append(label,select);return;
-  }
-  const presets=document.createElement('select'),presetLabel=document.createElement('label'),presetHelp=document.createElement('p'),applyPreset=document.createElement('button');
-  presets.id='antigravity-preset';presetLabel.htmlFor=presets.id;presetLabel.textContent='权限模式';
-  for(const [id,name] of [['default','默认'],['full-machine','全机访问'],['turbo','Turbo'],['custom','自定义']])presets.add(new Option(name,id));
-  presets.value=p.preset||'custom';presetHelp.className='help';applyPreset.type='button';applyPreset.textContent='应用权限模式';
-  const custom=document.createElement('div');
-  const describe=()=>{presetHelp.textContent=({default:'工作区内读写；命令与工作区外访问若需授权，会停止并提示你授权后重发。','full-machine':'允许访问全机文件；命令若需授权，会停止并提示你授权后重发。',turbo:'自动执行文件、命令等操作；已有拒绝、询问规则及沙箱限制继续有效。',custom:'按具体文件、命令或网址管理规则。'})[presets.value];custom.hidden=presets.value!=='custom';applyPreset.hidden=presets.value==='custom';};
-  presets.onchange=describe;applyPreset.onclick=()=>saveNativeRule({operation:'preset',preset:presets.value});
-  box.append(presetLabel,presets,presetHelp,applyPreset,custom);describe();
-  const list=document.createElement('div');list.className='permission-rule-list';
-  for(const row of p.rules){
-   const line=document.createElement('div'),text=document.createElement('code'),remove=document.createElement('button');
-   text.textContent=({allow:'允许',ask:'询问',deny:'拒绝'}[row.decision])+' · '+row.rule;
-   remove.type='button';remove.textContent='移除';remove.setAttribute('aria-label','移除 '+text.textContent);
-   remove.onclick=()=>saveNativeRule({operation:'remove',decision:row.decision,rule:row.rule});line.append(text,remove);list.append(line);
-  }
-  custom.append(list);
-  const denied=[...chat.events.values()].reverse().map(e=>e.data?.item).find(item=>item?.type==='runtime_tool'&&item.status==='failed'&&typeof item.output==='string'&&item.output.includes('user denied permission for '));
-  const match=denied?.output.match(/user denied permission for ((?:read_file|write_file|command|read_url|execute_url|mcp)\([^\r\n()]+\))/);
-  if(match){
-   const recovery=document.createElement('section'),description=document.createElement('p'),approve=document.createElement('button');
-   description.textContent='上次未完成的操作：'+denied.tool+'。授权范围：'+match[1];
-   approve.type='button';approve.textContent='允许此操作并保存授权';
-   approve.onclick=()=>saveNativeRule({operation:'add',decision:'allow',rule:match[1]});
-   recovery.append(description,approve);custom.append(recovery);
-  }
-  const form=document.createElement('form');form.id='permission-rule-form';form.innerHTML='<h3>授权具体操作</h3><label for="permission-rule-decision">处理方式</label><select id="permission-rule-decision"><option value="allow">允许所选操作</option><option value="deny">拒绝</option></select><label for="permission-rule-tool">操作</label><select id="permission-rule-tool"><option value="read_file">读取文件</option><option value="write_file">写入文件</option><option value="command">执行命令</option><option value="read_url">读取网址</option><option value="execute_url">执行网址操作</option><option value="mcp">MCP 工具</option></select><label for="permission-rule-scope">范围</label><input id="permission-rule-scope" required autocomplete="off" placeholder="填写要访问的完整文件路径或网址"><p class="help">此授权会保存到本机 Antigravity，也会影响其他会话。只填写你愿意授权的具体路径；可在上方撤销。</p><button type="submit">保存规则</button>';
-  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};custom.append(form);
- }catch(e){if(token===permissionLoad){$('chat-permissions-options').textContent='';$('chat-permissions-error').textContent=e.message}}
-}
-async function saveNativeRule(change){
- const p=permissionPanel;if(!p||p.backend!==chatBackendChoice())return;
- const controls=[...$('chat-permissions-options').querySelectorAll('button,input,select')];controls.forEach(e=>e.disabled=true);
- try{await api('runtime/permissions',{backend:p.backend,revision:p.revision,...change});await loadPermissionPanel();$('chat-permissions-error').textContent='规则已保存。之后发送的任务使用新规则。'}
- catch(e){$('chat-permissions-error').textContent=e.message;controls.forEach(e=>e.disabled=false)}
-}
+function loadPermissionPanel(){return permissionPanel.load()}
 
 function renderRequests(){
  renderPermissionRequests();

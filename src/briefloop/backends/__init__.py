@@ -15,6 +15,10 @@ BACKENDS = ('codex', 'opencode', 'briefloop-native', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
 
+# Execution scopes implemented by BriefLoop's managed adapters. This is not a
+# catalog of third-party runtime permission modes or an Auto mode alias.
+WORKSPACE_SCOPES = ('workspace-write', 'read-only')
+
 # Shown to users and to the chat model; never infer a host's name from another host.
 BACKEND_LABELS = {
     'codex': 'Codex CLI',

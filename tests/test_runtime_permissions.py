@@ -7,14 +7,58 @@ from briefloop.bridge_harness import normalize_bridge_usage
 from briefloop.models import Settings
 
 
-def test_claude_auto_is_default_without_overwriting_explicit_restrictions():
-    found=permissions.catalog('claude',Path('/tmp'),None)
+class ModeBridge:
+    def __init__(self, result): self.result=result; self.calls=[]
+    def call(self, method, params, **kwargs):
+        self.calls.append((method, params))
+        if isinstance(self.result, Exception):raise self.result
+        return self.result
+
+
+def test_permission_directory_uses_current_host_names_order_and_model():
+    bridge=ModeBridge({'modes':[{'id':'plan','name':'Plan from host','description':'Native description'},
+                               {'id':'auto','name':'Auto from host'}],
+                       'default_mode':'auto','auto_available':True,
+                       'source':{'kind':'runtime','label':'Claude --help'}})
+    found=permissions.catalog('claude',Path('/tmp'),bridge,model='chosen-model')
+    assert found['modes']==bridge.result['modes']
     assert found['default_mode']=='auto' and found['auto_available']
-    assert permissions.validate_options('claude',None)=={'mode':'auto'}
-    assert permissions.validate_options('claude',{})=={'mode':'auto'}
+    assert found['inherit_mode']['id']=='native'
+    assert bridge.calls[-1][1]['model']=='chosen-model'
+    # Upgrading the host changes its catalog without changing product fixtures.
+    bridge.result={'modes':[{'id':'newMode','name':'newMode'}],'source':{'kind':'runtime','label':'Claude --help'}}
+    assert permissions.catalog('claude',Path('/tmp'),bridge)['modes']==bridge.result['modes']
+    assert permissions.validate_options('claude',None)=={}
+    assert permissions.validate_options('claude',{})=={}
     for mode in ('auto','native','plan','manual','dontAsk'):
         assert permissions.validate_options('claude',{'mode':mode})=={'mode':mode}
     with pytest.raises(ValueError):permissions.validate_options('claude',{'mode':'bypassPermissions'})
+
+
+@pytest.mark.parametrize('backend',['claude','zcode','codex','kimi','hermes','reasonix','codebuddy','kilo','kiro','vibe','deepseek-harness','mimo','pi'])
+def test_failed_runtime_lookup_never_recreates_a_static_permission_list(backend):
+    result=permissions.catalog(backend,Path('/tmp'),ModeBridge(RuntimeError('unavailable')))
+    assert result['modes']==[]
+    assert result['source']['kind']=='unavailable'
+    assert result['auto_available'] is False
+    assert 'unavailable' in result['diagnostic']
+
+
+def test_adapter_scopes_are_not_named_auto_or_claimed_as_host_modes():
+    for backend in ('opencode','briefloop-native'):
+        result=permissions.catalog(backend,Path('/tmp'),None)
+        assert result['source']['kind']=='adapter'
+        assert [mode['id'] for mode in result['modes']]==list(permissions.WORKSPACE_SCOPES)
+        assert all(mode['name']==mode['id'] for mode in result['modes'])
+        assert result['auto_available'] is False
+    bridge=ModeBridge({'modes':[{'id':'read-only','name':'read-only'},
+                               {'id':'danger-full-access','name':'danger-full-access'},
+                               {'id':'workspace-write','name':'workspace-write'}],
+                       'source':{'kind':'runtime','label':'Codex --sandbox'}})
+    result=permissions.catalog('codex',Path('/tmp'),bridge)
+    assert result['modes'][1]['disabled'] is True
+    assert result['modes'][1]['name']=='danger-full-access'
+    assert result['source']['kind']=='runtime' and result['default_source']=='adapter'
 
 
 def test_scoped_native_rule_preserves_other_settings_and_rejects_stale_write(tmp_path, monkeypatch):
@@ -37,7 +81,7 @@ def test_scoped_native_rule_preserves_other_settings_and_rejects_stale_write(tmp
 
 
 def test_invalid_modes_and_symlink_never_change_native_settings(tmp_path, monkeypatch):
-    for backend,mode in [('pi','bypass'),('claude','bypassPermissions'),('codex','read'),('antigravity','yolo'),('zcode','acceptEdits')]:
+    for backend,mode in [('pi','bypass'),('claude','bypassPermissions'),('codex','read'),('antigravity','yolo'),('zcode','--mode=invalid')]:
         with pytest.raises(ValueError):permissions.validate_options(backend,{'mode':mode})
     target=tmp_path/'target';target.write_text('{}');link=tmp_path/'link';link.symlink_to(target)
     monkeypatch.setattr(permissions,'antigravity_settings',lambda:link)
@@ -63,11 +107,14 @@ def test_failed_temporary_file_protection_keeps_existing_host_settings(tmp_path,
 
 def test_zcode_offers_its_own_modes_without_claiming_interactive_approval():
     """ZCode headless has no permission channel: a blocked action just fails."""
-    found=permissions.catalog('zcode',Path('/tmp'),None)
+    bridge=ModeBridge({'modes':[{'id':mode,'name':mode} for mode in ('build','edit','plan','yolo')],
+                       'default_mode':'build','default_source':'adapter','native_default_mode':'yolo',
+                       'source':{'kind':'runtime','label':'ZCode --mode'}})
+    found=permissions.catalog('zcode',Path('/tmp'),bridge)
     assert [m['id'] for m in found['modes']]==['build','edit','plan','yolo']
     assert found['default_mode']=='build'
     assert found['interactive'] is False
-    assert '不提供逐项授权通道' in found['note']
+    assert found['native_default_mode']=='yolo' and found['default_source']=='adapter'
     assert permissions.validate_options('zcode',{'mode':'plan'})=={'mode':'plan'}
     assert permissions.validate_options('zcode',{})=={'mode':'build'}
     assert permissions.validate_options('zcode',{'mode':'native'})=={'mode':'build'}
@@ -131,6 +178,6 @@ def test_antigravity_presets_preserve_rules_and_change_queue_digest(tmp_path,mon
         assert current['permissions']==original['permissions']
         assert current['unrelated']=='keep'
         assert current['enableTerminalSandbox'] is True
-        assert permissions.catalog('antigravity',tmp_path,None)['preset']==preset
+        assert permissions.preset_for(current)==preset
         if preset!='default':assert permissions.permission_digest()!=before
     assert permissions.permission_digest()==before

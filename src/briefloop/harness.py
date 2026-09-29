@@ -1,4 +1,5 @@
 """Persistent, bidirectional conversations backed by Codex CLI app-server."""
+from .backends import WORKSPACE_SCOPES
 import json
 from pathlib import Path
 import threading
@@ -63,7 +64,7 @@ class HarnessManager:
         provider=value.get('model_provider')
         if provider is not None and not isinstance(provider,str):raise ValueError('model_provider 必须是 Codex 已配置的服务名称')
         value['model_provider']=provider.strip() or None if isinstance(provider,str) else None
-        if value['permission'] not in ('read-only','workspace-write'):raise ValueError('权限必须为仅阅读或工作区读写')
+        if value['permission'] not in WORKSPACE_SCOPES:raise ValueError('权限必须为仅阅读或工作区读写')
         return value
     def fast_capability(self, runtime):
         from .fast_mode import capability

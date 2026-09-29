@@ -2,11 +2,11 @@ import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import path from 'node:path';
 import {createJsonLineStream} from '../third_party/open-design/core/json-line-stream.js';
+import {selectDiscoveredMode} from './permission-catalog.js';
 
 // Protocol: `zcode --prompt ... --output-format stream-json` writes one session
 // event per line. ZCode retired its ACP surface for its own ZCode Protocol, so
 // the app-server/agent-server framing is not reachable through this bridge.
-const MODES = ['build', 'edit', 'plan', 'yolo'];
 const IMAGE_TYPES = ['.png', '.jpg', '.jpeg', '.webp'];
 // The prompt travels in argv: ZCode headless has no stdin prompt channel, so a
 // long prompt must fail explicitly instead of losing any of its content.
@@ -44,16 +44,16 @@ function toolOutput(payload:any) {
  return result;
 }
 
-export async function runZcode(p:any, state:any, launch:any, terminate:any, emit:any) {
+export async function runZcode(p:any, state:any, launch:any, terminate:any, emit:any, getPermissions:any) {
  if (p.model && p.model !== 'default') throw Error('ZCode 无界面运行不接受模型参数：只能使用它自己配置的模型，请在 ZCode 中切换后重试');
  if (p.prompt.length > PROMPT_LIMIT) throw promptTooLong();
  const args = ['--prompt', p.prompt, '--cwd', p.cwd, '--output-format', 'stream-json', '--no-color'];
  // ZCode --prompt defaults to yolo, regardless of the interactive setting.
  // Preserve legacy 'native' records as the ordinary build mode; yolo requires
  // an explicit choice in BriefLoop and is never inferred from a missing flag.
- const selected = p.host_options?.mode;
- const mode = !selected || selected === 'native' ? 'build' : selected;
- if (!MODES.includes(mode)) throw Error('Invalid ZCode permission mode');
+ const catalog=await getPermissions();
+ if(state.cancelled)return;
+ const mode=selectDiscoveredMode(catalog,p.host_options?.mode,'zcode');
  args.push('--mode', mode);
  if (p.session_id) args.push('--resume', p.session_id);
  for (const image of p.images || []) {

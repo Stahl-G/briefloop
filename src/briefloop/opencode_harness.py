@@ -8,6 +8,7 @@ the running BriefLoop message id. Interactive chats surface native questions
 through ChatStore and return validated answers to the owning session. Background
 jobs and reviewers keep the non-interactive deny rule.
 """
+from .backends import WORKSPACE_SCOPES
 import json
 import functools
 import inspect
@@ -257,7 +258,7 @@ class OpencodeHarness:
             raise ValueError('无效模型 variant')
         value['variant'] = variant.strip() if isinstance(variant, str) and variant.strip() else None
         value.pop('model_variant', None)
-        if value['permission'] not in ('read-only', 'workspace-write'):
+        if value['permission'] not in WORKSPACE_SCOPES:
             raise ValueError('权限必须为仅阅读或工作区读写')
         return value
 

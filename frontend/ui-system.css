@@ -296,3 +296,42 @@ dialog .section-title h2{font-size:var(--text-xl)}
 
 #settings-dialog .runtime-card-compact:has(#settings-model-block)>.runtime-current-model{display:none}
 #settings-dialog .runtime-card-compact .model-settings legend{font-size:var(--text-sm);margin-bottom:var(--space-3)}
+
+/* Runtime names and descriptions stay intact in a compact, ordered list. */
+#chat-permissions-dialog{width:min(calc(var(--rail-width) + var(--space-6)*4),calc(100% - var(--space-6)));max-height:calc(100dvh - var(--space-6));overflow:auto;padding:var(--space-4)}
+#chat-permissions-dialog .section-title{gap:var(--space-2);margin-bottom:var(--space-3)}
+#chat-permissions-dialog .section-title h2{font-size:var(--text-lg)}
+#chat-permissions-host{font-size:var(--text-sm);margin-block:var(--space-2)}
+#chat-permissions-note{font-size:var(--text-xs);margin-block:var(--space-2);overflow-wrap:anywhere}
+#chat-permissions-native{display:none}
+#chat-permissions-options[aria-busy=true]{color:var(--color-text-muted);padding-block:var(--space-4)}
+.runtime-permission-modes{border:0;padding:0;margin:var(--space-4) 0 0;min-width:0}
+.runtime-permission-modes>legend{font-size:var(--text-xs);font-weight:var(--fw-medium);color:var(--color-text-muted);margin-bottom:var(--space-2)}
+.runtime-permission-choice{display:flex!important;align-items:flex-start;gap:var(--space-3);padding:var(--space-3);margin:var(--space-2) 0!important;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-surface);cursor:pointer;min-width:0}
+.runtime-permission-choice:has(input:checked){border-color:var(--color-primary)}
+.runtime-permission-choice:hover:not(.is-disabled),.runtime-permission-choice:active:not(.is-disabled){background:var(--color-surface-soft)}
+.runtime-permission-choice:has(input:focus-visible){outline:2px solid var(--color-focus);outline-offset:2px}
+.runtime-permission-choice.is-disabled{cursor:not-allowed;color:var(--color-text-muted);background:var(--color-bg)}
+.runtime-permission-choice input{width:var(--control-check)!important;height:var(--control-check);min-height:0!important;flex:none;margin:var(--space-1) 0 0!important;accent-color:var(--color-primary)}
+.runtime-permission-choice>span{min-width:0}
+.runtime-permission-choice strong{font-size:var(--text-sm);font-weight:var(--fw-medium);overflow-wrap:anywhere}
+.runtime-permission-choice small{display:block;font-size:var(--text-xs);color:var(--color-text-muted);line-height:var(--leading-normal);overflow-wrap:anywhere;margin-top:var(--space-1);white-space:pre-wrap}
+.runtime-permission-choice .runtime-permission-disabled-reason{color:var(--color-warn)}
+.runtime-permission-inherit{margin-top:var(--space-4);padding-top:var(--space-2);border-top:1px solid var(--color-border)}
+.runtime-permission-inherit>p{font-size:var(--text-xs);color:var(--color-text-muted);margin:var(--space-2) 0}
+.runtime-permission-details,.runtime-permission-rules{margin-top:var(--space-3);border-top:1px solid var(--color-border);padding-top:var(--space-2);font-size:var(--text-xs);color:var(--color-text-muted)}
+.runtime-permission-details summary,.runtime-permission-rules summary{cursor:pointer;min-height:var(--control-h-sm)}
+.runtime-permission-details summary:focus-visible,.runtime-permission-rules summary:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}
+.runtime-permission-details :is(p,dd){overflow-wrap:anywhere;white-space:pre-wrap}
+.runtime-permission-details dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-2)}
+.runtime-permission-details dd{margin:0}
+.runtime-permission-selection-status{font-size:var(--text-xs);color:var(--color-text-muted);margin-block:var(--space-2)}
+.runtime-permission-selection-status:empty{display:none}
+.runtime-permission-rules .permission-rule-list{margin-block:var(--space-3)}
+.runtime-permission-rules .permission-rule-list>div{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-3);padding-block:var(--space-2)}
+.runtime-permission-rules code{overflow-wrap:anywhere;white-space:pre-wrap;min-width:0}
+.runtime-permission-rules .permission-rule-list button{flex:none;min-height:var(--control-h-sm);font-size:var(--text-xs)}
+.runtime-permission-rules form{display:grid;gap:var(--space-2);min-width:0;padding-top:var(--space-3);border-top:1px solid var(--color-border)}
+.runtime-permission-rules form :is(input,select){width:100%;min-width:0;font-size:var(--text-sm)}
+.runtime-permission-rules form button{justify-self:end}
+#chat-permissions-error{color:var(--color-danger);font-size:var(--text-sm);overflow-wrap:anywhere}

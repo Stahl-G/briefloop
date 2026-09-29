@@ -8,11 +8,22 @@ import os from 'node:os';
 import path from 'node:path';
 import {createInterface} from 'node:readline';
 const fixtureDirectories=new WeakMap();
+const bridgeArtifact=process.env.BRIEFLOOP_BRIDGE_PATH||'src/briefloop/static/runtime-bridge.mjs';
+const fixtureHelp=`Options:
+  --permission-mode <mode> Permission mode (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
+  --mode <mode> Permission mode for prompts: build, edit, plan, or yolo (default: yolo for --prompt)
+    Set the agent execution mode for this session (accept-edits, plan)
+  --sandbox <mode> Select the sandbox policy
+    [possible values: read-only, workspace-write, danger-full-access]
+  --tools <tools> Comma-separated tool names
+  --no-tools Disable tools
+  --no-extensions Disable extensions
+`;
 function bridge(t,extraEnv={}){
  const win=process.platform==='win32';
  if(win)assert.ok(process.env.BRIEFLOOP_PYTHON&&process.env.BRIEFLOOP_PROCESS_HELPER,'Set BRIEFLOOP_PYTHON and BRIEFLOOP_PROCESS_HELPER for Windows tests');
  const fixtureHome=mkdtempSync(path.join(os.tmpdir(),'bridge-home-'));
- const p=spawn(win?process.env.BRIEFLOOP_PYTHON:process.execPath,win?['-X','utf8',process.env.BRIEFLOOP_PROCESS_HELPER,process.execPath,'src/briefloop/static/runtime-bridge.mjs']:['src/briefloop/static/runtime-bridge.mjs'],{stdio:['pipe','pipe','inherit'],windowsHide:true,env:{...process.env,HOME:fixtureHome,USERPROFILE:fixtureHome,CLAUDE_CONFIG_DIR:fixtureHome,MMD_MODEL_ROUTES_FILE:path.join(fixtureHome,'routes.json'),...extraEnv}});
+ const p=spawn(win?process.env.BRIEFLOOP_PYTHON:process.execPath,win?['-X','utf8',process.env.BRIEFLOOP_PROCESS_HELPER,process.execPath,bridgeArtifact]:[bridgeArtifact],{stdio:['pipe','pipe','inherit'],windowsHide:true,env:{...process.env,HOME:fixtureHome,USERPROFILE:fixtureHome,CLAUDE_CONFIG_DIR:fixtureHome,MMD_MODEL_ROUTES_FILE:path.join(fixtureHome,'routes.json'),...extraEnv}});
  const directories=[fixtureHome];fixtureDirectories.set(t,directories);
  // exitCode is available before close, and separate after hooks do not express
  // this dependency. Gracefully drain the bridge and its owned processes before
@@ -32,7 +43,7 @@ function bridge(t,extraEnv={}){
  });
  return {home:fixtureHome,frames,stop:()=>p.stdin.end(),send:(id,method,params)=>p.stdin.write(JSON.stringify({id,method,params})+'\n'),wait:predicate=>{const found=frames.find(predicate);if(found)return Promise.resolve(found);return new Promise((resolve,reject)=>{const w={predicate,resolve,timer:setTimeout(()=>reject(Error('missing frame')),5000)};waiters.push(w);});}};
 }
-function fixture(t,body,name='cli'){const directories=fixtureDirectories.get(t);assert.ok(directories,'Create the bridge before its fixtures');const d=mkdtempSync(path.join(os.tmpdir(),'bridge-fixture-')),f=path.join(d,name);directories.push(d);writeFileSync(f,'#!/usr/bin/env node\n'+body,{mode:0o755});if(process.platform==='win32'){writeFileSync(path.join(d,'entry.cjs'),body);writeFileSync(f,'exec node "$basedir/entry.cjs" "$@"');writeFileSync(f+'.cmd','@echo off');return {path:f+'.cmd',cwd:d};}return {path:f,cwd:d};}
+function fixture(t,body,name='cli',help=fixtureHelp){const directories=fixtureDirectories.get(t);assert.ok(directories,'Create the bridge before its fixtures');const d=mkdtempSync(path.join(os.tmpdir(),'bridge-fixture-')),f=path.join(d,name);directories.push(d);if(help!==null)body=`if(process.argv.includes('--help')){console.log(${JSON.stringify(help)});process.exit(0);}\n`+body;writeFileSync(f,'#!/usr/bin/env node\n'+body,{mode:0o755});if(process.platform==='win32'){writeFileSync(path.join(d,'entry.cjs'),body);writeFileSync(f,'exec node "$basedir/entry.cjs" "$@"');writeFileSync(f+'.cmd','@echo off');return {path:f+'.cmd',cwd:d};}return {path:f,cwd:d};}
 const rpcFake=`const rl=require('node:readline').createInterface({input:process.stdin});const send=v=>process.stdout.write(JSON.stringify(v)+'\\n');let promptId;rl.on('line',line=>{const m=JSON.parse(line);const result=r=>send({jsonrpc:'2.0',id:m.id,result:r});if(m.method==='initialize')result({agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}});else if(m.method==='session/new'||m.method==='session/load')result({sessionId:'real-session',models:{availableModels:[{modelId:'test/model',name:'Test'}]}});else if(m.method==='session/set_model')result({});else if(m.method==='session/prompt'){promptId=m.id;send({method:'session/update',params:{update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'HIDDEN'}}}});send({id:90,method:'session/request_permission',params:{options:[{optionId:'yes',kind:'allow_once',name:'Allow once'}],toolCall:{title:'Read fixture'}}});}else if(m.id===90){if(m.result.outcome.optionId!=='yes')process.exit(2);send({method:'session/update',params:{update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'OK'}}}});send({id:promptId,result:{stopReason:'end_turn'}});}});`;
 test('Claude without a live directory does not inject concrete model presets',async t=>{
  const b=bridge(t,{MMD_MODEL_ROUTES_FILE:path.join(os.tmpdir(),'briefloop-no-route-'+process.pid)}),f=fixture(t,'process.exit(0);');
@@ -260,6 +271,63 @@ test('ACP accepts only an advertised permission mode before prompting',async t=>
  b.send(3,'start',{...f,runtime_id:'kimi',execution_id:'plan-mode',prompt:'x',permission:'runtime-native',host_options:{mode:'plan'}});
  const q=await b.wait(x=>x.params?.execution_id==='plan-mode'&&x.params.kind==='question');b.send(4,'answer',{execution_id:'plan-mode',request_id:q.params.request_id,option_id:'yes'});
  assert.equal((await b.wait(x=>x.params?.execution_id==='plan-mode'&&x.params.kind==='end')).params.status,'completed');
+});
+
+test('Claude permissions preserve live help values and order, including new modes and an old CLI without auto',async t=>{
+ const help='Options:\n  --permission-mode <mode> Permission mode (choices: "manual",\n    "futureNative", "plan")\n  --other <value> Other option';
+ const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2),i=a.indexOf('--permission-mode');process.stdin.once('data',()=>{console.log(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:i<0?'inherit':a[i+1]}]}}));console.log(JSON.stringify({type:'result',is_error:false}));});`,'claude-fixture',help);
+ b.send(1,'permission_options',{...f,runtime_id:'claude'});const catalog=(await b.wait(x=>x.id===1)).result;
+ assert.equal(catalog.source.kind,'runtime');assert.deepEqual(catalog.modes.map(m=>[m.id,m.name,m.description]),[['manual','manual',''],['futureNative','futureNative',''],['plan','plan','']]);assert.equal(catalog.auto_available,false);assert.equal(catalog.default_mode,'native');
+ b.send(2,'start',{...f,runtime_id:'claude',execution_id:'inherit',prompt:'fixture',permission:'runtime-native'});
+ assert.equal((await b.wait(x=>x.params?.execution_id==='inherit'&&x.params.kind==='text')).params.text,'inherit');
+ await b.wait(x=>x.params?.execution_id==='inherit'&&x.params.kind==='end');
+ b.send(3,'start',{...f,runtime_id:'claude',execution_id:'future',prompt:'fixture',permission:'runtime-native',host_options:{mode:'futureNative'}});
+ assert.equal((await b.wait(x=>x.params?.execution_id==='future'&&x.params.kind==='text')).params.text,'futureNative');
+ await b.wait(x=>x.params?.execution_id==='future'&&x.params.kind==='end');
+ b.send(4,'start',{...f,runtime_id:'claude',execution_id:'unsupported',prompt:'fixture',permission:'runtime-native',host_options:{mode:'auto'}});
+ assert.equal((await b.wait(x=>x.params?.execution_id==='unsupported'&&x.params.kind==='end')).params.status,'failed');
+});
+
+test('failed permission discovery advertises no fabricated modes and rejects an explicit unverified choice',async t=>{
+ const b=bridge(t),f=fixture(t,`if(process.argv.includes('--help'))process.exit(3);process.stdin.once('data',()=>{console.log(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'inherit'}]}}));console.log(JSON.stringify({type:'result',is_error:false}));});`,'no-help',null);
+ b.send(1,'permission_options',{...f,runtime_id:'claude'});const catalog=(await b.wait(x=>x.id===1)).result;
+ assert.deepEqual(catalog.modes,[]);assert.equal(catalog.source.kind,'unavailable');assert.equal(catalog.default_mode,'native');assert.ok(catalog.diagnostic);
+ b.send(2,'start',{...f,runtime_id:'claude',execution_id:'failed-discovery',prompt:'fixture',permission:'runtime-native',host_options:{mode:'auto'}});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'failed');assert.ok(!b.frames.some(x=>x.params?.kind==='text'));
+});
+
+test('CLI native directories remain distinct from Pi adapter tool controls and preserve risky modes without selecting them by default',async t=>{
+ const b=bridge(t),f=fixture(t,'process.exit(1);');
+ const cases=[['zcode',['build','edit','plan','yolo'],'runtime'],['antigravity',['accept-edits','plan'],'runtime'],['codex',['read-only','workspace-write','danger-full-access'],'runtime'],['pi',['read','none'],'adapter']];
+ let id=0;
+ for(const [runtime,values,source] of cases){
+  b.send(++id,'permission_options',{...f,runtime_id:runtime});const catalog=(await b.wait(x=>x.id===id)).result;
+  assert.deepEqual(catalog.modes.map(m=>m.id),values);assert.equal(catalog.source.kind,source);assert.equal(catalog.auto_available,false);
+  if(source==='runtime')assert.deepEqual(catalog.modes.map(m=>m.name),values);
+  if(runtime==='codex')assert.equal(catalog.modes.find(m=>m.id==='danger-full-access').disabled,true);
+  if(runtime==='zcode'){assert.equal(catalog.native_default_mode,'yolo');assert.equal(catalog.default_mode,'build');assert.equal(catalog.default_source.kind,'adapter');assert.ok(!catalog.modes.find(m=>m.id==='yolo').disabled);}
+ }
+});
+
+test('Claude model capability can disable auto without replacing native mode names',async t=>{
+ const b=bridge(t),f=fixture(t,`require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='control_request'||m.request.subtype!=='initialize')process.exit(4);console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{models:[{value:'haiku',displayName:'Haiku',supportsAutoMode:false}]}}}));});`);
+ b.send(1,'permission_options',{...f,runtime_id:'claude',model:'haiku'});const catalog=(await b.wait(x=>x.id===1)).result;
+ assert.equal(catalog.model_supports_auto,false);assert.equal(catalog.auto_available,false);assert.equal(catalog.default_mode,'native');assert.equal(catalog.modes.find(m=>m.id==='auto').disabled,true);assert.equal(catalog.modes.find(m=>m.id==='auto').name,'auto');assert.equal(catalog.modes.find(m=>m.id==='bypassPermissions').disabled,true);
+ b.send(2,'list_models',{...f,runtime_id:'claude'});assert.equal((await b.wait(x=>x.id===2)).result.models.find(m=>m.id==='haiku').supports_auto_mode,false);
+});
+
+test('ACP permission directory preserves native descriptions and current identity',async t=>{
+ const b=bridge(t),f=fixture(t,rpcFake.replace("models:{availableModels:","modes:{currentModeId:'plan',availableModes:[{id:'auto',name:'Native Auto',description:'Runtime-owned description'},{id:'plan',name:'Native Plan'}]},models:{availableModels:"));
+ b.send(1,'permission_options',{...f,runtime_id:'kimi'});const catalog=(await b.wait(x=>x.id===1)).result;
+ assert.equal(catalog.source.kind,'runtime');assert.equal(catalog.current_mode,'plan');assert.equal(catalog.modes[0].name,'Native Auto');assert.equal(catalog.modes[0].description,'Runtime-owned description');
+});
+
+test('Antigravity applies an advertised per-turn mode and never adds a skip-permissions flag',async t=>{
+ const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(a[a.indexOf('--mode')+1]!=='accept-edits'||a.includes('--dangerously-skip-permissions'))process.exit(2);process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({event:'result',result:{status:'SUCCESS',conversation_id:'mode-fixture',response:'Mode applied'}})));`);
+ b.send(1,'start',{...f,runtime_id:'antigravity',execution_id:'mode',prompt:'fixture',permission:'runtime-native',host_options:{mode:'accept-edits'}});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+ b.send(2,'start',{...f,runtime_id:'antigravity',execution_id:'unsupported-mode',prompt:'fixture',permission:'runtime-native',host_options:{mode:'auto'}});
+ assert.equal((await b.wait(x=>x.params?.execution_id==='unsupported-mode'&&x.params.kind==='end')).params.status,'failed');
 });
 
 test('MiMo retains JSON execution and applies only an advertised native agent mode',async t=>{

@@ -379,9 +379,9 @@ function questionAnswers(questions, answers) {
   if (!answers || typeof answers !== "object" || Array.isArray(answers) || Object.keys(answers).length !== questions.length) throw Error("\u8BF7\u56DE\u7B54\u6BCF\u4E00\u4E2A\u95EE\u9898");
   const result = /* @__PURE__ */ Object.create(null);
   for (const q of questions) {
-    const values = answers[q.id]?.answers;
-    if (!Array.isArray(values) || !values.length || values.length > 100 || values.some((v) => typeof v !== "string" || !v.trim() || v.length > 1e4)) throw Error("\u56DE\u7B54\u683C\u5F0F\u65E0\u6548");
-    const chosen = [...new Set(values.map((v) => v.trim()))];
+    const values2 = answers[q.id]?.answers;
+    if (!Array.isArray(values2) || !values2.length || values2.length > 100 || values2.some((v) => typeof v !== "string" || !v.trim() || v.length > 1e4)) throw Error("\u56DE\u7B54\u683C\u5F0F\u65E0\u6548");
+    const chosen = [...new Set(values2.map((v) => v.trim()))];
     if (!q.multiSelect && chosen.length !== 1) throw Error("\u8BE5\u95EE\u9898\u53EA\u80FD\u9009\u62E9\u4E00\u4E2A\u7B54\u6848");
     if (q.allowCustom === false && chosen.some((v) => !q.options.some((o) => o.label === v))) throw Error("\u8BF7\u9009\u62E9\u95EE\u9898\u63D0\u4F9B\u7684\u9009\u9879");
     result[q.id] = { answers: chosen };
@@ -604,7 +604,95 @@ async function runPi(p, state, launch2, terminate2, emit2) {
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path2 from "node:path";
-var MODES = ["build", "edit", "plan", "yolo"];
+
+// runtime-bridge/permission-catalog.ts
+function optionBlock(help, flag) {
+  const lines = help.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = lines.findIndex((line) => new RegExp("(?:^|\\s|,)" + escaped + "(?=\\s|=|,|$)").test(line));
+  if (start < 0) return "";
+  let end = start + 1;
+  while (end < lines.length && !/^\s*(?:-\w,?\s+)?--[A-Za-z]/.test(lines[end]) && !/^(?:Commands|Options|Examples|Available subcommands|Slash Commands):/.test(lines[end])) end++;
+  return lines.slice(start, end).join("\n");
+}
+function values(raw) {
+  return [...new Set(raw.split(/\s*,\s*(?:or\s+)?|\s+or\s+|\|/).map((value) => value.trim().replace(/^["']|["']$/g, "")).filter((value) => /^[A-Za-z][A-Za-z0-9-]*$/.test(value)))];
+}
+function nativeModes(ids, runtime) {
+  return ids.map((id) => ({
+    id,
+    name: id,
+    native_name: id,
+    description: "",
+    .../bypass|yolo|danger-full-access/i.test(id) ? { advanced: true } : {},
+    ...runtime === "claude" && /bypass/i.test(id) || runtime === "codex" && id === "danger-full-access" ? { disabled: true, disabled_reason: "\u5F53\u524D BriefLoop \u9002\u914D\u5668\u4E0D\u652F\u6301\u6B64\u6743\u9650\u8303\u56F4" } : {}
+  }));
+}
+function unavailablePermissions(runtime, diagnostic) {
+  return { modes: [], source: { kind: "unavailable", label: runtime }, default_mode: "native", auto_available: false, diagnostic };
+}
+function permissionsFromHelp(runtime, help) {
+  let ids = [], flag = "", block = "", nativeDefault;
+  if (runtime === "claude") {
+    flag = "--permission-mode";
+    block = optionBlock(help, flag);
+    const choice = /\(choices:\s*([\s\S]*?)\)/.exec(block);
+    if (choice) ids = [...choice[1].matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
+  } else if (runtime === "zcode") {
+    flag = "--mode";
+    block = optionBlock(help, flag);
+    const choice = /Permission mode for prompts:\s*([^\n(]+)/i.exec(block);
+    if (choice) ids = values(choice[1]);
+    nativeDefault = /\(default:\s*([A-Za-z][\w-]*)/i.exec(block)?.[1];
+  } else if (runtime === "antigravity") {
+    flag = "--mode";
+    block = optionBlock(help, flag);
+    const choice = /execution mode[^\n]*?\(([^)]+)\)/i.exec(block);
+    if (choice) ids = values(choice[1]);
+  } else if (runtime === "codex") {
+    flag = "--sandbox";
+    block = optionBlock(help, flag);
+    const choice = /\[possible values:\s*([^\]]+)\]/i.exec(block);
+    if (choice) ids = values(choice[1]);
+  } else if (runtime === "pi") {
+    const tools = optionBlock(help, "--tools"), none = optionBlock(help, "--no-tools"), extensions = optionBlock(help, "--no-extensions");
+    if (!tools || !none || !extensions) return unavailablePermissions(runtime, "Pi \u5E2E\u52A9\u672A\u58F0\u660E\u6B64\u9002\u914D\u5668\u6240\u9700\u7684\u5DE5\u5177\u96C6\u63A7\u5236\u53C2\u6570\u3002");
+    return {
+      modes: [{ id: "read", name: "--tools read,grep,find,ls", description: "" }, { id: "none", name: "--no-tools", description: "" }],
+      source: { kind: "adapter", label: "BriefLoop \xB7 Pi \u5DE5\u5177\u96C6\u63A7\u5236" },
+      default_mode: "native",
+      auto_available: false,
+      note: "Pi \u672A\u516C\u5F00\u539F\u751F\u6743\u9650\u6A21\u5F0F\u76EE\u5F55\uFF1B\u4EE5\u4E0A\u4E3A\u9002\u914D\u5668\u4F7F\u7528 --tools / --no-tools \u4E0E --no-extensions \u5B9E\u73B0\u7684\u5DE5\u5177\u96C6\u63A7\u5236\u3002"
+    };
+  }
+  if (!ids.length) return unavailablePermissions(runtime, "\u5BBF\u4E3B\u5E2E\u52A9\u672A\u8FD4\u56DE\u53EF\u8BC6\u522B\u7684\u6743\u9650\u6A21\u5F0F\u76EE\u5F55\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u5F0F\u3002");
+  const modes = nativeModes(ids, runtime), automatic = modes.some((mode) => mode.id === "auto" && !mode.disabled);
+  const chosen = automatic ? "auto" : runtime === "zcode" && ids.includes("build") ? "build" : runtime === "codex" && ids.includes("workspace-write") ? "workspace-write" : "native";
+  return {
+    modes,
+    source: { kind: "runtime", label: runtime + " --help " + flag },
+    default_mode: chosen,
+    auto_available: automatic,
+    ...chosen !== "native" ? { default_source: { kind: "adapter", label: "BriefLoop \u9ED8\u8BA4\u542F\u52A8\u9009\u62E9" } } : {},
+    ...nativeDefault ? { native_default_mode: nativeDefault } : {},
+    refreshed_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function selectDiscoveredMode(catalog, requested, runtime) {
+  const mode = requested ?? catalog.default_mode ?? "native";
+  if (mode === "native") {
+    if (runtime === "zcode") {
+      if (catalog.modes.some((entry) => entry.id === "build" && !entry.disabled)) return "build";
+      throw Error("ZCode \u672A\u516C\u5F00\u53EF\u7528\u7684 build \u6A21\u5F0F\uFF1B\u672A\u542F\u7528\u65E0\u754C\u9762\u9ED8\u8BA4\u7684 yolo\u3002");
+    }
+    return mode;
+  }
+  const selected = catalog.modes.find((entry) => entry.id === mode);
+  if (!selected || selected.disabled) throw Error(selected?.disabled_reason || "\u5BBF\u4E3B\u5F53\u524D\u672A\u516C\u5F00\u6743\u9650\u6A21\u5F0F\uFF1A" + String(mode));
+  return mode;
+}
+
+// runtime-bridge/zcode.ts
 var IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp"];
 var PROMPT_LIMIT = 2e5;
 var THINK = /^(think|thinking|reasoning)$/i;
@@ -637,13 +725,13 @@ function toolOutput(payload) {
   if (result && typeof result === "object" && "content" in result) return result.content;
   return result;
 }
-async function runZcode(p, state, launch2, terminate2, emit2) {
+async function runZcode(p, state, launch2, terminate2, emit2, getPermissions) {
   if (p.model && p.model !== "default") throw Error("ZCode \u65E0\u754C\u9762\u8FD0\u884C\u4E0D\u63A5\u53D7\u6A21\u578B\u53C2\u6570\uFF1A\u53EA\u80FD\u4F7F\u7528\u5B83\u81EA\u5DF1\u914D\u7F6E\u7684\u6A21\u578B\uFF0C\u8BF7\u5728 ZCode \u4E2D\u5207\u6362\u540E\u91CD\u8BD5");
   if (p.prompt.length > PROMPT_LIMIT) throw promptTooLong();
   const args = ["--prompt", p.prompt, "--cwd", p.cwd, "--output-format", "stream-json", "--no-color"];
-  const selected = p.host_options?.mode;
-  const mode = !selected || selected === "native" ? "build" : selected;
-  if (!MODES.includes(mode)) throw Error("Invalid ZCode permission mode");
+  const catalog = await getPermissions();
+  if (state.cancelled) return;
+  const mode = selectDiscoveredMode(catalog, p.host_options?.mode, "zcode");
   args.push("--mode", mode);
   if (p.session_id) args.push("--resume", p.session_id);
   for (const image of p.images || []) {
@@ -769,10 +857,10 @@ function sanitizeClaudeModel(value) {
   if (trimmed.length > 200) return null;
   return trimmed.endsWith("[1m]") && sanitizeCustomModel(trimmed.slice(0, -4)) ? trimmed : sanitizeCustomModel(trimmed);
 }
-function claudePermissionArgs(options) {
-  const mode = options?.mode ?? "auto";
+function claudePermissionArgs(options, modes) {
+  const mode = options?.mode ?? "native";
   if (mode === "native") return [];
-  if (!["auto", "manual", "acceptEdits", "dontAsk", "plan"].includes(mode)) throw Error("Invalid Claude permission mode");
+  if (!modes.some((entry) => entry.id === mode && !entry.disabled)) throw Error("Claude \u5F53\u524D\u672A\u516C\u5F00\u53EF\u7528\u7684\u6743\u9650\u6A21\u5F0F\uFF1A" + String(mode));
   return ["--permission-mode", mode];
 }
 async function claudeModels(bin, p, launch2, terminate2) {
@@ -824,6 +912,7 @@ async function claudeModels(bin, p, launch2, terminate2) {
             description: typeof row.description === "string" ? row.description : "",
             ...typeof row.resolvedModel === "string" ? { resolved_model: row.resolvedModel } : {},
             ...typeof row.supportsEffort === "boolean" ? { supports_effort: row.supportsEffort } : {},
+            ...typeof row.supportsAutoMode === "boolean" ? { supports_auto_mode: row.supportsAutoMode } : {},
             ...levels ? { reasoningOptions: levels.map((id) => ({ id, label: id })), thinking_levels: levels } : {},
             provider: "Claude Code"
           });
@@ -1319,8 +1408,8 @@ async function loadMmdRouteLaunchEnv(env2, modelId) {
 // third_party/open-design/runtime-models/codex-models.ts
 function parseCodexStringList(raw) {
   if (!Array.isArray(raw)) return void 0;
-  const values = raw.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean);
-  return values.length > 0 ? values : void 0;
+  const values2 = raw.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean);
+  return values2.length > 0 ? values2 : void 0;
 }
 function parseCodexServiceTiers(raw) {
   if (!Array.isArray(raw)) return void 0;
@@ -1611,7 +1700,7 @@ async function handshake(conn, p) {
 }
 function acpModelOptions(runtime, options) {
   if (!Array.isArray(options)) return options;
-  const flatten2 = (values) => values.flatMap((v) => Array.isArray(v?.options) ? flatten2(v.options) : [v]);
+  const flatten2 = (values2) => values2.flatMap((v) => Array.isArray(v?.options) ? flatten2(v.options) : [v]);
   return options.map((o) => ({ ...o, options: Array.isArray(o.options) ? flatten2(o.options).map((v) => {
     if (runtime !== "deepseek-harness") return v;
     try {
@@ -1740,6 +1829,32 @@ function acpAutoMode(session) {
 async function permissionOptions(p) {
   const bin = findBin(defFor(p.runtime_id), p.path);
   if (!bin) throw Error("Runtime not installed");
+  if (["claude", "zcode", "antigravity", "codex", "pi"].includes(p.runtime_id)) {
+    let catalog;
+    try {
+      const help = await exec(bin, ["--help"], { env, cwd: p.cwd || process.cwd(), timeout: 8e3, maxBuffer: 512 * 1024 });
+      catalog = permissionsFromHelp(p.runtime_id, help.stdout || help.stderr || "");
+    } catch {
+      return unavailablePermissions(p.runtime_id, "\u5BBF\u4E3B\u6743\u9650\u6A21\u5F0F\u5E2E\u52A9\u8BFB\u53D6\u5931\u8D25\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u5F0F\u3002");
+    }
+    if (p.runtime_id === "claude" && p.model && catalog.modes.length) {
+      try {
+        const metadata = await claudeModels(bin, { ...p, cwd: p.cwd || process.cwd() }, launch, terminate);
+        const selected = metadata.models.find((model) => model.id === p.model || model.resolved_model === p.model);
+        if (typeof selected?.supports_auto_mode === "boolean") catalog.model_supports_auto = selected.supports_auto_mode;
+        if (selected?.supports_auto_mode === false) {
+          catalog.modes = catalog.modes.map((mode) => mode.id === "auto" ? { ...mode, disabled: true, disabled_reason: "\u5BBF\u4E3B\u58F0\u660E\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301 auto" } : mode);
+          catalog.auto_available = false;
+          catalog.default_mode = "native";
+          delete catalog.default_source;
+        }
+      } catch {
+        catalog.model_diagnostic = "\u672A\u80FD\u8BFB\u53D6\u5F53\u524D\u6A21\u578B\u7684 Auto \u80FD\u529B\uFF1B\u76EE\u5F55\u4EC5\u786E\u8BA4 CLI \u652F\u6301\u7684\u6A21\u5F0F\u503C\u3002";
+      }
+    }
+    return catalog;
+  }
+  if (!(p.runtime_id in acpArgs) && p.runtime_id !== "mimo") return unavailablePermissions(p.runtime_id, "\u6B64\u5BBF\u4E3B\u672A\u63A5\u5165\u539F\u751F\u6743\u9650\u6A21\u5F0F\u76EE\u5F55\u3002");
   const conn = connect(bin, p.runtime_id === "mimo" ? ["acp"] : acpArguments(p.runtime_id, bin), p.cwd, () => {
   }, (_m, reply) => reply({ error: "Metadata probe cannot grant permissions" }));
   try {
@@ -1748,8 +1863,13 @@ async function permissionOptions(p) {
       modes: acpPermissionModes(session),
       default_mode: automatic?.id || "native",
       auto_available: !!automatic,
-      note: automatic ? "Auto \u4F7F\u7528\u5BBF\u4E3B\u516C\u5F00\u7684\u81EA\u52A8\u5BA1\u6279\u6A21\u5F0F\uFF1B\u9700\u8981\u8BE2\u95EE\u7684\u64CD\u4F5C\u4ECD\u4EA4\u7ED9\u7528\u6237\u3002" : "\u5BBF\u4E3B\u672A\u516C\u5F00 Auto \u6A21\u5F0F\uFF0C\u4FDD\u7559\u539F\u751F\u6743\u9650\uFF1B\u4E0D\u4F1A\u6539\u7528\u8DF3\u8FC7\u6743\u9650\u6216 yolo\u3002"
+      source: { kind: "runtime", label: p.runtime_id + " ACP session/new" },
+      ...typeof session.modes?.currentModeId === "string" ? { current_mode: session.modes.currentModeId } : {},
+      ...automatic ? { default_source: { kind: "adapter", label: "BriefLoop \u9ED8\u8BA4\u542F\u52A8\u9009\u62E9" } } : {},
+      refreshed_at: (/* @__PURE__ */ new Date()).toISOString()
     };
+  } catch {
+    return unavailablePermissions(p.runtime_id, "\u5BBF\u4E3B ACP \u6743\u9650\u6A21\u5F0F\u8BFB\u53D6\u5931\u8D25\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u5F0F\u3002");
   } finally {
     terminate(conn.child);
   }
@@ -1871,6 +1991,9 @@ async function runAntigravity(p, state) {
   });
   const prompt = imagePaths.length ? p.prompt + "\n\n\u7528\u6237\u9644\u52A0\u7684\u56FE\u7247\uFF08\u8BF7\u8C03\u7528 view_file \u5B9E\u9645\u8BFB\u53D6\u540E\u56DE\u7B54\uFF0C\u4E0D\u8981\u6839\u636E\u6587\u4EF6\u540D\u731C\u6D4B\uFF09\uFF1A\n" + imagePaths.map((f) => JSON.stringify(f)).join("\n") : p.prompt;
   const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
+  const permissionCatalog = await permissionOptions({ ...p, path: state.bin }), mode = selectDiscoveredMode(permissionCatalog, p.host_options?.mode, p.runtime_id);
+  if (state.cancelled) return;
+  if (mode !== "native") args.push("--mode", mode);
   if (p.effort) args.push("--effort", p.effort);
   if (p.model && p.model !== "default") args.push("--model", reasoningModel(p.runtime_id, p.model, p.effort));
   if (p.session_id) args.push("--conversation", p.session_id);
@@ -1945,7 +2068,13 @@ async function runAntigravity(p, state) {
 }
 async function runStream(p, state) {
   const claude = p.runtime_id === "claude";
-  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio", ...claudePermissionArgs(p.host_options)] : ["run", "--format", "json"];
+  let permissionArgs = [];
+  if (claude) {
+    const catalog = await permissionOptions({ ...p, path: state.bin }), mode = selectDiscoveredMode(catalog, p.host_options?.mode, "claude");
+    permissionArgs = claudePermissionArgs({ mode }, catalog.modes);
+  }
+  if (state.cancelled) return;
+  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio", ...permissionArgs] : ["run", "--format", "json"];
   if (claude && p.effort) args.push("--effort", p.effort);
   if (!claude && p.effort) args.push("--variant", p.effort);
   if (!claude && p.host_options?.mode !== "native") {
@@ -2080,7 +2209,7 @@ async function execute(p, state) {
     if (p.runtime_id in acpArgs) await runAcp(p, state);
     else if (p.runtime_id === "pi") await runPi(p, state, launch, terminate, emit);
     else if (p.runtime_id === "antigravity") await runAntigravity(p, state);
-    else if (p.runtime_id === "zcode") await runZcode(p, state, launch, terminate, emit);
+    else if (p.runtime_id === "zcode") await runZcode(p, state, launch, terminate, emit, () => permissionOptions({ ...p, path: state.bin }));
     else await runStream(p, state);
     if (!state.cancelled && !state.publicActivity) throw Error("Host ended without visible output or tool activity; verify host configuration");
     emit(p.execution_id, "end", { status: state.cancelled ? "cancelled" : "completed" });

@@ -29,7 +29,7 @@ function fixture(read){
  });
  vm.runInContext([
   line('refresh'),line('refreshState'),line('chatBackendChoice'),
-  section('function rememberDraft(){','const PERMISSION_MODES='),
+  section('function rememberDraft(){','function renderChatRuntimePermissions()'),
   section('async function initChat(',"$('chat-allow-web').onchange="),
   section('// BEGIN_WORKSPACE_STARTUP','// END_WORKSPACE_STARTUP'),
  ].join('\n'),context);

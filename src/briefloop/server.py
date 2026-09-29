@@ -344,7 +344,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,options(q.get('backend',['codex'])[0],q.get('model',['default'])[0],store.root,bridge,native=native_harness,opencode=opencode_harness))
                 elif u.path=='/api/runtime/permissions':
                     from .runtime_permissions import catalog
-                    self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge))
+                    self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge,model=q.get('model',[None])[0]))
                 elif u.path=='/api/native/providers':
                     from .native_providers import configurations
                     self.send(200,{'configurations':configurations()})
