@@ -59,6 +59,8 @@ def main():
     run.add_argument('--allow-private-external', action='store_true')
     run.add_argument('--prefilter', action='store_true', help='确定性引文/定位前置过滤，命中者不进模型')
     run.add_argument('--with-probabilities', action='store_true', help='仅 llm 臂：要求类别概率分布')
+    run.add_argument('--response-format', choices=['json_schema', 'json_object'], default='json_schema',
+                     help='仅 llm 臂：端点不支持严格 schema 时用 json_object，回答仍按同一 schema 严格校验')
     run.add_argument('--timeout', type=float, default=30)
     run.add_argument('--attempts', type=int, default=2)
     run.add_argument('--max-request-bytes', type=int, default=60000)
@@ -116,7 +118,8 @@ def main():
             key = os.environ.get(env_name)
         print(dump(execute(args.dataset, args.out, args.provider, model, endpoint, key, args.split,
             args.allow_network, args.allow_private_external, args.timeout, args.attempts, args.max_request_bytes,
-            args.prefilter, args.with_probabilities, frozen_policy=args.policy)))
+            args.prefilter, args.with_probabilities, frozen_policy=args.policy,
+            response_format=args.response_format)))
     elif args.command == 'serve':
         server = serve(args.dataset, args.annotations, args.port, args.mode, args.run)
         print(f'http://127.0.0.1:{server.server_port}', flush=True)
