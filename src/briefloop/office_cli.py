@@ -6,7 +6,7 @@ disabled workspace switch or any subprocess failure records "not run" without
 touching the export job, the delivery gate or the audit fingerprints. Command
 forms are fixed to the ones the shipped CLI actually speaks — `validate <file>
 --json`, `view <file> issues --json` and `view <file> screenshot --page N -o
-<out> --json`; a top-level `screenshot` subcommand does not exist.
+<out> --json` (Excel uses `--range`); no top-level `screenshot` command exists.
 """
 from io import BytesIO
 from pathlib import Path
@@ -63,6 +63,9 @@ VERSION_TTL_SECONDS = 600
 HINT_TTL_SECONDS = 30
 MAX_ISSUE_ITEMS = 50
 MAX_IMAGE_PIXELS = 40_000_000
+# Older XLSX previews used --page, which OfficeCLI ignores for worksheets.
+# Reject their manifests at both render and image-serving entry points.
+RENDER_CACHE_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS office_checks(id TEXT PRIMARY KEY,kind TEXT NOT NULL,file_sha256 TEXT NOT NULL,
@@ -453,14 +456,16 @@ def _atomic_bytes(path, data):
         temporary_io.unlink(missing_ok=True)
 
 
-def _cached_render(directory, digest, page):
+def _cached_render(directory, digest, page, *, worksheet=None):
     path = directory / f'page-{page:04d}.png'
     record = platform_support.filesystem_path(path.with_suffix('.json'))
     if not record.is_file():
         return None
     try:
         metadata = json.loads(record.read_text(encoding='utf-8'))
-        if not isinstance(metadata, dict) or metadata.get('source_sha256') != digest or metadata.get('page') != page:
+        if (not isinstance(metadata, dict) or metadata.get('cache_version') != RENDER_CACHE_VERSION
+                or metadata.get('source_sha256') != digest or metadata.get('page') != page
+                or (worksheet is not None and metadata.get('worksheet') != worksheet)):
             return None
         if 'image_file' in metadata:
             image_hash = metadata.get('image_sha256')
@@ -478,11 +483,37 @@ def _cached_render(directory, digest, page):
         return None
     return {'page': page, 'path': str(path), 'width': width, 'height': height,
             'image_sha256': metadata['image_sha256'], 'digest': digest,
-            'tool_version': metadata.get('tool_version'), 'cached': True}
+            'tool_version': metadata.get('tool_version'), 'cached': True,
+            **({'worksheet': metadata['worksheet']} if metadata.get('worksheet') else {})}
+
+
+def _xlsx_worksheet(path, page):
+    """Select the visible worksheet's cell extent, without rewriting the file.
+
+    OfficeCLI's --page selects document pages/slides, not Excel worksheets.
+    Its --range selects and reveals the worksheet containing the given cells.
+    The slash form also keeps '!' in a worksheet name unambiguous.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    workbook = load_workbook(platform_support.filesystem_path(path), read_only=True)
+    try:
+        sheets = [sheet for sheet in workbook.worksheets if sheet.sheet_state == 'visible']
+        if page > len(sheets):
+            raise ValueError(f'工作表序号 {page} 超出范围；文件有 {len(sheets)} 张可见工作表')
+        sheet = sheets[page - 1]
+        cells = f'A1:{get_column_letter(sheet.max_column or 1)}{sheet.max_row or 1}'
+        # OfficeCLI embeds data paths in a double-quoted CSS selector. Excel
+        # names allow quotes, so escape them for that selector, not a shell.
+        selector_name = sheet.title.replace('"', '\\"')
+        return {'name': sheet.title, 'cells': cells,
+                'range': f'/{selector_name}/{cells}', 'count': len(sheets)}
+    finally:
+        workbook.close()
 
 
 def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT):
-    """Render one page via `view <file> screenshot --page N -o <out> --json`.
+    """Render a page/slide, or a visible Excel worksheet's cell range.
 
     Output lands in the content-addressed cache office/renders/<sha>/ with a
     hash-bound sidecar, mirroring the PDF page render cache.
@@ -493,9 +524,10 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
         raise ValueError('未检测到 OfficeCLI 或未开启')
     if type(page) is not int or page < 1:
         raise ValueError('页码必须为从 1 开始的整数')
+    worksheet = _xlsx_worksheet(target, page) if target.suffix.lower() == '.xlsx' else None
     digest = _file_sha256(target)
     directory = _render_directory(store, digest)
-    cached = _cached_render(directory, digest, page)
+    cached = _cached_render(directory, digest, page, worksheet=worksheet)
     if cached:
         return cached
     # Per-request staging name: concurrent renders of the same page must not
@@ -503,7 +535,8 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
     staging = directory / f'.render-{page:04d}-{uid("render")}.tmp.png'
     staging_io = platform_support.filesystem_path(staging)
     try:
-        outcome = run_json([binary, 'view', str(target), 'screenshot', '--page', str(page),
+        selector = ['--range', worksheet['range']] if worksheet else ['--page', str(page)]
+        outcome = run_json([binary, 'view', str(target), 'screenshot', *selector,
                             '-o', str(staging_io), '--json'], timeout=timeout, deadline=deadline)
         if not outcome['ok']:
             if outcome['reason'] == BUDGET_EXHAUSTED:
@@ -519,13 +552,15 @@ def render_page(store, path, page, *, deadline=None, timeout=SCREENSHOT_TIMEOUT)
         _replace_cache_file(staging, destination)
     finally:
         staging_io.unlink(missing_ok=True)
-    metadata = {'source_sha256': digest, 'page': page,
+    metadata = {'cache_version': RENDER_CACHE_VERSION, 'source_sha256': digest, 'page': page,
                 'image_sha256': image_hash, 'image_file': destination.name,
-                'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height}
+                'tool': BINARY, 'tool_version': version(binary), 'width': width, 'height': height,
+                **({'worksheet': worksheet} if worksheet else {})}
     _atomic_bytes(directory / f'page-{page:04d}.json', json.dumps(metadata, sort_keys=True).encode())
     return {'page': page, 'path': str(destination), 'width': width, 'height': height,
             'image_sha256': metadata['image_sha256'], 'digest': digest,
-            'tool_version': metadata['tool_version'], 'cached': False}
+            'tool_version': metadata['tool_version'], 'cached': False,
+            **({'worksheet': worksheet} if worksheet else {})}
 
 
 def _resolve_target(store, kind, identity):
@@ -589,7 +624,8 @@ def render_preview(store, body):
         cached_all = cached_all and found['cached']
         rendered.append({'page': page,
                          'url': f"/api/office-image?digest={found['digest']}&page={page}",
-                         'width': found['width'], 'height': found['height']})
+                         'width': found['width'], 'height': found['height'],
+                         **({'worksheet': found['worksheet']} if found.get('worksheet') else {})})
     return {'target': {'kind': target['kind'], 'id': target['id'], 'name': target['name']},
             'tool': BINARY, 'tool_version': version(binary),
             'cached': bool(rendered) and cached_all, 'pages': rendered,
