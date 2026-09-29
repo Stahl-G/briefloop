@@ -2,6 +2,8 @@ import {reasoningProfile,reasoningModel,validateEffort,acpReasoning,applyAcpEffo
 import {piModels,runPi} from './pi.js';
 import {runZcode,zcodeModels} from './zcode.js';
 import {checkWindowsCommandLine} from './windows-command.js';
+import {claudeModels,claudePermissionArgs,sanitizeClaudeModel} from './claude.js';
+import {claudeQuestions,claudeQuestionInput,questionAnswers} from './user-input.js';
 // BriefLoop protocol glue. Upstream Apache helpers: third_party/open-design/NOTICE.md.
 import {spawn, execFile} from 'node:child_process';
 import {accessSync, constants, readFileSync, existsSync} from 'node:fs';
@@ -125,15 +127,22 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
   return models.length?models.map(model=>({id:x.name+'/'+model,label:x.name+' · '+model,provider:x.kind||'configured',model_id:model})):[{id:x.name,label:x.name+(x.model?' · '+x.model:''),provider:x.kind||'configured',model_id:x.model}];
  })],source:'native_config',note:'Models declared by the host; account availability is checked by a model call.'};
  }
- const configuredDefault=hostDefaults(p.runtime_id);
+ const configuredDefault=p.runtime_id==='claude'?defaults:hostDefaults(p.runtime_id);
  const unavailable=(diagnostic='宿主未提供模型目录；可沿用宿主设置或手动输入模型 ID。')=>({models:configuredDefault,source:'host_default_only',status:'unavailable',diagnostic,refreshed_at:new Date().toISOString()});
  if(p.runtime_id==='pi')return piModels(bin,p,launch,terminate);
  if(p.runtime_id==='zcode')return zcodeModels();
  if(p.runtime_id==='antigravity'){const r=await exec(bin,['models'],{env,cwd:p.cwd||process.cwd(),timeout:20000,maxBuffer:1024*1024});const models=r.stdout.split(/\r?\n/).map(line=>line.trim().split(/\t+/)).filter(([id,label])=>label&&sanitizeCustomModel(id)).map(([id,label])=>({id,label}));return {models:[...defaults,...models],source:models.length?'host':'host_default_only'};}
  if(p.runtime_id==='claude'){
-  const routed=await loadMmdRouteModels(env,[]);
-  return {models:routed||configuredDefault,source:routed?'local_routes':'host_default_only',status:routed?'configured':'unavailable',refreshed_at:new Date().toISOString(),
-   note:'Claude Code 未提供可读取的实时模型目录。仅显示本机已配置路由；也可沿用宿主默认或手动输入模型 ID。'};
+  try{
+   const catalog=await claudeModels(bin,{...p,cwd:p.cwd||process.cwd()},launch,terminate);
+   if(!catalog.models.some(m=>m.id==='default'))catalog.models.unshift(...configuredDefault);
+   return catalog;
+  }catch{
+   const routed=await loadMmdRouteModels(env,[]);
+   return {models:routed||hostDefaults('claude'),source:routed?'local_routes':'host_default_only',status:routed?'configured':'unavailable',refreshed_at:new Date().toISOString(),
+    diagnostic:'Claude Code 模型元数据初始化失败；请确认 CLI 版本支持当前控制协议。',
+    note:'仅显示本机已配置路由或宿主默认；可重试或手动输入模型 ID，未注入预设模型。'};
+  }
  }
  try{
   if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return models?.some(m=>m.id!=='default')?{models,source:'host',status:'reachable',refreshed_at:new Date().toISOString()}:unavailable();}
@@ -143,7 +152,7 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
  return unavailable();
 }
 
-function validate(p:any){p.effort=validateEffort(p.runtime_id,p.effort);if(p.model&&!sanitizeCustomModel(p.model))throw Error('Invalid model ID');if(!p.execution_id||!p.cwd||typeof p.prompt!=='string')throw Error('execution_id, cwd and prompt required');if(active.has(p.execution_id))throw Error('Execution already active');if((p.permission||'runtime-native')!=='runtime-native')throw Error('This runtime cannot enforce '+p.permission+'; use runtime-native or a restricted native manager');if(p.allow_web===false)throw Error('This runtime cannot enforce network disabled; enable host-native network access or choose a native manager');const d=defFor(p.runtime_id),bin=findBin(d,p.path);if(!bin)throw Error('Runtime not installed');if(!protocol(d.id)||protocol(d.id)==='native-manager')throw Error('Runtime execution belongs to native manager or is not integrated');return bin;}
+function validate(p:any){p.effort=validateEffort(p.runtime_id,p.effort);if(p.model&&!(p.runtime_id==='claude'?sanitizeClaudeModel(p.model):sanitizeCustomModel(p.model)))throw Error('Invalid model ID');if(!p.execution_id||!p.cwd||typeof p.prompt!=='string')throw Error('execution_id, cwd and prompt required');if(active.has(p.execution_id))throw Error('Execution already active');if((p.permission||'runtime-native')!=='runtime-native')throw Error('This runtime cannot enforce '+p.permission+'; use runtime-native or a restricted native manager');if(p.allow_web===false)throw Error('This runtime cannot enforce network disabled; enable host-native network access or choose a native manager');const d=defFor(p.runtime_id),bin=findBin(d,p.path);if(!bin)throw Error('Runtime not installed');if(!protocol(d.id)||protocol(d.id)==='native-manager')throw Error('Runtime execution belongs to native manager or is not integrated');return bin;}
 function acpToolTitle(tool:any){
  if(tool?.title)return tool.title;
  const input=tool?.rawInput;
@@ -153,15 +162,24 @@ function acpToolTitle(tool:any){
 }
 function acpPermissionModes(session:any){
  const modes=session.modes?.availableModes||[];
- return modes.filter((m:any)=>typeof m.id==='string'&&typeof m.name==='string').map((m:any)=>({id:m.id,name:m.name}));
+ return modes.filter((m:any)=>typeof m.id==='string'&&typeof m.name==='string').map((m:any)=>({id:m.id,name:m.name,...(typeof m.description==='string'?{description:m.description}:{})}));
+}
+function acpAutoMode(session:any){
+ return acpPermissionModes(session).find((mode:any)=>mode.id==='auto'&&!/bypass|yolo|skip(?:ping)?[ -]permissions|无条件|跳过.*(?:权限|确认)/i.test(mode.name+' '+(mode.description||'')));
 }
 async function permissionOptions(p:any){
  const bin=findBin(defFor(p.runtime_id),p.path);if(!bin)throw Error('Runtime not installed');
  const conn=connect(bin,p.runtime_id==='mimo'?['acp']:acpArguments(p.runtime_id,bin),p.cwd,()=>{},(_m,reply)=>reply({error:'Metadata probe cannot grant permissions'}));
- try{const {session}=await handshake(conn,p);return {modes:acpPermissionModes(session)};}finally{terminate(conn.child);}
+ try{const {session}=await handshake(conn,p),automatic=acpAutoMode(session);return {modes:acpPermissionModes(session),default_mode:automatic?.id||'native',auto_available:!!automatic,
+  note:automatic?'Auto 使用宿主公开的自动审批模式；需要询问的操作仍交给用户。':'宿主未公开 Auto 模式，保留原生权限；不会改用跳过权限或 yolo。'};}finally{terminate(conn.child);}
 }
 async function reasoningOptions(p:any){
  const profile=reasoningProfile(p.runtime_id);
+ if(p.runtime_id==='claude'){
+  const catalog=await listModels(p),selected=catalog.models.find((m:any)=>m.id===(p.model||'default')||m.resolved_model===p.model);
+  return selected&&Array.isArray(selected.reasoningOptions)?{kind:'levels',source:'host',options:selected.reasoningOptions.map((o:any)=>({id:o.id,name:o.label||o.id})),note:'Claude Code 当前模型公开的推理档位；模型默认不覆盖宿主默认设置。'}:
+   {kind:'host',source:catalog.source,options:[],availability:'not_advertised',note:'Claude Code 未返回所选模型的推理档位，沿用宿主默认；未添加推测选项。'};
+ }
  if(p.runtime_id==='codex'){
   const bin=findBin(defFor('codex'),p.path);if(!bin)throw Error('Runtime not installed');
   try{
@@ -199,7 +217,8 @@ async function reasoningOptions(p:any){
 async function runAcp(p:any,state:any){let sessionId;const args=acpArguments(p.runtime_id,state.bin);if(p.runtime_id==='codebuddy'&&p.effort)args.push('--effort',p.effort);if(p.runtime_id==='reasonix'&&p.model&&p.model!=='default')args.push('-model',p.model);const conn=connect(state.bin,args,p.cwd,(m)=>{if(m.method!=='session/update'||!state.promptStarted)return;const u=m.params?.update||{};if(u.sessionUpdate==='agent_message_chunk'&&u.content?.type==='text')emit(p.execution_id,'text',{text:u.content.text,delta:true});else if(u.sessionUpdate==='agent_thought_chunk'&&u.content?.type==='text')emit(p.execution_id,'reasoning',{text:u.content.text,delta:true});else if(['tool_call','tool_call_update'].includes(u.sessionUpdate)&&!['think','thinking','reasoning'].includes(u.kind))emit(p.execution_id,'tool',{id:u.toolCallId,name:acpToolTitle(u),status:u.status,input:u.rawInput,output:u.rawOutput});else if(u.sessionUpdate==='usage_update')emit(p.execution_id,'usage',{usage:u.usage||u});},(m,reply)=>{if(m.method==='session/request_permission'){const id=String(m.id);state.questions.set(id,{reply,options:m.params?.options||[]});emit(p.execution_id,'question',{request_id:id,type:'permission',title:acpToolTitle(m.params?.toolCall)+(m.params?.toolCall?.rawInput?'\n'+JSON.stringify(m.params.toolCall.rawInput):''),options:m.params?.options||[]});}else {reply({error:'Client method unsupported'});}});
  state.child=conn.child;state.cancel=()=>{if(sessionId)conn.notify('session/cancel',{sessionId});terminate(conn.child);};
  try{const {init,session}=await handshake(conn,p);sessionId=p.session_id||session.sessionId;if(!sessionId)throw Error('No session ID returned');emit(p.execution_id,'session',{session_id:sessionId,capabilities:init.agentCapabilities||{}});
- if(p.host_options?.mode&&p.host_options.mode!=='native'){if(!acpPermissionModes(session).some((m:any)=>m.id===p.host_options.mode))throw Error('Host does not advertise this permission mode');await conn.call('session/set_mode',{sessionId,modeId:p.host_options.mode});}
+ const mode=p.host_options?.mode??acpAutoMode(session)?.id;
+ if(mode&&mode!=='native'){if(!acpPermissionModes(session).some((m:any)=>m.id===mode))throw Error('Host does not advertise this permission mode');await conn.call('session/set_mode',{sessionId,modeId:mode});}
  let options=session.configOptions;if(p.model&&p.model!=='default'&&p.runtime_id!=='reasonix'){const cfg=findModelConfigOption(options);const changed=await conn.call(cfg?'session/set_config_option':'session/set_model',cfg?{sessionId,configId:cfg.configId,value:acpSelectedModel(p.runtime_id,p.model,options)}:{sessionId,modelId:p.model});options=changed?.configOptions||options;}
  if(p.runtime_id!=='codebuddy')await applyAcpEffort(conn,sessionId,options,p.effort);
  const blocks=buildPromptBlocks(p.prompt,[]);if(p.images?.length&&!init.agentCapabilities?.promptCapabilities?.image)throw Error('Host does not advertise image input');for(const image of p.images||[]){const f=typeof image==='string'?image:image.path;const mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'})[path.extname(f).toLowerCase()];if(!mime)throw Error('Unsupported image format');const data=readFileSync(f);if(data.length>20*1024*1024)throw Error('Image exceeds 20 MiB');blocks.push({type:'image',mimeType:mime,data:data.toString('base64')});}
@@ -248,19 +267,48 @@ async function runAntigravity(p:any,state:any){
   child.stdin.end(JSON.stringify({event:'user',message:{content:prompt}})+'\n');
  });
 }
-async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';let args=claude?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--permission-prompt-tool','stdio']:['run','--format','json'];if(claude&&p.host_options?.mode&&p.host_options.mode!=='native'){if(!['manual','acceptEdits','dontAsk','plan'].includes(p.host_options.mode))throw Error('Invalid Claude permission mode');args.push('--permission-mode',p.host_options.mode);}
+async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';let args=claude?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--permission-prompt-tool','stdio',...claudePermissionArgs(p.host_options)]:['run','--format','json'];
  if(claude&&p.effort)args.push('--effort',p.effort);
  if(!claude&&p.effort)args.push('--variant',p.effort);
- if(!claude&&p.host_options?.mode&&p.host_options.mode!=='native'){const options=await permissionOptions({...p,path:state.bin});if(!options.modes.some((m:any)=>m.id===p.host_options.mode))throw Error('Host does not advertise this mode');args.push('--agent',p.host_options.mode);}
+ if(!claude&&p.host_options?.mode!=='native'){const options=await permissionOptions({...p,path:state.bin}),mode=p.host_options?.mode??options.default_mode;if(mode&&mode!=='native'){if(!options.modes.some((m:any)=>m.id===mode))throw Error('Host does not advertise this mode');args.push('--agent',mode);}}
  if(p.model&&p.model!=='default')args.push('--model',p.model);if(p.session_id)args.push(claude?'--resume':'--session',p.session_id);if(claude&&p.web_tools===true)args.push('--allowedTools','WebSearch','WebFetch');if(!claude&&p.images?.length)throw Error('MiMo direct image transport not verified');const route=claude?await loadMmdRouteLaunchEnv(env,p.model):null;const child=launch(state.bin,args,p.cwd,route?{...env,...route}:env);state.child=child;state.cancel=()=>terminate(child);let resultSeen=false,lastSession=null;
- await new Promise<void>((resolve,reject)=>{const timer=p.timeout_ms?setTimeout(()=>{terminate(child);reject(Error('Runtime turn timed out'));},p.timeout_ms):null;const parser=createJsonLineStream((m:any)=>{const sid=m.session_id||m.sessionID;if(sid&&sid!==lastSession){lastSession=sid;emit(p.execution_id,'session',{session_id:sid});}if(claude){if(m.type==='control_request'){
+ await new Promise<void>((resolve,reject)=>{const timer=p.timeout_ms?setTimeout(()=>{terminate(child);reject(Error('Runtime turn timed out'));},p.timeout_ms):null;const parser=createJsonLineStream((m:any)=>{const sid=m.session_id||m.sessionID;if(sid&&sid!==lastSession){lastSession=sid;emit(p.execution_id,'session',{session_id:sid});}if(claude){if(m.type==='control_cancel_request'){const id=String(m.request_id);if(state.questions.delete(id))emit(p.execution_id,'question_cancelled',{request_id:id});return;}if(m.type==='control_request'){
  const request=m.request||{},id=String(m.request_id),send=(response:any)=>child.stdin.write(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:id,response}})+'\n');
  if(request.subtype!=='can_use_tool'){child.stdin.write(JSON.stringify({type:'control_response',response:{subtype:'error',request_id:id,error:'Unsupported control request'}})+'\n');return;}
+ if(request.tool_name==='AskUserQuestion'){
+  try{
+   const questions=claudeQuestions(request.input);
+   state.questions.set(id,{type:'user_input',questions,reply:(r:any)=>send(r.cancelled?{behavior:'deny',message:'用户取消了提问'}:{behavior:'allow',updatedInput:claudeQuestionInput(request.input,questions,r.answers)})});
+   emit(p.execution_id,'question',{request_id:id,type:'user_input',title:'Claude 请求回答',questions});
+  }catch(error){send({behavior:'deny',message:String(error.message||'AskUserQuestion 格式无效')})}
+  return;
+ }
  const options=[{optionId:'allow',name:'允许本次',kind:'allow_once'},{optionId:'deny',name:'拒绝',kind:'reject_once'}];
  state.questions.set(id,{options,reply:(r:any)=>send(r.outcome?.optionId==='allow'?{behavior:'allow',updatedInput:request.input}:{behavior:'deny',message:'用户拒绝了本次操作'})});
- emit(p.execution_id,'question',{request_id:id,type:'permission',title:(request.title||request.tool_name||'Claude 请求权限')+' · '+JSON.stringify(request.input||{}),options});return;
+ emit(p.execution_id,'question',{request_id:id,type:'permission',title:request.title||request.tool_name||'Claude 请求权限',tool:request.tool_name,input:request.input||{},options});return;
  }if(m.type==='assistant'){for(const b of m.message?.content||[]){if(b.type==='text')emit(p.execution_id,'text',{text:b.text,delta:true});if(b.type==='thinking'&&b.thinking)emit(p.execution_id,'reasoning',{text:b.thinking,delta:true});if(b.type==='tool_use'&&!/^(think|thinking|reasoning)$/i.test(b.name))emit(p.execution_id,'tool',{id:b.id,name:b.name,status:'running',input:b.input});}}if(m.type==='user')for(const b of m.message?.content||[])if(b.type==='tool_result')emit(p.execution_id,'tool',{id:b.tool_use_id,status:b.is_error?'failed':'completed',output:b.content});if(m.type==='result'){resultSeen=true;child.stdin.end();if(m.usage)emit(p.execution_id,'usage',{usage:m.usage});if(m.is_error){reject(Error('Host reported unsuccessful result'));terminate(child);}}}else{const part=m.part||{};if(m.type==='text')emit(p.execution_id,'text',{text:part.text||m.text||'',delta:true});if(m.type==='reasoning'||part.type==='reasoning')emit(p.execution_id,'reasoning',{text:part.text||m.text||'',delta:true});if(m.type==='tool_use'&&!/^(think|thinking|reasoning)$/i.test(part.tool))emit(p.execution_id,'tool',{id:part.callID,name:part.tool,status:part.state?.status,input:part.state?.input,output:part.state?.output});if(m.type==='step_finish'){resultSeen=true;emit(p.execution_id,'usage',{usage:part.tokens||{},cost:part.cost});}if(m.type==='error'){reject(Error([m.error?.name||'Host error',m.error?.data?.statusCode?'HTTP '+m.error.data.statusCode:''].filter(Boolean).join(' · ')));terminate(child);}}});child.stdout.setEncoding('utf8');child.stdout.on('data',c=>parser.feed(c));child.stderr.resume();child.on('error',e=>{clearTimeout(timer);reject(e);});child.stdin.on('error',()=>{});child.on('close',code=>{clearTimeout(timer);parser.flush();if(state.cancelled)resolve();else if(code===0&&resultSeen)resolve();else reject(Error('Runtime exited without successful result (code '+code+')'));});
  if(claude){const content:any[]=[{type:'text',text:p.prompt}];for(const img of p.images||[]){const f=typeof img==='string'?img:img.path;const mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'})[path.extname(f).toLowerCase()];if(!mime){terminate(child);reject(Error('Unsupported image'));return;}const data=readFileSync(f);if(data.length>20*1024*1024){terminate(child);reject(Error('Image exceeds 20 MiB'));return;}content.push({type:'image',source:{type:'base64',media_type:mime,data:data.toString('base64')}});}child.stdin.write(JSON.stringify({type:'user',message:{role:'user',content}})+'\n');}else child.stdin.end(p.prompt);});}
-async function execute(p:any,state:any){try{if(state.cancelled)return;if(p.runtime_id in acpArgs)await runAcp(p,state);else if(p.runtime_id==='pi')await runPi(p,state,launch,terminate,emit);else if(p.runtime_id==='antigravity')await runAntigravity(p,state);else if(p.runtime_id==='zcode')await runZcode(p,state,launch,terminate,emit);else await runStream(p,state);if(!state.cancelled&&!state.publicActivity)throw Error('Host ended without visible output or tool activity; verify host configuration');emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'completed'});}catch(e){if(!state.cancelled)emit(p.execution_id,'error',{message:String(e.message||e)});emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'failed',error:state.cancelled?undefined:String(e.message||e)});}finally{state.questions.clear();active.delete(p.execution_id);}}
-async function handle(method:string,p:any){if(method==='discover')return discover(p);if(method==='list_models')return listModels(p);if(method==='permission_options')return permissionOptions(p);if(method==='reasoning_options')return reasoningOptions(p);if(method==='start'){const bin=validate(p);const state={bin,cancelled:false,questions:new Map()};active.set(p.execution_id,state);setImmediate(()=>execute(p,state));return {execution_id:p.execution_id};}if(method==='cancel'){const s=active.get(p.execution_id);if(!s)return {cancelled:false};s.cancelled=true;s.cancel?.();return {cancelled:true};}if(method==='answer'){const s=active.get(p.execution_id),q=s?.questions.get(String(p.request_id));if(!q)throw Error('Request no longer pending');if(p.option_id&&!q.options.some(o=>o.optionId===p.option_id))throw Error('Unknown permission option');q.reply({outcome:p.option_id?{outcome:'selected',optionId:p.option_id}:{outcome:'cancelled'}});s.questions.delete(String(p.request_id));return {accepted:true};}throw Error('Unknown bridge method');}
+async function execute(p:any,state:any){try{if(state.cancelled)return;if(p.runtime_id in acpArgs)await runAcp(p,state);else if(p.runtime_id==='pi')await runPi(p,state,launch,terminate,emit);else if(p.runtime_id==='antigravity')await runAntigravity(p,state);else if(p.runtime_id==='zcode')await runZcode(p,state,launch,terminate,emit);else await runStream(p,state);if(!state.cancelled&&!state.publicActivity)throw Error('Host ended without visible output or tool activity; verify host configuration');emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'completed'});}catch(e){if(!state.cancelled)emit(p.execution_id,'error',{message:String(e.message||e)});emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'failed',error:state.cancelled?undefined:String(e.message||e)});}finally{for(const q of state.questions.values())clearTimeout(q.timer);state.questions.clear();active.delete(p.execution_id);}}
+async function handle(method:string,p:any){
+ if(method==='discover')return discover(p);
+ if(method==='list_models')return listModels(p);
+ if(method==='permission_options')return permissionOptions(p);
+ if(method==='reasoning_options')return reasoningOptions(p);
+ if(method==='start'){const bin=validate(p);const state={bin,cancelled:false,questions:new Map()};active.set(p.execution_id,state);setImmediate(()=>execute(p,state));return {execution_id:p.execution_id};}
+ if(method==='cancel'){const s=active.get(p.execution_id);if(!s)return {cancelled:false};s.cancelled=true;s.cancel?.();return {cancelled:true};}
+ if(method==='answer'){
+  const s=active.get(p.execution_id),id=String(p.request_id),q=s?.questions.get(id);
+  if(!q||s.cancelled)throw Error('Request no longer pending');
+  if(q.type==='user_input'){
+   if(p.option_id)throw Error('A user question cannot be answered as a permission');
+   q.reply(p.answers===undefined?{cancelled:true}:{answers:questionAnswers(q.questions,p.answers)});
+  }else{
+   if(p.answers!==undefined)throw Error('A permission requires a native permission option');
+   if(p.option_id&&!q.options.some(o=>o.optionId===p.option_id))throw Error('Unknown permission option');
+   q.reply({outcome:p.option_id?{outcome:'selected',optionId:p.option_id}:{outcome:'cancelled'}});
+  }
+  clearTimeout(q.timer);s.questions.delete(id);return {accepted:true};
+ }
+ throw Error('Unknown bridge method');
+}
 const input=createInterface({input:process.stdin});input.on('line',async line=>{let m;try{m=JSON.parse(line);wire({id:m.id,result:await handle(m.method,m.params||{})});}catch(e){wire({id:m?.id??null,error:{message:String(e.message||e)}});}});function shutdown(){if(stopping)return;stopping=true;for(const s of active.values()){s.cancelled=true;s.cancel?.();}for(const child of ownedChildren)terminate(child);setTimeout(()=>process.exit(0),1500).unref();}input.on('close',shutdown);process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);

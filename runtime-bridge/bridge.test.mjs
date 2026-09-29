@@ -11,8 +11,9 @@ const fixtureDirectories=new WeakMap();
 function bridge(t,extraEnv={}){
  const win=process.platform==='win32';
  if(win)assert.ok(process.env.BRIEFLOOP_PYTHON&&process.env.BRIEFLOOP_PROCESS_HELPER,'Set BRIEFLOOP_PYTHON and BRIEFLOOP_PROCESS_HELPER for Windows tests');
- const p=spawn(win?process.env.BRIEFLOOP_PYTHON:process.execPath,win?['-X','utf8',process.env.BRIEFLOOP_PROCESS_HELPER,process.execPath,'src/briefloop/static/runtime-bridge.mjs']:['src/briefloop/static/runtime-bridge.mjs'],{stdio:['pipe','pipe','inherit'],windowsHide:true,env:{...process.env,...extraEnv}});
- const directories=[];fixtureDirectories.set(t,directories);
+ const fixtureHome=mkdtempSync(path.join(os.tmpdir(),'bridge-home-'));
+ const p=spawn(win?process.env.BRIEFLOOP_PYTHON:process.execPath,win?['-X','utf8',process.env.BRIEFLOOP_PROCESS_HELPER,process.execPath,'src/briefloop/static/runtime-bridge.mjs']:['src/briefloop/static/runtime-bridge.mjs'],{stdio:['pipe','pipe','inherit'],windowsHide:true,env:{...process.env,HOME:fixtureHome,USERPROFILE:fixtureHome,CLAUDE_CONFIG_DIR:fixtureHome,MMD_MODEL_ROUTES_FILE:path.join(fixtureHome,'routes.json'),...extraEnv}});
+ const directories=[fixtureHome];fixtureDirectories.set(t,directories);
  // exitCode is available before close, and separate after hooks do not express
  // this dependency. Gracefully drain the bridge and its owned processes before
  // removing their working directories, including on Windows.
@@ -29,7 +30,7 @@ function bridge(t,extraEnv={}){
    await rm(directory,{recursive:true,force:true,maxRetries:20,retryDelay:100});
   }
  });
- return {frames,stop:()=>p.stdin.end(),send:(id,method,params)=>p.stdin.write(JSON.stringify({id,method,params})+'\n'),wait:predicate=>{const found=frames.find(predicate);if(found)return Promise.resolve(found);return new Promise((resolve,reject)=>{const w={predicate,resolve,timer:setTimeout(()=>reject(Error('missing frame')),5000)};waiters.push(w);});}};
+ return {home:fixtureHome,frames,stop:()=>p.stdin.end(),send:(id,method,params)=>p.stdin.write(JSON.stringify({id,method,params})+'\n'),wait:predicate=>{const found=frames.find(predicate);if(found)return Promise.resolve(found);return new Promise((resolve,reject)=>{const w={predicate,resolve,timer:setTimeout(()=>reject(Error('missing frame')),5000)};waiters.push(w);});}};
 }
 function fixture(t,body,name='cli'){const directories=fixtureDirectories.get(t);assert.ok(directories,'Create the bridge before its fixtures');const d=mkdtempSync(path.join(os.tmpdir(),'bridge-fixture-')),f=path.join(d,name);directories.push(d);writeFileSync(f,'#!/usr/bin/env node\n'+body,{mode:0o755});if(process.platform==='win32'){writeFileSync(path.join(d,'entry.cjs'),body);writeFileSync(f,'exec node "$basedir/entry.cjs" "$@"');writeFileSync(f+'.cmd','@echo off');return {path:f+'.cmd',cwd:d};}return {path:f,cwd:d};}
 const rpcFake=`const rl=require('node:readline').createInterface({input:process.stdin});const send=v=>process.stdout.write(JSON.stringify(v)+'\\n');let promptId;rl.on('line',line=>{const m=JSON.parse(line);const result=r=>send({jsonrpc:'2.0',id:m.id,result:r});if(m.method==='initialize')result({agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}});else if(m.method==='session/new'||m.method==='session/load')result({sessionId:'real-session',models:{availableModels:[{modelId:'test/model',name:'Test'}]}});else if(m.method==='session/set_model')result({});else if(m.method==='session/prompt'){promptId=m.id;send({method:'session/update',params:{update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'HIDDEN'}}}});send({id:90,method:'session/request_permission',params:{options:[{optionId:'yes',kind:'allow_once',name:'Allow once'}],toolCall:{title:'Read fixture'}}});}else if(m.id===90){if(m.result.outcome.optionId!=='yes')process.exit(2);send({method:'session/update',params:{update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'OK'}}}});send({id:promptId,result:{stopReason:'end_turn'}});}});`;
@@ -38,7 +39,7 @@ test('Claude without a live directory does not inject concrete model presets',as
  b.send(1,'list_models',{runtime_id:'claude',...f});
  const result=(await b.wait(x=>x.id===1)).result;
  assert.ok(['local_routes','host_default_only'].includes(result.source));
- assert.match(result.note,/未提供可读取的实时模型目录/);
+ assert.match(result.note,/仅显示本机已配置路由或宿主默认/);
  assert.ok(!result.models.some(m=>m.id==='claude-opus-5-5'));
  assert.ok(result.models.some(m=>m.id==='default'));
 });
@@ -139,6 +140,117 @@ test('Claude forwards native allow and deny over open stdio',async t=>{
  await b.wait(x=>x.params?.request_id==='first');b.send(2,'answer',{execution_id:'claude-permission',request_id:'first',option_id:'allow'});
  await b.wait(x=>x.params?.request_id==='second');b.send(3,'answer',{execution_id:'claude-permission',request_id:'second',option_id:'deny'});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+});
+test('Claude defaults to native auto, preserves explicit host settings, and passes long-context aliases unchanged',async t=>{
+ for(const mode of [undefined,'native','manual']){
+  const b=bridge(t),expected=mode==='native'?null:mode||'auto';
+  const f=fixture(t,`const a=process.argv.slice(2),i=a.indexOf('--permission-mode');
+   if((i<0?null:a[i+1])!==${JSON.stringify(expected)}||a.includes('--dangerously-skip-permissions')||a.includes('--effort'))process.exit(2);
+   if(a[a.indexOf('--model')+1]!=='opus[1m]')process.exit(3);
+   process.stdin.once('data',()=>{console.log(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'OK'}]}}));console.log(JSON.stringify({type:'result',is_error:false}));});`);
+  b.send(1,'start',{...f,runtime_id:'claude',execution_id:'native-auto',model:'opus[1m]',effort:'none',prompt:'fixture',permission:'runtime-native',host_options:mode?{mode}:{}});
+  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+  b.send(2,'start',{...f,runtime_id:'claude',execution_id:'invalid-alias',model:'opus[other]',prompt:'fixture',permission:'runtime-native'});
+  assert.match((await b.wait(x=>x.id===2)).error.message,/Invalid model ID/);
+ }
+});
+test('Claude AskUserQuestion carries multi-select and custom answers, separate from tool approvals',async t=>{
+ const input={questions:[{question:'选择内容',header:'内容',multiSelect:true,options:[{label:'A',description:'说明 A'},{label:'B',description:'说明 B'}]},{question:'补充要求',header:'要求',options:[{label:'无',description:''}]}],metadata:{keep:true}};
+ const b=bridge(t),f=fixture(t,`const send=x=>console.log(JSON.stringify(x)),rl=require('node:readline').createInterface({input:process.stdin});
+  rl.on('line',line=>{const m=JSON.parse(line);if(m.type==='user')send({type:'control_request',request_id:'ask',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:${JSON.stringify(input)}}});
+  if(m.type==='control_response'){const r=m.response.response;
+   if(m.response.request_id==='ask'){
+    if(r.behavior!=='allow'||r.updatedInput.answers['选择内容']!=='A, B'||r.updatedInput.answers['补充要求']!=='自定义要求'||!r.updatedInput.metadata.keep)process.exit(3);
+    send({type:'control_request',request_id:'bash',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'printf fixture'}}});
+   }else{if(r.behavior!=='deny')process.exit(4);send({type:'assistant',message:{content:[{type:'text',text:'Answered'}]}});send({type:'result',is_error:false});}
+  }});`);
+ b.send(1,'start',{...f,runtime_id:'claude',execution_id:'questions',prompt:'fixture',permission:'runtime-native'});
+ const q=(await b.wait(x=>x.params?.request_id==='ask')).params;
+ assert.equal(q.type,'user_input');assert.equal(q.questions[0].multiSelect,true);assert.equal(q.questions[0].options[0].description,'说明 A');assert.equal(q.questions[1].allowCustom,true);assert.equal(q.options,undefined);
+ b.send(2,'answer',{execution_id:'questions',request_id:'ask',option_id:'allow'});assert.match((await b.wait(x=>x.id===2)).error.message,/user question/);
+ b.send(3,'answer',{execution_id:'questions',request_id:'ask',answers:{}});assert.ok((await b.wait(x=>x.id===3)).error);
+ b.send(4,'answer',{execution_id:'questions',request_id:'ask',answers:{question_0:{answers:['A','B']},question_1:{answers:['自定义要求']}}});assert.equal((await b.wait(x=>x.id===4)).result.accepted,true);
+ const permission=(await b.wait(x=>x.params?.request_id==='bash')).params;
+ assert.equal(permission.type,'permission');assert.equal(permission.tool,'Bash');assert.equal(permission.input.command,'printf fixture');
+ b.send(5,'answer',{execution_id:'questions',request_id:'ask',answers:{}});assert.match((await b.wait(x=>x.id===5)).error.message,/no longer pending/);
+ b.send(6,'answer',{execution_id:'questions',request_id:'bash',option_id:'deny'});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+});
+test('Claude model metadata initializes without a prompt and exposes only model-specific capabilities',async t=>{
+ const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(!a.includes('--no-session-persistence')||!a.includes('--safe-mode'))process.exit(3);
+  require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='control_request'||m.request.subtype!=='initialize')process.exit(4);
+   console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{account:{secret:'DO_NOT_LEAK'},models:[{value:'sonnet',displayName:'Sonnet',resolvedModel:'claude-sonnet-current',supportedEffortLevels:['medium','high','future'],supportsEffort:true},{value:'opus[1m]',displayName:'Long context',supportedEffortLevels:['high']}]}}}));});`);
+ writeFileSync(path.join(b.home,'routes.json'),JSON.stringify({routes:{'configured-only':{primary:{}}}}));
+ b.send(1,'list_models',{runtime_id:'claude',...f});const list=(await b.wait(x=>x.id===1)).result;
+ assert.equal(list.source,'host');assert.equal(list.inference_tested,false);assert.deepEqual(list.models.map(m=>m.id),['default','sonnet','opus[1m]']);assert.doesNotMatch(JSON.stringify(list),/DO_NOT_LEAK|secret/);
+ b.send(2,'reasoning_options',{runtime_id:'claude',model:'claude-sonnet-current',...f});
+ assert.deepEqual((await b.wait(x=>x.id===2)).result.options.map(o=>o.id),['medium','high','future']);
+ b.send(3,'reasoning_options',{runtime_id:'claude',model:'unknown',...f});assert.deepEqual((await b.wait(x=>x.id===3)).result.options,[]);
+});
+test('Claude native question cancellation expires its answer without cancelling the conversation',async t=>{
+ const b=bridge(t),f=fixture(t,`const send=x=>console.log(JSON.stringify(x));process.stdin.once('data',()=>{
+  send({type:'control_request',request_id:'cancel-question',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{question:'取消的问题',options:[]}]}}});
+  setTimeout(()=>send({type:'control_cancel_request',request_id:'cancel-question'}),30);
+ });setInterval(()=>{},1000);`);
+ b.send(1,'start',{...f,runtime_id:'claude',execution_id:'cancel-question',prompt:'fixture',permission:'runtime-native'});
+ await b.wait(x=>x.params?.kind==='question_cancelled');
+ b.send(2,'answer',{execution_id:'cancel-question',request_id:'cancel-question',answers:{question_0:{answers:['late']}}});
+ assert.match((await b.wait(x=>x.id===2)).error.message,/no longer pending/);
+ assert.ok(!b.frames.some(x=>x.params?.kind==='end'));
+ b.send(3,'cancel',{execution_id:'cancel-question'});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'cancelled');
+});
+test('Pi extension selection, free text, confirmation and editor use native question responses',async t=>{
+ const b=bridge(t),f=fixture(t,`const send=x=>console.log(JSON.stringify(x)),rl=require('node:readline').createInterface({input:process.stdin});
+  rl.on('line',line=>{const m=JSON.parse(line),ok=data=>send({type:'response',id:m.id,command:m.type,success:true,data});
+   if(m.type==='get_state')ok({sessionFile:'/tmp/pi-questions-fixture.jsonl'});
+   else if(m.type==='prompt'){ok({});send({type:'extension_ui_request',id:'select',method:'select',title:'选择颜色',options:['红','蓝']});}
+   else if(m.type==='extension_ui_response'){
+    if(m.id==='select'){if(m.value!=='蓝'||m.confirmed!==undefined)process.exit(2);send({type:'extension_ui_request',id:'input',method:'input',title:'输入名称'});}
+    else if(m.id==='input'){if(m.value!=='测试')process.exit(3);send({type:'extension_ui_request',id:'confirm',method:'confirm',title:'确认继续',message:'这是扩展确认'});}
+    else if(m.id==='confirm'){if(m.confirmed!==false||m.value!==undefined)process.exit(4);send({type:'extension_ui_request',id:'editor',method:'editor',title:'编辑正文'});}
+    else{if(m.value!=='第一行\\n第二行')process.exit(5);send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'OK'}],stopReason:'stop'}});send({type:'agent_settled'});}
+   }
+  });`);
+ b.send(1,'start',{...f,runtime_id:'pi',execution_id:'pi-questions',prompt:'fixture',permission:'runtime-native'});
+ let next=2;
+ for(const [id,value] of [['select','蓝'],['input','测试'],['confirm','取消'],['editor','第一行\n第二行']]){
+  const q=(await b.wait(x=>x.params?.request_id===id)).params;
+  assert.equal(q.type,'user_input');assert.equal(q.questions[0].allowCustom,['input','editor'].includes(id));
+  b.send(next++,'answer',{execution_id:'pi-questions',request_id:id,answers:{answer:{answers:[value]}}});
+ }
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+});
+test('Pi native extension timeout expires the question and allows the host to continue',async t=>{
+ const b=bridge(t),f=fixture(t,`const send=x=>console.log(JSON.stringify(x));require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+  const m=JSON.parse(line),ok=data=>send({type:'response',id:m.id,command:m.type,success:true,data});
+  if(m.type==='get_state')ok({sessionFile:'/tmp/pi-timeout-fixture.jsonl'});
+  else if(m.type==='prompt'){ok({});send({type:'extension_ui_request',id:'expired',method:'input',title:'稍后继续',timeout:25});}
+  else if(m.type==='extension_ui_response'){if(m.cancelled!==true)process.exit(3);send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'Continuing'}],stopReason:'stop'}});send({type:'agent_settled'});}
+ });`);
+ b.send(1,'start',{...f,runtime_id:'pi',execution_id:'pi-expired',prompt:'fixture',permission:'runtime-native'});
+ await b.wait(x=>x.params?.kind==='question_cancelled');
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+ b.send(2,'answer',{execution_id:'pi-expired',request_id:'expired',answers:{answer:{answers:['late']}}});
+ assert.match((await b.wait(x=>x.id===2)).error.message,/no longer pending/);
+});
+test('ACP defaults only to an advertised Auto mode and never substitutes yolo',async t=>{
+ for(const [available,hasAuto] of [
+  [[{id:'auto',name:'Auto'},{id:'yolo',name:'Skip permissions'}],true],
+  [[{id:'yolo',name:'Skip permissions'}],false],
+  [[{id:'auto',name:'Auto',description:'Bypass all permission checks'}],false],
+ ]){
+  const b=bridge(t);
+  const f=fixture(t,`let selected=false;`+rpcFake
+   .replace("models:{availableModels:",`modes:{availableModes:${JSON.stringify(available)}},models:{availableModels:`)
+   .replace("else if(m.method==='session/set_model')",`else if(m.method==='session/set_mode'){if(m.params.modeId!=='auto')process.exit(3);selected=true;result({});}else if(m.method==='session/set_model')`)
+   .replace("promptId=m.id;",`if(selected!==${hasAuto})process.exit(4);promptId=m.id;`));
+  b.send(1,'permission_options',{...f,runtime_id:'kimi'});const modes=(await b.wait(x=>x.id===1)).result;
+  assert.equal(modes.auto_available,hasAuto);assert.equal(modes.default_mode,hasAuto?'auto':'native');
+  b.send(2,'start',{...f,runtime_id:'kimi',execution_id:'mode',prompt:'fixture',permission:'runtime-native',host_options:{}});
+  const q=(await b.wait(x=>x.params?.kind==='question')).params;b.send(3,'answer',{execution_id:'mode',request_id:q.request_id,option_id:'yes'});
+  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+ }
 });
 test('ACP accepts only an advertised permission mode before prompting',async t=>{
  const b=bridge(t),f=fixture(t,rpcFake.replace("models:{availableModels:","modes:{availableModes:[{id:'plan',name:'Plan'}]},models:{availableModels:").replace("m.method==='session/set_model'","m.method==='session/set_mode'||m.method==='session/set_model'"));

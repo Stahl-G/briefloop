@@ -7,6 +7,16 @@ from briefloop.bridge_harness import normalize_bridge_usage
 from briefloop.models import Settings
 
 
+def test_claude_auto_is_default_without_overwriting_explicit_restrictions():
+    found=permissions.catalog('claude',Path('/tmp'),None)
+    assert found['default_mode']=='auto' and found['auto_available']
+    assert permissions.validate_options('claude',None)=={'mode':'auto'}
+    assert permissions.validate_options('claude',{})=={'mode':'auto'}
+    for mode in ('auto','native','plan','manual','dontAsk'):
+        assert permissions.validate_options('claude',{'mode':mode})=={'mode':mode}
+    with pytest.raises(ValueError):permissions.validate_options('claude',{'mode':'bypassPermissions'})
+
+
 def test_scoped_native_rule_preserves_other_settings_and_rejects_stale_write(tmp_path, monkeypatch):
     path=tmp_path/'settings.json'
     original={'auth':{'fixture':'never-return-this'},'permissions':{'deny':['command(rm *)']},'theme':'dark'}

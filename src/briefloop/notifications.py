@@ -39,13 +39,13 @@ def mark_read(store, through, category=None, seq=None):
     return snapshot(store)
 
 
-def permission_requested(store, job_id, session_id, request_id):
+def permission_requested(store, job_id, session_id, request_id, *, question=False):
     job=store.one('jobs',job_id)
     from .task_labels import label
     category='learning' if job['kind']=='learn' else 'templates' if job['kind']=='prepare_template' else 'reports'
-    post(store,'permission:'+request_id,category,label(job['kind'])+' 等待授权',
+    post(store,'permission:'+request_id,category,label(job['kind'])+(' 等待补充信息' if question else ' 等待授权'),
          target={'job_id':job_id,'session_id':session_id,'request_id':request_id},
-         body='请打开任务查看具体操作，并选择允许本次或拒绝。任务正在等待你的选择。')
+         body='请打开任务回答问题，回答后继续。' if question else '请打开任务查看具体操作，并选择允许本次或拒绝。任务正在等待你的选择。')
     # The user may answer between request creation and notification insertion.
     rows=store.rows('SELECT status FROM chat_requests WHERE id=?',(request_id,))
     if not rows or rows[0]['status']!='pending':permission_resolved(store,request_id)

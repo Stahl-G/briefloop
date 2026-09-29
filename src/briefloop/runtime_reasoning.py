@@ -49,7 +49,7 @@ def options(backend, model, workspace, bridge, native=None, opencode=None):
                 'availability': 'advertised' if variants else 'no_variants',
                 'options': [{'id': value, 'name': value} for value in variants],
                 'note': '使用 OpenCode 当前模型目录公开的档位。' if variants else 'OpenCode 当前目录未提供该模型的独立档位。'}
-    probe = (profile['kind'] in ('negotiated', 'variant') or backend == 'codex'
+    probe = (profile['kind'] in ('negotiated', 'variant') or backend in ('codex','claude')
              or backend == 'antigravity' and model.startswith('gemini-'))
     if not probe:
         return {'kind': 'host', 'backend': backend, 'source': 'host',

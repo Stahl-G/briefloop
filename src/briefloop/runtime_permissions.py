@@ -51,26 +51,33 @@ def permission_digest():
 
 def catalog(backend,workspace,bridge):
     backend=validate_backend(backend)
-    result={'backend':backend,'workspace':str(workspace),'modes':[], 'interactive':backend in ACP-{'mimo'} or backend in ('claude','pi')}
+    result={'backend':backend,'workspace':str(workspace),'modes':[], 'default_mode':'native',
+            'auto_available':False, 'interactive':backend in ACP-{'mimo'} or backend in ('claude','pi')}
     if backend in ('codex','opencode','briefloop-native'):
-        result.update(kind='native',modes=[{'id':'workspace-write','name':'读写工作区'},{'id':'read-only','name':'只读'}],note='选择用于下一回合；已发送的任务保持原权限。')
+        result.update(kind='native',default_mode='workspace-write',auto_available=True,
+                      modes=[{'id':'workspace-write','name':'Auto · 工作区读写'},{'id':'read-only','name':'只读'}],
+                      note='默认在工作区权限内自动执行，保留联网与审阅限制。选择用于下一回合；已发送的任务保持原权限。')
     elif backend=='pi':
-        result.update(kind='tools',modes=[{'id':'native','name':'沿用 Pi 工具设置'},{'id':'read','name':'只启用读取工具'},{'id':'none','name':'关闭所有工具'}],note='读取工具模式关闭扩展，仅启用 read、grep、find、ls；它不是文件路径或网络沙箱。Pi 原生工具默认不逐次询问，扩展的确认请求可在这里回答。')
+        result.update(kind='tools',auto_available=True,modes=[{'id':'native','name':'Auto · Pi 原生工具'},{'id':'read','name':'只启用读取工具'},{'id':'none','name':'关闭所有工具'}],note='Pi 原生工具自动执行，扩展仍可要求确认；这不是文件路径或网络沙箱。读取模式关闭扩展，仅启用 read、grep、find、ls。')
     elif backend=='claude':
-        result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，接收授权请求'},{'id':'manual','name':'需要时询问'},{'id':'acceptEdits','name':'自动允许文件编辑'},{'id':'dontAsk','name':'拒绝需要询问的操作'},{'id':'plan','name':'规划模式'}],note='使用 Claude 的原生权限模式。已有拒绝规则继续有效；规划模式不是操作系统级只读隔离。')
+        result.update(kind='host',default_mode='auto',auto_available=True,
+                      modes=[{'id':'auto','name':'Auto（默认）'},{'id':'native','name':'跟随 Claude Code 设置'},{'id':'manual','name':'需要时询问'},{'id':'acceptEdits','name':'自动允许文件编辑'},{'id':'dontAsk','name':'拒绝需要询问的操作'},{'id':'plan','name':'规划模式'}],
+                      note='Auto 使用 Claude Code 自带的自动审批，保留其安全检查和拒绝规则。若当前账号或版本不支持，会显示原始原因；不会切换为跳过权限。下一回合生效。')
     elif backend=='zcode':
-        result.update(kind='host',default_mode='build',modes=[{'id':'build','name':'构建模式（默认）'},{'id':'edit','name':'编辑模式'},{'id':'plan','name':'规划模式'},{'id':'yolo','name':'不再询问（yolo）'}],note='默认明确使用构建模式；只有选择“不再询问”才启用 yolo。下一回合生效。ZCode 无界面运行不提供逐项授权通道：被模式拦下的操作直接失败，规划模式也不是操作系统级只读隔离。')
+        result.update(kind='host',default_mode='build',auto_available=True,modes=[{'id':'build','name':'Auto · 构建模式'},{'id':'edit','name':'编辑模式'},{'id':'plan','name':'规划模式'},{'id':'yolo','name':'不再询问（yolo）'}],note='默认在构建模式允许的范围内执行，不自动启用 yolo。下一回合生效。ZCode 无界面运行不提供逐项授权通道：被模式拦下的操作直接失败，规划模式也不是操作系统级只读隔离。')
     elif backend=='antigravity':
         with _lock:
             path,raw,data,permissions=_read()
             rows=[{'decision':decision,'rule':rule} for decision in ('allow','ask','deny') for rule in permissions.get(decision,[]) if isinstance(rule,str)]
-            result.update(kind='rules',preset=preset_for(data),rules=rows,revision=hashlib.sha256(raw).hexdigest(),config_path=str(path),note='应用后对新任务生效，也会影响本机其他 Antigravity 会话。已有自定义规则保留。')
+            result.update(kind='rules',preset=preset_for(data),rules=rows,revision=hashlib.sha256(raw).hexdigest(),config_path=str(path),note='此 CLI 未提供独立的安全 Auto 模式，当前沿用原生规则。规则修改对新任务生效，也会影响本机其他 Antigravity 会话。已有自定义规则保留。')
     else:
         result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，逐项确认'}],note='宿主通过 ACP 发来的授权请求可在 BriefLoop 中批准或拒绝；模式名称和行为由宿主定义。')
         if backend=='mimo':result['note']='MiMo 使用宿主提供的运行模式，应用于下一回合。规划模式的文件权限由 MiMo 执行；当前 JSON 运行接口不能在 BriefLoop 逐项回答授权。需要交互批准时请在 MiMo 中配置，或选择可交互授权的宿主。'
         try:
             found=bridge.call('permission_options',{'runtime_id':backend,'cwd':str(workspace)},timeout=30)
             result['modes']+=found.get('modes',[])
+            if found.get('auto_available') and found.get('default_mode') in {m['id'] for m in result['modes']}:
+                result.update(auto_available=True,default_mode=found['default_mode'])
         except (ValueError,RuntimeError,OSError,TimeoutError) as e:
             result['diagnostic']='未能读取宿主模式：'+str(e)
     return result
@@ -119,12 +126,15 @@ def change_antigravity(body):
 
 
 def validate_options(backend,options):
-    if options is None:return {}
+    if options is None:options={}
     if not isinstance(options,dict) or set(options)-{'mode'}:raise ValueError('无效宿主权限选项')
-    mode=options.get('mode','native')
+    # ACP's supported modes arrive with the native session. Leave an omitted
+    # choice omitted so the bridge can select its advertised Auto mode there.
+    if backend in ACP and not options:return {}
+    mode=options.get('mode','auto' if backend=='claude' else 'native')
     if backend=='zcode' and mode=='native':mode='build'
     if not isinstance(mode,str) or not mode or len(mode)>100:raise ValueError('无效权限模式')
-    allowed={'pi':{'native','read','none'},'claude':{'native','manual','acceptEdits','dontAsk','plan'},'antigravity':{'native'},'zcode':{'native','build','edit','plan','yolo'}}
+    allowed={'pi':{'native','read','none'},'claude':{'auto','native','manual','acceptEdits','dontAsk','plan'},'antigravity':{'native'},'zcode':{'native','build','edit','plan','yolo'}}
     if backend in allowed and mode not in allowed[backend]:raise ValueError('此宿主不支持该权限模式')
     if backend not in allowed and backend not in ACP and mode!='native':raise ValueError('此宿主不支持该权限模式')
     return {'mode':mode}

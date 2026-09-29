@@ -29,13 +29,18 @@ export function reasoningControls({api}){
    select.disabled=control.disabled;
   }
   const blank=variant?'':'none';
-  const current=()=>control.value||blank;
+  if(control.dataset.reasoningKey!==key)delete control.dataset.reasoningUnconfirmed;
+  const requestedValue=control.dataset.reasoningKey===key?(control.dataset.reasoningRequestedValue||control.dataset.reasoningUnconfirmed||control.value||blank):control.value||blank;
+  control.dataset.reasoningRequestedValue=requestedValue;
   const render=(info,loading=false)=>{
-   const value=current(),choices=info.options||[],signature=JSON.stringify([key,choices,value,info.note,loading]);
+   const choices=info.options||[],unconfirmed=backend==='claude'&&requestedValue!==blank&&!choices.some(option=>option.id===requestedValue);
+   const value=backend==='claude'?(unconfirmed?blank:requestedValue):control.value||blank,signature=JSON.stringify([key,choices,value,info.note,loading]);
+   if(!loading&&backend==='claude'){if(unconfirmed)control.dataset.reasoningUnconfirmed=requestedValue;else delete control.dataset.reasoningUnconfirmed}
    if(select.dataset.reasoningSignature===signature)return;
-   const nodes=[new Option(loading?'模型默认（正在读取其他档位…）':'模型默认',blank),...choices.map(o=>new Option(names[o.id]?names[o.id]+' · '+o.id:o.name||o.id,o.id))];
+   const defaultName=backend==='claude'?'跟随 Claude Code':'模型默认';
+   const nodes=[new Option(loading?defaultName+'（读取中…）':defaultName,blank),...choices.map(o=>new Option(names[o.id]?names[o.id]+' · '+o.id:o.name||o.id,o.id))];
    if(variant)nodes.push(new Option('自定义档位…','__custom__'));
-   else if(value!==blank&&!choices.some(o=>o.id===value))nodes.push(new Option(value+(loading?'（读取中）':'（当前宿主未确认）'),value));
+   else if(backend!=='claude'&&value!==blank&&!choices.some(o=>o.id===value))nodes.push(new Option(value+(loading?'（读取中）':'（当前宿主未确认）'),value));
    select.replaceChildren(...nodes);
    select.value=variant&&value&&!choices.some(o=>o.id===value)?'__custom__':value;
    if(variant)control.hidden=select.value!=='__custom__';
@@ -43,7 +48,7 @@ export function reasoningControls({api}){
    const note=info.note||'下一次发送生效；可用档位取决于所选模型。';select.title=note;
    let help=control.parentElement.querySelector('[data-reasoning-note]');
    if(!help){help=document.createElement('small');help.dataset.reasoningNote='';help.className='help';control.parentElement.append(help)}
-   help.textContent=info.kind==='host'||info.error?note:'';help.hidden=!help.textContent;
+   help.textContent=backend==='claude'?(unconfirmed&&!loading?'已保存的 '+requestedValue+' 未获宿主确认；请重新选择，或跟随 Claude Code。':info.error?'档位暂不可读，可跟随 Claude Code。':''):(info.kind==='host'||info.error?note:'');help.hidden=!help.textContent;
   };
   if(control.dataset.reasoningKey!==key)render({options:[]},true);
   control.dataset.reasoningKey=key;
@@ -51,7 +56,7 @@ export function reasoningControls({api}){
   if(!requests.has(key))requests.set(key,backend==='briefloop-native'&&!model?Promise.resolve({options:[],note:'选择模型后读取该模型的档位。'}):api('runtime/reasoning?backend='+encodeURIComponent(backend)+'&model='+encodeURIComponent(model||'default')));
   return requests.get(key).then(info=>{
    if(control.dataset.reasoningKey!==key)return;
-   render(info);delete control.dataset.reasoningError;
+   render(info);delete control.dataset.reasoningError;delete control.dataset.reasoningRequestedValue;
   }).catch(error=>{
    if(control.dataset.reasoningKey!==key)return;
    render({options:[],error:true,note:'暂时无法读取宿主档位：'+error.message+'。可选择模型默认；重新选择模型可重试。'});

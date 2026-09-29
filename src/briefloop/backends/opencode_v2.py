@@ -236,6 +236,52 @@ class V2:
         # v2 FileAccess permission resources are relative to location, not Git root.
         return {'directory': value['directory'], 'worktree': value['directory']}
 
+    def set_permissions(self, sid, permission, directory=None):
+        self.session(sid, directory)
+        expected = permission_rules(permission)
+        self.request('PATCH', self.path(sid), {'permissions': expected})
+        if self.session(sid, directory).get('permissions') != expected:
+            raise _error('OpenCode v2 未保留本轮权限规则；未发送任务')
+
+    def questions(self, sid, directory=None):
+        # v2.0.14's question tool uses Form, not the older /api/question
+        # proposal. Confirmed against its OpenAPI and tool/plugin/question.ts.
+        self.session(sid, directory)
+        forms = _data(self.request('GET', self.path(sid, '/form')), list)
+        result = []
+        for info in forms:
+            if not isinstance(info, dict) or info.get('sessionID') != sid or not isinstance(info.get('id'), str):
+                raise _error('OpenCode v2 返回了无法识别的表单结构')
+            # The tagged API explicitly lists pending forms only. No historical
+            # detail fetches are needed, even after a long conversation.
+            if (info.get('metadata') or {}).get('kind') != 'question':
+                raise _error('OpenCode v2 请求了暂不支持的原生表单；已停止，未代填答案')
+            questions = []
+            for field in info.get('fields', []):
+                if (not isinstance(field, dict) or field.get('type') not in ('string', 'multiselect')
+                        or field.get('hidden') or field.get('when') or field.get('secret')):
+                    raise _error('OpenCode v2 提问字段暂不支持；已停止，未代填答案')
+                options = field.get('options', [])
+                if not isinstance(options, list) or any(not isinstance(o, dict) or o.get('value') != o.get('label') for o in options):
+                    raise _error('OpenCode v2 提问选项暂不支持；已停止，未代填答案')
+                questions.append({'id': field.get('key'), 'question': field.get('description') or field.get('title'),
+                                  'header': field.get('title', ''),
+                                  'options': [{'label': o['label'], 'description': o.get('description', '')} for o in options],
+                                  'multiple': field['type'] == 'multiselect', 'custom': field.get('custom', True)})
+            result.append({'id': info['id'], 'sessionID': sid, 'questions': questions})
+        return result
+
+    def reply_question(self, sid, request_id, questions, answers, directory=None):
+        self.session(sid, directory)
+        value = {q['id']: answers[q['id']]['answers'] if q['multiSelect'] else answers[q['id']]['answers'][0]
+                 for q in questions}
+        return self.request('POST', self.path(sid, '/form/' + urllib.parse.quote(request_id, safe='') + '/reply'),
+                            {'answer': value})
+
+    def reject_question(self, sid, request_id, directory=None):
+        self.session(sid, directory)
+        return self.request('DELETE', self.path(sid, '/form/' + urllib.parse.quote(request_id, safe='')))
+
     def providers(self, directory=None):
         query = _query({'location[directory]': str(directory)}) if directory is not None else ''
         for attempt in range(2):
