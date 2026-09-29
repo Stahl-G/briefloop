@@ -13,6 +13,7 @@ from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 from .store import dump, now
 from .release import get_release, validate_release, safe_file, sha
 from .packet_views import DERIVED_VIEWS
+from .platform_support import filesystem_path, path_redirected
 
 SCHEMA_VERSION = 2
 
@@ -210,7 +211,7 @@ def generate_bundle(store, job, cancelled):
 
     def copy(name):
         path = safe_file(folder, name)
-        blob = path.read_bytes()
+        blob = filesystem_path(path).read_bytes()
         if sha(blob) != release_manifest['files'][name]:
             raise ValueError('冻结交付材料已变化：' + name)
         blobs[name] = blob
@@ -232,7 +233,7 @@ def generate_bundle(store, job, cancelled):
         blobs[name] = dump(value).encode()
 
     stage('按明确选择收集正式报告、依据和核查记录')
-    source_index = json.loads(safe_file(folder, 'packet/index.json').read_text(encoding='utf-8'))['sources']
+    source_index = json.loads(filesystem_path(safe_file(folder, 'packet/index.json')).read_text(encoding='utf-8'))['sources']
     source_files = {sid: set() for sid in permissions}
     for item in source_index:
         for key in ('text_file', 'readable_text_file', 'original_file', 'cells_file'):
@@ -241,7 +242,7 @@ def generate_bundle(store, job, cancelled):
         for name in item.get('visual_files', []):
             source_files[item['id']].add('packet/' + name)
     all_original = all(item['mode'] == 'original' for item in permissions.values())
-    target = json.loads(safe_file(folder, 'packet/target.json').read_text(encoding='utf-8'))
+    target = json.loads(filesystem_path(safe_file(folder, 'packet/target.json')).read_text(encoding='utf-8'))
     restricted_figure_files = {}
     for figure in target.get('figures', []):
         restricted = [sid for sid in figure['source_ids'] if permissions[sid]['mode'] != 'original']
@@ -291,7 +292,7 @@ def generate_bundle(store, job, cancelled):
             omissions.append({'file': name, 'reason': '存在未授权原件；省略由 target.json 派生的审阅视图，以过滤后的 target.json 为准'})
             continue
         if name.endswith('.json'):
-            value = json.loads(safe_file(folder, name).read_text(encoding='utf-8'))
+            value = json.loads(filesystem_path(safe_file(folder, name)).read_text(encoding='utf-8'))
             if not all_original and not matching and not name.startswith('packet/figures/') and name != 'packet/output.schema.json':
                 if _project_records(value, permissions, name) == value and _scrub(value) == value:
                     # A metadata-only input may need no redaction. Preserve its
@@ -323,7 +324,7 @@ def generate_bundle(store, job, cancelled):
     # exported as an extra user-owned document.
     if records['export_input'].get('template'):
         omissions.append({'kind': 'template_original', 'reason': '仅提供冻结模板标识、样式说明及最终Word，不打包历史模板原件'})
-    blobs['release-manifest.json'] = safe_file(store.root, release['result']['manifest_path']).read_bytes()
+    blobs['release-manifest.json'] = filesystem_path(safe_file(store.root, release['result']['manifest_path'])).read_bytes()
     office_render = None
     if payload.get('office_render'):
         # Optional enhancement over the frozen delivery: a local render of the
@@ -334,7 +335,7 @@ def generate_bundle(store, job, cancelled):
             report = safe_file(store.root, release['result']['path'])
             rendered = office_cli.render_page(store, report, 1)
             name = 'office-render/report-page-1.png'
-            blobs[name] = Path(rendered['path']).read_bytes()
+            blobs[name] = filesystem_path(rendered['path']).read_bytes()
             office_render = {'status': 'ok', 'file': name, 'source': 'report.docx',
                              'source_sha256': release['result']['sha256'], 'tool': 'officecli',
                              'tool_version': rendered.get('tool_version'), 'render': 'screenshot',
@@ -368,15 +369,15 @@ def generate_bundle(store, job, cancelled):
     if not checked['valid']:
         raise ValueError('审计包一致性校验失败：' + '；'.join(checked['errors']))
     destination = store.root / 'exports' / job['id'] / 'audit.zip'
-    if destination.parent.is_symlink() or destination.is_symlink() or (store.root / 'exports').is_symlink():
-        raise ValueError('审计包路径不能为符号链接')
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    if path_redirected(destination) or not destination.resolve().is_relative_to(store.root):
+        raise ValueError('审计包路径不能为链接或越界')
+    filesystem_path(destination.parent).mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix('.tmp')
-    if temporary.is_symlink():
-        raise ValueError('审计包临时文件不能为符号链接')
-    temporary.write_bytes(blob)
+    if path_redirected(temporary):
+        raise ValueError('审计包临时文件不能为链接')
+    filesystem_path(temporary).write_bytes(blob)
     stage('审计包已制作，可单独下载')
-    os.replace(temporary, destination)
+    os.replace(filesystem_path(temporary), filesystem_path(destination))
     return {'release_id': release['id'], 'version_id': release['version_id'], 'fingerprint': expected,
             'path': str(destination.relative_to(store.root)), 'sha256': sha(blob),
             'validation': checked, 'download_url': '/api/audit-file?job=' + job['id']}
@@ -389,9 +390,9 @@ def bundle_file(store, job):
         raise ValueError('审计包尚未制作完成')
     result = json.loads(job['result'])
     path = safe_file(store.root, result['path'])
-    if sha(path.read_bytes()) != result['sha256']:
+    if sha(filesystem_path(path).read_bytes()) != result['sha256']:
         raise ValueError('审计包文件已变化，请重新导出')
-    with ZipFile(path) as archive:
+    with ZipFile(filesystem_path(path)) as archive:
         manifest = json.loads(archive.read('manifest.json'))
         if manifest.get('schema_version', 1) < 2 and any(
                 p['mode'] != 'original' for p in manifest['source_permissions'].values()):
@@ -405,7 +406,8 @@ def verify_bundle(value):
     omissions = []
     manifest = {}
     try:
-        stream = BytesIO(value) if isinstance(value, bytes) else value
+        stream = (BytesIO(value) if isinstance(value, bytes) else
+                  filesystem_path(value) if isinstance(value, (str, os.PathLike)) else value)
         with ZipFile(stream) as archive:
             entries = archive.infolist()
             names = [item.filename for item in entries]

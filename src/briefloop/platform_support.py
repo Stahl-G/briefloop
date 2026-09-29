@@ -25,16 +25,19 @@ def filesystem_path(path):
 def path_redirected(path):
     """Detect symlinks, Windows junctions, and redirects in parent directories."""
     path = Path(path)
-    try:
-        info = filesystem_path(path).lstat()
-    except FileNotFoundError:
-        pass
-    else:
+    # A not-yet-created child may exceed MAX_PATH. Non-strict logical resolve
+    # can then silently retain a redirected parent, so inspect parents through
+    # extended paths before trusting the destination's logical identity.
+    for candidate in (path, *path.parents):
+        try:
+            info = filesystem_path(candidate).lstat()
+        except FileNotFoundError:
+            continue
         # NAME_SURROGATE marks redirects, including broken junctions. Ordinary
         # cloud placeholders are reparse points too, but do not redirect names.
         if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_reparse_tag', 0) & 0x20000000:
             return True
-    return path.resolve() != path.absolute()
+    return filesystem_path(path).resolve() != filesystem_path(path.absolute())
 
 
 class WorkspaceLock:

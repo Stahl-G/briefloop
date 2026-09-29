@@ -459,10 +459,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,{'eligibility':checked,'releases':public})
                 elif u.path=='/api/release-file':
                     from .release import release_file
-                    self.send(200,release_file(store,q['id'][0]).read_bytes(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='formal-report.docx')
+                    self.send(200,filesystem_path(release_file(store,q['id'][0])).read_bytes(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='formal-report.docx')
                 elif u.path=='/api/audit-file':
                     from .audit_bundle import bundle_file
-                    self.send(200,bundle_file(store,q['job'][0]).read_bytes(),'application/zip',download_name='report-audit.zip')
+                    self.send(200,filesystem_path(bundle_file(store,q['job'][0])).read_bytes(),'application/zip',download_name='report-audit.zip')
                 elif u.path=='/api/source-update-state':
                     from .source_updates import for_version
                     self.send(200,for_version(store,q['version'][0]))

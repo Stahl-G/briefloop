@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .deliverable_spec import SOFT_CONTRACT_KINDS, clause_items, requirement_severity
 from .store import dump, now, uid
-from .platform_support import filesystem_path
+from .platform_support import filesystem_path, path_redirected
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS releases(id TEXT PRIMARY KEY,version_id TEXT NOT NULL REFERENCES briefs(id),
@@ -25,6 +25,8 @@ def sha(blob):
 
 
 def safe_file(root, relative):
+    if path_redirected(root):
+        raise ValueError('交付目录不能通过链接读取')
     root = Path(root).resolve()
     name = Path(relative)
     if name.is_absolute() or '..' in name.parts or not name.parts:
@@ -33,8 +35,8 @@ def safe_file(root, relative):
     cursor = root
     for part in name.parts:
         cursor = cursor / part
-        if filesystem_path(cursor).is_symlink():
-            raise ValueError('交付文件不能通过符号链接读取')
+        if path_redirected(cursor):
+            raise ValueError('交付文件不能通过链接读取')
     if not path.resolve().is_relative_to(root) or not filesystem_path(path).is_file():
         raise ValueError('交付文件不存在或越界')
     return path
@@ -399,20 +401,20 @@ def validate_release(store, release):
     if consistency:
         raise ValueError('正式交付审阅记录不完整，请补全独立审阅：' + '；'.join(item['message'] for item in consistency))
     manifest_path = safe_file(store.root, result['manifest_path'])
-    if sha(manifest_path.read_bytes()) != result['manifest_hash']:
+    if sha(filesystem_path(manifest_path).read_bytes()) != result['manifest_hash']:
         raise ValueError('正式交付清单已变化')
-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest = json.loads(filesystem_path(manifest_path).read_text(encoding='utf-8'))
     if manifest['release_id'] != release['id'] or manifest['fingerprint'] != release['fingerprint'] or manifest['version_id'] != release['version_id']:
         raise ValueError('正式件与交付记录版本不一致')
     folder = manifest_path.parent
     for name, digest in manifest['files'].items():
-        if sha(safe_file(folder, name).read_bytes()) != digest:
+        if sha(filesystem_path(safe_file(folder, name)).read_bytes()) != digest:
             raise ValueError('正式交付材料已变化：' + name)
     if manifest['files'].get('report.docx') != result['sha256']:
         raise ValueError('正式 Word 与交付记录不一致')
     if result['path'] != str((folder / 'report.docx').relative_to(store.root)):
         raise ValueError('正式 Word 下载未指向该交付文件')
-    if json.loads(safe_file(folder, 'records.json').read_text(encoding='utf-8')) != release['data']:
+    if json.loads(filesystem_path(safe_file(folder, 'records.json')).read_text(encoding='utf-8')) != release['data']:
         raise ValueError('正式交付输入与冻结文件不一致')
     return manifest
 
@@ -445,26 +447,26 @@ def generate_release(store, job, cancelled):
 
     stage('固定本次正文、核查材料与交付版本')
     folder = store.root / 'releases' / release['id']
-    if folder.is_symlink() or folder.parent.is_symlink():
-        raise ValueError('交付目录不能为符号链接')
-    folder.mkdir(parents=True, exist_ok=True)
+    if path_redirected(folder) or not folder.resolve().is_relative_to(store.root):
+        raise ValueError('交付目录不能为链接或越界')
+    filesystem_path(folder).mkdir(parents=True, exist_ok=True)
     files = {}
 
     def save(name, blob):
         path = folder / name
-        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(folder)):
-            raise ValueError('交付文件不能为符号链接')
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if path_redirected(path):
+            raise ValueError('交付文件不能为链接')
+        filesystem_path(path.parent).mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + '.tmp')
-        if temporary.is_symlink():
-            raise ValueError('交付临时文件不能为符号链接')
-        temporary.write_bytes(blob)
-        os.replace(temporary, path)
+        if path_redirected(temporary):
+            raise ValueError('交付临时文件不能为链接')
+        filesystem_path(temporary).write_bytes(blob)
+        os.replace(filesystem_path(temporary), filesystem_path(path))
         files[name] = sha(blob)
 
     packet = store.root / data['packet_path']
     for name, digest in data['review_files'].items():
-        blob = safe_file(packet, name).read_bytes()
+        blob = filesystem_path(safe_file(packet, name)).read_bytes()
         if sha(blob) != digest:
             raise ValueError('核查材料已变化：' + name)
         save('packet/' + name, blob)
@@ -473,7 +475,7 @@ def generate_release(store, job, cancelled):
     word_job = {**job, 'kind': 'export_docx', 'payload': dump({
         'version_id': release['version_id'], 'fingerprint': data['export_fingerprint']})}
     word = generate_word(store, word_job, cancelled)
-    blob = safe_file(store.root, word['path']).read_bytes()
+    blob = filesystem_path(safe_file(store.root, word['path'])).read_bytes()
     if sha(blob) != word['sha256']:
         raise ValueError('Word 文件校验失败')
     save('report.docx', blob)
@@ -489,10 +491,10 @@ def generate_release(store, job, cancelled):
                 'created': now(), 'files': files}
     encoded = dump(manifest).encode()
     target = folder / 'manifest.json'
-    if target.is_symlink() or target.with_suffix('.tmp').is_symlink():
-        raise ValueError('交付清单不能为符号链接')
-    target.with_suffix('.tmp').write_bytes(encoded)
-    os.replace(target.with_suffix('.tmp'), target)
+    if path_redirected(target) or path_redirected(target.with_suffix('.tmp')):
+        raise ValueError('交付清单不能为链接')
+    filesystem_path(target.with_suffix('.tmp')).write_bytes(encoded)
+    os.replace(filesystem_path(target.with_suffix('.tmp')), filesystem_path(target))
     result = {'release_id': release['id'], 'version_id': release['version_id'],
               'path': str((folder / 'report.docx').relative_to(store.root)), 'sha256': word['sha256'],
               'manifest_path': str(target.relative_to(store.root)), 'manifest_hash': sha(encoded),
