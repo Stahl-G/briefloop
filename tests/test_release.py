@@ -236,6 +236,18 @@ def test_must_fix_expression_anchor_and_overall_consistency():
     assert not overall_inconsistent({'status': 'complete', 'overall': '建议修改', 'expression': 2})
 
 
+def test_listing_facts_without_implications_is_a_must_fix_analysis():
+    # #757: analysis 2 means the reader must infer what the facts mean; one revision applies.
+    from briefloop.models import must_fix, must_fix_dimensions, overall_inconsistent
+    from briefloop.revision_policy import revision_reasons
+    listed = {'status': 'complete', 'overall': '达到要求', 'evidence': 4, 'coverage': 4, 'analysis': 2, 'expression': 3,
+              'findings': [{'dimension': 'analysis', 'severity': 'minor', 'kind': 'no_implication', 'description': '只罗列事实'}]}
+    assert must_fix(listed) and overall_inconsistent(listed) and must_fix_dimensions(listed) == {'analysis': 2}
+    assert {'type': 'analysis_score', 'score': 2} in revision_reasons(listed, [])
+    assert not must_fix({**listed, 'analysis': 3})
+    assert revision_reasons({**listed, 'analysis': 3, 'findings': []}, []) == []
+
+
 def test_formal_gate_surfaces_open_and_unresolved_gaps():
     review = {'status': 'complete', 'coverage_scan_complete': True, 'requirement_checks': []}
     base = {'requirements': {'requirement_items': []}, 'evidence': {'bindings': []}, 'conflicts': []}

@@ -3,7 +3,7 @@
 Agents classify the actual findings/checks. This module only applies the bounded
 repair rule to those structured decisions; it never guesses from prose keywords.
 """
-from .models import must_fix
+from .models import must_fix_dimensions
 
 OPEN_STATUSES = {'open', 'addressed_pending_review'}
 REQUIRED_KINDS = {'contradiction', 'insufficient_evidence', 'missing_requirement', 'missing_binding'}
@@ -47,8 +47,8 @@ def revision_reasons(assessment, findings, review=None):
                        or (finding.get('dimension') in ('evidence', 'coverage')
                            and bool(finding.get('evidence'))
                            and bool(finding.get('report_quote') or finding.get('requirement'))))
-        if must_fix(assessment):
-            reasons.append({'type': 'expression_score', 'score': assessment['expression']})
+        for dimension, score in must_fix_dimensions(assessment).items():
+            reasons.append({'type': dimension + '_score', 'score': score})
         # Preserve older unstructured assessments, but an explicitly optional
         # finding list must not become compulsory merely because of its headline.
         all_findings = [f['data'] for f in active] + scored

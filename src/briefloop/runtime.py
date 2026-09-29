@@ -1363,7 +1363,7 @@ class Worker:
         if overall_inconsistent(assessment):
             self.store.event(job['id'],'assessment_inconsistent',
                              {'version_id':brief['id'],'expression':assessment.get('expression'),
-                              'overall':assessment.get('overall')})
+                              'analysis':assessment.get('analysis'),'overall':assessment.get('overall')})
         if existing:revised=existing[0]
         else:
             latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
