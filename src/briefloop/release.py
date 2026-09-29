@@ -68,6 +68,8 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
     if not review_result or review_result.get('status') != 'complete':
         issue('review_incomplete', '本版本的独立核查尚未完成')
         return {'eligible': False, 'blockers': blockers, 'notices': notices}
+    from .review import finding_consistency_errors
+    blockers.extend(finding_consistency_errors(review_result))
     if not review_result.get('coverage_scan_complete'):
         issue('coverage_unchecked', '尚未独立检查正文是否遗漏重要主张绑定')
     # Older free-text unchecked entries contain no importance judgement. They
@@ -378,6 +380,12 @@ def validate_release(store, release):
     result = release['result']
     if sha(dump(release['data']).encode()) != release['fingerprint']:
         raise ValueError('正式交付固定输入记录已变化')
+    # Older accepted results can predate admission consistency checks. Keep the
+    # immutable record, but do not serve an unsafe formal artifact as verified.
+    from .review import finding_consistency_errors
+    consistency = finding_consistency_errors(release['data'].get('review_result') or {})
+    if consistency:
+        raise ValueError('正式交付审阅记录不完整，请补全独立审阅：' + '；'.join(item['message'] for item in consistency))
     manifest_path = safe_file(store.root, result['manifest_path'])
     if sha(manifest_path.read_bytes()) != result['manifest_hash']:
         raise ValueError('正式交付清单已变化')
