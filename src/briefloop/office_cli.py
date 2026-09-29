@@ -323,7 +323,7 @@ def enhance_workbook(store, path, plan, *, cancelled=None):
             return {'applied': False, 'reason': '未检测到 OfficeCLI 或未开启'}
         binary = find()
         deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
-        outcome = run_json([binary, 'batch', str(path), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
+        outcome = run_json([binary, 'batch', str(platform_support.filesystem_path(path)), '--commands', json.dumps(commands, ensure_ascii=False), '--json'],
                            timeout=ENHANCE_BATCH_TIMEOUT, deadline=deadline)
         if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         if not outcome['ok']:
@@ -332,7 +332,7 @@ def enhance_workbook(store, path, plan, *, cancelled=None):
         failed = summary.get('failed') if isinstance(summary, dict) else None
         if type(failed) is int and failed > 0:
             return {'applied': False, 'reason': f'officecli batch 有 {failed} 条命令未成功'}
-        run_json([binary, 'close', str(path)], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
+        run_json([binary, 'close', str(platform_support.filesystem_path(path))], timeout=ENHANCE_CLOSE_TIMEOUT, deadline=deadline)
         if cancelled is not None and cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
         return {'applied': True, 'reason': None}
     except InterruptedError:

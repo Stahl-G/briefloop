@@ -15,6 +15,7 @@ from io import BytesIO
 
 from .store import dump, now, uid
 from .document_model import brief_document, table_layout
+from .platform_support import filesystem_path, path_redirected
 
 LAYOUTS = ('sheets', 'single')
 XLSX_RENDERER_VERSION = 4
@@ -75,7 +76,7 @@ def enqueue_export_xlsx(store, version_id, layout_id='sheets'):
             if job['status'] != 'complete':
                 return job
             try:
-                path = output_path_xlsx(store, job)
+                path = filesystem_path(output_path_xlsx(store, job))
                 if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == json.loads(job['result'] or '{}').get('sha256'):
                     return job
             except (OSError, ValueError):
@@ -94,10 +95,13 @@ def enqueue_export_xlsx(store, version_id, layout_id='sheets'):
 def output_path_xlsx(store, job):
     if job['kind'] != 'export_xlsx': raise ValueError('不是 Excel 文件任务')
     path = store.root / 'exports' / job['id'] / 'report.xlsx'
+    if path_redirected(path):raise ValueError('导出路径不能为链接')
     if not path.resolve().is_relative_to((store.root / 'exports').resolve()): raise ValueError('无效导出路径')
     result = json.loads(job.get('result') or '{}')
     if result.get('path'):
-        saved = (store.root / result['path']).resolve()
+        saved = store.root / result['path']
+        if path_redirected(saved):raise ValueError('导出路径不能为链接')
+        saved = saved.resolve()
         if saved.parent != path.parent.resolve() or saved.suffix.lower() != '.xlsx':
             raise ValueError('无效导出结果路径')
         path = saved
@@ -549,7 +553,7 @@ def _enhanced_mismatches(staging, plan, base_blob):
         try:
             base = load_workbook(BytesIO(base_blob))
             opened.append(base)
-            enhanced = load_workbook(staging)
+            enhanced = load_workbook(filesystem_path(staging))
             opened.append(enhanced)
             if enhanced.sheetnames != base.sheetnames:
                 raise ValueError('增强工作簿的工作表与基础件不一致')
@@ -572,7 +576,7 @@ def _enhanced_mismatches(staging, plan, base_blob):
                             matches = found.value == cell.value and found.data_type == cell.data_type
                         if not matches:
                             raise ValueError(f'增强工作簿改变了未授权内容或遗漏增强：{sheet.title}!{cell.coordinate}')
-            workbook = load_workbook(staging, data_only=True, read_only=True)
+            workbook = load_workbook(filesystem_path(staging), data_only=True, read_only=True)
             opened.append(workbook)
             mismatched = []
             for item in plan['formulas']:
@@ -605,18 +609,23 @@ def generate_xlsx(store, job, cancelled):
     stage(2, '展开表格并生成工作簿')
     blob = xlsx_bytes(identity['document'], detail, requirements, layout_id)
     stage(3, '写入 Excel 文件' + ('并应用增强' if payload.get('enhanced') else ''))
-    destination = output_path_xlsx(store, job); destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix('.tmp'); temporary.write_bytes(blob)
-    if cancelled.is_set(): temporary.unlink(); raise InterruptedError('Excel 制作已停止')
+    destination = output_path_xlsx(store, job)
+    temporary = destination.with_suffix('.tmp')
+    staging = destination.with_name('report.staging.xlsx')
+    if path_redirected(temporary):raise ValueError('导出临时文件不能为链接')
+    if payload.get('enhanced') and path_redirected(staging):raise ValueError('Excel 增强暂存文件不能为链接')
+    filesystem_path(destination.parent).mkdir(parents=True, exist_ok=True)
+    filesystem_path(temporary).write_bytes(blob)
+    if cancelled.is_set(): filesystem_path(temporary).unlink(); raise InterruptedError('Excel 制作已停止')
     try:
-        os.replace(temporary, destination)
+        os.replace(filesystem_path(temporary), filesystem_path(destination))
     except PermissionError:
-        if os.name != 'nt' or not destination.exists(): raise
+        if os.name != 'nt' or not filesystem_path(destination).exists(): raise
         # Office/WPS may hold a deny-delete handle; keep this rendered version.
         from uuid import uuid4
         destination = destination.with_name('report-' + uuid4().hex + '.xlsx')
-        os.replace(temporary, destination)
-        store.event(job['id'], 'export_saved_as', {'path': str(destination.relative_to(store.root)),
+        os.replace(filesystem_path(temporary), filesystem_path(destination))
+        store.event(job['id'], 'export_saved_as', {'path': destination.relative_to(store.root).as_posix(),
                                                    'reason': '原文件被占用或不可替换，已另存本次 Excel'})
     enhanced, reason = bool(payload.get('enhanced')), None
     if enhanced:
@@ -626,7 +635,7 @@ def generate_xlsx(store, job, cancelled):
         staging = destination.with_name('report.staging.xlsx')
         try:
             if plan['commands']:
-                shutil.copyfile(destination, staging)
+                shutil.copyfile(filesystem_path(destination), filesystem_path(staging))
                 outcome = office_cli.enhance_workbook(store, staging, plan, cancelled=cancelled)
                 if cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
                 if not outcome['applied']:
@@ -638,7 +647,7 @@ def generate_xlsx(store, job, cancelled):
                         store.event(job['id'], 'export_xlsx_formula_mismatch', {'cells': mismatched})
                     else:
                         if cancelled.is_set(): raise InterruptedError('Excel 制作已停止')
-                        os.replace(staging, destination)  # enhanced bytes become the artifact
+                        os.replace(filesystem_path(staging), filesystem_path(destination))  # enhanced bytes become the artifact
             else:
                 enhanced, reason = False, None  # nothing to enhance in this report
         except InterruptedError:
@@ -647,17 +656,17 @@ def generate_xlsx(store, job, cancelled):
             enhanced, reason = False, 'OfficeCLI 增强未通过，已保留基础件：' + type(exc).__name__
         finally:
             try:
-                staging.unlink(missing_ok=True)
+                filesystem_path(staging).unlink(missing_ok=True)
             except OSError:
                 # A renderer/Windows reader may still hold its staging file;
                 # cleanup failure must not hide the intact downloadable base.
-                store.event(job['id'], 'export_xlsx_staging_retained', {'path': str(staging.relative_to(store.root))})
+                store.event(job['id'], 'export_xlsx_staging_retained', {'path': staging.relative_to(store.root).as_posix()})
         if not enhanced and reason and reason != '公式结果与报告数值不一致':
             store.event(job['id'], 'export_xlsx_enhancement_failed', {'reason': reason})
     stage(4, 'Excel 已生成，可以下载')
-    data = destination.read_bytes()
+    data = filesystem_path(destination).read_bytes()
     result = {'version_id': brief['id'], 'fingerprint': payload['fingerprint'],
-              'path': str(destination.relative_to(store.root)), 'sha256': hashlib.sha256(data).hexdigest(),
+              'path': destination.relative_to(store.root).as_posix(), 'sha256': hashlib.sha256(data).hexdigest(),
               'download_url': '/api/export-file?job=' + job['id'],
               'layout': layout_id, 'enhanced': enhanced}
     if not enhanced and reason: result['enhance_reason'] = reason
