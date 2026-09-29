@@ -66,6 +66,10 @@ MAX_IMAGE_PIXELS = 40_000_000
 # Older XLSX previews used --page, which OfficeCLI ignores for worksheets.
 # Reject their manifests at both render and image-serving entry points.
 RENDER_CACHE_VERSION = 2
+# OfficeCLI's HTML worksheet grid is capped. A range with a missing corner
+# can return only its other corner as a successful PNG (upstream #246).
+MAX_XLSX_PREVIEW_ROWS = 5000
+MAX_XLSX_PREVIEW_COLUMNS = 200
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS office_checks(id TEXT PRIMARY KEY,kind TEXT NOT NULL,file_sha256 TEXT NOT NULL,
@@ -423,8 +427,12 @@ def _png_size(payload):
 
 
 def _render_directory(store, digest):
-    directory = store.root / 'office' / 'renders' / digest
-    if not directory.resolve().is_relative_to((store.root / 'office' / 'renders').resolve()):
+    root = store.root / 'office' / 'renders'
+    directory = root / digest
+    # Concurrent Windows mkdir/resolve can leave only one path with the
+    # extended prefix. Compare the same physical form, including redirects.
+    if not platform_support.filesystem_path(directory).resolve().is_relative_to(
+            platform_support.filesystem_path(root).resolve()):
         raise ValueError('渲染缓存路径无效')
     platform_support.filesystem_path(directory).mkdir(parents=True, exist_ok=True)
     return directory
@@ -467,6 +475,9 @@ def _cached_render(directory, digest, page, *, worksheet=None):
                 or metadata.get('source_sha256') != digest or metadata.get('page') != page
                 or (worksheet is not None and metadata.get('worksheet') != worksheet)):
             return None
+        cached_sheet = metadata.get('worksheet')
+        if cached_sheet is not None:
+            _check_xlsx_preview_cells(cached_sheet.get('cells') if isinstance(cached_sheet, dict) else None)
         if 'image_file' in metadata:
             image_hash = metadata.get('image_sha256')
             if not isinstance(image_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', image_hash):
@@ -487,6 +498,16 @@ def _cached_render(directory, digest, page, *, worksheet=None):
             **({'worksheet': metadata['worksheet']} if metadata.get('worksheet') else {})}
 
 
+def _check_xlsx_preview_cells(cells):
+    from openpyxl.utils.cell import range_boundaries
+    if not isinstance(cells, str) or not re.fullmatch(r'A1:[A-Z]{1,3}[1-9][0-9]*', cells):
+        raise ValueError('工作表预览范围无效')
+    _, _, columns, rows = range_boundaries(cells)
+    if columns > MAX_XLSX_PREVIEW_COLUMNS or rows > MAX_XLSX_PREVIEW_ROWS:
+        raise ValueError(f'工作表范围 {cells} 超出本地预览支持的 {MAX_XLSX_PREVIEW_ROWS} 行、'
+                         f'{MAX_XLSX_PREVIEW_COLUMNS} 列；请下载 Excel 查看完整内容，文件不受影响')
+
+
 def _xlsx_worksheet(path, page):
     """Select the visible worksheet's cell extent, without rewriting the file.
 
@@ -503,6 +524,7 @@ def _xlsx_worksheet(path, page):
             raise ValueError(f'工作表序号 {page} 超出范围；文件有 {len(sheets)} 张可见工作表')
         sheet = sheets[page - 1]
         cells = f'A1:{get_column_letter(sheet.max_column or 1)}{sheet.max_row or 1}'
+        _check_xlsx_preview_cells(cells)
         # OfficeCLI embeds data paths in a double-quoted CSS selector. Excel
         # names allow quotes, so escape them for that selector, not a shell.
         selector_name = sheet.title.replace('"', '\\"')

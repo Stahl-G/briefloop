@@ -93,3 +93,36 @@ def test_xlsx_preview_returns_worksheet_names_and_ranges(tmp_path, monkeypatch):
     assert [page['worksheet']['cells'] for page in result['pages']] == ['A1:A1', 'A1:B2']
     assert result['cached'] is False and len(calls) == 2
     assert office_cli.render_preview(store, {'source_id': source['id'], 'pages': [2]})['cached'] is True
+
+
+@pytest.mark.parametrize('last_cell', ['GS2', 'B5001'])
+def test_oversized_xlsx_cannot_render_or_serve_a_partial_corner_as_complete(tmp_path, monkeypatch, last_cell):
+    target = tmp_path / 'large.xlsx'
+    workbook = Workbook()
+    workbook.active['A1'] = 'Title'
+    workbook.active[last_cell] = 'Must not disappear from the preview'
+    workbook.save(target)
+    frozen = target.read_bytes()
+    store = SimpleNamespace(root=tmp_path / 'workspace')
+    calls, images = _renderer(monkeypatch)
+    digest = hashlib.sha256(frozen).hexdigest()
+    directory = office_cli._render_directory(store, digest)
+    path = directory / 'page-0001.png'
+    path.write_bytes(images[0])
+    # An older successful, hash-bound screenshot contains just the title.
+    path.with_suffix('.json').write_text(json.dumps({
+        'cache_version': office_cli.RENDER_CACHE_VERSION, 'source_sha256': digest, 'page': 1,
+        'image_sha256': hashlib.sha256(images[0]).hexdigest(),
+        'worksheet': {'name': 'Sheet', 'cells': 'A1:' + last_cell, 'count': 1}}))
+    with pytest.raises(ValueError, match='下载 Excel 查看完整内容'):
+        office_cli.render_page(store, target, 1)
+    with pytest.raises(ValueError, match='绑定不一致'):
+        office_cli.office_image(store, digest, 1)
+    assert calls == [] and target.read_bytes() == frozen
+
+
+def test_preview_extent_accepts_its_boundary_and_rejects_invalid_cached_ranges():
+    office_cli._check_xlsx_preview_cells('A1:GR5000')
+    for cells in (None, 'A1:B0', 'A2:B2', 'A1:GS1', 'A1:B5001'):
+        with pytest.raises(ValueError):
+            office_cli._check_xlsx_preview_cells(cells)
