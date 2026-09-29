@@ -7,6 +7,7 @@ from .store import dump, now, uid
 from .document_model import brief_document, source_ids
 from .document_export import reader_source_blocks
 from .figure_support import export_figures
+from .platform_support import filesystem_path, path_redirected
 
 
 def export_input(store, brief, template_override=None):
@@ -55,7 +56,7 @@ def enqueue_export(store, version_id, template_override=None):
             job = dict(row)
             if job['status'] != 'complete':return job
             try:
-                path = output_path(store, job)
+                path = filesystem_path(output_path(store, job))
                 if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == json.loads(job['result'] or '{}').get('sha256'):
                     return job
             except (OSError, ValueError):
@@ -74,10 +75,13 @@ def enqueue_export(store, version_id, template_override=None):
 def output_path(store, job):
     if job['kind'] != 'export_docx': raise ValueError('不是 Word 文件任务')
     path = store.root / 'exports' / job['id'] / 'report.docx'
+    if path_redirected(path):raise ValueError('导出路径不能为链接')
     if not path.resolve().is_relative_to((store.root / 'exports').resolve()): raise ValueError('无效导出路径')
     result = json.loads(job.get('result') or '{}')
     if result.get('path'):
-        saved = (store.root / result['path']).resolve()
+        saved = store.root / result['path']
+        if path_redirected(saved):raise ValueError('导出路径不能为链接')
+        saved = saved.resolve()
         if saved.parent != path.parent.resolve() or saved.suffix.lower() != '.docx':
             raise ValueError('无效导出结果路径')
         path = saved
@@ -116,18 +120,20 @@ def generate_word(store, job, cancelled):
     from docx import Document
     from io import BytesIO
     Document(BytesIO(blob))
-    destination = output_path(store, job); destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix('.tmp'); temporary.write_bytes(blob)
+    destination = output_path(store, job)
+    filesystem_path(destination.parent).mkdir(parents=True, exist_ok=True)
+    if path_redirected(destination.with_suffix('.tmp')):raise ValueError('导出临时文件不能为链接')
+    temporary = filesystem_path(destination.with_suffix('.tmp')); temporary.write_bytes(blob)
     if cancelled.is_set(): temporary.unlink(); raise InterruptedError('Word 制作已停止')
     try:
-        os.replace(temporary, destination)
+        os.replace(temporary, filesystem_path(destination))
     except PermissionError:
-        if os.name!='nt' or not destination.exists():raise
+        if os.name!='nt' or not filesystem_path(destination).exists():raise
         # Office/WPS may hold a deny-delete handle. Keep both the old file and
         # this already-rendered version; no generation/model work is repeated.
         from uuid import uuid4
         destination = destination.with_name('report-'+uuid4().hex+'.docx')
-        os.replace(temporary, destination)
+        os.replace(temporary, filesystem_path(destination))
         store.event(job['id'],'export_saved_as',{'path':str(destination.relative_to(store.root)),
                                                'reason':'原文件被占用或不可替换，已另存本次 Word'})
     stage(4, 'Word 已生成，可以下载')

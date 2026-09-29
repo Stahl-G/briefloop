@@ -11,7 +11,7 @@ import signal
 import sys
 import threading
 import time
-from .platform_support import WorkspaceLock
+from .platform_support import WorkspaceLock, filesystem_path
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
 from .models import Requirements, Settings, SaveRevision, Comment
@@ -227,9 +227,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         except (TypeError,ValueError,AttributeError):pass
                     for source in snapshot['sources']:
                         sidecar=store.root/'sources'/(source['id']+'.provenance.json')
-                        if sidecar.is_file():
+                        if filesystem_path(sidecar).is_file():
                             try:
-                                meta=json.loads(sidecar.read_text(encoding='utf-8'))
+                                meta=json.loads(filesystem_path(sidecar).read_text(encoding='utf-8'))
                                 source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
                             except (ValueError,OSError):pass
                     self.send(200,snapshot)
@@ -284,7 +284,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     # Status polling reads only bounded metadata, never the original or extracted body.
                     sidecar=store.root/'sources'/(source['id']+'.provenance.json')
                     try:
-                        metadata=json.loads(sidecar.read_text(encoding='utf-8')) if sidecar.stat().st_size<=128_000 else {}
+                        metadata=json.loads(filesystem_path(sidecar).read_text(encoding='utf-8')) if filesystem_path(sidecar).stat().st_size<=128_000 else {}
                         if isinstance(metadata,dict):
                             source.update({key:metadata[key] for key in ('needs_visual','pages','media_type') if key in metadata})
                     except (OSError,ValueError):pass
@@ -308,12 +308,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     page=int(q['page'][0]) if q.get('page') else None
                     path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
                     if not path:raise ValueError('尚无图片页面，请先选择 PDF 页码并点击查看页面')
-                    self.send(200,Path(path).read_bytes(),'image/png')
+                    self.send(200,filesystem_path(path).read_bytes(),'image/png')
                 elif u.path=='/api/source-original':
                     from .projections import source_details
                     source,provenance,original=source_details(store,q['id'][0])
                     if original is None:raise ValueError('该来源未保留原件')
-                    self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                    self.send(200,filesystem_path(original).read_bytes(),'application/octet-stream',download_name=original.name)
                 elif u.path=='/api/office-image':
                     from .office_cli import office_image
                     payload=office_image(store,q.get('digest',[''])[0],q.get('page',[''])[0])
@@ -436,7 +436,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     xlsx=job['kind']=='export_xlsx'
                     if job['kind'] not in ('export_docx','export_xlsx'):raise ValueError('不是导出任务')
                     if job['status']!='complete':raise ValueError('Excel 尚未制作完成' if xlsx else 'Word 尚未制作完成')
-                    data=(output_path_xlsx(store,job) if xlsx else output_path(store,job)).read_bytes()
+                    data=filesystem_path(output_path_xlsx(store,job) if xlsx else output_path(store,job)).read_bytes()
                     import hashlib
                     if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:
                         raise ValueError('Excel 文件已变化，请重新生成' if xlsx else 'Word 文件已变化，请重新生成')
@@ -459,10 +459,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,{'eligibility':checked,'releases':public})
                 elif u.path=='/api/release-file':
                     from .release import release_file
-                    self.send(200,release_file(store,q['id'][0]).read_bytes(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='formal-report.docx')
+                    self.send(200,filesystem_path(release_file(store,q['id'][0])).read_bytes(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='formal-report.docx')
                 elif u.path=='/api/audit-file':
                     from .audit_bundle import bundle_file
-                    self.send(200,bundle_file(store,q['job'][0]).read_bytes(),'application/zip',download_name='report-audit.zip')
+                    self.send(200,filesystem_path(bundle_file(store,q['job'][0])).read_bytes(),'application/zip',download_name='report-audit.zip')
                 elif u.path=='/api/source-update-state':
                     from .source_updates import for_version
                     self.send(200,for_version(store,q['version'][0]))

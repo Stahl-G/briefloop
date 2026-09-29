@@ -13,6 +13,8 @@ from .industry_data import prepare_report_data
 from .store import Conflict, dump, now
 from .skills import bind_context
 from .agent_commands import tool_command, quote_path
+from .writing_guidance import NUMBER_UNIT_GUIDE, REPORT_CLAIM_GUIDE
+from .platform_support import filesystem_path, path_redirected
 
 FILE_JOB_KINDS = ('export_docx', 'export_xlsx', 'release', 'audit_bundle')
 
@@ -381,6 +383,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    保存最终 draft.json 前，先把待提交的 markdown 原样写入 {folder/'draft-body.md'}，调用 `{tool} count-brief --file {quote_path(folder/'draft-body.md',backend)} --target-words {req['target_words']} --max-words {req['max_words']}` 检查，或使用完全相同算法计数；按本轮篇幅模式处理结果，不因偏离建议范围反复重写。不要把 citations 元数据当正文计数，也不要在最终稿已经发布后才为长度反复改写它。
     把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。保存后调用 `{tool} check-draft --run {run['id']} --file {quote_path(folder/'draft.json',backend)}` 自检：status=invalid 要按 errors 指出的字段改正后重存；unknown_fields 里的键不在契约内，发布时会被丢弃并记入任务日志，其中若有必需内容要改放到契约字段。diagnostics 返回实际总量、各章篇幅、引用定位和数字绑定问题，对照用户重点修正；检查通过不等于语义核实或独立审阅完成。
     重要数字绑定：凡是承载结论的数值——金额、财务指标、比率、占比、年份、日期、指数、计数、产能、订单、成交量、涨跌幅等，无论是否属于常见业务口径——都用 number_bindings 记录原始 value/unit、label/entity/period、source_id/locator；另给 source_excerpt（来源中逐字存在、含原始数值与完整单位的摘录）、report_quote（正文中唯一的逐字片段）、number_text（该片段内唯一、完整的带符号数字与单位）。示例：{{"label":"公司订单金额","value":13.6,"unit":"billion USD","period":"本报告期","entity":"示例公司","source_id":"实际来源ID","locator":"line 1","source_excerpt":"从真实来源逐字摘录，不照抄示例","report_quote":"示例公司订单为136亿美元。","number_text":"136亿美元"}}。示例仅说明字段，必须使用实际材料；不要编造绑定。locator 使用可解析的明确范围：line 1（或 line 1-3）、page 1，或序列化为字符串的证据定位 JSON（如带 kind、sheet、cells 的 XLSX 定位）；行号、页码和单元格均须替换为原件真实位置。无法识别的定位会标记未检查，不会退回整份来源寻找相同文字。程序只核对指定位置的数值、币种、单位换算以及摘录存在性，不证明主体、期间或指标含义正确。不能准确绑定或不支持的单位会标记未检查，不能声称全文已核验。数值性结论的关键数必须尝试绑定；确实无法绑定的数值不得为规避未检查标记而默默从绑定中省略——正文保留该数值却不绑定，等同于放弃该项核验，发布记录会如实标注数值核验未执行。
+    {NUMBER_UNIT_GUIDE}
     草稿一保存应用就会展示；不需要 Editor、Auditor 或评分通过。
 对于复用的关键来源，按本轮联网选择和预算调用 workspace-action 的 refresh_source(run_id,source_id,information_cutoff,trigger=next_run) 实际复查；禁网时只记录未刷新。对明确时间信息用source_snapshot(source_id,timing)登记effective_start/effective_end/published_at/available_at/basis；时间未知就保留未知，不用抓取日代替披露日。发现更新用source_change(change)登记旧新source_id、kind/relation/description/scope/relationship_evidence/information_cutoff，并交共用Conflict复核，不自动覆写旧报告或宣称新版胜出。
 4. draft.json 完整保存后，完成重要主张的证据登记，再写 agents.json。使用 `{tool} workspace-action --request REQUEST_JSON`：
@@ -992,10 +995,12 @@ class Worker:
                 with self._claim_lock:self.file_current=None
 
     def folder(self,job):
-        folder=self.store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
-        (folder/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
-        (folder/'scout.schema.json').write_text(json.dumps(ScoutResult.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
-        (folder/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        folder=self.store.root/'jobs'/job['id']
+        if path_redirected(folder) or not folder.resolve().is_relative_to(self.store.root.resolve()):raise ValueError('任务目录越界或链接')
+        filesystem_path(folder).mkdir(exist_ok=True)
+        filesystem_path(folder/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        filesystem_path(folder/'scout.schema.json').write_text(json.dumps(ScoutResult.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        filesystem_path(folder/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
         return folder
 
     def _remember_generated_sources(self,folder,brief):
@@ -1370,22 +1375,27 @@ class Worker:
             stage=folder/'revision';stage.mkdir(exist_ok=True)
             from .evidence import inspect_bindings,EvidenceInput,ClaimInput
             from .figures import read_figure
+            from .draft_checks import inspect_draft
             detail=json.loads(brief['detail'])
+            requirements=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
+            original={key:value for key,value in detail.items() if key in BriefDraft.model_fields}
+            original['markdown']=brief['markdown']
+            if brief.get('editor_document'):original['editor_document']=json.loads(brief['editor_document'])
+            allowed=set(self.store.source_ids(brief['run_id']))-set(requirements.get('reference_source_ids') or [])
+            diagnostics={'version_id':brief['id'],'brief_hash':brief['hash'],
+                **inspect_draft(original,requirements,store=self.store,allowed_sources=allowed)}
             revision_focus='修正每条问题所在原段后，同步复核摘要、标题、相关表格和影响建议有无同一结论残留；保留来源的条件、主体、期间与事实状态。有证据认为原发现不成立时保留原文并给出依据，不机械服从旧评分。'
             (stage/'input.json').write_text(json.dumps({'brief':brief,'assessment':assessment,'revision_reasons':reasons,'revision_focus':revision_focus,
-                'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts'],
+                'requirements':requirements,'review_findings':open_findings,'conflicts':review_state['conflicts'],
+                'draft_diagnostics':diagnostics,
                 'evidence':inspect_bindings(self.store,brief['id']),
                 'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
                 'figures':[read_figure(self.store,fid,brief['run_id']) for fid in detail.get('figures',[])]},ensure_ascii=False,indent=2), encoding='utf-8')
             (stage/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+            from .revision_metadata import binding_schema,response_schema
             finding_ids=[finding['id'] for finding in open_findings]
-            response_schema={'type':'array','minItems':len(finding_ids),'maxItems':len(finding_ids),
-                'items':{'type':'object','additionalProperties':False,
-                    'required':['finding_id','action','reason'],'properties':{
-                        'finding_id':{'type':'string','enum':finding_ids},
-                        'action':{'type':'string','enum':['corrected','removed','disagree']},
-                        'reason':{'type':'string','minLength':1}}} if finding_ids else False}
-            (stage/'responses.schema.json').write_text(json.dumps(response_schema,ensure_ascii=False,indent=2), encoding='utf-8')
+            (stage/'revision_bindings.schema.json').write_text(json.dumps(binding_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+            (stage/'responses.schema.json').write_text(json.dumps(response_schema(finding_ids),ensure_ascii=False,indent=2), encoding='utf-8')
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
@@ -1395,12 +1405,16 @@ class Worker:
 遵循 input.revision_focus：同一结论在问题原段、摘要、标题、表格、影响建议中一起核对，避免只改局部原句。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
+input.draft_diagnostics 是原稿的确定性诊断，绑定其中 version_id/brief_hash；不是事实判断或通过门槛。修订涉及的数值与引用按原文修复定位，不仅复制原稿元数据。number_bindings 的 report_quote 必须在整篇正文（含表格）中逐字唯一，number_text 必须包含完整数字与单位；改正文后同步更新定位。无法机械核对的单位或日期，以及尚未核实的范围保留真实未检状态，不能删绑定、删单位或改真实数值来消除提示。
+{NUMBER_UNIT_GUIDE}
+正文来源用 citation 节点、attrs.sourceId 为实际来源ID；相关行号与摘录放 draft.citations。普通文字 [1] 或只有 citations 元数据不会登记正文引用；表内转述来源事实时在相应单元格标引用，计算、目标与事实状态仍须按原文区分。不要为消除提示自动复制来源标记或编造依据。
 input.figures提供已登记图表、数据和脚本。图像本身有错误时，在工作区另存修正后的数据/脚本/图片并实际查看，使用 `{tool} register-figure --run {brief['run_id']} --image IMAGE_PATH --title TITLE --caption CAPTION --source SOURCE_ID --data DATA_PATH --script SCRIPT_PATH` 登记新快照；用返回的真实figure_id同步draft.figures与editor_document图片src（briefloop-figure:FIGURE_ID），旧资产保留。图中错误未改时不能仅改正文图注或写入gaps就声称已修正。
-需要新增或修正主张依据时，使用 workspace-action 的 evidence_span/claim_create/evidence_read 接口；修订原有主张时传 previous_id，不删历史。将待绑定到本次新正文的关联保存 {stage/'revision_bindings.json'}，格式为数组，每项 claim_id、block_id、quote。运行器会在新稿入库后绑定，不把关联写到旧稿。
+需要新增或修正主张依据时，使用 workspace-action 的 evidence_span/claim_create/evidence_read 接口；修订原有主张时传 previous_id，不删历史。将待绑定到本次新正文的关联保存 {stage/'revision_bindings.json'}，遵循 {stage/'revision_bindings.schema.json'}：文件顶层直接是数组，每项 claim_id、block_id、quote，不加 bindings 包装对象。运行器会在新稿入库后绑定，不把关联写到旧稿。
+{REPORT_CLAIM_GUIDE}
 使用 `{tool} workspace-action --request REQUEST_JSON`：evidence_span请求为action/evidence（按input.evidence_schema），claim_create请求为action/run_id/claim（按input.claim_schema，可传previous_id）。input.evidence包含现有真实ID；新增ID必须取登记接口实际返回值，不能自拟rev_等占位符。
 对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
-responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是写作修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正正文。
-将完整修订稿写入 {stage/'draft.json'}，遵循 {stage/'draft.schema.json'}，正文使用 editor_document 富文档 JSON。仅做此轮修订，不自行启动下一轮评价或技能学习。
+responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是数组，不加 responses 包装对象；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是写作修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正正文。
+将完整修订稿写入 {stage/'draft.json'}，遵循 {stage/'draft.schema.json'}，正文使用 editor_document 富文档 JSON。保存后调用 `{tool} check-draft --run {brief['run_id']} --file {quote_path(stage/'draft.json',payload.get('agent_backend','codex'))}` 检查；结构错误定向修正，诊断提示按实际原文判断，未检项不冒充核验完成。不因普通篇幅建议反复重写。仅做此轮修订，不自行启动下一轮评价或技能学习。
 '''
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
             self.runtime.execute(job,prompt,stage,resume_on_complete=(stage/'admission-error.json').exists())
@@ -1437,31 +1451,20 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def _revision_metadata(self,job,revised,folder,findings):
         """Admit auxiliary files or repair them without generating another body."""
-        from .evidence import bind_claim,blocks,node_text,record
+        from .evidence import bind_claim,record
         from .document_model import brief_document
         from .review import respond
+        from .revision_metadata import validate_arrays,validate_bindings,recovery_schema
         stage=folder/'revision';stage.mkdir(exist_ok=True)
         error_file=stage/'metadata-admission-error.json'
         names={'bindings':'revision_bindings.json','responses':'responses.json'}
         expected={item['id'] for item in findings}
-        nodes=blocks(brief_document(revised))
         def load():
             return {key:json.loads((stage/name).read_text(encoding='utf-8-sig')) if (stage/name).exists() else [] for key,name in names.items()}
         def admit(data):
-            if not isinstance(data,dict) or any(not isinstance(data.get(key),list) for key in names):raise ValueError('修订绑定及处理说明必须为数组')
-            for binding in data['bindings']:
-                if not isinstance(binding,dict) or any(not isinstance(binding.get(key),str) or not binding[key] for key in ('claim_id','block_id','quote')):raise ValueError('修订绑定缺少 claim_id/block_id/quote')
-                claim=record(self.store,'claims',binding['claim_id']);node=nodes.get(binding['block_id'])
-                if claim['run_id']!=revised['run_id'] or node is None or node_text(node).count(binding['quote'])!=1:raise ValueError('修订正文锚点缺失或不唯一，请对照已入库正文修复绑定')
-            response_ids=[]
-            for item in data['responses']:
-                if not isinstance(item,dict) or any(not isinstance(item.get(key),str) or not item[key].strip() for key in ('finding_id','action','reason')) or item['action'] not in ('corrected','removed','disagree'):raise ValueError('修订处理说明缺少有效 finding_id/action/reason')
-                response_ids.append(item['finding_id'])
-            if set(response_ids)!=expected or len(response_ids)!=len(set(response_ids)):
-                raise ValueError('修订处理说明须逐项对应本轮发现：'+dump({
-                    'missing':sorted(expected-set(response_ids)),
-                    'unexpected':sorted(set(response_ids)-expected),
-                    'duplicate':sorted({rid for rid in response_ids if response_ids.count(rid)>1})}))
+            if not isinstance(data,dict):raise ValueError('修订元数据必须包含 bindings/responses')
+            validate_arrays(data.get('bindings'),data.get('responses'),expected)
+            validate_bindings(self.store,revised['run_id'],data['bindings'],brief_document(revised))
             for binding in data['bindings']:
                 if not self.store.rows('SELECT id FROM claim_bindings WHERE version_id=? AND claim_id=? AND block_id=? AND quote=?',(revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])):
                     bind_claim(self.store,revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])
@@ -1485,12 +1488,16 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
             remember(exc)
             if not retry:raise
         repair=stage/'metadata-repair';repair.mkdir(exist_ok=True)
-        (repair/'input.json').write_text(json.dumps({'version_id':revised['id'],'brief_hash':revised['hash'],'document':brief_document(revised),
-            'findings':findings,'error':json.loads(error_file.read_text(encoding='utf-8')),'candidate_claims':self.store.rows('SELECT id,data FROM claims WHERE run_id=?',(revised['run_id'],))},ensure_ascii=False,indent=2), encoding='utf-8')
+        claims=[record(self.store,'claims',row['id']) for row in self.store.rows('SELECT id FROM claims WHERE run_id=?',(revised['run_id'],))]
+        candidates=[claim for claim in claims if claim['data'].get('claim_role','report_statement')=='report_statement']
+        source_statements=[claim for claim in claims if claim['data'].get('claim_role','report_statement')!='report_statement']
+        (repair/'metadata.schema.json').write_text(json.dumps(recovery_schema(revised['id'],revised['hash'],sorted(expected),[claim['id'] for claim in candidates]),ensure_ascii=False,indent=2), encoding='utf-8')
+        (repair/'input.json').write_text(json.dumps({'version_id':revised['id'],'brief_hash':revised['hash'],'run_id':revised['run_id'],'document':brief_document(revised),
+            'findings':findings,'error':json.loads(error_file.read_text(encoding='utf-8')),'candidate_claims':candidates,'source_statements':source_statements},ensure_ascii=False,indent=2), encoding='utf-8')
         prompt=TASK_CONTEXT+f'''恢复这次已发布修订的绑定与处理说明。只读取 {repair/'input.json'}，正文版本 {revised['id']} 已固定，hash={revised['hash']}。
 只修正本次失败的 revision_bindings/responses 元数据，禁止重新生成正文、修改 draft.json、调用 revise_document 或发布另一版本，也不新增研究或改写来源。
-对照已保存 document 的真实 blockId 和唯一原句选绑定；使用现有真实 claim_id；每个 input.findings 的 finding_id 必须有 corrected/removed/disagree 与具体 reason。
-写入 {repair/'metadata.json'}，格式为 {{"version_id":"{revised['id']}","brief_hash":"{revised['hash']}","bindings":[{{"claim_id":"实际ID","block_id":"实际块ID","quote":"正文唯一片段"}}],"responses":[{{"finding_id":"实际ID","action":"corrected|removed|disagree","reason":"具体依据"}}]}}。完整数组包含原有正确项目。不要直接写数据库，运行器核对后接纳。
+对照已保存 document 的真实 blockId 和唯一原句选绑定；claim_id 仅选 input.candidate_claims 中实际登记的报告侧主张。input.source_statements 只供回读，不能绑定或自动改角色；缺少所需报告主张时保留缺口，不删正确绑定或声称已补齐，另行正常修订才可由写稿模型建立新主张。每个 input.findings 的 finding_id 必须有 corrected/removed/disagree 与具体 reason。
+写入 {repair/'metadata.json'}，遵循 {repair/'metadata.schema.json'}：只有此恢复文件顶层是含 version_id、brief_hash、bindings、responses 的对象，后两者仍是数组。bindings 使用真实 claim_id/block_id/quote，responses 使用真实 finding_id、单个 corrected/removed/disagree 值及具体 reason。没有对应项目时写 []；完整数组包含原有正确项目。不要直接写数据库，运行器核对后接纳。
 '''
         self.store.event(job['id'],'revision_progress',{'stage':'repairing_metadata','version_id':revised['id'],'message':'只修复已保存稿件的依据关联与处理说明'})
         self.runtime.execute({**job,'kind':'repair_revision_metadata'},prompt,repair,resume_on_complete=(repair/'admission-error.json').exists())

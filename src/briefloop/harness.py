@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from queue import Empty
 from .app_server import AppServerClient
 from .chat_store import ChatStore
+from .platform_support import filesystem_path
 from .store import uid
 
 DEFAULT_RUNTIME={'model':'default','effort':None,'permission':'workspace-write'}
@@ -188,7 +189,7 @@ class HarnessManager:
             image_path=attachment.get('image_path')
             if (attachment.get('media_type') or '').startswith('image/') and not image_path:
                 raise ValueError('图片附件 '+attachment.get('name',sid)+' 没有可发送的有效图像')
-            if image_path and (not Path(image_path).is_absolute() or not Path(image_path).is_file()):
+            if image_path and (not Path(image_path).is_absolute() or not filesystem_path(image_path).is_file()):
                 raise ValueError('图片附件 '+attachment.get('name',sid)+' 的图像文件已丢失或路径无效')
             attachments.append(attachment)
         return attachments

@@ -106,7 +106,6 @@ def test_http_surfaces_degrade_without_officecli(tmp_path, monkeypatch):
         _stop_server(server, thread)
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_http_office_check_preview_and_image_with_stub(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     server, thread = _start_server(tmp_path / 'workspace')
@@ -137,7 +136,6 @@ def test_http_office_check_preview_and_image_with_stub(tmp_path, monkeypatch):
         _stop_server(server, thread)
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='stub uses a POSIX shebang')
 def test_version_checks_and_review_status_compose_the_office_key(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     server, thread = _start_server(tmp_path / 'workspace')

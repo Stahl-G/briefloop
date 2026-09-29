@@ -2,6 +2,7 @@
 from typing import Literal, get_args
 from datetime import date
 from .industry_data import IndustryData
+from .writing_guidance import NUMBER_UNIT_GUIDE
 from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, field_validator, model_serializer
 
 
@@ -367,7 +368,7 @@ class NumberBinding(Model):
     """
     label: str = ""
     value: float | None = None
-    unit: str = ""
+    unit: str = Field(default="", description=NUMBER_UNIT_GUIDE)
     period: str = ""
     entity: str = ""
     source_id: str = ""

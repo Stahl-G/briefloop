@@ -55,7 +55,8 @@ class Support(Model):
 class ClaimInput(Model):
     statement: str = Field(min_length=1,max_length=6000)
     kind: Literal['fact','source_opinion','calculation','inference','recommendation']
-    claim_role: Literal['source_statement','report_statement'] = 'report_statement'
+    claim_role: Literal['source_statement','report_statement'] = Field(default='report_statement',
+        description='正文采用的事实、计算与判断用 report_statement；source_statement 仅保留来源说法及归属，不能直接绑定正文或作为报告推断前提。角色由写稿模型选择，不自动转换。')
     attribution: str = ''
     importance: Literal['core','supporting'] = 'core'
     entity: str = ''

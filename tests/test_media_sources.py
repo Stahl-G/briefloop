@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -43,7 +44,7 @@ def test_image_upload_preserves_original_normalizes_orientation_and_rejects_bad_
         assert image.format=='PNG' and image.size==(4,8)
         assert image.getexif().get(274) is None
     text=read_source(store,source['id'])
-    assert attachment['image_path'] in text and 'OCR' in text
+    assert json.loads(text.splitlines()[1])['image_path']==attachment['image_path'] and 'OCR' in text
     # Both a misleading extension and a truncated PNG must remain failed sources.
     for invalid in (b'not a png at all',b'\x89PNG\r\n\x1a\nnot an image'):
         broken=sources.upload(store,'broken.png',invalid)
@@ -105,8 +106,18 @@ def test_source_metadata_and_cache_cannot_escape_or_silently_drift(tmp_path):
     record.write_text(json.dumps(original))
     Path(store.root/original['image_path']).write_bytes(image_bytes(size=(2,2)))
     with pytest.raises(ValueError):media.source_attachment(store,sid)
-    record.unlink();record.symlink_to(outside)
-    with pytest.raises(ValueError):media.source_attachment(store,sid)
+    if os.name=='nt':
+        import _winapi
+        junction=store.root/'sources'/'outside'
+        _winapi.CreateJunction(str(tmp_path),str(junction))
+        try:
+            record.write_text(json.dumps({**original,'original_path':'sources/outside/private.txt'}))
+            with pytest.raises(ValueError,match='越界'):media.source_attachment(store,sid)
+            assert outside.read_text()=='outside'
+        finally:junction.rmdir()
+    else:
+        record.unlink();record.symlink_to(outside)
+        with pytest.raises(ValueError):media.source_attachment(store,sid)
 
 
 def test_office_expansion_limit_covers_docx_sources_and_templates(tmp_path,monkeypatch):
