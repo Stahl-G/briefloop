@@ -8,6 +8,7 @@ import json
 import threading
 import time
 from .harness import HarnessManager
+from .platform_support import filesystem_path
 from .store import dump, now, uid
 from .task_labels import label as task_label
 
@@ -16,8 +17,8 @@ TERMINAL = {'completed', 'failed', 'interrupted', 'cancelled'}
 
 def _write(path, value):
     temporary = path.with_name(path.name + '.tmp')
-    temporary.write_text(dump(value), encoding='utf-8')
-    temporary.replace(path)
+    filesystem_path(temporary).write_text(dump(value), encoding='utf-8')
+    filesystem_path(temporary).replace(filesystem_path(path))
 
 
 def _message(snapshot, message_id):
@@ -29,13 +30,13 @@ def _usable_output(job, folder, store=None):
     from .models import BriefDraft
     if job.get('plain_output'):
         if job['plain_output']!='response.txt':return False
-        try:return bool((folder/'response.txt').read_text(encoding='utf-8').strip())
+        try:return bool(filesystem_path(folder/'response.txt').read_text(encoding='utf-8').strip())
         except (OSError,ValueError):return False
     if job.get('readonly_output'):
-        try:return isinstance(json.loads((folder/job['readonly_output']).read_text(encoding='utf-8-sig')),dict)
+        try:return isinstance(json.loads(filesystem_path(folder/job['readonly_output']).read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     if job.get('kind')=='repair_revision_metadata':
-        try:return isinstance(json.loads((folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
+        try:return isinstance(json.loads(filesystem_path(folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     role=job.get('runtime_role')
     if role=='analyst':
@@ -48,7 +49,7 @@ def _usable_output(job, folder, store=None):
         except (OSError,ValueError,KeyError):return False
     if role=='scout':
         from .models import ScoutResult
-        try:ScoutResult.model_validate(json.loads((folder/'result.json').read_text(encoding='utf-8-sig')));return True
+        try:ScoutResult.model_validate(json.loads(filesystem_path(folder/'result.json').read_text(encoding='utf-8-sig')));return True
         except (OSError,ValueError):return False
     if role in ('evaluator','scorer','assessor'):
         name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
@@ -56,7 +57,7 @@ def _usable_output(job, folder, store=None):
     elif job['kind']=='assess':name='assessment.json'
     else:return True  # WikiSkill handoffs already request resume_on_complete.
     try:
-        data=json.loads((folder/name).read_text(encoding='utf-8-sig'))
+        data=json.loads(filesystem_path(folder/name).read_text(encoding='utf-8-sig'))
         if name=='draft.json':BriefDraft.model_validate(data)
         elif name=='assessment.json':
             if store is None:return False
@@ -115,8 +116,8 @@ class InteractiveRuntime:
         if 'input_source_ids' in job:return list(dict.fromkeys(job['input_source_ids']))
         if job.get('runtime_role')!='evaluator':return []
         path=folder/'input.json'
-        if not path.exists():return []
-        packet=json.loads(path.read_text(encoding='utf-8'))
+        if not filesystem_path(path).exists():return []
+        packet=json.loads(filesystem_path(path).read_text(encoding='utf-8'))
         ids=[]
         if isinstance(packet,dict):
             ids=[row.get('source_id') or row.get('id') for row in packet.get('sources',[])]
@@ -139,7 +140,7 @@ class InteractiveRuntime:
     def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
         from .progress import ProgressTracker
         folder = Path(folder)
-        folder.mkdir(parents=True, exist_ok=True)
+        filesystem_path(folder).mkdir(parents=True, exist_ok=True)
         resume_on_complete = resume_on_complete or not _usable_output(job, folder, self.store)
         tracker = ProgressTracker(self.store, job['id'], folder, context=job)
         deferred = [None]
@@ -193,8 +194,8 @@ class InteractiveRuntime:
         if configured.get('model_variant'):
             runtime['variant'] = configured['model_variant']
         saved = folder / 'execution.json'
-        if saved.exists():
-            previous = json.loads(saved.read_text(encoding='utf-8'))
+        if filesystem_path(saved).exists():
+            previous = json.loads(filesystem_path(saved).read_text(encoding='utf-8'))
             if previous.get('runtime') and previous['runtime'] != configured:
                 raise ValueError('已保存执行的模型配置与本阶段不一致')
             if previous.get('backend', 'codex') != backend:
@@ -207,7 +208,7 @@ class InteractiveRuntime:
             raise InterruptedError('任务已停止，已生成内容保留')
 
         marker = folder / 'conversation.json'
-        binding = json.loads(marker.read_text(encoding='utf-8')) if marker.exists() else None
+        binding = json.loads(filesystem_path(marker).read_text(encoding='utf-8')) if filesystem_path(marker).exists() else None
         snapshot = None
         if binding:
             if binding['job_id'] != job['id'] or binding.get('backend', 'codex') != backend:
@@ -272,7 +273,7 @@ class InteractiveRuntime:
             fixed = runtime_instruction(configured, backend)
             if binding['history']:
                 fixed += '恢复这一个任务：先核对现有子 agent 和完整输出，复用已完成结果，只补未完成部分，不重新采样已完成稿件。\n'
-            (folder / 'prompt.md').write_text(fixed + prompt, encoding='utf-8')
+            filesystem_path(folder / 'prompt.md').write_text(fixed + prompt, encoding='utf-8')
             _write(saved, {'returncode': None, 'status': 'running', 'session_id': binding['session_id'],
                            'message_id': binding['message_id'], 'runtime': configured, 'backend': backend})
 
@@ -286,8 +287,8 @@ class InteractiveRuntime:
         cursor = 0
         seen_messages = set()
         log_path = folder / 'events.jsonl'
-        if log_path.exists():
-            for line in log_path.read_text(encoding='utf-8').splitlines():
+        if filesystem_path(log_path).exists():
+            for line in filesystem_path(log_path).read_text(encoding='utf-8').splitlines():
                 try:
                     event = json.loads(line)
                 except ValueError:
@@ -304,7 +305,7 @@ class InteractiveRuntime:
                          'learn': '请继续整理反馈、更新经验并完成当前技能改进步骤。'}.get(job['kind'], '请完成当前简报任务。')
                 evaluation_label='请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。' if job.get('evaluation_mode')=='pairwise' else '请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。'
                 label = {'evaluator': evaluation_label, 'scorer': '请使用 Evaluator 单稿评分模式核对简报。', 'assessor': '请使用 Evaluator 成对比较模式核对新旧稿件。', 'maintainer': '请从反馈中整理可复用经验。', 'proposer': '请依据经验提出技能改进。'}.get(job.get('runtime_role'), label)
-                harness.start_internal((folder / 'prompt.md').read_text(encoding='utf-8'), session_id=sid,
+                harness.start_internal(filesystem_path(folder / 'prompt.md').read_text(encoding='utf-8'), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
                     allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'],
                     search_provider=payload.get('search_provider','codex'),search_policy=payload.get('search_policy'),
@@ -341,7 +342,7 @@ class InteractiveRuntime:
                     assistant = [m['text'] for m in snapshot['messages']
                                  if m['role'] == 'assistant' and m.get('turn_id') == message.get('turn_id')]
                     if assistant:
-                        (folder / 'last-message.txt').write_text('\n\n'.join(assistant), encoding='utf-8')
+                        filesystem_path(folder / 'last-message.txt').write_text('\n\n'.join(assistant), encoding='utf-8')
                     if status=='completed' and job.get('plain_output'):
                         if job['plain_output']!='response.txt':raise ValueError('无效文本输出文件名')
                         replies=[m for m in snapshot['messages'] if m['role']=='assistant'
@@ -349,7 +350,7 @@ class InteractiveRuntime:
                         finals=[m for m in replies if m.get('phase')=='final_answer' or m.get('channel')=='final']
                         final=(finals or replies)[-1]['text'] if replies else ''
                         if not final.strip():raise ValueError('模型未返回完整正文，运行记录已保留')
-                        (folder/'response.txt').write_text(final,encoding='utf-8')
+                        filesystem_path(folder/'response.txt').write_text(final,encoding='utf-8')
                     if status=='completed' and job.get('readonly_output'):
                         name=job['readonly_output']
                         if name not in ('review.json','permission-probe.json'):raise ValueError('无效只读输出文件名')
@@ -397,7 +398,7 @@ class InteractiveRuntime:
             except Exception:
                 pass
             try:
-                previous = json.loads(saved.read_text(encoding='utf-8')) if saved.exists() else {}
+                previous = json.loads(filesystem_path(saved).read_text(encoding='utf-8')) if filesystem_path(saved).exists() else {}
                 if previous.get('status') in (None, 'running'):
                     _write(saved, {'returncode': 1,
                         'status': 'interrupted' if isinstance(exc, (InterruptedError, TimeoutError)) else 'failed',
@@ -407,7 +408,7 @@ class InteractiveRuntime:
                         **self._usage_diagnostics(log_path, backend)})
             except Exception:
                 pass  # Preserve the original error and any already saved result.
-            with (folder / 'stderr.log').open('a', encoding='utf-8') as errors:
+            with filesystem_path(folder / 'stderr.log').open('a', encoding='utf-8') as errors:
                 errors.write(str(exc) + '\n')
             tick()
             raise
@@ -418,7 +419,7 @@ class InteractiveRuntime:
 
     @staticmethod
     def _project(snapshot, log_path, cursor, seen_messages):
-        with log_path.open('a', encoding='utf-8') as log:
+        with filesystem_path(log_path).open('a', encoding='utf-8') as log:
             for event in snapshot['events']:
                 if event['seq'] <= cursor:
                     continue
@@ -450,9 +451,9 @@ class InteractiveRuntime:
     @staticmethod
     def _public_events(path):
         values = []
-        if not path.exists():
+        if not filesystem_path(path).exists():
             return values
-        for line in path.read_text(encoding='utf-8').splitlines():
+        for line in filesystem_path(path).read_text(encoding='utf-8').splitlines():
             try:
                 event = json.loads(line)
             except ValueError:

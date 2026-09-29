@@ -14,6 +14,7 @@ from .store import Conflict, dump, now
 from .skills import bind_context
 from .agent_commands import tool_command, quote_path
 from .writing_guidance import NUMBER_UNIT_GUIDE, REPORT_CLAIM_GUIDE
+from .platform_support import filesystem_path, path_redirected
 
 FILE_JOB_KINDS = ('export_docx', 'export_xlsx', 'release', 'audit_bundle')
 
@@ -994,10 +995,12 @@ class Worker:
                 with self._claim_lock:self.file_current=None
 
     def folder(self,job):
-        folder=self.store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
-        (folder/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
-        (folder/'scout.schema.json').write_text(json.dumps(ScoutResult.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
-        (folder/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        folder=self.store.root/'jobs'/job['id']
+        if path_redirected(folder) or not folder.resolve().is_relative_to(self.store.root.resolve()):raise ValueError('任务目录越界或链接')
+        filesystem_path(folder).mkdir(exist_ok=True)
+        filesystem_path(folder/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        filesystem_path(folder/'scout.schema.json').write_text(json.dumps(ScoutResult.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        filesystem_path(folder/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
         return folder
 
     def _remember_generated_sources(self,folder,brief):

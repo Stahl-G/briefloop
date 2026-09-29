@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 import re
 from .store import dump
+from .platform_support import filesystem_path
 
 
 def role_label(role):
@@ -48,7 +49,7 @@ def _pipeline(folder, workers, *, draft_first=False):
     Statuses come only from actual files and reported worker states, never from a
     model's self-report of progress percentage.
     """
-    folder = Path(folder)
+    folder = filesystem_path(folder)
     plan = (folder / 'plan.json').exists()
     draft = (folder / 'draft.json').exists()
     scored = any((folder / name).exists() for name in ('assessment.json', 'evaluation/assessment.json', 'scorer/assessment.json'))
@@ -111,14 +112,14 @@ class ProgressTracker:
             version = payload.get('version_id')
             if not version:
                 try:
-                    value = json.loads((self.folder / 'input.json').read_text(encoding='utf-8-sig'))
+                    value = json.loads(filesystem_path(self.folder / 'input.json').read_text(encoding='utf-8-sig'))
                     version = value.get('brief', {}).get('id') if isinstance(value, dict) else None
                 except (ValueError, OSError):pass
             self.has_saved_draft = bool(version and store.rows('SELECT id FROM briefs WHERE id=?', (version,)))
 
     def update(self):
-        paths=[self.folder/n for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]+[
-            self.folder/'evaluation'/'assessment.json',self.folder/'scorer'/'assessment.json']
+        paths=[filesystem_path(self.folder/n) for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]+[
+            filesystem_path(self.folder/'evaluation'/'assessment.json'),filesystem_path(self.folder/'scorer'/'assessment.json')]
         signature=tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in paths)
         if signature==self.signature:return
         self.signature=signature

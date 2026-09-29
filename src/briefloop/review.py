@@ -6,6 +6,7 @@ import shutil
 from typing import Literal
 from pydantic import ConfigDict, Field, StrictInt, ValidationError, model_validator
 from .models import Model, Assessment
+from .platform_support import filesystem_path, path_redirected
 from .store import dump, uid, now
 from .evidence import inspect_bindings, record
 
@@ -173,10 +174,10 @@ def sha(data):return hashlib.sha256(data).hexdigest()
 def _archive_review_output(folder):
     """Preserve rejected bytes before a later repair can replace review.json."""
     output=folder/'review.json'
-    if not output.is_file():return None
-    raw=output.read_bytes();attempts=folder/'attempts';attempts.mkdir(exist_ok=True)
+    if not filesystem_path(output).is_file():return None
+    raw=filesystem_path(output).read_bytes();attempts=folder/'attempts';filesystem_path(attempts).mkdir(exist_ok=True)
     archived=attempts/('review-'+sha(raw)+'.json')
-    if not archived.exists():archived.write_bytes(raw)
+    if not filesystem_path(archived).exists():filesystem_path(archived).write_bytes(raw)
     return str(archived.relative_to(folder))
 
 
@@ -192,19 +193,22 @@ def _packet(store,review):
     if not relative or not isinstance(files,dict) or 'index.json' not in files:
         raise ValueError('审阅缺少固定核查包及文件清单')
     packet=store.root/relative
-    if not packet.resolve().is_relative_to(store.root.resolve()) or packet.is_symlink():
+    if path_redirected(packet) or not packet.resolve().is_relative_to(store.root.resolve()):
         raise ValueError('核查包路径无效')
     for name,digest in files.items():
         path=packet/name
-        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(packet)):
+        if path_redirected(path):
             raise ValueError('Reviewer 核查包文件已变化，不能接纳本次结果')
-        if not path.resolve().is_relative_to(packet.resolve()) or not path.is_file() or sha(path.read_bytes())!=digest:
+        if not path.resolve().is_relative_to(packet.resolve()) or not filesystem_path(path).is_file() or sha(filesystem_path(path).read_bytes())!=digest:
             raise ValueError('Reviewer 核查包文件已变化，不能接纳本次结果')
     # Packet manifests use forward slashes on every platform, including Windows.
-    actual={path.relative_to(packet).as_posix() for path in packet.rglob('*') if path.is_file() or path.is_symlink()}
+    physical_packet=filesystem_path(packet);actual=set()
+    for path in physical_packet.rglob('*'):
+        if path_redirected(path):raise ValueError('Reviewer 核查包不能包含链接目录或文件')
+        if path.is_file():actual.add(path.relative_to(physical_packet).as_posix())
     if actual!=set(files):raise ValueError('Reviewer 核查包文件清单不一致')
-    index=json.loads((packet/'index.json').read_text(encoding='utf-8'));bound={k:v for k,v in files.items() if k!='index.json'}
-    target=json.loads((packet/'target.json').read_text(encoding='utf-8'))
+    index=json.loads(filesystem_path(packet/'index.json').read_text(encoding='utf-8'));bound={k:v for k,v in files.items() if k!='index.json'}
+    target=json.loads(filesystem_path(packet/'target.json').read_text(encoding='utf-8'))
     fingerprint=sha(dump({'target':target,'files':bound}).encode())
     if index.get('files')!=bound or index.get('version_id')!=review['version_id'] or target.get('version_id')!=review['version_id'] or index.get('fingerprint')!=fingerprint or fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 核查包索引与输入指纹不一致')
@@ -235,7 +239,7 @@ def _latest_responses(rows,ancestry):
 
 
 def _response_scope(store,packet,version_id):
-    rows=json.loads((packet/'history/responses.json').read_text(encoding='utf-8'))
+    rows=json.loads(filesystem_path(packet/'history/responses.json').read_text(encoding='utf-8'))
     # History stays complete, but a later explanation explicitly supersedes the
     # earlier explanation for the same finding. Only its exact id is actionable.
     ancestry=_ancestry(store,version_id)
@@ -321,7 +325,7 @@ def _snapshot(store,version_id,snapshot_version=7):
         try:
             _,_,original=source_files(store,sid);text=store.source_text(sid)
             sources.append({'id':sid,'name':source['name'],'hash':source['hash'],'status':source['status'],
-                            'original_hash':sha(original.read_bytes()) if original else None})
+                            'original_hash':sha(filesystem_path(original).read_bytes()) if original else None})
         except (ValueError,OSError) as exc:sources.append({'id':sid,'name':source['name'],'hash':source['hash'],'error':str(exc)})
     from .evidence import claim_closure
     unused=store.rows('SELECT c.id FROM claims c WHERE c.run_id=? AND NOT EXISTS (SELECT 1 FROM claim_bindings b WHERE b.claim_id=c.id) AND NOT EXISTS (SELECT 1 FROM claims n WHERE n.previous_id=c.id)',(run['id'],))
@@ -448,7 +452,7 @@ def _visual_inputs(store,snapshot,packet,source_index,save):
         name='figures/'+figure['figure_id']+'/'+Path(figure['image_path']).name
         visuals.append({'id':'figure:'+figure['figure_id'],'kind':'report_figure',
                         'figure_id':figure['figure_id'],'title':figure['title'],
-                        'file':name,'sha256':sha((packet/name).read_bytes()),'mime':'image/png'})
+                        'file':name,'sha256':sha(filesystem_path(packet/name).read_bytes()),'mime':'image/png'})
     selected={}
     def collect(node):
         for evidence in node.get('evidence',[]):
@@ -481,18 +485,18 @@ def _visual_inputs(store,snapshot,packet,source_index,save):
             visuals.append(item);continue
         try:
             original=packet/source['original_file']
-            if sha(original.read_bytes())!=source['original_hash']:raise ValueError('证据原件与核查快照不一致')
+            if sha(filesystem_path(original).read_bytes())!=source['original_hash']:raise ValueError('证据原件与核查快照不一致')
             if choice['kind']=='image':
                 from .figures import _normalized_image
-                png,_,_,_=_normalized_image(original.read_bytes());name='sources/'+sid+'.visual.png'
+                png,_,_,_=_normalized_image(filesystem_path(original).read_bytes());name='sources/'+sid+'.visual.png'
             else:
                 from .media import render_source_pages,source_files
                 # The established renderer validates its source/page cache hashes.
                 # Compare the actual original to the frozen original as well.
                 _,_,live_original=source_files(store,sid)
-                if not live_original or sha(live_original.read_bytes())!=source['original_hash']:raise ValueError('PDF 原件在核查包准备期间发生变化')
+                if not live_original or sha(filesystem_path(live_original).read_bytes())!=source['original_hash']:raise ValueError('PDF 原件在核查包准备期间发生变化')
                 rendered=render_source_pages(store,sid,[page])['pages'][0]
-                png=Path(rendered['path']).read_bytes();name=f'sources/{sid}.page-{page}.png'
+                png=filesystem_path(Path(rendered['path'])).read_bytes();name=f'sources/{sid}.page-{page}.png'
             save(name,png);source.setdefault('visual_files',[]).append(name)
             item.update(file=name,sha256=sha(png),mime='image/png')
         except (ValueError,OSError,KeyError,ImportError) as exc:item['unavailable']=str(exc)
@@ -506,7 +510,7 @@ def visual_input_files(store,review_id,packet_root):
     review=get_review(store,review_id);packet,target,bound=_packet(store,review)
     if packet.resolve()!=Path(packet_root).resolve():raise ValueError('视觉输入不属于当前 Reviewer 核查包')
     if 'visual-inputs.json' in bound:
-        plan=json.loads((packet/'visual-inputs.json').read_text(encoding='utf-8'))
+        plan=json.loads(filesystem_path(packet/'visual-inputs.json').read_text(encoding='utf-8'))
         if plan.get('version_id')!=review['version_id']:raise ValueError('视觉输入属于另一正文版本')
         images=plan['images']
     else:
@@ -521,7 +525,7 @@ def visual_input_files(store,review_id,packet_root):
             output.append({**item,'bytes':None});continue
         name=item['file']
         if name not in bound or (item.get('sha256') and item['sha256']!=bound[name]):raise ValueError('视觉输入未绑定到核查包文件清单')
-        blob=(packet/name).read_bytes()
+        blob=filesystem_path(packet/name).read_bytes()
         if sha(blob)!=bound[name]:raise ValueError('Reviewer 图片在发送前发生变化')
         output.append({**item,'sha256':bound[name],'bytes':blob})
     return output
@@ -532,21 +536,24 @@ def build_packet(store,version_id,folder):
     # Length diagnostics belong to new review packets. Other consumers (notably
     # pending releases) retain their existing snapshot identity.
     snapshot=_snapshot(store,version_id,8);folder=Path(folder)
+    if not folder.resolve().is_relative_to(store.root.resolve()):raise ValueError('核查包任务目录越界')
     # A saved reader contract must survive into the packet. Losing it silently would
     # let the Reviewer check content without the user's own delivery interpretation.
     saved_contract=snapshot['detail'].get('reader_contract')
     if saved_contract and snapshot['requirements'].get('reader_contract')!=saved_contract:
         raise ValueError('核查包丢失了本轮已保存的读者约定')
     packet=folder/'packet'
-    if packet.is_symlink():raise ValueError('核查包目录不能是符号链接')
-    packet.mkdir(parents=True,exist_ok=True);entries={};source_index=[]
+    if path_redirected(packet):raise ValueError('核查包目录不能是链接或越界')
+    for path in filesystem_path(packet).rglob('*'):
+        if path_redirected(path):raise ValueError('核查包不能包含链接目录或文件')
+    filesystem_path(packet).mkdir(parents=True,exist_ok=True);entries={};source_index=[]
     def save(name,blob):
         path=packet/name
-        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(packet)):
+        if path_redirected(path):
             raise ValueError('核查包不能包含符号链接')
-        path.parent.mkdir(parents=True,exist_ok=True)
-        if path.exists() and path.read_bytes()!=blob:raise ValueError('核查包内容已变化，请创建新审阅')
-        if not path.exists():path.write_bytes(blob)
+        filesystem_path(path.parent).mkdir(parents=True,exist_ok=True)
+        if filesystem_path(path).exists() and filesystem_path(path).read_bytes()!=blob:raise ValueError('核查包内容已变化，请创建新审阅')
+        if not filesystem_path(path).exists():filesystem_path(path).write_bytes(blob)
         entries[name]=sha(blob)
     save('target.json',pack_dump(snapshot).encode())
     # Purpose-split views of the same snapshot; target.json stays the authority.
@@ -575,11 +582,11 @@ def build_packet(store,version_id,folder):
             view=[{'original_line':i+1,'chunks':[line[n:n+1200] for n in range(0,len(line),1200)] or ['']} for i,line in enumerate(text.splitlines())]
             name='sources/'+sid+'.view.json';save(name,pack_dump(view).encode());item['readable_text_file']=name
             if original:
-                name='sources/'+sid+original.suffix;save(name,original.read_bytes());item['original_file']=name
+                name='sources/'+sid+original.suffix;save(name,filesystem_path(original).read_bytes());item['original_file']=name
             # Human-readable saved workbook cells require no Reviewer shell or recalculation.
             if original and original.suffix=='.xlsx':
                 from .workbook_figures import workbook_text
-                name='sources/'+sid+'.cells.txt';save(name,workbook_text(original.read_bytes()).encode());item['cells_file']=name
+                name='sources/'+sid+'.cells.txt';save(name,workbook_text(filesystem_path(original).read_bytes()).encode());item['cells_file']=name
         except (ValueError,OSError) as exc:item['read_error']=str(exc)
         source_index.append(item)
     from .figure_text import figure_texts
@@ -590,8 +597,8 @@ def build_packet(store,version_id,folder):
             path=figure.get(key)
             if path:
                 source=(store.root/path).resolve()
-                if not source.is_relative_to(store.root) or not source.is_file():raise ValueError('图表核查资源路径无效')
-                name='figures/'+figure['figure_id']+'/'+Path(path).name;blob=source.read_bytes()
+                if not source.is_relative_to(store.root) or not filesystem_path(source).is_file():raise ValueError('图表核查资源路径无效')
+                name='figures/'+figure['figure_id']+'/'+Path(path).name;blob=filesystem_path(source).read_bytes()
                 save(name,blob);saved[key]=(name,blob)
         # Text drawn onto the image, read from the frozen script without running it,
         # so a stale footnote can be checked against the data and the report.
@@ -625,7 +632,7 @@ def build_packet(store,version_id,folder):
     save('history/executions.json',pack_dump(executions).encode())
     responses=store.rows('SELECT r.*,f.data AS finding_data,f.status AS finding_status,f.version_id AS finding_version FROM review_responses r JOIN review_findings f ON f.id=r.finding_id JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/responses.json',pack_dump([{**r,'data':json.loads(r['data']),'finding_data':json.loads(r['finding_data'])} for r in responses]).encode())
-    save('overview.json',pack_dump(packet_overview({name:(packet/name).stat().st_size for name in entries},snapshot)).encode())
+    save('overview.json',pack_dump(packet_overview({name:filesystem_path(packet/name).stat().st_size for name in entries},snapshot)).encode())
     fingerprint=sha(dump({'target':snapshot,'files':entries}).encode())
     index={'fingerprint':fingerprint,'version_id':version_id,'sources':source_index,
            'files':entries,'visual_inputs':'visual-inputs.json','history':['history/versions.json','history/executions.json','history/responses.json','history/tools.json','history/reviews.json'],
@@ -668,7 +675,7 @@ def accept_review(store,review_id,value,dry_run=False):
     consistency=finding_consistency_errors(result.model_dump(),requirement_severity=severity)
     if consistency:raise ValueError('；'.join(item['message'] for item in consistency))
     if result.assessment is not None and 'assessment-context.json' in review['data'].get('files', {}):
-        context=json.loads((packet/'assessment-context.json').read_text(encoding='utf-8'))
+        context=json.loads(filesystem_path(packet/'assessment-context.json').read_text(encoding='utf-8'))
         from .models import assessment_checks
         result.assessment.checks=assessment_checks(result.assessment.checks,result.assessment.findings,context['assessment_checks'])
     if review['result']:
@@ -845,7 +852,7 @@ def _review_requirement_index(store,review):
         def read(name):
             # Status is polled: at most two fixed files, each capped at 2 MiB.
             # Oversized/old packets still show their saved results without labels.
-            with safe_file(store.root,Path(relative)/name).open('rb') as stream:
+            with filesystem_path(safe_file(store.root,Path(relative)/name)).open('rb') as stream:
                 raw=stream.read(2*1024*1024+1)
             if len(raw)>2*1024*1024 or sha(raw)!=files[name]:raise ValueError('Changed packet index')
             value=json.loads(raw.decode('utf-8'))
@@ -958,10 +965,10 @@ def run_review(store,runtime,job,version_id,folder):
     frozen=json.loads(job['payload'])
     review_mode=normalize_mode(frozen.get('review_mode','standard'))
     review_backend=frozen.get('agent_backend','codex')
-    folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
+    folder=Path(folder);filesystem_path(folder).mkdir(parents=True,exist_ok=True)
     marker=folder/'review-id.json'
-    if marker.exists():
-        identity=json.loads(marker.read_text(encoding='utf-8'))['review_id'];review=get_review(store,identity)
+    if filesystem_path(marker).exists():
+        identity=json.loads(filesystem_path(marker).read_text(encoding='utf-8'))['review_id'];review=get_review(store,identity)
         if review['version_id']!=version_id:raise ValueError('保存的审阅任务属于另一正文版本')
         recorded_mode=review['data'].get('review_mode')
         if ((recorded_mode is not None and recorded_mode!=review_mode)
@@ -969,7 +976,7 @@ def run_review(store,runtime,job,version_id,folder):
             raise ValueError('审阅模式与已保存任务不同；不能把普通或历史审阅复用为严格审阅')
         if review['data'].get('review_backend',review_backend)!=review_backend:
             raise ValueError('审阅执行后端与已保存任务不同')
-        target=json.loads((folder/'packet'/'target.json').read_text(encoding='utf-8'))
+        target=json.loads(filesystem_path(folder/'packet'/'target.json').read_text(encoding='utf-8'))
         if target.get('snapshot_version',1)<3:
             return run_review(store,runtime,job,version_id,folder/'scope-v3')
         if review['result']:
@@ -988,21 +995,21 @@ def run_review(store,runtime,job,version_id,folder):
         data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol,
               'review_mode':review_mode,'review_backend':review_backend}
         with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',(identity,version_id,job['id'],fingerprint,'queued',dump(data),None,now(),now()))
-        marker.write_text(dump({'review_id':identity}),encoding='utf-8');review=get_review(store,identity)
+        filesystem_path(marker).write_text(dump({'review_id':identity}),encoding='utf-8');review=get_review(store,identity)
     # A transport-complete result can have failed only schema admission. Retry
     # the shared validator first; a compatibility fix must not spend another turn.
     saved_output=folder/'review.json'
-    if saved_output.exists():
+    if filesystem_path(saved_output).exists():
         validate_applicable_review(store,identity,version_id)
-        raw=saved_output.read_bytes()
+        raw=filesystem_path(saved_output).read_bytes()
         try:return accept_review(store,identity,json.loads(raw))
         except (ValueError,TypeError) as exc:
             archived=_archive_review_output(folder)
-            (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':archived}),encoding='utf-8')
+            filesystem_path(folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':archived}),encoding='utf-8')
     require_for_review(review_backend,review_mode)
     schema=folder/'packet'/'output.schema.json'
     validate_applicable_review(store,identity,version_id)
-    target=json.loads((folder/'packet'/'target.json').read_text(encoding='utf-8'))
+    target=json.loads(filesystem_path(folder/'packet'/'target.json').read_text(encoding='utf-8'))
     from .deliverable_spec import clause_items
     # The persisted protocol decides the prompt, not whether clauses happen to exist;
     # a legacy review restored after upgrade must keep the legacy instruction.
@@ -1013,16 +1020,16 @@ def run_review(store,runtime,job,version_id,folder):
     requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。重大 missing_requirement 或 execution_gap 若引用同时含硬软条款的原始要求，findings.requirement_ids 必须写具体冻结 clause_id，不能写混合父 requirement_id。' if clause_protocol else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     packet_guide=('先读 overview.json，它说明每个文件的内容和大小：正文纯文本在 report.txt（每行一个段落，前面是段落ID），要求在 requirements.json，主张与证据在 claims.json，数字绑定在 numbers.json，引用摘录在 citations.json；target.json 是这些视图的完整依据，需要其他字段时按字段读取。'
-                  if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
-    if (folder/'packet'/'reader-preview.md').exists():
+                  if filesystem_path(folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
+    if filesystem_path(folder/'packet'/'reader-preview.md').exists():
         packet_guide+=' reader-preview.md 是同一稿件通过产品阅读渲染器生成的文本预览，含短编号和自动来源表。report.txt 的 [src_…] 是核查定位标记，不是用户看到的编号；涉及引用展示/来源表的发现须对照预览，不能要求作者重复补写渲染器已生成的内容。预览不证明实际 Word 分页、样式或原生可点击性，这些须另查实际文件。'
-    if (folder/'packet'/'reading-context.json').exists():
+    if filesystem_path(folder/'packet'/'reading-context.json').exists():
         from .evaluation_reading import GUIDE as READING_GUIDE
         packet_guide+=' reading-context.json 说明本次实际输入呈现和机器记录范围。\n'+READING_GUIDE
     if target.get('length_stats'):
         packet_guide+=' target.json 和 requirements.json 的 length_stats 是已存正文的确定性计数，按 count/rule 对照原始要求与读者约定，不估算字数或把核查段落ID、来源表计入正文。over_limit 只比较结构化 max_words；以 length_mode/length_requirement 及原始要求区分建议与明确严格限制，不仅凭 over_limit 判失败。计数不表示已满足全部篇幅要求或后续反馈。'
     figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
-                      if (folder/'packet'/'figure-texts.json').exists() else '')
+                      if filesystem_path(folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions
     temporal_note=time_instructions(target.get('requirements_input',{}).get('time_context'))
     # The review contract is shared; how to reach the packet and hand back the
@@ -1064,7 +1071,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression 或软条款的 missing_requirement/execution_gap；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
 '''
-    if (folder/'packet'/'assessment-context.json').exists():
+    if filesystem_path(folder/'packet'/'assessment-context.json').exists():
         prompt+=('\n读取 assessment-context.json；assessment_checks 是本次评分复核清单，revision_context 若非空，包含准确父版本的原稿、父评价 ID 与逐条问题，历史评价不是事实真值。'
                  '在 assessment.checks 逐项返回清单 id、status(passed/needs_attention/not_checked/disputed)、reason(实际比较的位置与依据)，可附 report_quote。'
                  '摘要、标题须服从正文表格与原文限定，影响和建议不能把融资当客户付费、个别案例当行业变化。'
@@ -1093,29 +1100,29 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
         # status=complete needs one check per item; give the ids instead of letting the model guess.
         prompt+='\n本次 requirement_checks 须逐项覆盖的 requirement_id：'+dump([{'requirement_id':item['requirement_id'],'mode':item.get('mode')} for item in target['requirements']['requirement_items']])
     prompt+='\n本次允许的findings.claim_ids：'+dump(sorted(ids|{x['claim_id'] for x in target.get('source_statements',[])}))
-    if (folder/'admission-error.json').exists():
-        error=json.loads((folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')
+    if filesystem_path(folder/'admission-error.json').exists():
+        error=json.loads(filesystem_path(folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')
         prompt+='\n上次结果未通过接纳：'+error+'。仅修正结构化结果中的ID或字段，不重做已经完成的研究或改稿。response_to使用history/responses.json的id字段，finding_id是其关联的原始发现。'
     stage=stage_job(store,{**job,'payload':dump({**json.loads(job['payload']),'version_id':version_id})},'evaluator',mode='single')
     stage.update(readonly_output='review.json',review_id=identity,review_mode=review_mode,input_source_ids=[],allow_web=False)
     with store.tx() as c:c.execute("UPDATE reviews SET status='running',updated=? WHERE id=?",(now(),identity))
     try:
-        runtime.execute(stage,prompt,folder,resume_on_complete=(folder/'admission-error.json').exists())
+        runtime.execute(stage,prompt,folder,resume_on_complete=filesystem_path(folder/'admission-error.json').exists())
         # Correct one malformed structured reply in the same read-only session.
         # Do not retry transport errors or evidence/version admission failures.
         try:
-            ReviewOutput.model_validate_json(saved_output.read_text(encoding='utf-8-sig'))
+            ReviewOutput.model_validate_json(filesystem_path(saved_output).read_text(encoding='utf-8-sig'))
         except ValidationError as exc:
             correction=folder/'schema-correction.json'
-            if correction.exists():raise
+            if filesystem_path(correction).exists():raise
             archived=_archive_review_output(folder)
-            correction.write_text(dump({'error':str(exc),'original_output':archived}),encoding='utf-8')
+            filesystem_path(correction).write_text(dump({'error':str(exc),'original_output':archived}),encoding='utf-8')
             validate_applicable_review(store,identity,version_id)
             repair=prompt+'\n上次回复的 JSON 结构未通过校验：'+str(exc)+'。仅修正字段结构，保留已完成核查的判断和依据，不重新研究或改稿。assessment.checks 是对象数组，可省略或使用 []，不能填写字符串数组。仍只回复完整 JSON。'
             runtime.execute(stage,repair,folder,resume_on_complete=True)
-        return accept_review(store,identity,json.loads((folder/'review.json').read_text(encoding='utf-8-sig')))
+        return accept_review(store,identity,json.loads(filesystem_path(folder/'review.json').read_text(encoding='utf-8-sig')))
     except Exception as exc:
         with store.tx() as c:c.execute('UPDATE reviews SET status=?,updated=? WHERE id=? AND result IS NULL',('cancelled' if isinstance(exc,InterruptedError) else 'incomplete',now(),identity))
         archived=_archive_review_output(folder)
-        (folder/'admission-error.json').write_text(dump({'error':str(exc),**({'original_output':archived} if archived else {})}),encoding='utf-8')
+        filesystem_path(folder/'admission-error.json').write_text(dump({'error':str(exc),**({'original_output':archived} if archived else {})}),encoding='utf-8')
         raise

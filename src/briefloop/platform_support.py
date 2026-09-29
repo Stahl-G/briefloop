@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -19,6 +20,21 @@ def filesystem_path(path):
     if value.startswith('\\\\'):
         return Path('\\\\?\\UNC\\' + value[2:])
     return Path('\\\\?\\' + value)
+
+
+def path_redirected(path):
+    """Detect symlinks, Windows junctions, and redirects in parent directories."""
+    path = Path(path)
+    try:
+        info = filesystem_path(path).lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        # NAME_SURROGATE marks redirects, including broken junctions. Ordinary
+        # cloud placeholders are reparse points too, but do not redirect names.
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_reparse_tag', 0) & 0x20000000:
+            return True
+    return path.resolve() != path.absolute()
 
 
 class WorkspaceLock:
