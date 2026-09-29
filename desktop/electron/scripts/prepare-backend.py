@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import email
+import io
 import re
 import hashlib
 import json
@@ -144,9 +145,16 @@ def main() -> None:
         stage = Path(temporary)
         source = stage / 'source'
         source.mkdir()
-        shutil.copytree(ROOT / 'src', source / 'src', ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.egg-info', '.DS_Store'))
-        for filename in ('pyproject.toml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'):
-            shutil.copy2(ROOT / filename, source / filename)
+        inputs = ('src', 'pyproject.toml', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')
+        if args.release_commit:
+            # Build the committed tree, never ignored files or mutable worktree bytes.
+            data = subprocess.check_output(['git', 'archive', '--format=zip', args.release_commit, *inputs], cwd=ROOT)
+            with zipfile.ZipFile(io.BytesIO(data)) as snapshot:
+                snapshot.extractall(source)
+        else:
+            shutil.copytree(ROOT / 'src', source / 'src', ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.egg-info', '.DS_Store'))
+            for filename in inputs[1:]:
+                shutil.copy2(ROOT / filename, source / filename)
         wheels = stage / 'wheels'
         subprocess.run([*pip, 'wheel', '--no-deps', '--no-build-isolation', '--wheel-dir', str(wheels), str(source)],
                        env=env, check=True, cwd=stage)
