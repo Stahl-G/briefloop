@@ -205,6 +205,98 @@ def test_unicode_upload_and_original_survive_workspace_reopen(tmp_path):
     assert reopened.snapshot()['wiki'] == '中文 Wiki；μm；😀'
 
 
+def test_long_source_uploads_extract_reopen_and_preserve_integrity_guards(tmp_path):
+    import hashlib
+    from io import BytesIO
+    import _winapi
+    import threading
+    from PIL import Image
+    from pypdf import PdfWriter
+    from briefloop import media, sources
+    from briefloop.platform_support import filesystem_path
+    from briefloop.source_extraction import extract_job
+    from briefloop.source_ingestion import receive_upload
+    from briefloop.store import Store, SourceTooLarge
+    root=tmp_path/('中文来源-'+'w'*(224-len(str(tmp_path))-1-len('中文来源-')))
+    store=Store(root)
+    text='仅用于合成验收。\n中文 😀；UTF-8 second line.\n'
+    direct=sources.upload(store,'中文原件.txt',text.encode('utf-8'))
+    assert Store(root).source_text(direct['id'])==text
+    image=BytesIO();Image.new('RGB',(8,4),(90,140,180)).save(image,format='PNG')
+    pdf=BytesIO();writer=PdfWriter();writer.add_blank_page(width=200,height=100);writer.write(pdf)
+    originals=[]
+    for name,data in (('中文材料.txt',text.encode('utf-8')),('图表.png',image.getvalue()),('扫描.pdf',pdf.getvalue())):
+        source=receive_upload(store,name,len(data),lambda sink:sink.write(data))
+        assert source['status']=='queued'
+        jid=source['extraction_job_id'];store.update_job(jid,'running')
+        assert extract_job(store,store.one('jobs',jid),threading.Event())=={'source_id':source['id']}
+        reopened=Store(root)
+        record,metadata,original=media.source_files(reopened,source['id'])
+        assert record['status']=='ready' and store.one('jobs',jid)['status']=='complete'
+        assert len(str(original))>260 and filesystem_path(original).read_bytes()==data
+        assert hashlib.sha256(data).hexdigest()==metadata['raw_sha256']
+        assert not str(original).startswith('\\\\?\\') and not metadata['original_path'].startswith('\\\\?\\')
+        assert len(str(root/record['path']))>260
+        attachment=media.source_attachment(reopened,source['id'])
+        assert attachment['status']=='ready'
+        if name.endswith('.txt'):
+            assert reopened.source_text(source['id'],max_bytes=1000)==text
+            with pytest.raises(SourceTooLarge):reopened.source_text(source['id'],max_bytes=1)
+        elif name.endswith('.png'):
+            assert attachment['needs_visual'] and len(attachment['image_path'])>260
+            assert Image.open(filesystem_path(attachment['image_path'])).size==(8,4)
+        else:
+            page=media.render_source_pages(reopened,source['id'],[1])['pages'][0]
+            assert len(page['path'])>260 and filesystem_path(page['path']).is_file()
+            assert media.rendered_page_path(reopened,source['id'],1)==Path(page['path'])
+        originals.append((record,metadata,original,data))
+    record,metadata,original,data=originals[0]
+    filesystem_path(original).write_bytes(b'changed original')
+    with pytest.raises(ValueError,match='哈希不匹配'):media.source_files(store,record['id'])
+    filesystem_path(original).write_bytes(data)
+    sidecar=root/'sources'/(record['id']+'.provenance.json')
+    filesystem_path(sidecar).write_text(json.dumps({**metadata,'original_path':'sources/../outside.txt'}),encoding='utf-8')
+    with pytest.raises(ValueError,match='越界'):media.source_files(store,record['id'])
+    target=tmp_path/'unrelated';target.mkdir();marker=target/'keep.txt';marker.write_bytes(b'keep unrelated bytes')
+    junction=root/'sources'/'escape';_winapi.CreateJunction(str(target),str(junction))
+    try:
+        with pytest.raises(ValueError,match='越界'):media.safe_source_path(store,'sources/escape/keep.txt')
+        assert marker.read_bytes()==b'keep unrelated bytes'
+    finally:filesystem_path(junction).rmdir()
+
+
+def test_long_source_disconnect_recovery_retry_and_cancel_keep_originals(tmp_path,monkeypatch):
+    import hashlib
+    from briefloop import media
+    from briefloop.platform_support import filesystem_path
+    from briefloop.source_ingestion import receive_upload,recover_uploads,retry_upload
+    from briefloop.store import Store
+    root=tmp_path/('中文恢复-'+'w'*(224-len(str(tmp_path))-1-len('中文恢复-')))
+    store=Store(root)
+    def disconnected(sink):sink.write(b'partial');raise ConnectionError('synthetic disconnect')
+    with pytest.raises(ConnectionError):receive_upload(store,'中断.txt',100,disconnected)
+    assert not store.rows('SELECT * FROM sources')
+    assert not list(filesystem_path(root/'sources').glob('*.upload.*'))
+    data='完整合成原件。\n'.encode('utf-8')
+    def interrupted(*args):raise RuntimeError('synthetic admission interruption')
+    with monkeypatch.context() as patch:
+        patch.setattr(store,'accept_source_upload',interrupted)
+        with pytest.raises(RuntimeError):receive_upload(store,'恢复.txt',len(data),lambda sink:sink.write(data))
+    assert len(list(filesystem_path(root/'sources').glob('*.upload.json')))==1
+    recover_uploads(store);recover_uploads(store)
+    source=store.rows('SELECT * FROM sources')[0];job=store.rows("SELECT * FROM jobs WHERE kind='source_extract'")[0]
+    assert len(store.rows('SELECT * FROM sources'))==1 and not list(filesystem_path(root/'sources').glob('*.upload.*'))
+    assert store.finish_source_extraction(source['id'],job['id'],'',None,status='cancelled',error='Synthetic cancellation')
+    assert not store.finish_source_extraction(source['id'],job['id'],'late text',{},status='ready')
+    assert store.source_text(source['id'])==''
+    retried=retry_upload(store,source['id'])
+    assert retried['id']!=source['id'] and store.one('sources',source['id'])['status']=='cancelled'
+    for sid in (source['id'],retried['id']):
+        _,metadata,original=media.source_files(Store(root),sid)
+        assert filesystem_path(original).read_bytes()==data and metadata['raw_sha256']==hashlib.sha256(data).hexdigest()
+    assert len(list(filesystem_path(root/'sources').glob('*.original.txt')))==2
+
+
 @pytest.mark.parametrize('long_workspace', [False, True])
 def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path, long_workspace):
     from briefloop.workspaces import _request_shutdown, _read_api

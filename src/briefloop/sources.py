@@ -3,6 +3,7 @@ from html.parser import HTMLParser
 from html import unescape
 from . import __version__
 from .host_bins import find as find_host_bin
+from .platform_support import filesystem_path
 from io import BytesIO
 from urllib.parse import urlsplit
 from pathlib import Path
@@ -187,7 +188,7 @@ def upload(store, name, data):
     from .media import detect_media_type,safe_source_path
     sid=uid('src');name=Path(name).name
     original=safe_source_path(store,'sources/'+sid+'.original'+Path(name).suffix.lower(),must_exist=False)
-    original.write_bytes(data)
+    filesystem_path(original).write_bytes(data)
     metadata={'original_path':str(original.relative_to(store.root)), 'original_kind':'uploaded_file',
               'uploaded_at':now(),'raw_sha256':hashlib.sha256(data).hexdigest(),
               'media_type':detect_media_type(name,data),'needs_visual':False,'pages':None}
@@ -199,7 +200,7 @@ def upload(store, name, data):
     except (ValueError,OSError,subprocess.SubprocessError,zipfile.BadZipFile) as exc:error=str(exc);text=''
     metadata.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
     if error:metadata['error']=error
-    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(metadata),encoding='utf-8')
+    filesystem_path(safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False)).write_text(dump(metadata),encoding='utf-8')
     return store.add_source(name,text,error=error,source_id=sid)
 
 
@@ -352,7 +353,7 @@ def _fetch(store, url, *, allow_private=False):
     name=title or raw_name
     suffix=_fetch_suffix(raw_name,data,content_type)
     original=safe_source_path(store,'sources/'+sid+'.original'+suffix,must_exist=False)
-    original.write_bytes(data)
+    filesystem_path(original).write_bytes(data)
     provenance={'url':url,'title':title or None,'content_type':content_type,'fetched_at':now(),
                 'raw_sha256':hashlib.sha256(data).hexdigest(),'original_kind':'http_response',
                 'original_path':str(original.relative_to(store.root)),
@@ -367,7 +368,7 @@ def _fetch(store, url, *, allow_private=False):
     except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:text='';error=str(exc)
     provenance.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
     if error:provenance['error']=error
-    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(provenance),encoding='utf-8')
+    filesystem_path(safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False)).write_text(dump(provenance),encoding='utf-8')
     return store.add_source(name,text,url=url,error=error,source_id=sid)
 
 
@@ -473,7 +474,7 @@ def fetch_for_run(store,run_id,url):
                 previous=store.one('sources',result['source_id'])
                 if previous['status']=='failed':
                     provenance=store.root/'sources'/(previous['id']+'.provenance.json')
-                    try:provider=json.loads(provenance.read_text(encoding='utf-8')).get('extractor')=='tavily.extract'
+                    try:provider=json.loads(filesystem_path(provenance).read_text(encoding='utf-8')).get('extractor')=='tavily.extract'
                     except (OSError,ValueError):provider=False
                     if provider:continue
                 return {**previous,'reused':True,'shared':True,
@@ -506,7 +507,7 @@ def fetch_for_run(store,run_id,url):
               'canonical_url':url,
               'outcome':status if accepted else 'response_rejected','source_id':source['id'],
               'error':source.get('error'),'admitted':accepted,
-              'provenance_path':str(provenance.relative_to(store.root)) if provenance.exists() else None}
+              'provenance_path':str(provenance.relative_to(store.root)) if filesystem_path(provenance).exists() else None}
     if not accepted:
         if reservation.get('round_id'):
             from .research_plan import pending_requests
