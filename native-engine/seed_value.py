@@ -40,10 +40,11 @@ def _body_paragraphs(markdown):
     out = []
     for i, block in enumerate(blocks):
         text = block.strip()
-        if text.startswith('## '):
+        # Any heading opens the body; a report's title block before it has no citations.
+        if re.match(r'#{1,6} ', text):
             seen_heading = True
             continue
-        if (seen_heading and text and not text.startswith(('#', '!', '|', '- ', '* ', '>', '1.'))
+        if (seen_heading and text and not text.startswith(('#', '!', '|', '- ', '* ', '>'))
                 and CITATION.search(text) and len(text) > 80):
             out.append(i)
     return blocks, out
