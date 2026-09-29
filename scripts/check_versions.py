@@ -34,6 +34,11 @@ def backend_versions(resources, expected_hash=None):
         raise ValueError('Backend wheel hash differs from manifest')
     if expected_hash and manifest['sha256'] != expected_hash:
         raise ValueError('Desktop backend differs from shared release wheel')
+    # Dependencies are installed only from the shipped hash-locked list (#851).
+    lock = (base / str(manifest.get('requirements', ''))).resolve()
+    if (manifest.get('requirements') != 'requirements.txt' or lock.parent != base.resolve() or not lock.is_file()
+            or hashlib.sha256(lock.read_bytes()).hexdigest() != manifest.get('requirements_sha256')):
+        raise ValueError('Backend dependency lock is missing or differs from manifest')
     return {'backend_manifest': manifest['version'], 'backend_wheel': wheel_version(wheel)}
 
 

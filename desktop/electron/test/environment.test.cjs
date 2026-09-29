@@ -18,13 +18,18 @@ async function fixture(t) {
   const versions=new Map(),calls=[],changes=[];
   async function payload(next) {
     version=next;const wheel=`briefloop-${version}-py3-none-any.whl`,bytes=Buffer.from('Synthetic wheel fixture '+version);
-    await fs.writeFile(path.join(payloadPath,wheel),bytes);
-    await fs.writeFile(path.join(payloadPath,'manifest.json'),JSON.stringify({version,wheel,sha256:createHash('sha256').update(bytes).digest('hex')}));
+    const lock=Buffer.from('synthetic-dependency==1.0 --hash=sha256:'+'0'.repeat(64)+'\n');
+    await fs.writeFile(path.join(payloadPath,wheel),bytes);await fs.writeFile(path.join(payloadPath,'requirements.txt'),lock);
+    await fs.writeFile(path.join(payloadPath,'manifest.json'),JSON.stringify({version,wheel,sha256:createHash('sha256').update(bytes).digest('hex'),
+      requirements:'requirements.txt',requirements_sha256:createHash('sha256').update(lock).digest('hex')}));
   }
   await payload(version);
   const runProcess=async(executable,args,options)=>{
     calls.push({executable,args,options});
     if(args.includes('-c')&&args.some(value=>value.includes('list(sys.version_info')))return {stdout:JSON.stringify({version:[3,12,5],executable:host})};
+    if(executable==='/bin/cp'){
+      const [source,target]=args.slice(-2);await fs.cp(source,target,{recursive:true});versions.set(target,versions.get(source));return {stdout:''};
+    }
     if(args[2]==='venv'){
       const target=args.at(-1);versions.set(target,version);await fs.mkdir(path.join(target,'bin'));
       await fs.writeFile(path.join(target,'bin','python3'),'Synthetic venv marker',{mode:0o700});return {stdout:''};
@@ -33,6 +38,8 @@ async function fixture(t) {
       enteredInstall?.();
       if(waitInstall)await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(Error('cancelled fake install')),{once:true}));
       if(failInstall)throw Error('https://private.invalid/?token=do-not-expose');
+      // Installing the wheel is what gives the environment its BriefLoop version.
+      if(args.at(-1).endsWith('.whl'))versions.set(path.dirname(path.dirname(executable)),version);
       return {stdout:''};
     }
     if(args.includes('-c')){await fs.access(executable);return {stdout:JSON.stringify({version:versions.get(args.at(-1))})};}
@@ -61,8 +68,9 @@ test('prepare verifies declared modules and pip check before atomically selectin
   const activeFile=path.join(f.root,'environments','active.json'),before=await fs.readFile(activeFile,'utf8');
   const record=JSON.parse(before),target=path.join(f.root,'environments',record.environmentId);
   assert.equal(runtime.python,path.join(target,'bin','python3'));
-  const install=f.calls.find(call=>call.args.includes('install'));
-  assert.deepEqual(install.args.slice(0,10),['-I','-m','pip','--isolated','--disable-pip-version-check','--no-input','install','--only-binary=:all:','--index-url','https://pypi.org/simple']);
+  const [locked,wheel]=f.calls.filter(call=>call.args.includes('install'));
+  assert.deepEqual(locked.args.slice(0,13),['-I','-m','pip','--isolated','--disable-pip-version-check','--no-input','install','--require-hashes','--only-binary=:all:','--index-url','https://pypi.org/simple','-r',path.join(f.payloadPath,'requirements.txt')]);
+  assert.deepEqual(wheel.args.slice(6),['install','--no-deps','--no-index','--force-reinstall',path.join(f.payloadPath,'briefloop-0.19.0-py3-none-any.whl')]);
   assert.equal(f.calls.find(call=>call.args[2]==='venv').args.at(-1),target);
   const verify=f.calls.find(call=>call.args.some(value=>value.includes('importlib.import_module'))).args.join(' ');
   for(const name of ['briefloop','wikiskill','mcp','docx','lxml','PIL','pypdf','pypdfium2','openpyxl'])assert.ok(verify.includes(`"${name}"`));
@@ -115,8 +123,13 @@ test('first install and repair wait for the user; updates preserve environments 
   const directory=path.join(f.root,'environments'),stale=path.join(directory,'00000000-0000-4000-8000-000000000000');
   await fs.mkdir(stale);await fs.writeFile(path.join(directory,'keep-me.txt'),'not an environment');
   const one=JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).environmentId;
-  await f.payload('0.20.0');assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  f.calls.length=0;await f.payload('0.20.0');assert.equal((await createEnvironment(f.config).startup()).state,'ready');
   const two=JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).environmentId;
+  // A macOS update on the same base Python starts from an APFS clone, not a new venv.
+  const clone=f.calls.find(c=>c.executable==='/bin/cp');
+  assert.deepEqual(clone.args,['-c','-R',path.join(directory,one),path.join(directory,two)]);
+  assert.ok(!f.calls.some(c=>c.args[2]==='venv'));
+  assert.equal(JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).cloned,true);
   assert.deepEqual((await fs.readdir(directory)).sort(),['active.json','keep-me.txt',path.basename(stale),one,two].sort());
   await fs.unlink(path.join(directory,two,'bin','python3'));f.calls.length=0;
   const repair=await createEnvironment(f.config).startup();

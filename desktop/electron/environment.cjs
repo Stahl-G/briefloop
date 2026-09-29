@@ -231,7 +231,17 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(wheel)) { checkAbort(signal); hash.update(chunk); }
     if (hash.digest('hex') !== manifest.sha256.toLowerCase()) throw new EnvironmentError('payload_hash', '随包运行组件校验失败，请重新安装 App。');
-    return {...manifest, sha256: manifest.sha256.toLowerCase(), wheelPath: wheel};
+    // The hash-locked dependency list shipped with the wheel (#851).
+    if (manifest.requirements !== 'requirements.txt' || !/^[a-f0-9]{64}$/i.test(manifest.requirements_sha256 || '')) {
+      throw new EnvironmentError('invalid_payload', '随包依赖清单无效，请重新安装 App。');
+    }
+    const requirements = path.join(payloadPath, manifest.requirements);
+    const lockStat = await fs.lstat(requirements);
+    if (!lockStat.isFile() || lockStat.isSymbolicLink()
+        || createHash('sha256').update(await fs.readFile(requirements)).digest('hex') !== manifest.requirements_sha256.toLowerCase()) {
+      throw new EnvironmentError('payload_hash', '随包依赖清单校验失败，请重新安装 App。');
+    }
+    return {...manifest, sha256: manifest.sha256.toLowerCase(), wheelPath: wheel, requirementsPath: requirements};
   }
   async function probe(candidate, signal) {
     const executable = typeof candidate === 'string' ? candidate : candidate.executable;
@@ -310,7 +320,9 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); }
     }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
-    return {manifest, python, previous: recorded ? active.environmentId : null};
+    return {manifest, python, previous: recorded ? active.environmentId : null,
+      // An update on the same base Python can start from a copy of the environment it replaces.
+      cloneFrom: recorded && !matches && active.hostPython === python.executable ? active.environmentId : null};
   }
   // Query command lines only (never process environments). If process discovery
   // fails or a Python process cannot be attributed, defer cleanup conservatively.
@@ -341,7 +353,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     } catch { /* Cleanup must never turn a successful update into a failure. */ }
   }
   async function prepareImpl(signal, inspected) {
-    const {manifest, python, previous} = inspected || await inspectImpl(signal);
+    const {manifest, python, previous, cloneFrom} = inspected || await inspectImpl(signal);
     if (!python || data.state === 'ready') return status();
     let id, created = false, committed = false, safeToRemove = true;
     try {
@@ -349,16 +361,49 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       if ((await fs.lstat(directory)).isSymbolicLink()) throw new EnvironmentError('unsafe_path', 'App 运行环境目录不可用。');
       id = randomUUID();
       const target = path.join(directory, id);
-      await fs.mkdir(target, {mode: 0o700}); created = true;
       phase('installing', 'create-venv');
-      await run(python.executable, ['-I', '-m', 'venv', target], signal, 120000);
-      phase('installing', 'install-dependencies');
       const executable = environmentPython(id);
-      await run(executable, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input',
-        'install', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple', manifest.wheelPath], signal, 15 * 60 * 1000);
-      await validate(id, manifest, signal);
+      const pip = ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input'];
+      const fresh = async () => {
+        await fs.mkdir(target, {mode: 0o700}); created = true;
+        await run(python.executable, ['-I', '-m', 'venv', target], signal, 120000);
+      };
+      const install = async () => {
+        phase('installing', 'install-dependencies');
+        await run(executable, [...pip, 'install', '--require-hashes', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple',
+          '-r', manifest.requirementsPath], signal, 15 * 60 * 1000);
+        // Dependencies come only from the lock; the wheel itself was verified by its manifest hash.
+        await run(executable, [...pip, 'install', '--no-deps', '--no-index', '--force-reinstall', manifest.wheelPath], signal, 5 * 60 * 1000);
+        await validate(id, manifest, signal);
+      };
+      // macOS: an APFS clone of the replaced environment costs no copy and no disk;
+      // unchanged locked packages are then already satisfied and need no network.
+      // A missing source, a failed clone or a clone that does not install and verify
+      // falls back to a fresh venv from the same lock; the replaced one is untouched.
+      let cloned = false;
+      if (platform === 'darwin' && cloneFrom && UUID.test(cloneFrom)) {
+        try {
+          const source = path.join(directory, cloneFrom);
+          if (!(await fs.lstat(source)).isDirectory()) throw Error('Not an environment');
+          await fs.access(environmentPython(cloneFrom));
+          created = true;
+          await run('/bin/cp', ['-c', '-R', source, target], signal, 120000);
+          await install();
+          cloned = true;
+        } catch (error) {
+          if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error;
+          checkAbort(signal);
+          await fs.rm(target, {recursive: true, force: true});
+          created = false;
+        }
+      }
+      if (!cloned) {
+        await fresh();
+        await install();
+      }
       phase('installing', 'activate-environment');
       const record = {schema: 1, environmentId: id, version: manifest.version, wheel: manifest.wheel, sha256: manifest.sha256,
+        requirementsSha256: manifest.requirements_sha256, cloned,
         hostPython: python.executable, pythonVersion: python.version, platform, arch};
       const temporary = path.join(directory, `active-${randomUUID()}.tmp`);
       try {
