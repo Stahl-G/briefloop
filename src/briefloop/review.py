@@ -126,7 +126,7 @@ class ReviewOutput(Model):
     assessment: Assessment | None = None
 
 
-def finding_consistency_errors(value):
+def finding_consistency_errors(value, *, requirement_severity=None):
     """Check explicit cross-list coverage without interpreting or promoting prose.
 
     Assessment findings and review findings serve different purposes. A complete
@@ -151,14 +151,16 @@ def finding_consistency_errors(value):
                          (not finding.get('assessment_finding_indices') and scored.get('description')
                           and finding.get('description')==scored['description']))]
         # This is an explicit classification conflict, not a guess about prose:
-        # an evidence issue cannot disappear through the expression-only exception.
+        # an evidence issue cannot disappear through any soft-finding exception.
         if scored.get('dimension')=='evidence':
-            candidates=[finding for finding in candidates if finding.get('kind')!='expression']
+            from .release import finding_is_soft
+            candidates=[finding for finding in candidates
+                        if not finding_is_soft(finding,requirement_severity or {})]
         if not candidates:
             errors.append({'code':'review_findings_inconsistent','assessment_finding_index':index,
                 'message':f'assessment.findings[{index}] 的 major 问题未被顶层 major 新发现完整承接；'
                           f'请补全 findings 并用 assessment_finding_indices:[{index}] 关联，'
-                          '保留核查类型和依据（evidence 问题不能仅标为 expression）；无法完成请将 review.status 标为 incomplete'})
+                          '保留核查类型和依据（evidence 问题不能仅标为 expression 或软条款的要求/执行缺口）；无法完成请将 review.status 标为 incomplete'})
     return errors
 
 
@@ -657,10 +659,15 @@ def accept_review(store,review_id,value,dry_run=False):
     result=ReviewOutput.model_validate(value);review=get_review(store,review_id)
     if result.version_id!=review['version_id'] or result.fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 输出未绑定本次正文与核查包')
-    consistency=finding_consistency_errors(result.model_dump())
+    packet=current=None
+    severity={}
+    if result.assessment is not None:
+        packet,current,_=_packet(store,review)
+        from .release import finding_severity
+        severity=finding_severity(current['requirements'])
+    consistency=finding_consistency_errors(result.model_dump(),requirement_severity=severity)
     if consistency:raise ValueError('；'.join(item['message'] for item in consistency))
     if result.assessment is not None and 'assessment-context.json' in review['data'].get('files', {}):
-        packet,_,_=_packet(store,review)
         context=json.loads((packet/'assessment-context.json').read_text(encoding='utf-8'))
         from .models import assessment_checks
         result.assessment.checks=assessment_checks(result.assessment.checks,result.assessment.findings,context['assessment_checks'])
@@ -673,7 +680,7 @@ def accept_review(store,review_id,value,dry_run=False):
         record_verified_corrections(store,review_id)
         return review
     validate_applicable_review(store,review_id,result.version_id)
-    packet,current,_=_packet(store,review)
+    if current is None:packet,current,_=_packet(store,review)
     expected={b['claim_id'] for b in current['evidence']['bindings']}
     allowed_claims=set(expected)
     def include_premises(node):
@@ -1055,7 +1062,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
-完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
+完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression 或软条款的 missing_requirement/execution_gap；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
 '''
     if (folder/'packet'/'assessment-context.json').exists():
         prompt+=('\n读取 assessment-context.json；assessment_checks 是本次评分复核清单，revision_context 若非空，包含准确父版本的原稿、父评价 ID 与逐条问题，历史评价不是事实真值。'

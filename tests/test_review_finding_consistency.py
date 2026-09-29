@@ -11,12 +11,23 @@ from briefloop.store import Store, dump, now
 from review_checks import for_version
 
 
-def fixture(tmp_path):
+def fixture(tmp_path, *, method_clause=False):
     """Offline saved-response replay: no selected model and no model dispatch."""
     store = Store(tmp_path)
     source = store.add_source('Synthetic source', 'Revenue was USD 12 million.')
-    run = store.create_run({'title': 'Synthetic report', 'objective': 'Explain revenue'}, [source['id']])
-    brief = store.publish(run['id'], {'title': 'Synthetic report', 'markdown': 'Revenue was USD 12 million.'})
+    objective = 'Explain revenue. Verify the source.' if method_clause else 'Explain revenue'
+    run = store.create_run({'title': 'Synthetic report', 'objective': objective}, [source['id']])
+    draft = {'title': 'Synthetic report', 'markdown': 'Revenue was USD 12 million.'}
+    if method_clause:
+        from briefloop.deliverable_spec import resolve, reader_contract_schema
+        spec = resolve(json.loads(run['requirements']))
+        draft['reader_contract'] = {
+            'source_fingerprint': reader_contract_schema(spec)['properties']['source_fingerprint']['const'],
+            'clauses': [{'requirement_id': spec['requirement_items'][0]['requirement_id'],
+                         'kind': kind, 'source_quote': text, 'instruction': text}
+                        for kind, text in [('reader_content', 'Explain revenue.'),
+                                           ('research_method', 'Verify the source.')]]}
+    brief = store.publish(run['id'], draft)
     job_id = 'job_offline_review'
     folder = store.root/'jobs'/job_id
     fingerprint, files = build_packet(store, brief['id'], folder)
@@ -27,7 +38,8 @@ def fixture(tmp_path):
             (job_id, 'review', 'running', dump({'version_id': brief['id'], 'runtime': {}}), None, None, now(), now()))
         connection.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
             ('review_test', brief['id'], job_id, fingerprint, 'running',
-             dump({'packet_path': str((folder/'packet').relative_to(store.root)), 'files': files}), None, now(), now()))
+             dump({'packet_path': str((folder/'packet').relative_to(store.root)), 'files': files,
+                   'protocol': 'clauses_v1' if method_clause else 'legacy'}), None, now(), now()))
     value = {'fingerprint': fingerprint, 'version_id': brief['id'], 'status': 'complete',
         'summary': 'Synthetic source checked', 'coverage_scan_complete': True,
         'requirement_checks': for_version(store, brief['id']),
@@ -35,6 +47,11 @@ def fixture(tmp_path):
             'overall': '建议修改', 'evidence': 3, 'coverage': 3, 'analysis': 3, 'expression': 3},
         'findings': [{'kind': 'insufficient_evidence', 'severity': 'major', 'description': 'Need support',
                      'evidence': 'Source only contains one value'}]}
+    if method_clause:
+        from briefloop.deliverable_spec import clause_items
+        target = json.loads((folder/'packet'/'target.json').read_text())
+        value['clause_checks'] = [{'clause_id': clause['clause_id'], 'status': 'covered', 'reason': 'Source checked'}
+                                 for clause in clause_items(target['requirements'])]
     return store, source, brief, value
 
 
@@ -120,6 +137,49 @@ def test_legacy_exact_links_and_expression_only_issues_remain_usable(tmp_path):
     assert decision(checked['input']['snapshot'], result, [])['eligible']
     result['assessment'] = None
     assert decision(checked['input']['snapshot'], result, [])['eligible']
+
+
+@pytest.mark.parametrize('kind', ['missing_requirement', 'execution_gap'])
+def test_major_evidence_issue_cannot_use_soft_compliance_exception(tmp_path, kind):
+    store, source, brief, value = fixture(tmp_path, method_clause=True)
+    # Pure method-compliance issues remain notices. The same explicit finding
+    # cannot stand in for an evidence/major assessment issue and keep that waiver.
+    finding = value['findings'][0]
+    finding.update(kind=kind, requirement_ids=[value['clause_checks'][1]['clause_id']])
+    value['assessment']['findings'] = [major(finding['description'])]
+    finding['assessment_finding_indices'] = [0]
+    with pytest.raises(ValueError, match='软条款'):
+        accept_review(store, 'review_test', value)
+    assert get_review(store, 'review_test')['result'] is None
+    assert not store.rows('SELECT * FROM assessments')
+    assert not store.rows('SELECT * FROM review_findings')
+
+    plain_compliance = deepcopy(value)
+    plain_compliance['assessment']['findings'] = []
+    plain_compliance['findings'][0]['assessment_finding_indices'] = []
+    accept_review(store, 'review_test', plain_compliance)
+    checked = eligibility(store, brief['id'])
+    assert checked['eligible']
+    assert any(item['code'] == 'finding_notice' for item in checked['notices'])
+
+    # Older admitted records use the same frozen clause rule at both gates.
+    old_result = deepcopy(checked['input']['review_result'])
+    old_result['assessment']['findings'] = value['assessment']['findings']
+    old_result['findings'][0]['assessment_finding_indices'] = [0]
+    raw = dump(old_result)
+    with store.tx() as connection:
+        connection.execute('UPDATE reviews SET result=? WHERE id=?', (raw, 'review_test'))
+    historical = eligibility(store, brief['id'])
+    assert not historical['eligible']
+    assert {item['code'] for item in historical['blockers']} == {'review_findings_inconsistent'}
+    with pytest.raises(ValueError, match='软条款'):
+        enqueue_release(store, brief['id'])
+    frozen = {'data': {**checked['input'], 'review_result': old_result},
+              'status': 'released', 'result': {'path': 'old.docx'}}
+    frozen['fingerprint'] = sha(dump(frozen['data']).encode())
+    with pytest.raises(ValueError, match='软条款'):
+        validate_release(store, frozen)
+    assert store.rows('SELECT result FROM reviews WHERE id=?', ('review_test',))[0]['result'] == raw
 
 
 def test_rejected_runtime_output_is_archived_with_repairable_error(tmp_path):
