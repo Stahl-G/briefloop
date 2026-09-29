@@ -329,7 +329,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         commands = (await run('/bin/ps', ['-ww', '-axo', 'command='], signal, 10000)).stdout.split(/\r?\n/).filter(Boolean);
       }
       const root = directory.toLowerCase();
-      if (commands.some(command => /(?:^|[\/\\\s])(?:python(?:w|[0-9.]*)?|briefloop)(?:\s|$)/i.test(command) && !command.toLowerCase().includes(root))) return;
+      if (commands.some(command => /(?:^|[\/\\\s])(?:python(?:w|[0-9.]*)?|briefloop)(?:\.exe)?(?:\s|$)/i.test(command) && !command.toLowerCase().includes(root))) return;
       const used = commands.join('\n').toLowerCase();
       for (const entry of await fs.readdir(directory, {withFileTypes: true})) {
         checkAbort(signal);
