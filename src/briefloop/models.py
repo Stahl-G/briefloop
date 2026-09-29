@@ -306,6 +306,9 @@ class Settings(RoleModel):
     auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
+    # Workspace-wide ceiling on concurrent agent sessions: reports, their Scouts,
+    # separate reviews and the main task lane together (#728).
+    max_agent_sessions: int = Field(default=12, ge=2, le=64)
     # Legacy settings key now means a soft planning target, never a deadline.
     timeout_minutes: int = Field(default=60, ge=0, le=240)
     hard_timeout_minutes: int = Field(default=0, ge=0, le=1440)
