@@ -5,6 +5,7 @@ import {api,uploadSource,setToken,getUploadLimits,setSourceUploadHost} from './a
 import {createReportBrowsing} from './report-browsing.js';
 import {createSourceLibrarySearch} from './source-library-search.js';
 import {createProviderCapabilities} from './provider-capabilities.js';
+import {createModelCatalog,createProviderCatalog} from './model-catalog.js';
 const providerCapabilities=createProviderCapabilities({$});
 const reasoning=reasoningControls({api});
 import {createAssessmentPanel} from './assessment-panel.js';
@@ -386,7 +387,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.filter(s=>s.status==='ready').forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');reportLanguageForm.restore(state.requirements?.language);initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();quickReport.sync();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.filter(s=>s.status==='ready').forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');reportLanguageForm.restore(state.requirements?.language);initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();quickReport.sync();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} ${s.status!=='ready'?'disabled':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${esc(sourceStatusLabel(s))}</span>${['failed','cancelled','interrupted'].includes(s.status)?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);if(s.status==='ready')selected.add(s.id);notice(sourceStatusLabel(s),['failed','cancelled','interrupted'].includes(s.status))}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -719,8 +720,8 @@ async function refreshProgress(){
  finally{if(progressRequest===request)progressRequest=null}
 }
 
-function friendlyModel(model){return ({'default':'宿主默认模型','gpt-5.6-luna':'Luna','gpt-5.6-terra':'Terra','gpt-5.6-sol':'Sol','gpt-6-astra':'Astra'}[model]||model)}
-function effortValue(runtime,key){return Object.prototype.hasOwnProperty.call(runtime,key)?(runtime[key]||'none'):'high'}
+function friendlyModel(model){return model==='default'?'宿主默认模型':model}
+function effortValue(runtime,key){return Object.prototype.hasOwnProperty.call(runtime,key)?(runtime[key]||'none'):'none'}
 function assignEffort(id,value){const input=$(id);if(![...input.options].some(o=>o.value===value))input.add(new Option(value,value));input.value=value}
 function activeChatRuntime(){return chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id&&m.runtime)?.runtime||chat.session?.runtime||{}}
 const fastCapabilities=new Map();
@@ -738,7 +739,7 @@ function renderBackend(){
  $('variant-field').hidden=!variant;document.querySelector('.main-provider-field').style.display=codex?'':'none';
  $('effort-select').hidden=variant;$('effort-select').closest('label').hidden=variant;
  reasoning.configure($(variant?'model-variant':'effort-select'),backend,$('model-select').value.trim(),{variant});
- $('model-select').placeholder=['opencode','briefloop-native'].includes(backend)?'如 opencode-go/gpt-5.6-luna':'输入任意模型 ID';
+ $('model-select').placeholder=['opencode','briefloop-native'].includes(backend)?'输入 provider/model':'输入任意模型 ID';
  document.querySelectorAll('.role-variant-field').forEach(e=>e.hidden=!variant);
  document.querySelectorAll('.role-provider-field').forEach(e=>e.style.display=codex?'':'none');
  document.querySelectorAll('.role-effort-select').forEach(e=>{e.style.display=variant?'none':'';reasoning.configure(variant?$(`role-${e.dataset.roleEffort}-variant`):e,backend,$(`role-${e.dataset.roleEffort}-model`).value.trim()||$('model-select').value.trim(),{variant})});
@@ -796,65 +797,14 @@ async function refreshRuntimeDiscovery(force=false){
  $('runtime-discovery-status').textContent='正在检测执行引擎…';$('runtime-discovery-refresh').disabled=true;
  try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();if(typeof office!=='undefined'&&data.capabilities?.officecli)office.renderSettingsCapability(data.capabilities.officecli);$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用，需另行短测试。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 }
-$('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};assignEffort('effort-select',settingsEffort(state.settings,backend));$('model-variant').value=backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');reasoning.refresh();$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
-let modelCatalog={backend:null,at:0,models:[]};
-const modelCatalogs=new Map();
-function modelTargetBackend(target){return target==='chat-model'?chatBackendChoice():backendValue()}
-async function fetchModelCatalog(force=false,backend=backendValue()){
- const now=Date.now(),cached=modelCatalogs.get(backend);
- if(!force&&cached&&now-cached.at<3600000){if(backend===backendValue())modelCatalog=cached;return cached.models;}
- let data;
- try{data=await api('models?backend='+encodeURIComponent(backend)+(force?'&refresh=1':''))}
- catch(error){if(force){const failure={backend,at:0,models:[],diagnostic:error.message||'模型目录读取失败'};modelCatalogs.set(backend,failure);if(backend===backendValue())modelCatalog=failure}throw error}
- const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||'',note:data.note||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;refreshRuntimeModelSummaries();return catalog.models;
-}
-async function refreshModelSuggestions(force=false){
- if(force)fastCapabilities.clear();renderFastControls();
- const backend=backendValue();$('model-suggestions').innerHTML='';refreshInlineModelPickers();
- try{const models=await fetchModelCatalog(force);if(backend!==backendValue())return;
- $('model-suggestions').innerHTML=models.map(m=>`<option value="${esc(m.id)}" label="${esc(m.name||m.id)}"></option>`).join('');refreshInlineModelPickers();
- if($('runtime-model-status'))$('runtime-model-status').textContent=modelCatalog.diagnostic||`${runtimeName(backend)}：${models.length} ${modelCatalog.source==='builtin_hints'?'项内置建议':'个模型'}${modelCatalog.source?' · '+({native_config:'本机配置',host:'宿主目录',host_default_only:'宿主未提供目录',builtin_hints:'非实时目录',local_routes:'本机路由'}[modelCatalog.source]||modelCatalog.source):''}。${modelCatalog.note||'可直接输入其他模型 ID。'}`;
- }catch(e){if($('runtime-model-status'))$('runtime-model-status').textContent='模型目录读取失败：'+e.message+'；可手动输入模型 ID。'}
-}
-let modelPickerTarget=null;
-async function openModelPicker(targetId){
-  modelPickerTarget=targetId;
-  $('model-picker-search').value='';
-  $('model-picker').showModal();
-  await refreshCurrentModelPicker();
-}
-function refreshCurrentModelPicker(){return renderModelPicker(true)}
-async function renderModelPicker(force=false){
-  const backend=modelTargetBackend(modelPickerTarget);let models,status,error='';
-  try{
-    models=await fetchModelCatalog(force,backend);refreshInlineModelPickers();
-    const note=modelCatalogs.get(backend)?.note;
-    status=`${runtimeName(backend)} · ${models.length} ${modelCatalogs.get(backend)?.source==='builtin_hints'?'项内置建议':'个模型'}；${note||'可手填模型 ID'}`;
-  }catch(e){models=[];error=e.message||'模型目录读取失败';refreshInlineModelPickers()}
-  const q=$('model-picker-search').value.trim().toLowerCase();
-  const shown=models.filter(m=>!q||m.id.toLowerCase().includes(q)||(m.name||'').toLowerCase().includes(q)||(m.provider||'').toLowerCase().includes(q));
-  $('model-picker-status').textContent=(error?('读取失败：'+error+'；可直接手填模型 ID'):(models.length?status:emptyCatalogLabel(backend,modelCatalogs.get(backend))))+(q?` · 筛出 ${shown.length} 个`:'');
-  let lastProvider=null,html='';
-  for(const m of shown){
-    if(m.provider!==lastProvider){lastProvider=m.provider;html+=`<h3 class="workspace-list-heading">${esc(m.provider)}</h3>`}
-    html+=`<button type="button" class="workspace-choice" data-model-pick="${esc(m.id)}"><span><strong>${esc(m.id)}</strong><small>${esc(m.name||'')}</small></span><em>选用</em></button>`;
-  }
-  const custom=$('model-picker-search').value.trim();
-  const customChoice=custom&&!/\s/.test(custom)&&!shown.some(m=>m.id===custom)?`<button type="button" class="workspace-choice" data-model-pick="${esc(custom)}"><span><strong>${esc(custom)}</strong><small>使用此模型 ID</small></span><em>选用</em></button>`:'';
-  $('model-picker-list').innerHTML=(html||(error?('<p class="help">读取失败：'+esc(error)+'</p>'):(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>')))+customChoice;
-  $('model-picker-list').querySelectorAll('[data-model-pick]').forEach(b=>b.onclick=()=>pickModel(b.dataset.modelPick));
-}
-function pickModel(id){
-  const el=modelPickerTarget&&$(modelPickerTarget);
-  $('model-picker').close();
-  if(!el)return;
-  el.value=id;
-  el.dispatchEvent(new Event('change',{bubbles:true}));
-}
+$('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};assignEffort('effort-select',settingsEffort(state.settings,backend));$('model-variant').value=backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');reasoning.refresh();$('model-select').value='';$('chat-model').value='';renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
+const modelDirectory=createModelCatalog({api,$,getBackend:backendValue,getChatBackend:chatBackendChoice,runtimeName,onCatalogChange:refreshRuntimeModelSummaries});
+const {catalogs:modelCatalogs,fetchModelCatalog,openModelPicker,refreshCurrentModelPicker,renderModelPicker,pickModel,refreshInlineModelPickers,setupModelPickers}=modelDirectory;
+async function refreshModelSuggestions(force=false){if(force)fastCapabilities.clear();renderFastControls();await modelDirectory.refreshModelSuggestions()}
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
 $('model-picker-search').onkeydown=event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();const id=event.target.value.trim();if(id&&!/\s/.test(id))pickModel(id)}};
-$('model-picker-refresh').onclick=()=>action(refreshCurrentModelPicker,'模型目录已刷新');
+$('model-picker-refresh').onclick=()=>refreshCurrentModelPicker();
 $('model-select').onchange=()=>{reasoning.refresh();renderBackend();return action(saveModel,'模型已保存；下一次启动生效')};$('service-tier').onchange=()=>action(saveModel,'速度已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
 $('model-apply-session').onclick=()=>{
  const session=chat.session;
@@ -933,7 +883,7 @@ function restoreDraft({preserveNewDraft=false}={}){
  const runtime=saved||sessionRuntime||fallback;
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
  $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user'&&m.purpose!=='runtime_test')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};
- $('chat-model').value=runtime.model||'';assignEffort('chat-effort',Object.hasOwn(runtime,'effort')?effortValue(runtime,'effort'):(backend==='codex'?'high':'none'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';
+ $('chat-model').value=runtime.model||'';assignEffort('chat-effort',Object.hasOwn(runtime,'effort')?effortValue(runtime,'effort'):'none');if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';
  $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
@@ -970,7 +920,7 @@ function renderChatRuntimePermissions(){
  const effortField=document.querySelector('label[for="chat-effort"]');
  if(effortField)effortField.hidden=['opencode','briefloop-native','mimo'].includes(backend);
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode','briefloop-native'].includes(backend)){return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}}}if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
+function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode','briefloop-native'].includes(backend)){return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}}}if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('模型必须是 provider/model 形式');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
 function messageTime(value){return clock(value)}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
@@ -1509,7 +1459,7 @@ $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
 function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();office.syncSettingsToggle();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
 $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
- const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
+ const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">未指定模型</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
  const providerRow=document.querySelector('.chat-provider-row');providerRow.querySelector('label').textContent='当前对话 Provider';providerRow.querySelector('span').textContent='用于当前对话下一次执行';$('settings-model-block').append(providerRow);
  const learningControl=document.querySelector('.learning-control'),learningHelp=learningControl.nextElementSibling,autoLearnLabel=$('auto-learn').closest('label');$('settings-learning-block').append(learningControl,learningHelp,autoLearnLabel);
  const link=document.createElement('button');link.type='button';link.className='outline feedback-settings';link.textContent='学习设置';link.onclick=showSettings;$('learn-now').before(link);
@@ -1879,43 +1829,6 @@ $('report-data-open').onclick=()=>action(async()=>{
 });
 
 
-// An explicit select lists every suggestion; the text input stays unrestricted.
-function emptyCatalogLabel(backend,catalog){const why=String(catalog?.diagnostic||'').trim()||'没有读取到模型列表';return `${runtimeName(backend)}：${why}（可直接输入模型 ID）`}
-function refreshInlineModelPickers(){
- const chatBackend=modelTargetBackend('chat-model');
- if(!modelCatalogs.has(chatBackend))fetchModelCatalog(false,chatBackend).then(()=>refreshInlineModelPickers()).catch(e=>{modelCatalogs.set(chatBackend,{backend:chatBackend,at:0,models:[],diagnostic:e.message||'模型目录读取失败'});refreshInlineModelPickers()});
- document.querySelectorAll('.model-picker-select').forEach(select=>{
-  const input=select.parentElement.querySelector('input');select.replaceChildren(new Option('▾',''));
-  const backend=modelTargetBackend(input?.id),catalog=modelCatalogs.get(backend),models=catalog?.models||[];
-  for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
-  if(!models.length){const warn=new Option(emptyCatalogLabel(backend,catalog),'__empty__');warn.disabled=true;select.add(warn)}
-  select.add(new Option('输入其他模型 ID…','__custom__'));
-  select.add(new Option('搜索全部模型…','__browse__'));
-  if(input?.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
- });
-}
-function setupModelPickers(root=document){
- for(const input of root.querySelectorAll('input[list="model-suggestions"]')){
-  input.removeAttribute('list');
-  const wrap=document.createElement('span');wrap.className='model-picker';input.before(wrap);wrap.append(input);
-  const select=document.createElement('select');select.className='model-picker-select';select.setAttribute('aria-label',input.id==='chat-model'?'选择模型':'选择'+(input.getAttribute('aria-label')||'模型'));select.title='常用模型建议；也可直接在左侧输入其他模型 ID';
-  select.add(new Option('▾',''));
-  const models=modelCatalogs.get(modelTargetBackend(input?.id))?.models||[];
-  for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
-  select.add(new Option('输入其他模型 ID…','__custom__'));
-  select.add(new Option('搜索全部模型…','__browse__'));
-  if(input.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
-  select.onchange=()=>{
-   const model=select.value;select.value='';if(input.disabled)return;
-   if(model==='__custom__'){input.focus();input.select();return}
-   if(model==='__browse__'){openModelPicker(input.id);return}
-   if(!model)return;input.value=model==='__inherit__'?'':model;
-   input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));input.focus();
-  };
-  wrap.append(select);
-  new MutationObserver(()=>{select.disabled=input.disabled}).observe(input,{attributes:true,attributeFilter:['disabled']});select.disabled=input.disabled;
- }
-}
 setupModelPickers();
 
 
@@ -2002,7 +1915,7 @@ $('template-default').onclick=()=>action(()=>api('settings',{default_template_id
 
 let savedProviderConfigurations=[];
 function providerEndpoint(){return $('provider-engine').value==='briefloop-native'?'native':'opencode'}
-$('provider-engine').onchange=()=>{$('custom-api-key').value='';$('custom-provider').value='';$('provider-open').click()};
+$('provider-engine').onchange=()=>{providerDirectory.invalidate();$('custom-api-key').value='';$('custom-provider').value='';$('provider-open').click()};
 $('provider-open').onclick=async()=>{$('provider-result').textContent='';$('custom-supports-images').value='';providerCapabilities.reset(providerEndpoint());$('provider-use').hidden=true;settingsView('models');settingsModelTab('api');
  try{const r=await api(providerEndpoint()+'/providers');savedProviderConfigurations=r.configurations||[];
  $('custom-saved').innerHTML='<option value="">新建配置</option>'+savedProviderConfigurations.map((p,i)=>`<option value="${i}">${esc(p.name)} · ${esc(p.model)}</option>`).join('');
@@ -2025,30 +1938,25 @@ $('provider-close').onclick=()=>{$('custom-api-key').value='';if(welcomeFromProv
 $('provider-dialog').addEventListener('close',()=>{$('custom-api-key').value=''});
 $('provider-form').onsubmit=async event=>{
  event.preventDefault();const button=$('provider-save');button.disabled=true;$('provider-result').textContent='正在保存到本机…';
- const body={protocol:$('custom-protocol').value,name:$('custom-name').value.trim(),context_limit:$('custom-context-limit').value?Number($('custom-context-limit').value):null,output_limit:$('custom-output-limit').value?Number($('custom-output-limit').value):null,provider:$('custom-provider').value.trim(),base_url:$('custom-base-url').value.trim(),model:$('custom-model').value.trim(),api_key:$('custom-api-key').value,supports_images:$('custom-supports-images').value===''?null:$('custom-supports-images').value==='true',...providerCapabilities.read(providerEndpoint())};
+ const engine=providerEndpoint(),backend=engine==='native'?'briefloop-native':'opencode';
+ const body={protocol:$('custom-protocol').value,name:$('custom-name').value.trim(),context_limit:$('custom-context-limit').value?Number($('custom-context-limit').value):null,output_limit:$('custom-output-limit').value?Number($('custom-output-limit').value):null,provider:$('custom-provider').value.trim(),base_url:$('custom-base-url').value.trim(),model:$('custom-model').value.trim(),api_key:$('custom-api-key').value,supports_images:$('custom-supports-images').value===''?null:$('custom-supports-images').value==='true',...providerCapabilities.read(engine)};
  $('custom-api-key').value='';
  try{
-  const result=await api(providerEndpoint()+'/provider',body);body.api_key='';
-  $('provider-use').hidden=false;$('provider-use').dataset.model=result.model;$('provider-use').dataset.backend=$('provider-engine').value;
+  const result=await api(engine+'/provider',body);body.api_key='';
+  modelDirectory.invalidate(backend);providerDirectory.invalidate(engine,body.provider);
+  const refreshed=modelDirectory.fetchModelCatalog(true,backend);
+  if(engine!==providerEndpoint()||body.provider!==$('custom-provider').value.trim()){await refreshed;return}
+  $('provider-use').hidden=false;$('provider-use').dataset.model=result.model;$('provider-use').dataset.backend=backend;
   $('provider-result').textContent='已保存 '+result.model+'。当前模型选择保持原值。';
- await loadProviderCatalog();
+  await Promise.all([refreshed,loadProviderCatalog()]);
  }catch(e){$('provider-result').textContent=e.message}finally{body.api_key='';button.disabled=false}
 };
 
-let providerCatalogRequest=0;
-async function loadProviderCatalog(){
- const provider=$('custom-provider').value.trim();if(!provider)return;
- const engine=providerEndpoint(),request=++providerCatalogRequest;$('provider-model-options').innerHTML='';
- $('provider-result').textContent='正在读取模型目录…';
- try{
-  const r=await api(engine+'/provider-catalog',{provider});
-  if(request!==providerCatalogRequest||engine!==providerEndpoint()||provider!==$('custom-provider').value.trim())return;
-  $('provider-model-options').innerHTML=(r.models||[]).map(id=>`<option value="${esc(id)}"></option>`).join('');
-  const labels={reachable:'目录已更新',auth_failed:'认证失败',insufficient_balance:'余额不足',forbidden:'无权访问',catalog_unavailable:'目录接口不可用，可手填模型',rate_limited:'请求限流',upstream_unavailable:'服务商暂不可用',connection_failed:'连接失败，可手填模型',invalid_catalog:'响应不是可识别的模型目录',http_error:'接口返回错误'};
-  $('provider-result').textContent=(labels[r.status]||r.status)+' · '+(r.models||[]).length+' 个模型。未调用模型。';
- }catch(e){if(request===providerCatalogRequest)$('provider-result').textContent='目录读取失败：'+e.message+'；可手动输入模型 ID。'}
-}
+const providerDirectory=createProviderCatalog({api,$,getEndpoint:providerEndpoint,modelDirectory});
+const loadProviderCatalog=()=>providerDirectory.load();
 $('provider-catalog').onclick=loadProviderCatalog;
+$('custom-model').onfocus=loadProviderCatalog;
+$('custom-provider').oninput=()=>providerDirectory.invalidate();
 $('provider-test-model').onclick=()=>action(async()=>{
  $('provider-result').textContent='正在提交短工具调用…';
  const r=providerEndpoint()==='native'?await api('runtime-test',{backend:'briefloop-native',model:$('custom-provider').value.trim()+'/'+$('custom-model').value.trim()}):await api('opencode/provider-test',{provider:$('custom-provider').value.trim(),model:$('custom-model').value.trim()});
@@ -2069,7 +1977,7 @@ $('custom-protocol').onchange=()=>{
 };
 $('custom-preset').onchange=()=>{
  const presets={deepseek:['DeepSeek','deepseek','chat-completions','https://api.deepseek.com'],openai:['OpenAI','openai-custom','responses','https://api.openai.com/v1'],anthropic:['Anthropic','anthropic-custom','anthropic-messages','https://api.anthropic.com/v1']};
- const p=presets[$('custom-preset').value];if(!p)return;
+ const p=presets[$('custom-preset').value];if(!p)return;providerDirectory.invalidate();
  ['custom-name','custom-provider','custom-protocol','custom-base-url'].forEach((id,i)=>$(id).value=p[i]);
 };
 

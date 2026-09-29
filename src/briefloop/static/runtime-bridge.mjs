@@ -1277,168 +1277,6 @@ function parseOpenCodeModels(stdout) {
   return models.length > 1 ? models : null;
 }
 
-// third_party/open-design/runtime-models/fallbacks.json
-var fallbacks_default = {
-  claude: [
-    {
-      id: "sonnet",
-      label: "Sonnet (alias)"
-    },
-    {
-      id: "opus",
-      label: "Opus (alias)"
-    },
-    {
-      id: "haiku",
-      label: "Haiku (alias)"
-    },
-    {
-      id: "fable",
-      label: "Fable (alias)"
-    },
-    {
-      id: "claude-opus-5-5",
-      label: "Opus 5.5\uFF08\u5185\u7F6E\u5EFA\u8BAE\uFF09"
-    },
-    {
-      id: "claude-opus-5",
-      label: "claude-opus-5"
-    },
-    {
-      id: "claude-sonnet-5",
-      label: "claude-sonnet-5"
-    },
-    {
-      id: "claude-fable-5",
-      label: "claude-fable-5"
-    },
-    {
-      id: "claude-opus-4-5",
-      label: "claude-opus-4-5"
-    },
-    {
-      id: "claude-sonnet-4-5",
-      label: "claude-sonnet-4-5"
-    },
-    {
-      id: "claude-haiku-4-5",
-      label: "claude-haiku-4-5"
-    }
-  ],
-  kimi: [
-    {
-      id: "kimi-k2-turbo-preview",
-      label: "kimi-k2-turbo-preview"
-    },
-    {
-      id: "moonshot-v1-8k",
-      label: "moonshot-v1-8k"
-    },
-    {
-      id: "moonshot-v1-32k",
-      label: "moonshot-v1-32k"
-    }
-  ],
-  hermes: [
-    {
-      id: "grok-4.3",
-      label: "grok-4.3 (xAI \xB7 default)"
-    },
-    {
-      id: "grok-4.20-reasoning",
-      label: "grok-4.20-reasoning (xAI \xB7 deep)"
-    },
-    {
-      id: "grok-4.20-0309-non-reasoning",
-      label: "grok-4.20-non-reasoning (xAI \xB7 fast)"
-    },
-    {
-      id: "grok-4.20-multi-agent-0309",
-      label: "grok-4.20-multi-agent (xAI \xB7 orchestration)"
-    },
-    {
-      id: "openai-codex:gpt-5.5",
-      label: "gpt-5.5 (openai-codex:gpt-5.5)"
-    },
-    {
-      id: "openai-codex:gpt-5.4",
-      label: "gpt-5.4 (openai-codex:gpt-5.4)"
-    },
-    {
-      id: "openai-codex:gpt-5.4-mini",
-      label: "gpt-5.4-mini (openai-codex:gpt-5.4-mini)"
-    }
-  ],
-  codex: [
-    {
-      id: "gpt-5.5",
-      label: "gpt-5.5"
-    },
-    {
-      id: "gpt-5.4",
-      label: "gpt-5.4"
-    },
-    {
-      id: "gpt-5.4-mini",
-      label: "gpt-5.4-mini"
-    },
-    {
-      id: "gpt-5.3-codex",
-      label: "gpt-5.3-codex"
-    },
-    {
-      id: "gpt-5.1",
-      label: "gpt-5.1"
-    },
-    {
-      id: "gpt-5.1-codex-mini",
-      label: "gpt-5.1-codex-mini"
-    },
-    {
-      id: "gpt-5-codex",
-      label: "gpt-5-codex"
-    },
-    {
-      id: "gpt-5",
-      label: "gpt-5"
-    },
-    {
-      id: "o3",
-      label: "o3"
-    },
-    {
-      id: "o4-mini",
-      label: "o4-mini"
-    }
-  ],
-  opencode: [
-    {
-      id: "anthropic/claude-sonnet-4-5",
-      label: "anthropic/claude-sonnet-4-5"
-    },
-    {
-      id: "openai/gpt-5.6-sol",
-      label: "openai/gpt-5.6-sol"
-    },
-    {
-      id: "openai/gpt-5.6-terra",
-      label: "openai/gpt-5.6-terra"
-    },
-    {
-      id: "openai/gpt-5.6-luna",
-      label: "openai/gpt-5.6-luna"
-    },
-    {
-      id: "openai/gpt-5",
-      label: "openai/gpt-5"
-    },
-    {
-      id: "google/gemini-2.5-pro",
-      label: "google/gemini-2.5-pro"
-    }
-  ]
-};
-
 // runtime-bridge/main.ts
 var rawExec = promisify(execFile);
 var ownedChildren = /* @__PURE__ */ new Set();
@@ -1671,7 +1509,8 @@ async function listModels(p) {
       return models.length ? models.map((model) => ({ id: x.name + "/" + model, label: x.name + " \xB7 " + model, provider: x.kind || "configured", model_id: model })) : [{ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }];
     })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
-  const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
+  const configuredDefault = hostDefaults(p.runtime_id);
+  const unavailable = (diagnostic = "\u5BBF\u4E3B\u672A\u63D0\u4F9B\u6A21\u578B\u76EE\u5F55\uFF1B\u53EF\u6CBF\u7528\u5BBF\u4E3B\u8BBE\u7F6E\u6216\u624B\u52A8\u8F93\u5165\u6A21\u578B ID\u3002") => ({ models: configuredDefault, source: "host_default_only", status: "unavailable", diagnostic, refreshed_at: (/* @__PURE__ */ new Date()).toISOString() });
   if (p.runtime_id === "pi") return piModels(bin, p, launch, terminate);
   if (p.runtime_id === "zcode") return zcodeModels();
   if (p.runtime_id === "antigravity") {
@@ -1680,34 +1519,35 @@ async function listModels(p) {
     return { models: [...defaults, ...models], source: models.length ? "host" : "host_default_only" };
   }
   if (p.runtime_id === "claude") {
-    const routed = await loadMmdRouteModels(env, fallback);
+    const routed = await loadMmdRouteModels(env, []);
     return {
-      models: routed || fallback,
-      source: routed ? "local_routes" : "builtin_hints",
-      note: "Claude Code \u672A\u63D0\u4F9B\u53EF\u8BFB\u53D6\u7684\u5B9E\u65F6\u6A21\u578B\u76EE\u5F55\u3002opus / sonnet \u7B49\u522B\u540D\u7531 CLI \u5728\u8FD0\u884C\u65F6\u89E3\u6790\uFF1B\u5177\u4F53\u6A21\u578B ID \u53EF\u624B\u52A8\u8F93\u5165\uFF0C\u5185\u7F6E\u5EFA\u8BAE\u4E0D\u4EE3\u8868\u8D26\u53F7\u53EF\u7528\u3002"
+      models: routed || configuredDefault,
+      source: routed ? "local_routes" : "host_default_only",
+      status: routed ? "configured" : "unavailable",
+      refreshed_at: (/* @__PURE__ */ new Date()).toISOString(),
+      note: "Claude Code \u672A\u63D0\u4F9B\u53EF\u8BFB\u53D6\u7684\u5B9E\u65F6\u6A21\u578B\u76EE\u5F55\u3002\u4EC5\u663E\u793A\u672C\u673A\u5DF2\u914D\u7F6E\u8DEF\u7531\uFF1B\u4E5F\u53EF\u6CBF\u7528\u5BBF\u4E3B\u9ED8\u8BA4\u6216\u624B\u52A8\u8F93\u5165\u6A21\u578B ID\u3002"
     };
   }
   try {
     if (p.runtime_id === "codex") {
       const r = await exec(bin, ["debug", "models"], { env, timeout: 5e3, maxBuffer: 4 * 1024 * 1024 });
       const models = parseCodexDebugModels(r.stdout);
-      return { models: models || fallback, source: models ? "host" : "builtin_hints" };
+      return models?.some((m) => m.id !== "default") ? { models, source: "host", status: "reachable", refreshed_at: (/* @__PURE__ */ new Date()).toISOString() } : unavailable();
     }
     if (["mimo", "opencode"].includes(p.runtime_id)) {
       const r = await exec(bin, ["models", "--verbose"], { env, timeout: 2e4, maxBuffer: 8 * 1024 * 1024 });
       const models = parseOpenCodeModels(r.stdout);
-      return { models: models || fallback, source: models ? "host" : "builtin_hints" };
+      return models?.some((m) => m.id !== "default") ? { models, source: "host", status: "reachable", refreshed_at: (/* @__PURE__ */ new Date()).toISOString() } : unavailable();
     }
     if (p.runtime_id in acpArgs) {
       const args = acpArguments(p.runtime_id, bin);
       const models = await acpSessionModels(bin, args, p.cwd || process.cwd(), p.runtime_id);
-      const live = models.some((m) => m.id !== "default");
-      return { models: live ? models : fallback, source: live ? "host" : "builtin_hints" };
+      return models.some((m) => m.id !== "default") ? { models, source: "host", status: "reachable", refreshed_at: (/* @__PURE__ */ new Date()).toISOString() } : unavailable();
     }
   } catch {
-    return { models: fallback, source: "builtin_hints", diagnostic: "\u5BBF\u4E3B\u76EE\u5F55\u8BFB\u53D6\u5931\u8D25\uFF0C\u5DF2\u663E\u793A\u5185\u7F6E\u5EFA\u8BAE\uFF1B\u4E5F\u53EF\u76F4\u63A5\u8F93\u5165\u6A21\u578B ID\u3002" };
+    return unavailable("\u5BBF\u4E3B\u6A21\u578B\u76EE\u5F55\u8BFB\u53D6\u5931\u8D25\uFF1B\u672A\u6DFB\u52A0\u9884\u8BBE\u6A21\u578B\uFF0C\u53EF\u91CD\u8BD5\u6216\u624B\u52A8\u8F93\u5165\u6A21\u578B ID\u3002");
   }
-  return { models: fallback, source: "builtin_hints" };
+  return unavailable();
 }
 function validate(p) {
   p.effort = validateEffort(p.runtime_id, p.effort);
@@ -1755,7 +1595,7 @@ async function reasoningOptions2(p) {
       if (Array.isArray(model?.supported_reasoning_levels)) return { kind: "levels", source: "host", options: model.supported_reasoning_levels.filter((o) => typeof o.effort === "string" && o.effort !== "none").map((o) => ({ id: o.effort, name: o.effort })) };
     } catch {
     }
-    return { ...profile, source: "cli_defaults", note: "\u5BBF\u4E3B\u672A\u8FD4\u56DE\u6240\u9009\u6A21\u578B\u7684\u6863\u4F4D\uFF1B\u663E\u793A CLI \u5E38\u7528\u6863\u4F4D\uFF0C\u5B9E\u9645\u80FD\u529B\u53D6\u51B3\u4E8E\u6A21\u578B\u3002" };
+    return { kind: "host", options: [], source: "host", availability: "not_advertised", note: "\u5BBF\u4E3B\u672A\u8FD4\u56DE\u6240\u9009\u6A21\u578B\u7684\u63A8\u7406\u6863\u4F4D\uFF0C\u6CBF\u7528\u6A21\u578B\u9ED8\u8BA4\uFF1B\u672A\u6DFB\u52A0\u63A8\u6D4B\u9009\u9879\u3002" };
   }
   if (p.runtime_id === "antigravity" && p.model?.startsWith("gemini-")) {
     const family = reasoningModel(p.runtime_id, p.model, "low"), catalog = await listModels(p);

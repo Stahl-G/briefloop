@@ -180,6 +180,11 @@ async function turn(session_id, execution_id, extra = {}) {
   return done;
 }
 
+function describeConfiguredModels() {
+  const path = join(root, "home", ".config", "briefloop", "native-engine", "providers.json");
+  return call("describe_models", {models: Object.keys(JSON.parse(readFileSync(path, "utf8")))});
+}
+
 before(async () => {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   root = mkdtempSync(join(tmpdir(), "bl-native-test-"));
@@ -193,11 +198,19 @@ before(async () => {
   writeFileSync(join(engineDir, "native-engine-models.json"), JSON.stringify({ providers: { fake: {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: "openai-completions", apiKey: "FAKE_PROVIDER_KEY",
     models: [
+      { ...JSON.parse(readFileSync(fileURLToPath(new URL("./models.json", import.meta.url)), "utf8")).providers["opencode-go"].models[0],
+        id: "exact-deepseek-fixture", provider: "fake", baseUrl: `http://127.0.0.1:${server.address().port}/v1` },
       { id: "m1", name: "M1", api: "openai-completions", provider: "fake", reasoning: false, input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 },
       { id: "m2", name: "M2", api: "openai-completions", provider: "fake", reasoning: false, input: ["text", "image"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 },
     ] } } }));
+
+  const nativeDir = join(home, ".config", "briefloop", "native-engine");
+  mkdirSync(nativeDir, { recursive: true });
+  writeFileSync(join(nativeDir, "providers.json"), JSON.stringify(Object.fromEntries(["m1", "m2"].map(model => [`fake/${model}`, {
+    provider: "fake", model, protocol: "chat-completions", base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: "fixture-native-key",
+  }]))));
 
   packet = mkdtempSync(join(root, "packet-"));
   mkdirSync(join(packet, "sources"));
@@ -265,11 +278,11 @@ after(async () => {
 });
 
 // ---- protocol and isolation ---------------------------------------------------
-test("ping reports the engine and credentialed models", async () => {
+test("ping reports configured entries, separately from live API availability", async () => {
   const ping = await call("ping");
   assert.equal(ping.engine, "briefloop-native/2");
-  assert.equal(ping.models_available, 2);
-  const catalog = await call("list_models");
+  assert.equal(ping.models_configured, 2);
+  const catalog = await describeConfiguredModels();
   const model = catalog.models.find(m => m.id === MODEL);
   assert.equal(model.context_window, 100_000);
   assert.ok(Array.isArray(model.thinking_levels));
@@ -859,12 +872,12 @@ test('main-agent child tools may outlive the model idle interval and remain canc
 
 test('locally saved provider credentials and custom models are usable without a host CLI', async () => {
   const dir=join(root,'home','.config','briefloop','native-engine');mkdirSync(dir,{recursive:true});
-  writeFileSync(join(dir,'providers.json'),JSON.stringify({'local/model':{
+  writeFileSync(join(dir,'providers.json'),JSON.stringify({...JSON.parse(readFileSync(join(dir,'providers.json'),'utf8')), 'local/model':{
     provider:'local',model:'model',name:'Local fixture',protocol:'chat-completions',
     base_url:`http://127.0.0.1:${server.address().port}/v1`,api_key:'fake-local-literal-key',
     context_limit:100000,output_limit:1000,supports_images:false,
   }}));
-  const catalog=await call('list_models',{});
+  const catalog=await describeConfiguredModels();
   assert.ok(catalog.models.some(m=>m.id==='local/model'));
   const s=await reviewer({role:'chat',model:'local/model',runner_tools:[{name:'workspace_action',description:'Workspace',parameters:{type:'object'}}]});
   provider.script=[reply.text('Configured locally')];
@@ -900,7 +913,7 @@ test('provider edits freeze active turns and replace endpoint, protocol, key and
     await toolStarted;
     save({ protocol: 'anthropic-messages', base_url: `http://127.0.0.1:${server.address().port}/new`,
       api_key: 'fixture-new-key', context_limit: 32768, output_limit: 256, supports_images: true });
-    const [catalog, metadata] = await Promise.all([call('list_models'), call('ping')]);
+    const [catalog, metadata] = await Promise.all([describeConfiguredModels(), call('ping')]);
     assert.ok(metadata.configuration_revision > initial.configuration_revision);
     assert.equal(catalog.models.find(m => m.id === 'snapshot/model').output_limit, 256);
     // The second request in the SAME turn is made after the catalog refreshed.
@@ -924,7 +937,7 @@ test('provider edits freeze active turns and replace endpoint, protocol, key and
     assert.match(JSON.stringify(provider.requests[0].messages), /old turn finished/, 'provider changes preserve the transcript');
 
     save({ context_limit: null, output_limit: null, supports_images: null });
-    const cleared = (await call('list_models')).models.find(m => m.id === 'snapshot/model');
+    const cleared = (await describeConfiguredModels()).models.find(m => m.id === 'snapshot/model');
     assert.equal(cleared.context_window, 1_000_000);
     assert.equal(cleared.output_limit, 8192);
     await call('session_close', { session_id: resumed.session_id });
@@ -1112,4 +1125,35 @@ test("failed focused compaction never falls back to an unfocused paid call",asyn
   assert.ok(events.some(e=>e.session_id===s.session_id&&e.phase==='compaction'&&e.failed));
   script(reply.text('{"continued":true}'));
   assert.equal(ends(await turn(s.session_id,'after-compact-failure'))[0].status,'completed');
+});
+
+
+test('an API-new ID runs with only its saved provider connection and no guessed capabilities', async () => {
+  const catalog = await call('list_models');
+  assert.deepEqual(catalog.models, [], 'SDK metadata is not a live selection list');
+  assert.equal(catalog.status, 'metadata_only');
+  const meta = await call('describe_models', {models: ['fake/api-new-model', 'unconfigured/api-new-model']});
+  assert.deepEqual(meta.models.map(m => m.id), ['fake/api-new-model']);
+  assert.equal(meta.models[0].metadata_source, 'conservative_defaults');
+  const s = await reviewer({role: 'chat', model: 'fake/api-new-model', thinking: 'high'});
+  assert.equal(s.thinking, 'off');
+  assert.equal(s.image_input, false);
+  script(reply.text('New API model works'));
+  const result = await turn(s.session_id, 'api-new-id', {expect_json: false, require_submit: false});
+  assert.equal(ends(result)[0].status, 'completed');
+  assert.equal(provider.requests[0].model, 'api-new-model');
+  assert.equal(provider.transports[0].key, 'Bearer fixture-native-key');
+});
+
+
+test('API IDs retain exact known DeepSeek compatibility without borrowing capabilities for new IDs', async () => {
+  const s = await reviewer({role: 'chat', model: 'fake/exact-deepseek-fixture', thinking: 'high'});
+  assert.equal(s.thinking, 'high');
+  script(reply.text('Known compatibility preserved'));
+  const result = await turn(s.session_id, 'known-deepseek-id', {expect_json: false, require_submit: false});
+  assert.equal(ends(result)[0].status, 'completed');
+  assert.deepEqual(provider.requests[0].thinking, {type: 'enabled'});
+  assert.equal(provider.requests[0].reasoning_effort, 'high');
+  assert.equal(provider.requests[0].max_tokens, 384000);
+  assert.equal(provider.requests[0].max_completion_tokens, undefined);
 });

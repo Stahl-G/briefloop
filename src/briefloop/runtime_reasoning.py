@@ -19,10 +19,15 @@ def options(backend, model, workspace, bridge, native=None, opencode=None):
             raise ValueError('内置引擎目录不可用')
         selected = next((item for item in native.list_models() if item['id'] == model), None)
         if selected is None:
-            raise ValueError('所选模型尚未登记或不可用，请先配置内置引擎提供商')
+            raise ValueError('提供方当前目录未返回所选模型；请刷新目录或检查连接，手动选择不会因此被改写')
+        if selected.get('thinking_levels_source') != 'provider_api':
+            return {'backend': backend, 'kind': 'host', 'options': [],
+                    'source': selected.get('thinking_levels_source', 'provider_api'),
+                    'availability': 'not_advertised',
+                    'note': '提供方目录未声明所选模型的推理档位，沿用 Pi SDK 默认；已保存的自定义档位保持不变。'}
         return {'backend': backend, 'kind': 'levels',
                 'options': [{'id': level, 'name': level} for level in selected.get('thinking_levels', [])],
-                'note': '使用内置 Pi SDK 的模型档位；模型默认沿用 BriefLoop 的 low，实际能力取决于提供商。'}
+                'source': 'provider_api', 'note': '使用提供方目录明确返回的模型档位。'}
     profile = _PROFILES[backend]
     if backend == 'opencode':
         # Models and variants must come from the same owned provider API. V2
@@ -47,8 +52,9 @@ def options(backend, model, workspace, bridge, native=None, opencode=None):
     probe = (profile['kind'] in ('negotiated', 'variant') or backend == 'codex'
              or backend == 'antigravity' and model.startswith('gemini-'))
     if not probe:
-        return {**profile, 'backend': backend,
-                'options': [{'id': value, 'name': value} for value in profile.get('levels', [])]}
+        return {'kind': 'host', 'backend': backend, 'source': 'host',
+                'options': [], 'availability': 'not_advertised',
+                'note': '当前宿主未公开所选模型的独立推理档位，沿用模型默认；未添加推测选项。'}
     key = (backend, model, str(workspace))
     with _lock:
         cached = _cache.get(key)

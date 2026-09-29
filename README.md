@@ -96,14 +96,16 @@ Windows 也可不安装桌面 App，直接启动同一套 Python 服务与网页
 
 ## 执行后端与模型
 
+新工作区不预选具体模型或思考强度。BriefLoop Agent 从已保存提供方的模型 API 实时读取目录；Agent CLI 使用所选宿主公开的目录或本机路由。打开选择器或点击刷新会重新查询，失败不填回静态模型清单。页面区分目录来源、查询时间和错误；目录可见不代表推理调用已通过。提供方不支持列举模型时仍可手输 ID，已有用户选择和在运行任务不被目录刷新改写。
+
 工作区默认使用 Codex（Responses 通道）。执行宿主可在启动时用 `--backend` 指定，或在网页设置页切换；已排队/已开始的任务冻结原后端，不跟随切换。设置页会检测本机已安装的 CLI，并读取各自的模型目录。
 
 | 宿主 | 接入方式 | 模型目录 |
 | --- | --- | --- |
 | Codex | 原生 app-server | 原生 `debug models` |
 | Opencode | 本机原生服务 | 本机 provider/model 配置 |
-| Claude Code | bridge（stream-json） | 本机路由；无路由时给内置建议 |
-| Kimi、Hermes | bridge（ACP） | ACP 模型目录；读取失败给内置建议 |
+| Claude Code | bridge（stream-json） | 本机路由；未公开目录时支持宿主默认或手输 |
+| Kimi、Hermes | bridge（ACP） | ACP 模型目录；读取失败明确显示原因 |
 | Reasonix | bridge（ACP） | 原生 `doctor --json` |
 | MiMo | bridge（JSON 事件流） | 原生 `models --verbose` |
 | CodeBuddy Code | bridge（原生 `--acp`） | ACP 原生模型目录；支持手输模型 ID |

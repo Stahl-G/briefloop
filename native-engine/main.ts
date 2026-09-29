@@ -158,6 +158,8 @@ interface RuntimeSnapshot {
   runtime: ModelRuntime;
   registry: ModelRegistry;
   contextOverrides: Map<string, number>;
+  configured: Map<string, Record<string, any>>;
+  compatibility: Map<string, NonNullable<ReturnType<ModelRegistry["find"]>>>;
   revision: number;
 }
 let currentRuntime: RuntimeSnapshot | undefined;
@@ -203,10 +205,20 @@ async function buildRuntime(raw: string): Promise<RuntimeSnapshot> {
   mkdirSync(stateDir, { recursive: true });
   const runtime = await ModelRuntime.create({
     allowModelNetwork: false,
+    refreshOnCreate: false,
+    // Native credentials come only from BriefLoop connections, never ~/.pi.
+    credentials: {
+      async read() { return undefined; }, async list() { return []; },
+      async modify() { throw new Error("Native credentials are managed by BriefLoop"); },
+      async delete() { throw new Error("Native credentials are managed by BriefLoop"); },
+    },
     modelsPath: existsSync(modelsJson) ? modelsJson : null,
     modelsStorePath: join(stateDir, "models-store.json"),
   });
   const registry = new ModelRegistry(runtime);
+  // Provider registration may replace that provider's catalog. Retain exact
+  // shipped metadata separately so live IDs still get their wire compatibility.
+  const compatibility = new Map(registry.getAll().map(model => [`${model.provider}/${model.id}`, model]));
   for (const row of rows) {
     if (Number(row.context_limit) > 0) contextOverrides.set(`${row.provider}/${row.model}`, Number(row.context_limit));
   }
@@ -234,7 +246,7 @@ async function buildRuntime(raw: string): Promise<RuntimeSnapshot> {
     // Literal runtime auth avoids models.json's !command/env interpolation.
     await runtime.setRuntimeApiKey(provider, first.api_key);
   }
-  return { runtime, registry, contextOverrides, revision: ++runtimeRevision };
+  return { runtime, registry, contextOverrides, compatibility, configured: new Map(rows.map(row => [`${row.provider}/${row.model}`, row])), revision: ++runtimeRevision };
 }
 
 async function ensureRuntime(): Promise<RuntimeSnapshot> {
@@ -261,12 +273,25 @@ async function ensureRuntime(): Promise<RuntimeSnapshot> {
 }
 
 function resolveModel(spec: unknown, snapshot: RuntimeSnapshot) {
-  // No implicit default: a review must run on the model the job recorded.
+  // Catalog candidates and SDK compatibility metadata have different jobs.
+  // An exact API ID (or manual ID) works on any explicitly saved connection;
+  // no SDK catalog entry or credentials from another application are required.
   const s = String(spec ?? "").trim();
-  const slash = s.indexOf("/");
-  if (slash <= 0) return undefined;
-  const model = snapshot.registry.find(s.slice(0, slash), s.slice(slash + 1));
-  return model ? { ...model, contextWindow: snapshot.contextOverrides.get(s) ?? DEFAULT_CONTEXT_WINDOW } : undefined;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./:-]+$/.test(s)) return undefined;
+  const slash = s.indexOf("/"), provider = s.slice(0, slash), id = s.slice(slash + 1);
+  const explicit = snapshot.configured.get(s);
+  const connection = explicit ?? [...snapshot.configured.values()].find(row => row.provider === provider);
+  if (!connection?.api_key) return undefined;
+  const protocols: Record<string, string> = { "chat-completions": "openai-completions", "openai-compatible": "openai-completions", openai: "openai-completions", responses: "openai-responses", anthropic: "anthropic-messages", google: "google-generative-ai" };
+  const api = connection.api || protocols[connection.protocol] || connection.protocol;
+  const known = snapshot.registry.find(provider, id) ?? snapshot.compatibility.get(s);
+  return { ...known, id, provider, name: known?.name || id, api: api as any, baseUrl: connection.base_url,
+    reasoning: typeof explicit?.supports_reasoning === "boolean" ? explicit.supports_reasoning : (known?.reasoning ?? false),
+    input: explicit?.supports_images == null ? (known?.input || ["text"]) : explicit.supports_images ? ["text", "image"] : ["text"],
+    cost: known?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: snapshot.contextOverrides.get(s) ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: explicit?.output_limit || known?.maxTokens || 8192,
+  } as NonNullable<ReturnType<ModelRegistry["find"]>>;
 }
 
 // Any session event proves the model stream or a tool is alive. If nothing
@@ -563,7 +588,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     cwd,
     modelRuntime: snapshot.runtime,
     model,
-    thinkingLevel: (p.thinking as any) ?? "high",
+    ...(p.thinking == null ? {} : { thinkingLevel: p.thinking as any }),
     // Explicit allowlist: only our packet tools exist for this session. An
     // empty allowlist disables custom tools too; naming them is what keeps the
     // built-ins (read/bash/edit/write) off.
@@ -798,23 +823,27 @@ async function dispatch(req: WireRequest): Promise<void> {
           engine: ENGINE_VERSION,
           pi: PI_VERSION,
           node: process.version,
-          // Models whose provider has a credential; zero means nothing can run.
-          models_available: snapshot.registry.getAvailable().length,
+          // Saved entries are configuration only, not live API availability.
+          models_configured: snapshot.configured.size,
           configuration_revision: snapshot.revision,
         });
         break;
       }
-      case "list_models": {
+      case "list_models":
+      case "describe_models": {
         const snapshot = await ensureRuntime();
-        const models = snapshot.registry.getAvailable().map((m) => ({
-          id: `${m.provider}/${m.id}`,
-          name: m.name ?? m.id,
-          provider: m.provider,
-          context_window: resolveModel(`${m.provider}/${m.id}`, snapshot)!.contextWindow,
-          output_limit: m.maxTokens,
-          thinking_levels: catalogThinkingLevels(m),
-        }));
-        reply(req.id, { models });
+        // This wire operation supplies execution metadata only. Candidate IDs
+        // must come from the Python provider API reader, never getAvailable().
+        const requested = Array.isArray(req.params?.models) ? req.params.models : [];
+        const models = requested.flatMap(spec => {
+          const m = resolveModel(spec, snapshot);
+          return m ? [{ id: `${m.provider}/${m.id}`, name: m.name ?? m.id, provider: m.provider,
+            context_window: m.contextWindow, output_limit: m.maxTokens, thinking_levels: catalogThinkingLevels(m), thinking_levels_source: "execution_metadata",
+            metadata_source: snapshot.configured.has(String(spec)) ? "saved_model_configuration" :
+              snapshot.compatibility.has(String(spec)) ? "exact_model_compatibility" : "conservative_defaults",
+          }] : [];
+        });
+        reply(req.id, { models, source: "execution_metadata", status: "metadata_only", inference_tested: false });
         break;
       }
       case "session_create": await sessionCreate(req.id, req.params ?? {}); break;
