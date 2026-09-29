@@ -13,7 +13,7 @@ from .industry_data import prepare_report_data
 from .store import Conflict, dump, now
 from .skills import bind_context
 from .agent_commands import tool_command, quote_path
-from .writing_guidance import NUMBER_UNIT_GUIDE
+from .writing_guidance import NUMBER_UNIT_GUIDE, REPORT_CLAIM_GUIDE
 
 FILE_JOB_KINDS = ('export_docx', 'export_xlsx', 'release', 'audit_bundle')
 
@@ -1407,6 +1407,7 @@ input.draft_diagnostics 是原稿的确定性诊断，绑定其中 version_id/br
 正文来源用 citation 节点、attrs.sourceId 为实际来源ID；相关行号与摘录放 draft.citations。普通文字 [1] 或只有 citations 元数据不会登记正文引用；表内转述来源事实时在相应单元格标引用，计算、目标与事实状态仍须按原文区分。不要为消除提示自动复制来源标记或编造依据。
 input.figures提供已登记图表、数据和脚本。图像本身有错误时，在工作区另存修正后的数据/脚本/图片并实际查看，使用 `{tool} register-figure --run {brief['run_id']} --image IMAGE_PATH --title TITLE --caption CAPTION --source SOURCE_ID --data DATA_PATH --script SCRIPT_PATH` 登记新快照；用返回的真实figure_id同步draft.figures与editor_document图片src（briefloop-figure:FIGURE_ID），旧资产保留。图中错误未改时不能仅改正文图注或写入gaps就声称已修正。
 需要新增或修正主张依据时，使用 workspace-action 的 evidence_span/claim_create/evidence_read 接口；修订原有主张时传 previous_id，不删历史。将待绑定到本次新正文的关联保存 {stage/'revision_bindings.json'}，遵循 {stage/'revision_bindings.schema.json'}：文件顶层直接是数组，每项 claim_id、block_id、quote，不加 bindings 包装对象。运行器会在新稿入库后绑定，不把关联写到旧稿。
+{REPORT_CLAIM_GUIDE}
 使用 `{tool} workspace-action --request REQUEST_JSON`：evidence_span请求为action/evidence（按input.evidence_schema），claim_create请求为action/run_id/claim（按input.claim_schema，可传previous_id）。input.evidence包含现有真实ID；新增ID必须取登记接口实际返回值，不能自拟rev_等占位符。
 对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
 responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是数组，不加 responses 包装对象；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是写作修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正正文。
@@ -1447,23 +1448,20 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
 
     def _revision_metadata(self,job,revised,folder,findings):
         """Admit auxiliary files or repair them without generating another body."""
-        from .evidence import bind_claim,blocks,node_text,record
+        from .evidence import bind_claim,record
         from .document_model import brief_document
         from .review import respond
-        from .revision_metadata import validate_arrays,recovery_schema
+        from .revision_metadata import validate_arrays,validate_bindings,recovery_schema
         stage=folder/'revision';stage.mkdir(exist_ok=True)
         error_file=stage/'metadata-admission-error.json'
         names={'bindings':'revision_bindings.json','responses':'responses.json'}
         expected={item['id'] for item in findings}
-        nodes=blocks(brief_document(revised))
         def load():
             return {key:json.loads((stage/name).read_text(encoding='utf-8-sig')) if (stage/name).exists() else [] for key,name in names.items()}
         def admit(data):
             if not isinstance(data,dict):raise ValueError('修订元数据必须包含 bindings/responses')
             validate_arrays(data.get('bindings'),data.get('responses'),expected)
-            for binding in data['bindings']:
-                claim=record(self.store,'claims',binding['claim_id']);node=nodes.get(binding['block_id'])
-                if claim['run_id']!=revised['run_id'] or node is None or node_text(node).count(binding['quote'])!=1:raise ValueError('修订正文锚点缺失或不唯一，请对照已入库正文修复绑定')
+            validate_bindings(self.store,revised['run_id'],data['bindings'],brief_document(revised))
             for binding in data['bindings']:
                 if not self.store.rows('SELECT id FROM claim_bindings WHERE version_id=? AND claim_id=? AND block_id=? AND quote=?',(revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])):
                     bind_claim(self.store,revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])
@@ -1487,12 +1485,15 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
             remember(exc)
             if not retry:raise
         repair=stage/'metadata-repair';repair.mkdir(exist_ok=True)
-        (repair/'metadata.schema.json').write_text(json.dumps(recovery_schema(revised['id'],revised['hash'],sorted(expected)),ensure_ascii=False,indent=2), encoding='utf-8')
-        (repair/'input.json').write_text(json.dumps({'version_id':revised['id'],'brief_hash':revised['hash'],'document':brief_document(revised),
-            'findings':findings,'error':json.loads(error_file.read_text(encoding='utf-8')),'candidate_claims':self.store.rows('SELECT id,data FROM claims WHERE run_id=?',(revised['run_id'],))},ensure_ascii=False,indent=2), encoding='utf-8')
+        claims=[record(self.store,'claims',row['id']) for row in self.store.rows('SELECT id FROM claims WHERE run_id=?',(revised['run_id'],))]
+        candidates=[claim for claim in claims if claim['data'].get('claim_role','report_statement')=='report_statement']
+        source_statements=[claim for claim in claims if claim['data'].get('claim_role','report_statement')!='report_statement']
+        (repair/'metadata.schema.json').write_text(json.dumps(recovery_schema(revised['id'],revised['hash'],sorted(expected),[claim['id'] for claim in candidates]),ensure_ascii=False,indent=2), encoding='utf-8')
+        (repair/'input.json').write_text(json.dumps({'version_id':revised['id'],'brief_hash':revised['hash'],'run_id':revised['run_id'],'document':brief_document(revised),
+            'findings':findings,'error':json.loads(error_file.read_text(encoding='utf-8')),'candidate_claims':candidates,'source_statements':source_statements},ensure_ascii=False,indent=2), encoding='utf-8')
         prompt=TASK_CONTEXT+f'''恢复这次已发布修订的绑定与处理说明。只读取 {repair/'input.json'}，正文版本 {revised['id']} 已固定，hash={revised['hash']}。
 只修正本次失败的 revision_bindings/responses 元数据，禁止重新生成正文、修改 draft.json、调用 revise_document 或发布另一版本，也不新增研究或改写来源。
-对照已保存 document 的真实 blockId 和唯一原句选绑定；使用现有真实 claim_id；每个 input.findings 的 finding_id 必须有 corrected/removed/disagree 与具体 reason。
+对照已保存 document 的真实 blockId 和唯一原句选绑定；claim_id 仅选 input.candidate_claims 中实际登记的报告侧主张。input.source_statements 只供回读，不能绑定或自动改角色；缺少所需报告主张时保留缺口，不删正确绑定或声称已补齐，另行正常修订才可由写稿模型建立新主张。每个 input.findings 的 finding_id 必须有 corrected/removed/disagree 与具体 reason。
 写入 {repair/'metadata.json'}，遵循 {repair/'metadata.schema.json'}：只有此恢复文件顶层是含 version_id、brief_hash、bindings、responses 的对象，后两者仍是数组。bindings 使用真实 claim_id/block_id/quote，responses 使用真实 finding_id、单个 corrected/removed/disagree 值及具体 reason。没有对应项目时写 []；完整数组包含原有正确项目。不要直接写数据库，运行器核对后接纳。
 '''
         self.store.event(job['id'],'revision_progress',{'stage':'repairing_metadata','version_id':revised['id'],'message':'只修复已保存稿件的依据关联与处理说明'})

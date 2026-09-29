@@ -67,13 +67,15 @@ def test_stop_is_persisted_before_transport_finishes_and_settlement_cannot_overw
 
 
 @pytest.mark.parametrize('edit_during_repair',[False,True])
-@pytest.mark.parametrize('invalid_metadata',['anchor','assessment_response','wrapped_arrays'])
+@pytest.mark.parametrize('invalid_metadata',['anchor','assessment_response','wrapped_arrays','source_claim'])
 def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_path,edit_during_repair,invalid_metadata):
-    from briefloop.evidence import create_span,create_claim,blocks
+    from briefloop.evidence import create_span,create_claim,bind_claim,blocks
     from briefloop.document_model import brief_document
     store=Store(tmp_path);run,source,brief=report(store)
     span=create_span(store,{'source_id':source['id'],'locator':{'kind':'text','start_line':1,'end_line':1}})
     claim=create_claim(store,run['id'],{'statement':'Revenue was USD 12 million.','kind':'fact','supports':[{'span_id':span['id'],'supports_quote':'Revenue was USD 12 million.'}]})
+    source_claim=create_claim(store,run['id'],{'statement':'Revenue was USD 12 million.','kind':'fact','claim_role':'source_statement',
+        'supports':[{'span_id':span['id'],'supports_quote':'Revenue was USD 12 million.'}]})
     score={'status':'complete','summary':'Synthetic','overall':'建议修改','evidence':3,'coverage':3,'analysis':3,'expression':3}
     store.assess(brief['id'],{'brief_hash':brief['hash'],**score});job=store.enqueue('revise',{'version_id':brief['id']})
     class RepairRuntime(NoModel):
@@ -86,12 +88,19 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
                     (folder/'revision_bindings.json').write_text(dump([{'claim_id':claim['id'],'block_id':'wrong-block','quote':'Revenue was USD 12 million'}]),encoding='utf-8')
                 elif invalid_metadata=='assessment_response':
                     (folder/'responses.json').write_text(dump([{'finding_id':'expression_redundant_explanation','action':'removed','reason':'Removed repeated wording'}]),encoding='utf-8')
+                elif invalid_metadata=='source_claim':
+                    bid=next(iter(blocks(markdown_document('Revenue was USD 12 million, as reported.'))))
+                    (folder/'revision_bindings.json').write_text(dump([
+                        {'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'},
+                        {'claim_id':source_claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}]),encoding='utf-8')
                 else:
                     (folder/'revision_bindings.json').write_text(dump({'bindings':[]}),encoding='utf-8')
                     (folder/'responses.json').write_text(dump({'responses':[]}),encoding='utf-8')
             else:
                 assert job['kind']=='repair_revision_metadata'
                 packet=json.loads((folder/'input.json').read_text(encoding='utf-8'));revision=store.one('briefs',packet['version_id'])
+                assert [item['id'] for item in packet['candidate_claims']]==[claim['id']]
+                assert [item['id'] for item in packet['source_statements']]==[source_claim['id']]
                 if edit_during_repair:store.revise(revision['id'],editor_document=markdown_document('USER EDIT'))
                 bid=next(iter(blocks(brief_document(revision))))
                 metadata={'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}
@@ -100,10 +109,16 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
                 (folder/'metadata.json').write_text(dump(metadata),encoding='utf-8')
             return {'synthetic':True}
     runtime=RepairRuntime();worker=Worker(store,runtime);folder=worker.folder(job)
-    error={'anchor':'锚点','assessment_response':'unexpected.*expression_redundant_explanation','wrapped_arrays':'顶层必须为数组'}
+    error={'anchor':'锚点','assessment_response':'unexpected.*expression_redundant_explanation','wrapped_arrays':'顶层必须为数组','source_claim':'来源陈述不能直接绑定正文'}
     with pytest.raises(ValueError,match=error[invalid_metadata]):
         worker.auto_revise(job,brief,folder)
     revision=store.one('briefs','brief_'+job['id'][4:]+'_r1');original_hash=revision['hash']
+    assert not store.rows('SELECT id FROM claim_bindings WHERE version_id=?',(revision['id'],))
+    if invalid_metadata=='source_claim':
+        # A pre-upgrade failed job may already contain a valid partial binding.
+        # Recovery keeps it and must not insert the same binding a second time.
+        bid=next(iter(blocks(brief_document(revision))))
+        bind_claim(store,revision['id'],claim['id'],bid,'Revenue was USD 12 million')
     worker.assess_version=lambda job,revised,folder,backend:store.assess(revised['id'],{'brief_hash':revised['hash'],**score})
     result=worker.auto_revise(job,brief,folder)
     assert runtime.calls==['revise','repair_revision_metadata']
@@ -112,7 +127,7 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
     latest=store.rows('SELECT * FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]
     if edit_during_repair:
         assert result['revision_status']=='user_edit' and latest['markdown']=='USER EDIT'
-        assert not store.rows('SELECT id FROM claim_bindings WHERE version_id=?',(revision['id'],))
+        assert len(store.rows('SELECT id FROM claim_bindings WHERE version_id=?',(revision['id'],)))==(1 if invalid_metadata=='source_claim' else 0)
     else:
         assert result['revision_status']=='complete' and latest['id']==revision['id']
         assert len(store.rows('SELECT id FROM claim_bindings WHERE version_id=?',(revision['id'],)))==1
