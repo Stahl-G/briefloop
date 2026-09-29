@@ -9,6 +9,22 @@ const crypto = require('node:crypto');
 const {EventEmitter} = require('node:events');
 const {createUpdater} = require('../updater.cjs');
 
+const MANIFEST_URL = 'https://github.com/Stahl-G/briefloop/releases/latest/download/release-manifest.json';
+const manifestFor = version => ({version, source_commit: 'a'.repeat(40), assets: {
+  [`BriefLoop-${version}-arm64-mac.zip`]: {bytes: 64, sha256: 'b'.repeat(64)}
+}});
+function officialFeed(manifest, calls = [], tag = `v${manifest.version}`) {
+  const exact = `https://github.com/Stahl-G/briefloop/releases/download/${tag}/release-manifest.json`;
+  const cdn = 'https://release-assets.githubusercontent.com/synthetic/manifest';
+  return async url => {
+    calls.push(url);
+    if (url === MANIFEST_URL) return new Response(null, {status: 302, headers: {location: exact}});
+    if (url === exact) return new Response(null, {status: 302, headers: {location: cdn}});
+    assert.equal(url, cdn, 'Only the official static manifest chain may be requested');
+    return new Response(JSON.stringify(manifest));
+  };
+}
+
 async function nativeFile(t) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-native-'));
   const name = `BriefLoop-Setup-0.20.0-${process.arch}.exe`, file = path.join(directory, name);
@@ -94,15 +110,13 @@ test('test feed and redirects cannot escape their explicit loopback origin', asy
   assert.equal(f.assetRequests(), 1);
 });
 
-test('official source only accepts repository assets, with app version independent of backend', async t => {
-  const f = await fixture(t);
-  const updater = createUpdater({...f.config, testFeed: null,
-    fetch: async url => {
-      assert.equal(url, 'https://api.github.com/repos/Stahl-G/briefloop/releases/latest');
-      return new Response(JSON.stringify({...f.release, html_url: 'https://github.com/Stahl-G/briefloop/releases/tag/v0.20.0',
-        assets: [{...f.release.assets[0], browser_download_url: 'https://github.com/other/project/releases/download/v0.20.0/app.dmg'}]}));
-    }});
+test('official metadata rejects redirects to another repository before reading it', async () => {
+  const calls = [];
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64',
+    fetch: async url => {calls.push(url); return new Response(null, {status: 302,
+      headers: {location: 'https://github.com/other/project/releases/download/v0.20.0/release-manifest.json'}});}});
   assert.equal((await updater.check()).error.code, 'untrusted_url');
+  assert.deepEqual(calls, [MANIFEST_URL]);
   assert.equal(updater.status().source, 'github');
 });
 
@@ -177,13 +191,11 @@ test('DMG version and exact official release tag must match metadata', async t =
   f.release.assets[0].name = 'BriefLoop-0.18.0-arm64.dmg';
   assert.equal((await f.updater.check()).error.code, 'asset_version_mismatch');
   f.release.assets[0].name = 'BriefLoop-0.20.0-arm64.dmg';
-  let tag = 'v0.18.0';
-  const updater = createUpdater({...f.config, testFeed: null, fetch: async () => new Response(JSON.stringify({
-    ...f.release, html_url: 'https://github.com/Stahl-G/briefloop/releases/tag/v0.20.0',
-    assets: [{...f.release.assets[0], browser_download_url: `https://github.com/Stahl-G/briefloop/releases/download/${tag}/BriefLoop-0.20.0-arm64.dmg`}]
-  }))});
-  assert.equal((await updater.check()).error.code, 'asset_version_mismatch');
-  tag = 'v0.20.0'; assert.equal((await updater.check()).state, 'available');
+  const origin = new URL(f.config.testFeed).origin;
+  f.release.assets[0].browser_download_url = `${origin}/Stahl-G/briefloop/releases/download/v0.18.0/BriefLoop-0.20.0-arm64.dmg`;
+  assert.equal((await f.updater.check()).error.code, 'asset_version_mismatch');
+  f.release.assets[0].browser_download_url = `${origin}/Stahl-G/briefloop/releases/download/v0.20.0/BriefLoop-0.20.0-arm64.dmg`;
+  assert.equal((await f.updater.check()).state, 'available');
 });
 
 test('native installation error event is propagated so the main gate can recover', async t => {
@@ -230,10 +242,7 @@ test('only explicit local feeds allow equal-version reinstall; production equali
   assert.equal(checked.currentAppVersion, '0.19.0'); assert.equal(checked.releaseVersion, '0.19.0');
   assert.equal((await f.updater.download()).state, 'downloaded');
   assert.equal(f.updater.status().reinstall, true);
-  const official = createUpdater({...f.config, testFeed: null, fetch: async url => {
-    assert.equal(url, 'https://api.github.com/repos/Stahl-G/briefloop/releases/latest');
-    return new Response(JSON.stringify({...f.release, html_url: 'https://github.com/Stahl-G/briefloop/releases/tag/v0.19.0'}));
-  }});
+  const official = createUpdater({...f.config, testFeed: null, installMode: 'zip', fetch: officialFeed(manifestFor('0.19.0'))});
   assert.equal((await official.check()).state, 'current');
   assert.equal(official.status().reinstall, false);
   assert.equal((await official.download()).error.code, 'not_available');
@@ -256,7 +265,7 @@ test('equal-version local reinstall keeps filename and exact tag binding', async
 });
 
 
-test('GitHub primary rate limit explains reset and avoids repeat metadata requests', async () => {
+test('static release service throttling explains reset and avoids repeat requests', async () => {
   let requests = 0;
   const reset = Math.floor(Date.now() / 1000) + 120;
   const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64',
@@ -292,4 +301,45 @@ test('Mac default selects version-bound ZIP alongside DMG, requires its digest, 
   zip.digest=f.release.assets[0].digest;
   zip.browser_download_url=zip.browser_download_url.replace('/v0.20.0/','/v0.19.0/');
   assert.equal((await missing.check()).error.code,'asset_version_mismatch');
+});
+
+
+test('static manifest bypasses REST quota and caches only successful checks for five minutes', async t => {
+  t.mock.timers.enable({apis: ['Date']});
+  const calls = [], manifest = manifestFor('0.20.0');
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64',
+    fetch: officialFeed(manifest, calls)});
+  const first = await updater.check();
+  assert.equal(first.state, 'available'); assert.equal(first.releaseVersion, '0.20.0');
+  assert.equal(first.url, 'https://github.com/Stahl-G/briefloop/releases/tag/v0.20.0');
+  assert.equal((await updater.check()).state, 'available');
+  assert.equal(calls.length, 3);
+  t.mock.timers.tick(300001);
+  assert.equal((await updater.check()).state, 'available');
+  assert.equal(calls.length, 6);
+  assert.ok(calls.every(url => !url.includes('api.github.com')));
+});
+
+test('missing static manifest does not fall back to the rate-limited REST API and can recover', async () => {
+  const calls = [], manifest = manifestFor('0.20.0'), feed = officialFeed(manifest, calls);
+  let missing = true;
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64',
+    fetch: async url => missing ? (calls.push(url), new Response('', {status: 404})) : feed(url)});
+  assert.equal((await updater.check()).error.code, 'manifest_unavailable');
+  assert.deepEqual(calls, [MANIFEST_URL]);
+  missing = false;
+  assert.equal((await updater.check()).state, 'available');
+});
+
+test('manifest cannot silently change the tag resolved by GitHub or omit its checksum', async () => {
+  const manifest = manifestFor('0.20.0');
+  const config = {app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64'};
+  const wrongTag = createUpdater({...config, fetch: officialFeed(manifest, [], 'v0.21.0')});
+  assert.equal((await wrongTag.check()).error.code, 'invalid_release_manifest');
+  delete manifest.assets['BriefLoop-0.20.0-arm64-mac.zip'].sha256;
+  const checksum = createUpdater({...config, fetch: officialFeed(manifest)});
+  assert.equal((await checksum.check()).error.code, 'invalid_release_manifest');
+  const noTag = createUpdater({...config, fetch: async () => new Response(null, {status: 302,
+    headers: {location: 'https://release-assets.githubusercontent.com/synthetic/manifest'}})});
+  assert.equal((await noTag.check()).error.code, 'invalid_release_manifest');
 });

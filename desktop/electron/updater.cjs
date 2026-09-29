@@ -5,10 +5,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const semver = require('semver');
 const delta = require('./differential-download.cjs');
+const {parseReleaseManifest} = require('./release-metadata.cjs');
 
 const REPOSITORY = 'Stahl-G/briefloop';
-const API = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
 const RELEASES = `https://github.com/${REPOSITORY}/releases/`;
+const MANIFEST = `${RELEASES}latest/download/release-manifest.json`;
+const METADATA_TTL = 5 * 60 * 1000;
 const MAX_ASSET = 4 * 1024 ** 3;
 
 class UpdateError extends Error {
@@ -35,6 +37,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
               progress: null, installMode, error: null, retryable: false, reinstall: false, source: local ? 'local-test' : 'github'};
   let pending = null, asset = null, ready = null, native = null, available = false;
   let metadataRateLimit = null, operation = 'check';
+  let metadataCache = null;
   const status = () => structuredClone(data);
   const publish = patch => {data = {...data, ...patch}; changed(status()); return status();};
   const fail = (error, kind = operation) => {
@@ -64,28 +67,41 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       if (url.origin !== local.origin) throw new UpdateError('untrusted_url', '测试更新地址必须留在指定回环服务。', false);
     } else {
       if (url.protocol !== 'https:') throw new UpdateError('untrusted_url', '更新地址必须使用 HTTPS。', false);
-      const official = kind === 'metadata' ? url.href === API
+      const manifestPath = /^\/Stahl-G\/briefloop\/releases\/download\/v[^/]+\/release-manifest\.json$/;
+      const official = kind === 'metadata' ? url.href === MANIFEST || (redirected && url.origin === 'https://github.com' && manifestPath.test(url.pathname) && !url.search)
         : url.origin === 'https://github.com' && url.pathname.startsWith(`/${REPOSITORY}/releases/download/`);
       // GitHub serves release bytes through a signed CDN redirect. This host is
       // admitted only after requesting an official repository asset URL.
-      const cdn = redirected && kind === 'asset' && url.hostname === 'release-assets.githubusercontent.com';
+      const cdn = redirected && url.origin === 'https://release-assets.githubusercontent.com';
       if (!official && !cdn) throw new UpdateError('untrusted_url', '更新地址不属于官方发布来源。', false);
     }
     return url.href;
   }
-  async function response(value, kind, headers = {}, deadlineSignal = null) {
+  async function response(value, kind, headers = {}, deadlineSignal = null, trace = null) {
     let url = trusted(value, kind);
     if (kind === 'metadata' && metadataRateLimit?.until > Date.now()) throw metadataRateLimit.error;
     const signal = deadlineSignal || AbortSignal.timeout(kind === 'metadata' ? 30000 : 10 * 60 * 1000);
     for (let n = 0; n < 6; n++) {
       const res = await fetchImpl(url, {redirect: 'manual', signal,
-        headers: {'Accept': kind === 'metadata' ? 'application/vnd.github+json' : 'application/octet-stream',
+        headers: {'Accept': kind === 'metadata' ? 'application/json' : 'application/octet-stream',
                   'User-Agent': 'BriefLoop-Desktop-Updater', ...headers}});
       if ([301, 302, 303, 307, 308].includes(res.status)) {
         const location = res.headers.get('location');
         await res.body?.cancel();
         if (!location) break;
-        url = trusted(new URL(location, url).href, kind, true); continue;
+        url = trusted(new URL(location, url).href, kind, true);
+        if (!local && kind === 'metadata') {
+          const next = new URL(url);
+          if (next.origin === 'https://github.com' && next.pathname.startsWith(`/${REPOSITORY}/releases/download/`)) {
+            const tag = next.pathname.split('/').at(-2);
+            if (trace.tag && trace.tag !== tag) throw new UpdateError('invalid_release_manifest', '更新清单的发布版本发生变化，请重新检查。', false);
+            trace.tag = tag;
+          }
+          if (next.origin === 'https://release-assets.githubusercontent.com' && !trace.tag) {
+            throw new UpdateError('invalid_release_manifest', '更新清单缺少官方发布版本绑定。', false);
+          }
+        }
+        continue;
       }
       if (!res.ok) {
         const rateLimited = !local && kind === 'metadata' && (res.status === 429 ||
@@ -99,12 +115,15 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
           const hasReset = Number.isFinite(reported) && reported > now && reported <= now + 24 * 60 * 60 * 1000;
           const until = hasReset ? reported : now + 60000;
           const timing = hasReset ? `请在本机时间 ${new Date(until).toLocaleString('zh-CN', {hour12: false})} 后重试。` : '请稍后重试。';
-          const error = new UpdateError('github_rate_limited', `GitHub 更新检查已达到请求频率限制（HTTP ${res.status}）。${timing}也可点击“查看官方发布与安装包”手动下载；已下载的安装包仍可使用。`);
+          const error = new UpdateError('github_rate_limited', `GitHub 发布文件服务暂时限制请求（HTTP ${res.status}）。${timing}也可点击“查看官方发布与安装包”手动下载；已下载的安装包仍可使用。`);
           metadataRateLimit = {until, error};
           await res.body?.cancel();
           throw error;
         }
         await res.body?.cancel();
+        if (!local && kind === 'metadata' && res.status === 404) {
+          throw new UpdateError('manifest_unavailable', '官方发行尚未提供更新清单，请稍后重试或查看官方发布与安装包。');
+        }
         throw new UpdateError(`http_${res.status}`, `更新服务返回 HTTP ${res.status}，请稍后重试。`);
       }
       return res;
@@ -112,14 +131,26 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     throw new UpdateError('redirect_limit', '更新地址重定向异常。');
   }
   async function metadata() {
-    const res = await response(local ? local.href : API, 'metadata');
+    if (!local && metadataCache?.until > Date.now()) return metadataCache.release;
+    const trace = {};
+    const res = await response(local ? local.href : MANIFEST, 'metadata', {}, null, trace);
     let bytes = 0, chunks = [];
     for await (const chunk of res.body) {
       bytes += chunk.length;
       if (bytes > 2 * 1024 ** 2) {throw new UpdateError('metadata_limit', '更新说明超出大小限制。', false);}
       chunks.push(Buffer.from(chunk));
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    try {
+      const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      return local ? value : parseReleaseManifest(value, {tag: trace.tag});
+    } catch {
+      throw new UpdateError('invalid_release_manifest', '更新清单格式或版本校验失败，请从官方发行页核对。', false);
+    }
+  }
+  function rememberMetadata(release) {
+    // Cache only a usable check, never failures. Local acceptance feeds remain
+    // uncached so their operator can exercise recovery with corrected metadata.
+    if (!local && metadataCache?.release !== release) metadataCache = {release, until: Date.now() + METADATA_TTL};
   }
   function releaseVersion(value) {
     const version = typeof value === 'string' && semver.valid(value);
@@ -234,7 +265,10 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     const version = releaseVersion(release.tag_name), url = releaseURL(release.html_url);
     publish({releaseVersion: version, notes: typeof release.body === 'string' ? release.body.slice(0, 20000) : '', url});
     const reinstall = !!local && version === semver.valid(currentAppVersion);
-    if (!semver.gt(version, currentAppVersion) && !reinstall) return publish({state: 'current'});
+    if (!semver.gt(version, currentAppVersion) && !reinstall) {
+      rememberMetadata(release);
+      return publish({state: 'current'});
+    }
     const candidates = (Array.isArray(release.assets) ? release.assets : []).filter(item =>
       typeof item.name === 'string' && /(?:^|[-_.])arm64(?:[-_.]|$)/i.test(item.name) && (installMode === 'zip' ? /-mac\.zip$/i : /\.dmg$/i).test(item.name));
     if (candidates.length !== 1) throw new UpdateError('asset_unavailable', '该版本尚无唯一可用的 Apple Silicon 更新包，请稍后重试或从发行页下载 DMG。');
@@ -269,6 +303,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       } catch {}
     }
     available = true;
+    rememberMetadata(release);
     return publish({state: 'available', reinstall});
   }
   async function downloadImpl() {

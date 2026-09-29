@@ -29,7 +29,7 @@ DTO 字段：
 | `notes` | 发布说明字符串；必须按文本显示，不能直接作为 HTML 插入 |
 | `url` | 官方 Release 页面；本地测试时为测试地址 |
 | `progress` | null 或 `{percent,transferred,total}`，字节为单位 |
-| `installMode` | `native` 或 `dmg` |
+| `installMode` | `native`、`zip` 或 `dmg` |
 | `error` | null 或 `{code,message}`，不含凭据或原始错误全文 |
 | `retryable` | 操作失败后是否可重试 |
 | `reinstall` | 仅显式本地源的同版本 DMG 为 true；界面显示“重新安装当前 App”，不称为新版本 |
@@ -39,13 +39,23 @@ DTO 字段：
 
 ## 当前 macOS 路径
 
-macOS 当前默认使用 `installMode: 'dmg'` 的手动替换通道，并优先选择 ZIP 更新载荷：下载、校验、解压后打开 Finder，由用户替换 App；首次安装仍用 DMG。模式名沿用历史接口，不表示只下载 DMG。当前发行未做 Developer ID 签名或 Apple 公证，不声称原地自动升级。[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)
+macOS 当前默认使用 `installMode: 'zip'`：下载、校验、解压后打开 Finder，由用户替换 App；首次安装仍用 DMG。当前发行未做 Developer ID 签名或 Apple 公证，不声称原地自动升级。显式 `dmg` 模式仍可打开已验证的 DMG。
 
-0.20 发行须上传与版本一致的真实 DMG，文件名为 `BriefLoop-0.20.0-arm64.dmg`；公开发行是否完成以实际 Release 及其资产为准。本地测试源不代表公开发行。
+更新检查只读取固定的 `https://github.com/Stahl-G/briefloop/releases/latest/download/release-manifest.json`，不调用匿名 GitHub REST API，也不读取用户 GitHub 凭据。此清单从 0.26.1 开始随正式工件发布，含稳定版本、冻结源码提交、各工件字节数及 SHA-256。清单缺失时显示明确错误，不回退到可能已限流的 REST 接口。
 
-通过 GitHub `releases/latest` 查询稳定版本，仍显式拒绝 draft、prerelease 和非稳定 SemVer。必须有唯一 Apple Silicon DMG，正式文件名为 `BriefLoop-{稳定版本}-arm64.dmg`；下载 URL 必须属于返回的精确 release tag，且末段文件名一致。缺资产或版本不匹配时明确拒绝下载。GitHub 资产字段包括下载 URL、size 和可选 digest。[GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
+逐跳检查 HTTPS 重定向：官方 latest 别名先解析为同仓库精确 tag 下的清单，再允许 GitHub release-assets CDN；清单中的版本必须与此 tag 完全一致。清单不能指定其他下载域名。每次成功检查缓存五分钟，连续点击复用结果；过期后重新请求，失败不缓存为成功。若静态文件服务自身返回 429 或明确的配额耗尽响应，仍按 Retry-After/reset 暂停请求。没有自动轮询检查。
 
-下载起点限于官方仓库 `releases/download/` 地址；只允许其返回的 GitHub release-assets CDN HTTPS 重定向。临时文件在 `userData/updates` 内，完整下载后核对声明大小及存在的 SHA-256/SHA-512 digest，fsync 后原子重命名；失败清除本次临时目录。没有上游 digest 时只验证大小、保留本地 SHA-256 用于安装前防篡改检查，**不声称取得了上游哈希证明**。下载后的安装门禁调用 `shell.openPath()` 打开本模块生成的本地 DMG；用户自行完成安装。若打开 DMG 暂时失败，可保留已下载资产重试；每次仍重走保存/忙任务门禁并再次校验。检查与 `openPath` 之间仍存在同用户替换文件的时序窗口，本实现不宣称阻止恶意同用户本地篡改。
+必须有唯一的 Apple Silicon 更新包，名称为 `BriefLoop-{稳定版本}-arm64-mac.zip`（DMG 模式为 `BriefLoop-{稳定版本}-arm64.dmg`），并绑定到清单的精确 tag。生产清单每个工件都必须有大小和 SHA-256，ZIP 不接受缺少上游校验值。无新版本时只报告当前版本，不允许降级或预发布。
+
+下载起点限于官方仓库 `releases/download/` 地址；只允许其返回的 GitHub release-assets CDN HTTPS 重定向。临时文件在 `userData/updates` 内，完整下载后核对声明大小及 SHA-256/SHA-512 digest，fsync 后原子重命名；失败清除本次临时目录。ZIP 经解压及 App 标识/版本核对后交给 Finder；DMG 模式打开本模块生成的本地 DMG。安装前仍经过保存、忙任务和退出门禁，再次校验下载文件。此复核不宣称消除恶意同用户并发替换文件的全部时序窗口。
+
+每次发行必须用最终工件生成并上传 `release-manifest.json`，不能在签名或修改包之前计算哈希。生成脚本只读取工件，不重建它们；已发布版本不可用不同内容覆盖。发行验收包含一次公开 latest 清单读取、版本及包哈希比对，再进行各平台实际安装验收。
+
+```sh
+node desktop/electron/scripts/prepare-release-manifest.cjs --dist /path/to/frozen-artifacts --commit FROZEN_40_CHARACTER_SHA
+```
+
+版本自动取 `pyproject.toml`；可选 `--version` 必须与其一致。目录中只放本次最终安装包、同一 wheel/sdist、更新索引和验收记录；混入旧版本安装包会失败。脚本不会覆盖不同内容的既有清单。清单与其中列出的所有工件一起上传到对应正式 release，再检查 `releases/latest/download/release-manifest.json` 可用。
 
 ## 原生更新路径
 
@@ -59,7 +69,7 @@ Windows 下载完成后，以当前实例的公开 `update-downloaded` 元数据
 
 ## 无公开发布的本地验证
 
-构造器允许主进程显式传入 `testFeed: 'http://127.0.0.1:PORT/release'`，仅适用于 DMG 测试路径；也可用 localhost 或 IPv6 回环。该地址返回 GitHub Release 形状 JSON。测试资产必须在同一回环 origin，路径必须为 `/Stahl-G/briefloop/releases/download/{tag_name}/BriefLoop-{version}-arm64.dmg`，重定向不能离开；DTO 强制 `source: 'local-test'`。本模块不自动读取环境变量。主进程仅在 `!app.isPackaged` 时接受显式 `BRIEFLOOP_UPDATE_TEST_FEED`；打包 App 忽略该变量，始终使用官方来源。界面持续显示“本地测试更新源”，不接受网页传入 feed。
+构造器允许主进程显式传入 `testFeed: 'http://127.0.0.1:PORT/release'`，适用于 ZIP/DMG 测试路径；也可用 localhost 或 IPv6 回环。该地址返回 GitHub Release 形状 JSON。测试资产必须在同一回环 origin，路径必须为 `/Stahl-G/briefloop/releases/download/{tag_name}/BriefLoop-{version}-arm64.dmg`，重定向不能离开；DTO 强制 `source: 'local-test'`。本模块不自动读取环境变量。主进程仅在 `!app.isPackaged` 时接受显式 `BRIEFLOOP_UPDATE_TEST_FEED`；打包 App 忽略该变量，始终使用官方来源。界面持续显示“本地测试更新源”，不接受网页传入 feed。
 
 ```json
 {
@@ -85,11 +95,11 @@ Windows 下载完成后，以当前实例的公开 `update-downloaded` 元数据
 
 原生 `installReady()` 的 `requested: true` 仅表示请求已交给成熟更新器，不表示安装成功。主进程在请求返回后继续监听该安装事务的错误；在 App 仍存活时收到失败，会撤销退出、恢复 owned 服务并解除编辑器暂停。`electron.autoUpdater` 的 `before-quit-for-update` 用于识别更新器随后排队的退出，失败事务会阻止它且不会重新进入用户退出门禁。这里不以短延时推断安装完成；进程已经退出后的安装器失败仍由平台安装器处理，本地测试不构成 Windows 安装成功证明。
 
-## 增量下载（DMG / Windows NSIS）
+## 增量下载（ZIP / DMG / Windows NSIS）
 
-- macOS 仍使用原生 DMG 安装流程；增量只减少传输，不修改正在运行的 App。
-  发布最终 DMG 和同名 `.dmg.blockmap` 到同一 release；GitHub 资产必须提供完整 DMG 的
-  SHA-256/SHA-512 digest。`npm run dist` 生成并验证 blockmap；签名流程在 stapling
+- macOS 默认使用 ZIP/Finder 替换流程，保留显式 DMG 路径；增量只减少传输，不修改正在运行的 App。
+  发布最终 ZIP/DMG 和同名 `.blockmap` 到同一 release；静态清单必须提供完整包的
+  SHA-256。`npm run dist` 生成并验证 blockmap；签名流程在 stapling
   改变 DMG 后重新生成，不能上传 stapling 前的旧 map。
 - 第一次没有缓存时下载全包并保存已校验的基线。后续版本使用 electron-builder 的
   blockmap 比较数据块，只用 HTTP Range 下载变化部分，再验证整个重建 DMG。
