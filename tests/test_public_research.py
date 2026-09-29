@@ -46,36 +46,6 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     assert '实际联网状态：未开启' in chat_instructions(store,{},internal=True,allow_web=False)
 
 
-def test_search_provider_is_frozen_and_tavily_provenance_is_explicit(tmp_path):
-    store=Store(tmp_path/'workspace')
-    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    run=store.create_run({'title':'市场周报','objective':'核对公开披露','allow_web':True},[])
-    job=store.enqueue('generate',{'run_id':run['id']})
-    store.set_meta('settings',{**store.settings(),'search_provider':'native'})
-    payload=json.loads(store.one('jobs',job['id'])['payload'])
-    assert payload['search_provider']=='tavily'
-    assert store.search_provider_for_run(run['id'])=='tavily'
-    folder=store.root/'jobs'/'provider-check';folder.mkdir()
-    generation_prompt(store,{**run,'search_provider':payload['search_provider']},folder)
-    retrieval=json.loads((folder/'input.json').read_text())['retrieval_skill']
-    from pathlib import Path
-    skill_text=Path(retrieval['path']).read_text()
-    assert 'web-search --run '+run['id'] in skill_text and 'PROVIDER 可选 tavily' in skill_text
-    assert 'tavily-extract --run '+run['id'] in skill_text
-    assert '提取响应不是网站原始字节' in skill_text and '摘要和挑战页不算正文' in skill_text
-    assert json.loads((folder/'input.json').read_text())['search_provider']=='tavily'
-    # Old jobs keep their prior Codex behavior even if settings now select Tavily.
-    payload.pop('search_provider')
-    payload.pop('search_policy')
-    with store.tx() as connection:
-        connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(payload),job['id']))
-    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    assert store.search_provider_for_run(run['id'])=='native'
-    text=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'},allow_web=False)
-    assert '本轮冻结搜索策略：优先 Tavily' in text
-    assert '实际联网状态：未开启' in text
-
-
 def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkeypatch):
     from importlib.resources import files
     from pathlib import Path

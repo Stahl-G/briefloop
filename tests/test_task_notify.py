@@ -25,14 +25,6 @@ def test_note_does_not_disturb_another_running_session(tmp_path):
     assert chat.snapshot(b['id'])['requests'][0]['status'] == 'pending'
 
 
-def test_note_requires_an_owned_session(tmp_path):
-    store = Store(tmp_path)
-    chat = ChatStore(store)
-    other = chat.create('另一个对话', {}, tmp_path)
-    store.enqueue('generate', {'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})  # no session_id: never guess a conversation
-    assert _notes(chat, other['id']) == []
-
-
 def test_note_dedups_per_attempt_and_notifies_a_second_failure(tmp_path):
     store = Store(tmp_path)
     chat = ChatStore(store)

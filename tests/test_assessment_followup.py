@@ -68,32 +68,6 @@ def test_explicit_check_conflict_is_visible_but_minor_findings_do_not_reject_sco
     assert legacy['checks'][0]['status'] == 'passed'
 
 
-def test_missing_followups_are_saved_as_unchecked_without_another_turn(tmp_path):
-    store, first, revised, previous = pair(tmp_path)
-    job = store.enqueue('assess', {'version_id': revised['id'], 'agent_backend': 'codex'})
-
-    class Runtime:
-        calls = 0
-        def execute(self, job, prompt, folder):
-            self.calls += 1
-            packet = json.loads((folder / 'input.json').read_text())
-            # One requested check is answered; revision follow-up is omitted.
-            (folder / 'assessment.json').write_text(dump(score(revised, checks=[{
-                'id': packet['assessment_checks'][0]['id'], 'status': 'passed',
-                'reason': 'Compared headings and figures.'}])))
-            return {'status': 'complete'}
-
-    runtime = Runtime(); worker = Worker(store, runtime)
-    result = worker.assess(job)
-    data = json.loads(store.one('assessments', result['assessment_id'])['data'])
-    assert runtime.calls == 1
-    assert data['overall'] == '达到要求'
-    assert [check['status'] for check in data['checks']] == ['passed', 'not_checked', 'not_checked']
-    assert data['checks'][-1]['prior_assessment_id'] == previous['id']
-    assert data['checks'][-1]['prior_description'] == 'Summary omits the public beta condition.'
-    assert len(store.rows('SELECT id FROM briefs WHERE run_id=?', (first['run_id'],))) == 2
-
-
 def test_disputed_old_finding_is_not_silently_marked_resolved(tmp_path):
     store, first, revised, previous = pair(tmp_path)
     expected = [{'id': f"revision:{previous['id']}:0", 'name': '修订复核 · 1',

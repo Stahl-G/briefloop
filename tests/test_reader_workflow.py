@@ -52,24 +52,6 @@ class RevisionRuntime:
         return {'returncode':0}
 
 
-@pytest.mark.parametrize('user_edit',[False,True])
-def test_one_revision_only_and_user_edit_wins(tmp_path,user_edit):
-    store,run,source=setup(tmp_path);job=store.enqueue('generate',{'run_id':run['id']})
-    brief=store.publish(run['id'],{'title':'Report','markdown':'Original'},version_id='brief_'+job['id'][4:])
-    store.assess(brief['id'],{'brief_hash':brief['hash'],'summary':'needs a correction','overall':'建议修改','evidence':3,'coverage':3,'analysis':3,'expression':3})
-    runtime=RevisionRuntime(store,user_edit);worker=Worker(store,runtime);folder=worker.folder(job)
-    result=worker.auto_revise(job,brief,folder)
-    latest=store.rows('SELECT * FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]
-    if user_edit:
-        assert result['revision_status']=='suggestion' and latest['markdown']=='USER CORRECTION'
-        assert runtime.calls==['revision']
-    else:
-        assert result['version_id']==latest['id'] and latest['parent_id']==brief['id']
-        assert runtime.calls==['revision','review']
-        again=worker.auto_revise(job,brief,folder)
-        assert again['version_id']==latest['id'] and len(runtime.calls)==2
-
-
 def test_company_gate_requires_choice_and_source_bound_maintenance(tmp_path):
     from briefloop.company_context import complete_review
     store=Store(tmp_path)

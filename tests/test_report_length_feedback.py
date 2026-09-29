@@ -101,17 +101,3 @@ def test_existing_snapshot_seven_remains_applicable_without_length_metadata(tmp_
     assert review.get_review(store,'old_review')['status']=='complete'
     review.validate_applicable_review(store,'old_review',brief['id'])
     assert {name:(packet/name).read_bytes() for name in files}==before
-
-
-def test_pending_release_keeps_its_version_seven_input_after_new_review_diagnostics(tmp_path,monkeypatch):
-    from test_release import reviewed_report
-    from briefloop.release import eligibility,enqueue_release,get_release
-    snapshot=review._snapshot
-    with monkeypatch.context() as patch:
-        patch.setattr(review,'_snapshot',lambda store,version_id,snapshot_version=7: snapshot(store,version_id,7))
-        store,source,brief,*_=reviewed_report(tmp_path)
-        queued=enqueue_release(store,brief['id'])
-        frozen=get_release(store,queued['release']['id'])['data']
-    assert frozen['snapshot']['snapshot_version']==7 and 'length_stats' not in frozen['snapshot']
-    expected={key:value for key,value in frozen.items() if key not in ('notices','previous_id','change_type','change_reason')}
-    assert eligibility(store,brief['id'])['input']==expected

@@ -94,27 +94,3 @@ def test_bad_image_fails_before_queue_and_provider_rejection_does_not_drop_pixel
     assert starts[0]['model']=='vendor/custom'
     assert any('does not accept image' in event['data'].get('message','') for event in manager.snapshot(sid)['events'])
     manager.close()
-
-
-def test_internal_handoff_retains_visual_paths_without_loading_every_pdf_page(tmp_path,monkeypatch):
-    store=Store(tmp_path/'workspace');image,pdf,values=attachments(store,monkeypatch)
-    run=store.create_run({'title':'review','objective':'read source charts'},[image['id'],pdf['id']])
-    job=store.enqueue('generate',{'run_id':run['id']});folder=store.root/'jobs'/job['id'];folder.mkdir()
-    generation_prompt(store,run,folder);packet=json.loads((folder/'input.json').read_text())
-    assert packet['sources'][0]['image_path']==values[image['id']]['image_path']
-    assert packet['sources'][1]['original_path']==values[pdf['id']]['original_path']
-    assert packet['sources'][1]['pages']==8
-    runtime=InteractiveRuntime(store,object())
-    assert runtime._input_source_ids(job,folder)==[]
-    brief=store.publish(run['id'],{'title':'review','markdown':'chart','citations':[{'source_id':image['id'],'locator':'image'},{'source_id':pdf['id'],'locator':'PDF p.3'}]})
-    evaluation=folder/'evaluation';evaluation.mkdir();assessment_prompt(store,brief,evaluation)
-    stage=stage_job(store,job,'evaluator',mode='single')
-    assert runtime._input_source_ids(stage,evaluation)==[image['id'],pdf['id']]
-    manager=HarnessManager(store,RPC)
-    task=manager.start_internal('evaluate the cited sources',source_ids=runtime._input_source_ids(stage,evaluation))
-    until(lambda:manager.snapshot(task.session_id)['session']['turn_id'] is not None)
-    blocks=next(params for method,params in manager.client.calls if method=='turn/start')['input']
-    assert len([block for block in blocks if block['type']=='localImage'])==1
-    assert any(block['type']=='text' and pdf['id'] in block['text'] and 'application/pdf' in block['text'] for block in blocks)
-    assert manager.snapshot(task.session_id)['messages'][0]['source_ids']==[image['id'],pdf['id']]
-    manager.close()

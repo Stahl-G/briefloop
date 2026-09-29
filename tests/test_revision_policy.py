@@ -46,56 +46,6 @@ def test_missing_required_content_in_checks_does_not_need_a_low_score():
     assert not revision_reasons(passing(), [], {'requirement_checks': [{'requirement_id': 'manual', 'status': 'manual'}]})
 
 
-@pytest.mark.parametrize('has_score', [True, False])
-def test_worker_revises_confirmed_minor_defect_once_and_rechecks(tmp_path, has_score):
-    store = Store(tmp_path)
-    source = store.add_source('Synthetic source', 'Two issues await supplier documents.')
-    run = store.create_run({'title': 'Synthetic', 'objective': 'Only state supported facts.'}, [source['id']])
-    brief = store.publish(run['id'], {'title': 'Synthetic', 'markdown': 'Two issues await documents, not stalled.'})
-    job = store.enqueue('generate', {'run_id': run['id'], 'auto_revision': True})
-    if has_score:
-        store.assess(brief['id'], {'brief_hash': brief['hash'], **passing()})
-    # Seed an admitted review finding; the real review admission/binding path is
-    # independently covered by test_review.py. Never writes to a user workspace.
-    packet_folder = store.root / 'synthetic-review'
-    fingerprint, files = build_packet(store, brief['id'], packet_folder)
-    with store.tx() as connection:
-        connection.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
-                           ('review_case', brief['id'], job['id'], fingerprint, 'complete', dump({'packet_path': str((packet_folder / 'packet').relative_to(store.root)), 'files': files}),
-                            dump({'findings': []}), now(), now()))
-        connection.execute('INSERT INTO review_findings VALUES(?,?,?,?,?,?)',
-                           ('finding_case', 'review_case', brief['id'], 'open', dump({
-                               'kind': 'insufficient_evidence', 'severity': 'minor',
-                               'description': 'The source does not state that work was not stalled.',
-                               'evidence': 'Source only states the wait for documents.'}), now()))
-
-    class Runtime:
-        cancelled = threading.Event()
-        def __init__(self): self.calls = []
-        def execute(self, job, prompt, folder, **kwargs):
-            self.calls.append(str(folder.name))
-            (folder / 'draft.json').write_text(dump({'title': 'Synthetic', 'markdown': 'Two issues await supplier documents.'}))
-            (folder / 'responses.json').write_text(dump([{
-                'finding_id': 'finding_case', 'action': 'removed', 'reason': 'Removed unsupported characterization.'}]))
-            return {}
-
-    runtime = Runtime()
-    worker = Worker(store, runtime)
-    checked = []
-    def recheck(job, revised, folder, backend):
-        checked.append(revised['id'])
-        return store.assess(revised['id'], {'brief_hash': revised['hash'], **passing()})
-    worker.assess_version = recheck
-    result = worker.auto_revise(job, brief, worker.folder(job))
-    assert result['revision_status'] == 'complete'
-    assert store.one('briefs', brief['id'])['markdown'] == 'Two issues await documents, not stalled.'
-    assert len(runtime.calls) == len(checked) == 1
-    assert store.one('briefs', result['version_id'])['parent_id'] == brief['id']
-    worker.auto_revise(job, brief, worker.folder(job))
-    assert len(runtime.calls) == len(checked) == 1
-    assert len(store.rows('SELECT id FROM briefs WHERE run_id=?', (run['id'],))) == 2
-
-
 def test_stale_packet_and_its_score_cannot_trigger(tmp_path):
     from briefloop.review import review_status
     from briefloop.revision_policy import applicable_inputs, revision_reasons

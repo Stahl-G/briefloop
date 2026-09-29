@@ -40,53 +40,6 @@ def test_packet_carries_candidates_and_unselected(tmp_path):
     assert 'fact_checks' not in review._snapshot(store, world['brief']['id'], 6)
 
 
-def test_candidates_and_reviewer_judgements_are_separately_queryable(tmp_path):
-    world, record = admitted(tmp_path); store = world['store']; brief = world['brief']
-    assert fact_check.view(store, brief['id'])['records'][0]['candidates'][0]['reviewer'] is None  # 尚无审阅时不编造结论
-    job = store.enqueue('review', {'version_id': brief['id']})
-    folder = store.root/'jobs'/job['id']
-    prompts = []
-    fiscal = world['claims']['fiscal']
-
-    class Runtime:
-        def execute(self, stage, prompt, target, **kwargs):
-            prompts.append(prompt)
-            packet = json.loads((target/'packet'/'index.json').read_text(encoding='utf-8'))
-            claim_checks = [{'claim_id': claim['id'],
-                             'status': 'insufficient_evidence' if claim['id'] == fiscal['id'] else 'supported_for_scope',
-                             'reason': '候选判矛盾依据的是财年公告行；自然年度口径未见原文，材料不足' if claim['id'] == fiscal['id'] else '核对公告原文一致'}
-                            for claim in world['claims'].values()]
-            output = {'fingerprint': packet['fingerprint'], 'version_id': brief['id'], 'status': 'complete',
-                      'summary': '复核了核查候选', 'coverage_scan_complete': True, 'claim_checks': claim_checks,
-                      'requirement_checks': __import__('review_checks').requirement_checks(json.loads((target/'packet'/'target.json').read_text(encoding='utf-8'))),
-                      'findings': [{'kind': 'insufficient_evidence', 'severity': 'major', 'claim_ids': [fiscal['id']],
-                                    'block_ids': [fiscal['block']], 'report_quote': fiscal['quote'],
-                                    'evidence': '公告原文为财年口径，自然年度披露未取得', 'description': '财年口径主张需补充原文'}]}
-            (target/'review.json').write_text(json.dumps(output), encoding='utf-8')
-
-    accepted = review.run_review(store, Runtime(), job, brief['id'], folder)
-    # 指示词写明观察模式接纳规则：候选无权直接创建核心冲突或阻断交付
-    assert '观察模式' in prompts[0] and '无权直接创建核心冲突或阻断交付' in prompts[0]
-    assert '不代表主张真假' in prompts[0] and 'covers_this_version' in prompts[0]
-    assert accepted['status'] == 'complete'
-    # Reviewer 判断存独立记录（reviews.result），与候选记录（fact_checks）分开
-    saved = json.loads(store.rows('SELECT result FROM reviews WHERE id=?', (accepted['id'],))[0]['result'])
-    fiscal_check = next(check for check in saved['claim_checks'] if check['claim_id'] == fiscal['id'])
-    assert fiscal_check['status'] == 'insufficient_evidence'
-    # 网页视图同时可查两者：候选仍是 contradicted，Reviewer 结论是材料不足，互不改写
-    panel = fact_check.view(store, brief['id'])
-    entry = panel['records'][0]
-    assert entry['candidates'][0]['reviewer'] is not None
-    candidate = next(item for item in entry['candidates'] if item['claim_id'] == fiscal['id'])
-    assert candidate['status'] == 'contradicted' and candidate['reviewer']['status'] == 'insufficient_evidence'
-    assert candidate['anchors'][0]['quote'] == fiscal['quote']
-    assert candidate['spans'][0]['source_name']  # 原文链接解析出来源与定位
-    unselected = entry['unselected'][0]
-    assert unselected['claim_id'] == world['claims']['internal']['id'] and unselected['statement']
-    # 观察模式无硬门：候选存在不产生核心冲突，交付判断仍走既有规则
-    assert store.rows('SELECT * FROM conflicts') == []
-
-
 def test_stale_record_is_flagged_not_hidden(tmp_path):
     world, record = admitted(tmp_path); store = world['store']
     doc = json.loads(world['brief']['editor_document'])

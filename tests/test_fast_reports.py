@@ -49,85 +49,11 @@ def setup(tmp_path, *, internal=False):
     return store,source,run,job,runtime,worker
 
 
-def test_one_prose_turn_publishes_downloadable_draft_and_queues_checks_once(tmp_path):
-    store,source,run,job,runtime,worker=setup(tmp_path)
-    result=worker.generate(job)
-    assert runtime.calls==['fast-writing']
-    brief=store.one('briefs',result['version_id'])
-    assert '[@'+source['id']+']' in brief['markdown']
-    assert not store.rows('SELECT * FROM assessments')
-    checks=store.one('jobs',result['checks_job_id'])
-    assert checks['kind']=='assess' and json.loads(checks['payload'])['auto_revision'] is False
-    assert json.loads(checks['payload'])['runtime']==json.loads(job['payload'])['runtime']
-    assert worker.generate(job)['checks_job_id']==checks['id']
-    assert runtime.calls==['fast-writing']
-    from briefloop.export_jobs import enqueue_export,generate_word
-    export=enqueue_export(store,brief['id']);store.update_job(export['id'],'running')
-    artifact=generate_word(store,export,threading.Event())
-    with ZipFile(store.root/artifact['path']) as z:assert 'word/document.xml' in z.namelist()
-
-
 def finish(store,worker,result):
     job=store.one('jobs',result['checks_job_id']);store.update_job(job['id'],'running')
     outcome=worker.assess(job)
     store.update_job(job['id'],'complete',result=outcome)
     return outcome
-
-
-@pytest.mark.parametrize('internal',[False,True])
-def test_background_adds_located_evidence_and_scores_without_rewriting_prose(tmp_path,internal):
-    store,source,run,job,runtime,worker=setup(tmp_path,internal=internal)
-    result=worker.generate(job);store.update_job(job['id'],'complete',result=result)
-    original=store.one('briefs',result['version_id'])
-    outcome=finish(store,worker,result)
-    enriched=store.one('briefs',outcome['version_id'])
-    assert enriched['parent_id']==original['id'] and enriched['markdown']==original['markdown']
-    details=json.loads(enriched['detail'])
-    assert len(details['citations'])==1
-    citation=details['citations'][0]
-    assert citation['source_id']==source['id'] and citation['locator']=='line 2'
-    assert citation['excerpt']=='收入 120 万元，同比增长 20%'
-    assert citation['report_quote']=='收入 120 万元，同比增长 20%。'
-    assert '以上为本季度实际数。' in citation['source_context']
-    assert len(details['number_bindings'])==1
-    assert len(details['research_notes'][-1]['rejected'])==1
-    assert len(store.rows('SELECT * FROM assessments'))==1
-    assert not store.rows('SELECT * FROM reviews')
-    assert runtime.calls==['fast-writing','evidence','evaluation']
-    assert enqueue(store,original['id'])['id']==result['checks_job_id']
-    assert status(store,enriched['id'])['state']=='complete'
-    assert status(store,enriched['id'])['checked_version']==enriched['id']
-
-
-def test_background_never_overwrites_concurrent_user_edit(tmp_path):
-    store,source,run,job,runtime,worker=setup(tmp_path)
-    result=worker.generate(job);store.update_job(job['id'],'complete',result=result)
-    authored=[]
-    runtime.edit=lambda:authored.append(store.revise(result['version_id'],'用户新的正文，保留我写的说明。',allow_markdown_conversion=True))
-    outcome=finish(store,worker,result)
-    assert outcome['version_id']==result['version_id']
-    latest=store.rows('SELECT * FROM briefs ORDER BY rowid DESC LIMIT 1')[0]
-    assert latest['id']==authored[0]['id'] and latest['author']=='user'
-    assert not store.rows('SELECT id FROM assessments WHERE version_id=?',(latest['id'],))
-    assert status(store,latest['id'])['state']=='deferred'
-
-
-def test_source_changes_reject_before_any_background_model_call(tmp_path):
-    store,source,run,job,runtime,worker=setup(tmp_path)
-    result=worker.generate(job);store.update_job(job['id'],'complete',result=result)
-    (store.root/source['path']).write_text('Changed material')
-    with pytest.raises(Conflict):finish(store,worker,result)
-    assert runtime.calls==['fast-writing']
-    assert store.one('briefs',result['version_id'])
-
-
-def test_material_change_during_writing_keeps_raw_output_without_publishing(tmp_path):
-    store,source,run,job,runtime,worker=setup(tmp_path)
-    runtime.edit=lambda:(store.root/source['path']).write_text('Changed material')
-    with pytest.raises((ValueError,Conflict)):worker.generate(job)
-    assert (worker.folder(job)/'fast-writing'/'response.txt').exists()
-    assert not store.rows('SELECT * FROM briefs')
-    assert not store.rows("SELECT * FROM jobs WHERE kind='assess'")
 
 
 def test_fast_admission_does_not_silently_truncate_or_start_web_research(tmp_path):

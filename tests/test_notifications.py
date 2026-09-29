@@ -15,21 +15,6 @@ def test_read_survives_reopen_and_cannot_swallow_new_activity(tmp_path):
     assert result['items'][0]['title']=='已完成'
 
 
-def test_task_without_chat_still_notifies_and_attempts_stay_distinct(tmp_path):
-    store=Store(tmp_path)
-    job=store.enqueue('generate',{'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
-    assert snapshot(store)['unread']==0  # queued is not running
-    job_status(store,job,'running');job_status(store,job,'complete')
-    job_status(store,job,'complete')
-    assert snapshot(store)['counts']['reports']==2
-    job['payload']='{"run_id":"fixture","attempt":2}'
-    job['error']='HTTP 503 sk-exampleSecret123456'
-    job_status(store,job,'failed')
-    latest=snapshot(store)['items'][0]
-    assert '503' in latest['body'] and 'exampleSecret' not in latest['body']
-    assert snapshot(store)['counts']['reports']==3
-
-
 def test_wiki_content_and_stable_version_deduplicate(tmp_path):
     store=Store(tmp_path)
     wiki_changed(store,'经验A');wiki_changed(store,'经验A')

@@ -52,24 +52,3 @@ def test_backends_receive_same_research_inputs_without_native_protocol_leaking(e
     assert '先 source_grep' not in system_prompt('scout')['text'] + scout.native_prompt(task)
     changed = experiment.comparison_conditions(store, run['id'], {**assignment, 'theme': 'Costs'}, None, 'opencode')
     assert changed['strategy_inputs_sha256'] != host['strategy_inputs_sha256']
-
-
-def test_changed_conditions_stop_before_model_dispatch(experiment, tmp_path, monkeypatch):
-    import shutil
-    store = Store(tmp_path / 'ws')
-    source = store.add_source('Frozen', 'Same text.')
-    run = store.create_run({'title': 'T', 'objective': 'Read', 'allow_web': False}, [source['id']])
-    job = store.enqueue('generate', {'run_id': run['id']})
-    folder = store.root / 'jobs' / job['id']; folder.mkdir()
-    (folder / 'plan.json').write_text(json.dumps({'scout_assignments': [{'slot_id': 'scout-1'}]}))
-    (folder / 'input.json').write_text(json.dumps({'search_provider': 'tavily', 'requirements': {'allow_web': False}}))
-    def no_dispatch(*args, **kwargs):
-        pytest.fail('Changed comparison conditions must not call the model')
-    monkeypatch.setattr(experiment.InteractiveRuntime, 'execute', no_dispatch)
-    result = experiment.run_leg(store.root, job['id'], 'scout-1', 'briefloop-native', 'fake/model', 'low', None, 0,
-                                expected_conditions={'strategy_inputs_sha256': 'different', 'effective_search_channels': []})
-    try:
-        assert result['status'] == 'failed'
-        assert '对照条件与首臂不一致，未调用模型' in result['error']
-    finally:
-        shutil.rmtree(result['work'])

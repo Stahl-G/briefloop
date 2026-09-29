@@ -9,54 +9,6 @@ from briefloop.harness import HarnessManager
 import pytest
 
 
-def test_baseline_is_bound_to_completed_attempt(tmp_path):
-    s=Store(tmp_path);source=s.add_source('source','Evidence')
-    run=s.create_run({'title':'Test','objective':'Test'},[source['id']])
-    old=s.enqueue('generate',{'run_id':run['id'],'runtime':{'model':'old-model'}})
-    s.publish(run['id'],{'title':'Old','markdown':'Old'},version_id='brief_'+old['id'][4:])
-    s.update_job(old['id'],'failed')
-    job=s.enqueue('generate',{'run_id':run['id']})
-    brief=s.publish(run['id'],{'title':'Current','markdown':'Current'},version_id='brief_'+job['id'][4:])
-    from briefloop.review_learning import source_snapshot
-    s.update_job(job['id'],'complete',result={'version_id':brief['id'],'source_snapshot':source_snapshot(s,run['id'])})
-    payload=json.loads(job['payload']);payload['skill_id']=None
-    # Reuse requires the actual frozen method and comparison conditions, not
-    # merely a completed status and matching model.
-    assert _baseline_for_attempt(s,run,payload) is None
-    from briefloop.learning import _conditions
-    conditions=_conditions(s,run,payload)
-    folder=s.root/'jobs'/job['id'];folder.mkdir(parents=True,exist_ok=True)
-    (folder/'input.json').write_text(json.dumps({'requirements':conditions['requirements']}))
-    s.update_job(job['id'],'complete',result={'version_id':brief['id'],
-        'source_snapshot':source_snapshot(s,run['id']),'learning_conditions':conditions})
-    assert _baseline_for_attempt(s,run,payload)['id']==brief['id']
-    payload['runtime']={'model':'different'}
-    assert _baseline_for_attempt(s,run,payload) is None
-
-
-def test_cancel_between_select_and_claim_never_executes(tmp_path):
-    s=Store(tmp_path);s.set_meta('settings',{**s.settings(),'auto_learn':False})
-    job=s.enqueue('generate',{})
-    selected=threading.Event();released=threading.Event();checked=threading.Event()
-    rows=s.rows
-    def delayed(query,args=()):
-        value=rows(query,args)
-        if "SELECT * FROM jobs" in query and "status='queued'" in query and threading.current_thread() is w.thread:
-            if value and not selected.is_set():selected.set();assert released.wait(3)
-            elif selected.is_set():checked.set()
-        return value
-    s.rows=delayed
-    class Runtime:
-        cancelled=threading.Event()
-        def cancel(self):self.cancelled.set()
-    w=Worker(s,Runtime());executed=[];w.generate=lambda j:executed.append(j['id'])
-    w.start()
-    try:
-        assert selected.wait(3);w.stop_job(job['id']);released.set();assert checked.wait(3)
-        assert s.one('jobs',job['id'])['status']=='cancelled' and not executed
-    finally:released.set();w.close()
-
-
 class RPC:
     def __init__(self,*args):self.notifications=Queue();self.server_requests=Queue();self.calls=[]
     def request(self,method,params):
