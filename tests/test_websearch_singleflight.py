@@ -54,5 +54,3 @@ def _process_search(workspace,run_id,entered,release,waiting,count,outputs,secon
     child_ddg._post=provider
     try:outputs.put(child_search.search('same query',store=ChildStore(workspace),run_id=run_id))
     except Exception as exc:outputs.put({'error':repr(exc)})
-
-

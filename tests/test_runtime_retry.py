@@ -32,5 +32,3 @@ def failed_learning(store,brief):
     job=enqueue_feedback(store,confirmed_plan=learning_plan(store.settings())['fingerprint'])
     store.update_job(job['id'],'interrupted',error='Synthetic interrupted maintainer')
     return store.one('jobs',job['id']),fid
-
-

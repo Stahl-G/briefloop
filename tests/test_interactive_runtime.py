@@ -124,4 +124,3 @@ def test_legacy_review_binding_rejects_changed_execution_or_packet(tmp_path,chan
     runtime=InteractiveRuntime(store,backends={'opencode':harness})
     with pytest.raises(ValueError):runtime.execute(stage,'Resume original review',folder)
     assert len(harness.starts)==1 and marker.read_bytes()==original
-

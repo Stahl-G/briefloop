@@ -24,5 +24,3 @@ def test_role_model_from_another_runtime_inherits_instead_of_blocking(tmp_path):
     assert payload['runtime']=={'model':'opencode-go/gpt-5.6-luna'}
     assert payload['role_models']['evaluator']==payload['runtime']
     assert payload['role_models']['maintainer']==payload['runtime']
-
-

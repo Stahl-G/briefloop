@@ -49,5 +49,3 @@ def wait_for(check):
         if check():return
         time.sleep(.01)
     assert check()
-
-

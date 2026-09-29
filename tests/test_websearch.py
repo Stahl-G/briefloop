@@ -27,5 +27,3 @@ def ddg_response(urls):
                     f'<a class="result__snippet" href="{redirect}">Snippet {index}</a></div>')
     html='<html><body>'+''.join(rows)+'</body></html>'
     return html,html.encode()
-
-

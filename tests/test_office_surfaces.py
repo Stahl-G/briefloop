@@ -170,5 +170,3 @@ def test_version_checks_and_review_status_compose_the_office_key(tmp_path, monke
         connection.close()
     finally:
         _stop_server(server, thread)
-
-

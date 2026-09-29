@@ -307,5 +307,3 @@ def test_pending_grant_receipt_does_not_add_again_after_the_stage_consumes_it(tm
     assert len(before['fact_check']['initial_grants']) == 1
     assert research_plan.pending_fact_check_grant(store, run['id']) is None
     assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == []
-
-

@@ -626,5 +626,3 @@ def _server(tmp_path):
         return response.status, payload, response_headers
 
     return server, thread, request
-
-

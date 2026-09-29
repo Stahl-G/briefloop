@@ -44,5 +44,3 @@ def test_scout_join_reads_shell_json_and_writes_plain_utf8(tmp_path,encoding):
     assert result['sources'][0]['excerpt']=='指标为十二台。'
     assert json.loads(joined.read_text(encoding='utf-8'))==result
     assert not joined.read_bytes().startswith(codecs.BOM_UTF8)
-
-

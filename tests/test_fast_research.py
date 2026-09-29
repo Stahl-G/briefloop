@@ -42,5 +42,3 @@ def setup(tmp_path,monkeypatch,*,invalid_selection=False):
         return '<html><title>Public disclosure</title><p>收入 120 万元，同比增长 20%</p></html>'.encode(),'text/html','utf-8'
     monkeypatch.setattr(sources,'_fetch_bytes',fetch)
     return store,run,job,runtime,worker,searches,reads
-
-

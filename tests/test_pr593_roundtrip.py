@@ -42,5 +42,3 @@ def test_markdown_bundle_uses_each_node_caption_without_registered_stale_caption
         text=archive.read('report.md').decode()
         assert 'USD millions' not in text and text.count('USD thousands')==1
         assert text.count('来源：Evidence')==2
-
-

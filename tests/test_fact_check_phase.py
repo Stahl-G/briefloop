@@ -122,5 +122,3 @@ def test_cancelled_stage_rejects_new_and_late_requests(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as blocked:
         budget.reserve_search(store, run['id'], 1)
     assert blocked.value.code == 'fact_check_closed'
-
-

@@ -52,5 +52,3 @@ def test_backends_receive_same_research_inputs_without_native_protocol_leaking(e
     assert '先 source_grep' not in system_prompt('scout')['text'] + scout.native_prompt(task)
     changed = experiment.comparison_conditions(store, run['id'], {**assignment, 'theme': 'Costs'}, None, 'opencode')
     assert changed['strategy_inputs_sha256'] != host['strategy_inputs_sha256']
-
-

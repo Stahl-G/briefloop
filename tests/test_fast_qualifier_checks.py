@@ -48,5 +48,3 @@ def test_standard_report_retains_existing_assessment_contract(tmp_path):
     context = store.assessment_context(brief['id'])
     assert {check['id'] for check in context['assessment_checks']} == {
         'summary_consistency', 'inference_support'}
-
-

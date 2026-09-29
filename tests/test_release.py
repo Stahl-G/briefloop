@@ -364,5 +364,3 @@ def test_number_mismatch_and_broken_reference_block_release():
     assert {'number_mismatch', 'broken_reference'} <= codes
     assert any(item['code'] == 'number_unchecked' for item in result['notices'])
     assert result['eligible'] is False
-
-

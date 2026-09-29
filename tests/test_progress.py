@@ -3,5 +3,3 @@ import json
 import pytest
 from briefloop.progress import ProgressTracker
 from briefloop.store import Store
-
-

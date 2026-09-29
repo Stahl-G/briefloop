@@ -234,5 +234,3 @@ def _analyst_case(root):
     writer.ensure_revision_base(store, cfg)
     assert drafts._read(drafts._root(store, cfg)/'current.json') == current
     assert TEXT in drafts._candidate(store, cfg, current)['draft']['markdown']
-
-

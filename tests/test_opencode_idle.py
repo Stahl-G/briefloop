@@ -222,4 +222,3 @@ def test_idle_releases_host_refreshes_directory_and_reopens_saved_session(tmp_pa
         assert h._client().messages('persisted-session')==[{'session':'persisted-session'}]
         assert len(clients)==2 and h.client is clients[1]
     finally:h.close()
-

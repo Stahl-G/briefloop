@@ -29,5 +29,3 @@ def test_remote_office_uses_same_reader_and_corrupt_archive_is_failed(tmp_path):
     assert meta['original_path'].endswith('.docx')
     bad=upload(store,'bad.xlsx',data)
     assert bad['status']=='failed'
-
-

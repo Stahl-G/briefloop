@@ -101,5 +101,3 @@ def test_existing_snapshot_seven_remains_applicable_without_length_metadata(tmp_
     assert review.get_review(store,'old_review')['status']=='complete'
     review.validate_applicable_review(store,'old_review',brief['id'])
     assert {name:(packet/name).read_bytes() for name in files}==before
-
-

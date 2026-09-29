@@ -51,5 +51,3 @@ def test_custom_validation_and_company_gate(tmp_path):
         with pytest.raises(ValueError):s.save(store,{**body,'config':{**body['config'],'every':value}})
     with pytest.raises(ValueError,match='企业背景'):
         s.save(store,{**body,'config':{**body['config'],'requirements':{**body['config']['requirements'],'writing_mode':'internal_report'}}})
-
-

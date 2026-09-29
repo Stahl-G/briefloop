@@ -15,5 +15,3 @@ class ArtifactHarness:
         self.sessions[kw['session_id']]['messages'].append({'id':kw['message_id'],'role':'user','text':kw['display_text'],'status':'completed','turn_id':'t'+str(self.starts)})
     def snapshot(self,sid,after=0):return self.sessions[sid]
     def cancel(self,sid):pass
-
-

@@ -32,5 +32,3 @@ def test_fact_check_defaults_off_and_follows_workspace_default(tmp_path):
     assert json.loads(run['requirements'])['fact_check'] is True  # workspace default
     run = store.create_run(_requirements(fact_check=False), [source['id']])
     assert json.loads(run['requirements'])['fact_check'] is False  # task overrides
-
-

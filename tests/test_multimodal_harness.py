@@ -94,5 +94,3 @@ def test_bad_image_fails_before_queue_and_provider_rejection_does_not_drop_pixel
     assert starts[0]['model']=='vendor/custom'
     assert any('does not accept image' in event['data'].get('message','') for event in manager.snapshot(sid)['events'])
     manager.close()
-
-

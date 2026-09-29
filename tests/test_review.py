@@ -73,5 +73,3 @@ def mixed_clause_review(tmp_path):
                                 for item in clause_items(target['requirements'])],
               'findings': []}
     return store, brief, target, parents, clauses, result
-
-

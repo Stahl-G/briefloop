@@ -90,5 +90,3 @@ def finish(store,job,worker):
     result=worker.assess(job)
     store.update_job(job['id'],'complete',result=result)
     return result
-
-

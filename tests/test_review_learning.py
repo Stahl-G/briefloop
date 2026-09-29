@@ -45,5 +45,3 @@ def reviewed_response(tmp_path,decision='resolved'):
     final['response_checks']=[{'response_id':response['id'],'decision':decision,'reason':'Compared saved original and revision.'}]
     accept_review(store,'review_after',final)
     return store,source,run,brief,revised,response,final
-
-

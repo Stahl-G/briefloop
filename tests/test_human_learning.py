@@ -99,5 +99,3 @@ def test_model_retry_retains_explicit_scope_without_duplicate_feedback(tmp_path)
     assert len(state['feedback'])==1 and state['explicit_requirement_sources']==['f1']
     candidate(second)
     assert feedback_loop.finish(second,pairs=[pair()])['history'][-1]['accepted']
-
-

@@ -36,5 +36,3 @@ def prepared(tmp_path, monkeypatch, *, protocol='quality_v1', deep=False):
         return {'boundary_reached': True}
     monkeypatch.setattr(native_orchestrator, '_child', writer_boundary)
     return store, run, config, calls
-
-

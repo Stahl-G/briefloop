@@ -100,5 +100,3 @@ def test_online_fact_checked_case_has_matching_offline_learning_arms(tmp_path,mo
     with pytest.raises(OfflineFactCheck):
         store.create_run({'title':'Offline','objective':'Summarize','allow_web':False,
                           'fact_check':True},[source['id']])
-
-

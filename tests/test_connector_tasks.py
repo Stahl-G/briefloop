@@ -21,5 +21,3 @@ class TaskMaterialTests(unittest.TestCase):
                         max_calls=calls, max_total_bytes=calls * 65536)
         self.token = self.tasks.access(self.job['id'])['access_token']
         self.request = {'action': 'read', 'connector_id': self.connector, 'uri': 'm0://document', 'request_id': 'first'}
-
-

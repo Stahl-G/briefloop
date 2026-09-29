@@ -216,5 +216,3 @@ def test_source_status_exposes_scanned_pdf_metadata_without_reading_original_or_
         assert result['source']['media_type']=='application/pdf'
         assert '未执行 OCR' in result['progress']['message']
     finally:server.shutdown();server.server_close()
-
-

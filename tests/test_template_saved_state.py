@@ -52,5 +52,3 @@ class Host:
 
     def cancel(self):
         self.cancelled.set()
-
-

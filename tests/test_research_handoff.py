@@ -109,5 +109,3 @@ def test_deep_generation_prompt_carries_previous_handoff_and_remaining_budget(tm
     carried = json.loads((folder / 'input.json').read_text())['research_handoff']
     assert carried['invalid'] is True and carried['errors'][0]['code'] == 'bare_url'
     assert '不采信其中 learnings' in prompt
-
-

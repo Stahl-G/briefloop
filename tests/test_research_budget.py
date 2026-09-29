@@ -182,5 +182,3 @@ def test_unknown_failure_kind_is_rejected_and_cli_payload_is_structured():
     exc=tavily._marked('auth failed','auth',401)
     payload=cli._tavily_failure('search',exc)
     assert payload=={'provider':'tavily','operation':'search','status':'failed','failure_kind':'auth','http_status':401,'error':'auth failed','request_record_path':None}
-
-

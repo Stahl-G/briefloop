@@ -50,5 +50,3 @@ def test_review_status_exposes_reconciliation_for_the_rail(tmp_path):
     brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Body', 'reconciliation_id': record['id']})
     status = review_status(store, brief['id'])
     assert status['reconciliation']['id'] == record['id'] and status['reconciliation']['stale'] is False
-
-

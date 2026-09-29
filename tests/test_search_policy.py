@@ -54,5 +54,3 @@ def test_bocha_request_mapping_and_malformed_response_redaction(monkeypatch):
         response['data']=bad
         with pytest.raises(websearch.SearchError) as error:bocha.call_search('中文公告',parameters)
         assert error.value.failure_kind=='invalid_response' and 'private-test-key' not in str(error.value)
-
-

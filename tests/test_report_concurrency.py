@@ -18,5 +18,3 @@ def test_deep_length_defaults_respect_explicit_user_length():
     assert (req.target_words,req.max_words)==(10000,12000)
     explicit=Requirements(title='专题',objective='精简',research_tier='deep',target_words=8000,max_words=9000)
     assert (explicit.target_words,explicit.max_words)==(8000,9000)
-
-

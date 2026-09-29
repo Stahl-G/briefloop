@@ -44,5 +44,3 @@ def test_rebuild_keeps_local_run_overrides_out_of_body_defaults(tmp_path):
     assert style.base_style.font.name=='Calibri'
     assert str(body.runs[-1].font.color.rgb)=='0000FF'
     assert previous_path.read_bytes()==previous_bytes
-
-
