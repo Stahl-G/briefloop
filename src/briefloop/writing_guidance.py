@@ -6,6 +6,8 @@ materials. No plugin code, compulsory review quota or pipeline is imported.
 
 NUMBER_UNIT_GUIDE = 'number_bindings 的 unit 只记录原始计量单位及其尺度，不混入少于/至少等比较条件、目标或实际状态。例：原文“年度目标至少 50 吨”使用 value=50、unit="吨"、number_text="50 吨"；label、source_excerpt、report_quote 及正文/主张保留“目标”“至少”和来源给出的达成状态。不能把阈值当实绩、改动阈值或删除条件来取得匹配；匹配只核对数值定位，比较关系与达成状态仍交独立审阅。复合单位的分母是单位的一部分，USD/kg 等不支持的单位保持原样并标为未检查。'
 
+REPORT_CLAIM_GUIDE = '正文主张绑定使用本报告实际登记的 claim_role="report_statement" 主张，包括正文采用的事实、计算与判断；用 evidence_span 的真实 span_id 记录来源支持，计算/推断保留 reasoning 与适用条件。claim_role="source_statement" 仅记录来源说法，保留来源归属和历史，不能直接绑定正文或充当报告推断的前提。由写稿模型决定报告采用什么结论并另建报告侧主张，不自动更改来源陈述的角色；修订既有报告主张时用 previous_id 保留历史。数值定位与 citation 节点不代替主张依据，绑定成功也不等于语义支持或独立审阅通过。'
+
 ANALYST_GUIDE = '''写作方法：
 先根据原始需求确定读者读完后需要理解、比较或决定什么，把篇幅留给这些问题。已有章节及人工分工优先，不因通用框架另增整套章节。
 先写有依据的主体分析，最后从正文提炼摘要。摘要通常给出最重要的几项变化与影响，不能引入正文没有支持的新事实，也不机械凑满条数。

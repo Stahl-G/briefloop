@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .store import dump
 
-from .writing_guidance import DECISION_EVIDENCE_GUIDE, NUMBER_UNIT_GUIDE
+from .writing_guidance import DECISION_EVIDENCE_GUIDE, NUMBER_UNIT_GUIDE, REPORT_CLAIM_GUIDE
 from .research_handoff import PLANNING_GUIDE
 
 _DEFAULT_SKILL = object()
@@ -33,7 +33,7 @@ WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报�
 '''
 
 
-WRITING_GUIDE += '\n' + NUMBER_UNIT_GUIDE + '\n' + DECISION_EVIDENCE_GUIDE + '\n' + PLANNING_GUIDE
+WRITING_GUIDE += '\n' + NUMBER_UNIT_GUIDE + '\n' + REPORT_CLAIM_GUIDE + '\n' + DECISION_EVIDENCE_GUIDE + '\n' + PLANNING_GUIDE
 
 
 def packet(store, run_id, folder, *, plan, research, source_ids=None, support=None,

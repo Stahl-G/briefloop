@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .store import dump
 from .native_roles import ToolError, _atomic, _json_result
-from .revision_metadata import binding_schema, response_schema, validate_arrays
+from .revision_metadata import binding_schema, response_schema, validate_arrays, validate_bindings
 
 READ_ACTIONS = {'inspect', 'capabilities', 'templates', 'workflows', 'profile_read',
                 'company_read', 'read_report', 'read_run_report', 'review_status',
@@ -350,12 +350,9 @@ def revision_metadata(store, config, args):
     bindings = args.get('bindings', [])
     try:
         validate_arrays(bindings, responses, expected)
+        validate_bindings(store, config['run_id'], bindings)
     except ValueError as exc:
         raise ToolError(str(exc)) from None
-    from .evidence import record
-    for binding in bindings:
-        if record(store, 'claims', binding['claim_id'])['run_id'] != config['run_id']:
-            raise ToolError('bindings 只能引用本报告已登记的主张')
     _save(_folder(config) / 'responses.json', responses)
     _save(_folder(config) / 'revision_bindings.json', bindings)
     return _json_result({'saved': True})
@@ -389,16 +386,14 @@ def metadata_submit(store, config, args):
         validate_arrays(bindings, responses, expected)
     except ValueError as exc:
         raise ToolError(str(exc)) from None
-    from .evidence import blocks, node_text
     claims = {c['id'] for c in original.get('candidate_claims', [])}
-    nodes = blocks(original['document'])
     for binding in bindings:
         if not isinstance(binding, dict) or binding.get('claim_id') not in claims:
             raise ToolError('claim_id 必须来自 input.candidate_claims；source_id 不是 claim_id。candidate_claims 为空时 bindings 必须为 []，数字定位仍保留在既有稿件 number_bindings。')
-        node = nodes.get(binding.get('block_id'))
-        quote = binding.get('quote')
-        if node is None or not isinstance(quote, str) or not quote or node_text(node).count(quote) != 1:
-            raise ToolError('绑定必须指向 input.document 的真实 blockId 和唯一原句')
+    try:
+        validate_bindings(store, config.get('run_id', original.get('run_id')), bindings, original['document'])
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
     _save(_folder(config) / 'metadata.json', args)
     return {**_json_result({'saved': True}), 'settle': dump({'saved': True})}
 
@@ -425,7 +420,7 @@ TEXT = {'type': 'string'}
 ACTION_TOOL = spec('workspace_action', action, '调用当前角色获准的工作区业务接口，request 包含 action 及该操作参数；不支持 shell 或任意路径写入。', {'request': OBJ}, ('request',), sequential=True)
 SOURCE_TOOL = spec('source_read', read_source, '读取已登记来源，按行分页，最多 60000 字符。',
     {'source_id': TEXT, 'start_line': {'type': 'integer', 'minimum': 1}, 'end_line': {'type': 'integer', 'minimum': 1}, 'max_chars': {'type': 'integer', 'minimum': 1}}, ('source_id',))
-METADATA_TOOL = spec('save_revision_metadata', revision_metadata, '保存本轮 review_findings 的逐项处理说明 responses 和已登记主张绑定 bindings；bindings 项须有 claim_id/block_id/quote，不是数字定位。没有已登记主张或发现时相应数组为 []。',
+METADATA_TOOL = spec('save_revision_metadata', revision_metadata, '保存本轮 review_findings 的逐项处理说明 responses 和报告侧主张绑定 bindings；claim_id 必须是本报告实际登记的 report_statement，source_statement 仅供回读。bindings 项含 claim_id/block_id/quote，不是数字定位，锚点由运行器对照实际新稿最终核对。没有已登记主张或发现时相应数组为 []。',
     {'responses': response_schema(), 'bindings': binding_schema()}, ('responses',), sequential=True)
 
 
