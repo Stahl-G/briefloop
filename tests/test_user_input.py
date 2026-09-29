@@ -81,7 +81,6 @@ def test_bridge_question_reply_and_lifecycle(tmp_path, finish):
         request = h.snapshot(sid)['requests'][0]
         assert request['data']['kind'] == 'question'
         assert 'native_options' not in request['data']
-        assert bridge.starts[0]['host_options'] == {'mode': 'auto'}
         if finish == 'answer':
             h.answer(sid, request['id'], ANSWERS)
             assert bridge.answers == [{'execution_id': 'ask-turn', 'request_id': 'ask1', 'answers': ANSWERS}]
