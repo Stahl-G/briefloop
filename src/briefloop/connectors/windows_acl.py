@@ -1,7 +1,7 @@
 """Private connector files on Windows; chmod does not set a Windows DACL."""
 import ctypes as c
 from ctypes import wintypes as w
-from pathlib import Path
+from ..platform_support import filesystem_path
 
 
 _kernel = c.WinDLL('kernel32', use_last_error=True)
@@ -55,7 +55,7 @@ def current_user_sid():
 def _open(path, write=False):
     # Do not follow reparse points, and prevent replacement while verifying/updating.
     handle = _api(_kernel, 'CreateFileW', [w.LPCWSTR, w.DWORD, w.DWORD, c.c_void_p, w.DWORD, w.DWORD, w.HANDLE], w.HANDLE)(
-        str(Path(path).absolute()), 0x20000 | (0x40000 if write else 0), 3, None, 3, 0x02200000, None)
+        str(filesystem_path(path)), 0x20000 | (0x40000 if write else 0), 3, None, 3, 0x02200000, None)
     if handle == c.c_void_p(-1).value:
         raise c.WinError(c.get_last_error())
     class AttributeTag(c.Structure):

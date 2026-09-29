@@ -9,6 +9,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.enum.style import WD_STYLE_TYPE
 from .store import dump, uid, now
+from .platform_support import filesystem_path
 
 
 def template(store, template_id):
@@ -20,7 +21,7 @@ def template(store, template_id):
 
 def _path(store, row, name):
     path=store.root/'templates'/row['id']/name
-    if path.is_symlink() or path.parent.is_symlink() or not path.resolve().is_relative_to(store.root/'templates'):
+    if filesystem_path(path).is_symlink() or filesystem_path(path.parent).is_symlink() or not path.resolve().is_relative_to(store.root/'templates'):
         raise ValueError('模板路径无效')
     return path
 
@@ -32,13 +33,13 @@ def import_template(store,name,data,parent_id=None,*,prepare_job=True,origin='up
     doc=Document(BytesIO(data))
     if len(doc.sections)!=1:raise ValueError('首版模板支持单节报告；请将多节版式另存为单节主模板，原文件不变')
     tid=uid('tpl');parent=template(store,parent_id) if parent_id else None
-    folder=store.root/'templates'/tid;folder.mkdir(parents=True)
-    (folder/'original.docx').write_bytes(data)
+    folder=store.root/'templates'/tid;filesystem_path(folder).mkdir(parents=True)
+    filesystem_path(folder/'original.docx').write_bytes(data)
     inventory=[];images={}
     for rid,rel in doc.part.rels.items():
         if rel.reltype.endswith('/image') and not rel.is_external:
             suffix=Path(str(rel.target_part.partname)).suffix
-            image=folder/(rid+suffix);image.write_bytes(rel.target_part.blob);images[rid]=str(image)
+            image=folder/(rid+suffix);filesystem_path(image).write_bytes(rel.target_part.blob);images[rid]=str(image)
     for index,element in enumerate(doc.element.body):
         if element.tag==qn('w:sectPr'):continue
         text=''.join(t.text or '' for t in element.iter(qn('w:t')))
@@ -46,7 +47,7 @@ def import_template(store,name,data,parent_id=None,*,prepare_job=True,origin='up
                           'text':text[:3500],'has_drawing':bool(element.xpath('.//w:drawing')),
                           'image_paths':[images[x.get(qn('r:embed'))] for x in element.xpath('.//a:blip') if x.get(qn('r:embed')) in images],
                           'paragraph_properties':element.pPr.xml if element.tag==qn('w:p') and element.pPr is not None else ''})
-    (folder/'inventory.json').write_text(dump({'blocks':inventory,'headers':[[p.text for p in s.header.paragraphs] for s in doc.sections],
+    filesystem_path(folder/'inventory.json').write_text(dump({'blocks':inventory,'headers':[[p.text for p in s.header.paragraphs] for s in doc.sections],
                                             'footers':[[p.text for p in s.footer.paragraphs] for s in doc.sections]}),encoding='utf-8')
     with store.tx() as c:
         c.execute('INSERT INTO templates VALUES(?,?,?,?,?,?,?,?,?,?)',(tid,Path(name).stem,(parent['revision']+1) if parent else 1,parent_id,
@@ -166,7 +167,7 @@ def rebuild_template_version(store,template_id):
     """Re-prepare a new version using saved interpretation, never edit a ready one."""
     previous=template(store,template_id)
     if previous['status']!='ready':raise ValueError('请先完成当前模板准备')
-    original=_path(store,previous,'original.docx');data=original.read_bytes()
+    original=_path(store,previous,'original.docx');data=filesystem_path(original).read_bytes()
     if hashlib.sha256(data).hexdigest()!=previous['source_hash']:raise ValueError('模板原件已变化，不能重建其版本')
     saved=previous['spec'];spec=deepcopy(saved.get('preparation_spec'))
     if spec is None:
@@ -263,8 +264,8 @@ def prepare(store,template_id,spec):
     if row['status']=='ready':return row
     if not isinstance(spec,dict) or set(spec)-{'sections','keep_blocks','paragraph_index','fields'}:raise ValueError('模板准备结果结构无效')
     original=_path(store,row,'original.docx')
-    if hashlib.sha256(original.read_bytes()).hexdigest()!=row['source_hash']:raise ValueError('模板原件已变化')
-    doc=Document(original);blocks=list(doc.element.body)
+    if hashlib.sha256(filesystem_path(original).read_bytes()).hexdigest()!=row['source_hash']:raise ValueError('模板原件已变化')
+    doc=Document(filesystem_path(original));blocks=list(doc.element.body)
     sections=spec.get('sections',[]);keep=spec.get('keep_blocks',[]);pi=spec.get('paragraph_index')
     if not sections or len(sections)>40:raise ValueError('模板需要明确的主章节')
     ids=set();indices=[];styles={}
@@ -330,11 +331,11 @@ def prepare(store,template_id,spec):
     referenced={v for element in doc.element.iter() for k,v in element.attrib.items() if k in (qn('r:id'),qn('r:embed'),qn('r:link'))}
     for rid,rel in list(doc.part.rels.items()):
         if rel.reltype.rsplit('/',1)[-1] in ('image','oleObject','package','comments','footnotes','endnotes') and rid not in referenced:doc.part.drop_rel(rid)
-    destination=_path(store,row,'prepared.docx');doc.save(destination)
+    destination=_path(store,row,'prepared.docx');doc.save(filesystem_path(destination))
     final={**spec,'styles':styles,'sections':[{k:v for k,v in s.items() if k!='index'} for s in sections],
            'layout_version':2,'cover_title_present':cover_title_present,'body_sample_index':selected_body,
            'preparation_spec':deepcopy(spec),
-           'prepared_hash':hashlib.sha256(destination.read_bytes()).hexdigest()}
+           'prepared_hash':hashlib.sha256(filesystem_path(destination).read_bytes()).hexdigest()}
     with store.tx() as c:c.execute("UPDATE templates SET status='ready',spec=?,error=NULL WHERE id=?",(dump(final),template_id))
     if row.get('origin')!='builtin':
         from .notifications import post
@@ -350,8 +351,8 @@ def export_template(store,brief,document,figures,template_id=None,source_records
     row=template(store,selected_id)
     if row['status']!='ready':raise ValueError('模板尚未准备完成')
     path=_path(store,row,'prepared.docx')
-    if hashlib.sha256(path.read_bytes()).hexdigest()!=row['spec']['prepared_hash']:raise ValueError('模板底稿已变化，请创建新模板版本')
-    doc=Document(path);detail=json.loads(brief['detail'])
+    if hashlib.sha256(filesystem_path(path).read_bytes()).hexdigest()!=row['spec']['prepared_hash']:raise ValueError('模板底稿已变化，请创建新模板版本')
+    doc=Document(filesystem_path(path));detail=json.loads(brief['detail'])
     fields={key:str(detail.get('title') if key=='title' else req.get(key,'')) for key in ('title','report_date','period','organization')}
     replacements={'{{'+key+'}}':value for key,value in fields.items()}
     _replace_text(doc,replacements)
@@ -384,8 +385,8 @@ def export_template(store,brief,document,figures,template_id=None,source_records
     profiles=('table_header','table_body','table_alternate')
     if 'table_properties' not in styles or any('paragraph_style' not in p for key in profiles for p in styles.get(key,[])):
         original=_path(store,row,'original.docx')
-        if hashlib.sha256(original.read_bytes()).hexdigest()!=row['source_hash']:raise ValueError('模板原件已变化')
-        defaults=table_defaults(Document(original))
+        if hashlib.sha256(filesystem_path(original).read_bytes()).hexdigest()!=row['source_hash']:raise ValueError('模板原件已变化')
+        defaults=table_defaults(Document(filesystem_path(original)))
         for key in profiles:
             for index,profile in enumerate(styles.get(key,[])):
                 samples=defaults.get(key,[])

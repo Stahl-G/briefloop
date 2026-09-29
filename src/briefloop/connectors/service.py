@@ -15,6 +15,7 @@ import time
 import uuid
 
 from .config import ConnectorError, LocalConfig, validate_config, validate_secrets
+from ..platform_support import filesystem_path
 
 
 class ConnectorService:
@@ -106,7 +107,7 @@ class ConnectorService:
             self._config.records[identifier] = record
             self._config.persist()
             if existing:
-                self._config.credential_path(existing['credential_binding']).unlink(missing_ok=True)
+                filesystem_path(self._config.credential_path(existing['credential_binding'])).unlink(missing_ok=True)
             self._errors.pop(identifier, None)
             return self._view(record)
 
@@ -213,7 +214,7 @@ class ConnectorService:
             self._stop_owners(connector_id)
             del self._config.records[connector_id]
             self._config.persist()
-            self._config.credential_path(record['credential_binding']).unlink(missing_ok=True)
+            filesystem_path(self._config.credential_path(record['credential_binding'])).unlink(missing_ok=True)
             self._errors.pop(connector_id, None)
             return {'id': connector_id, 'deleted': True}
 
