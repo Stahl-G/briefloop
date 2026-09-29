@@ -47,6 +47,8 @@ def test_packet_originals_hashes_display_index_and_rejected_bytes_survive(case):
     index=json.loads(filesystem_path(packet/'index.json').read_text(encoding='utf-8'))
     source=next(row for row in index['sources'] if row['id']==original['id'])
     assert sha(filesystem_path(packet/source['original_file']).read_bytes())==original['original_hash']
+    from briefloop.review_learning import source_snapshot
+    assert source_snapshot(store, brief['run_id'])[0]['original_hash']==original['original_hash']
     display=_review_requirement_index(store, {**review, 'data':dump(review['data'])})
     assert display['requirement_items'] and 'requirement_index_error' not in display
     rejected=b'{"status":"incomplete","invalid_utf8":"\xa1\xa1"}'
