@@ -57,7 +57,8 @@ test('saved-version numeric occurrence hint stays bounded and does not imply fac
   bindSources(){},applyHighlightState(){},readerHighlights:()=>[],toEditor:x=>x,
   beginPanel,updatePanel,reviewPending:()=>false});
  await panel.renderDeliveryChecks();
- assert.match(html,/带明确单位的数值出现 8 处；直接对应已核对绑定 1 处；待看 7 处/);
+ assert.match(html,/需要处理 · 1<\/h4>.*带明确单位的数值 8 处：直接对应已核对绑定 1 处，待看 7 处/s);
+ assert.match(html,/已通过 · 1<\/summary>.*正文引用可定位/s);
  assert.match(html,/表 1 · 第 2 行 2 列/);
  assert.match(html,/&lt;bad&gt; 25%/);
  assert.doesNotMatch(html,/<bad>/);

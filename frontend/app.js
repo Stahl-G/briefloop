@@ -49,6 +49,7 @@ import {reportExportUI} from './report-export.js';
 import {excelExportUI} from './excel-export.js';
 import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,DEEP_LENGTH,INDUSTRY_LENGTH,lengthUnit,runLanguage} from './report-language.js';
 import {createLengthControls} from './length-controls.js';
+import {createReportSources} from './report-sources.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -79,6 +80,7 @@ document.addEventListener('click',e=>{const node=e.target.closest?.('.must-fix,.
 const parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
 let state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
+const reportSources=createReportSources({$,esc,getState:()=>state,getCurrent:()=>current,runSourceIds,sourceState,sourceStatusChip,sourceTitle,sourceHost,openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
 const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta,svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:closeSourceDrawer,onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
 function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先选择 Agent 和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph();renderReports()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
@@ -414,8 +416,10 @@ function renderVersionSelect(){
  }
  if(current&&!visible.some(v=>v.brief.id===current.id))visible.push({brief:current,label:'正在查看历史快照'});
  const pendingOptions=state.jobs.filter(j=>j.kind==='generate'&&['queued','running'].includes(j.status)&&!state.briefs.some(b=>b.run_id===parse(j.payload).run_id)).map(j=>{const rid=parse(j.payload).run_id,r=state.runs.find(r=>r.id===rid);return `<option value="run:${esc(rid)}">${esc(parse(r?.requirements).title||'新报告')} · ${j.status==='queued'?'排队中':'正在生成'}</option>`}).join('');
- $('version-select').innerHTML=pendingOptions+visible.map(({brief:b,label})=>`<option value="${b.id}">${esc(parse(b.detail).title||'简报')} · ${label}</option>`).join('');
- if($('version-history'))$('version-history').textContent='编辑历史'+(current?'（'+(state.briefs.find(b=>b.run_id===current.run_id)?.user_version_count??state.briefs.filter(b=>b.run_id===current.run_id&&b.author==='user').length)+'）':'');
+ // The report title is already the page heading; its own versions show only their label.
+ $('version-select').innerHTML=pendingOptions+visible.map(({brief:b,label})=>`<option value="${b.id}">${b.run_id===current?.run_id?label:esc(parse(b.detail).title||'简报')+' · '+label}</option>`).join('');
+ const edits=current?(state.briefs.find(b=>b.run_id===current.run_id)?.user_version_count??state.briefs.filter(b=>b.run_id===current.run_id&&b.author==='user').length):0;
+ if($('version-history')){$('version-history').textContent=`编辑历史（${edits}）`;$('version-history').hidden=!edits}
  if(current)$('version-select').value=current.id;else if(pendingRun)$('version-select').value='run:'+pendingRun;
 }
 
@@ -429,7 +433,7 @@ function syncPendingReport(){
  const waiting=!!pendingRun&&!current;
  let box=$('pending-report');if(!box){box=document.createElement('div');box.id='pending-report';box.className='empty';$('document-area').before(box)}
  box.hidden=!waiting;$('document-area').hidden=!current;$('empty').hidden=!!current||waiting||state.jobs.length>0;
- for(const id of ['download-word','export-menu-toggle','more-menu-toggle','version-history','version-diff'])if($(id))$(id).hidden=waiting;
+ for(const id of ['download-word','export-menu-toggle','more-menu-toggle','version-diff'])if($(id))$(id).hidden=waiting;
  if(!waiting)return;
  const run=state.runs.find(r=>r.id===pendingRun),job=state.jobs.find(j=>j.kind==='generate'&&parse(j.payload).run_id===pendingRun);
  $('report-title').textContent=parse(run?.requirements).title||'新报告';$('save-state').textContent='';$('version-select').value='run:'+pendingRun;
@@ -1454,7 +1458,7 @@ function sourceOriginalLink(result){
 }
 function applySourceLinks(result,els){
  const source=result.source||{};
- if(els.link){els.link.textContent=source.url||'';els.link.href=source.url||'#';els.link.hidden=!source.url}
+ if(els.link){els.link.textContent=els.linkLabel||source.url||'';els.link.title=source.url||'';els.link.href=source.url||'#';els.link.hidden=!source.url}
  if(els.original){const original=sourceOriginalLink(result);els.original.textContent=original.label;els.original.hidden=!original.href;if(original.href){els.original.href=original.href;els.original.download=source.name||''}else els.original.removeAttribute('href')}
 }
 function sourceProvenanceRows(result){
@@ -2045,7 +2049,7 @@ function setReportTab(name){
  const panel=$('report-panel');if(!panel)return;
  if(!REPORT_TABS.includes(name))name='assistant';
  panel.querySelectorAll('[data-pane]').forEach(p=>{p.hidden=p.dataset.pane!==name});
- document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>markTab(b,b.dataset.reportTab===name));
+ document.querySelectorAll('#report-panel [data-report-tab]').forEach(b=>markTab(b,b.dataset.reportTab===name));
  expandReportPanel();
 }
 function outlineHeadings(){
@@ -2087,8 +2091,8 @@ function applyOutlineToSetup(){
  if(!titles.length){notice('大纲为空',true);return}
  applyRequirements(JSON.stringify({manual_sections:titles}));
 }
-function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
-function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
+function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');if($('report-panel-reopen'))$('report-panel-reopen').hidden=true;try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
+function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');if($('report-panel-reopen'))$('report-panel-reopen').hidden=false;try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
 function toggleReportPanel(){const grid=$('report-grid');if(!grid)return;grid.classList.contains('panel-collapsed')?expandReportPanel():collapseReportPanel()}
 function setReportChatOpen(open){
  const chatEl=$('chat');
@@ -2110,11 +2114,12 @@ function renderReportStatus(){
  const chips=[];
  const a=current&&state.assessments.find(x=>x.version_id===current.id);
  if(a){const d=parse(a.data);chips.push(d.status==='complete'?`<span class="chip ok">已评分${d.overall?' · '+esc(d.overall):''}</span>`:'<span class="chip">评分中</span>')}
- else{const pending=!!(current&&reviewPending(current,state.jobs));chips.push(pending?'<span class="chip">评分中</span>':'<span class="chip warn">未评分</span>')}
+ else{const pending=!!(current&&reviewPending(current,state.jobs));chips.push(pending?'<span class="chip">评分中</span>':'<span class="chip">未评分</span>')}
  const conflicts=runConflicts(current.run_id).length;if(conflicts)chips.push(`<span class="chip danger">来源分歧 ${conflicts}</span>`);
  box.innerHTML=chips.join('');
 }
 function renderAssistantSummary(){
+ reportSources.render();
  const box=$('assistant-summary');if(!box)return;
  if(!current){box.innerHTML='';return}
  const run=(state.runs||[]).find(r=>r.id===current.run_id),req=run?parse(run.requirements):{};
@@ -2123,7 +2128,8 @@ function renderAssistantSummary(){
  const kv=[['系统核对日期',tc?`${tc.today} · ${tc.timezone}`:'旧任务未记录'],['时间范围',tc?`${tc.start} 至 ${tc.end_exclusive}（不含结束时刻）`:req.period],['读者',req.audience],['已登记来源',runSourceCount(current.run_id)+' 个']].filter(([,v])=>v);
  const cards=[];
  if(kv.length)cards.push(`<dl class="assistant-card">${kv.map(([k,v])=>`<div class="kv"><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl>`);
- cards.push(`<div class="assistant-card"><h3>需要关注</h3>${conflicts?`<div class="attention"><span class="badge danger">数据冲突</span><span>有 ${conflicts} 项来源分歧待处理</span></div>`:'<p>暂未发现待处理冲突；评分与审阅完成后会显示在这里。</p>'}</div>`);
+ // An empty "needs attention" card is a placeholder; show it only when something needs attention.
+ if(conflicts)cards.push(`<div class="assistant-card"><h3>需要关注</h3><div class="attention"><span class="badge danger">数据冲突</span><span>有 ${conflicts} 项来源分歧待处理</span></div></div>`);
  box.innerHTML=cards.join('');
 }
 function sendReportQuestion(text){
@@ -2135,7 +2141,7 @@ function sendReportQuestion(text){
  const form=$('chat-form');if(form)form.requestSubmit();
 }
 document.querySelectorAll('#report-panel [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
-document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>{setReportView('edit');setReportTab(b.dataset.reportTab)});
+if($('report-panel-reopen'))$('report-panel-reopen').onclick=expandReportPanel;
 document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
@@ -2264,7 +2270,7 @@ async function openSourceDrawer(id,usage,match){
  let result=null;
  try{result=await api('source?id='+encodeURIComponent(id))}catch(e){if(drawer.dataset.request===request&&state.workspace_id===workspace&&body)body.textContent='读取失败：'+e.message}
  if(!result||drawer.dataset.request!==request||state.workspace_id!==workspace)return;
- applySourceLinks(result,{link:$('source-drawer-source'),original:$('source-drawer-original')});
+ applySourceLinks(result,{link:$('source-drawer-source'),linkLabel:'打开原文 ↗',original:$('source-drawer-original')});
  renderSourceOverview(s,result,usage);
  reportBrowsing.sourceUsage(id,()=>drawer.querySelectorAll('[data-source-report-usage]'),()=>drawer.dataset.request===request&&state.workspace_id===workspace);
  renderSourceText(result);

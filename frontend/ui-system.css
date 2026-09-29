@@ -83,7 +83,15 @@ h3{font-size:var(--text-lg);line-height:var(--leading-tight);font-weight:var(--f
 .report-topbar{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);padding:var(--space-3) 0;min-height:0;z-index:var(--z-sticky)}
 .report-crumbs{display:flex;flex-wrap:wrap;align-items:baseline;min-width:0;gap:var(--space-2)}
 .report-crumbs h1{flex:1 1 auto;min-width:0;max-width:none;white-space:normal;overflow-wrap:anywhere;font-size:var(--text-xl);line-height:var(--leading-tight);font-weight:var(--fw-semibold)}
-.report-crumbs .brief-length{flex:1 0 100%;font-size:var(--text-xs);line-height:var(--leading-normal);margin:0}
+.report-actions>.report-status{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);min-width:0}
+/* The inner status list only groups chips; they flow in the outer status row. */
+#report-status{display:contents}
+.report-status #save-state{margin-right:0;font-family:var(--font)}
+.report-status .brief-length{margin:0 0 0 var(--space-1);font-size:var(--text-xs);line-height:var(--leading-normal);color:var(--color-text-muted)}
+/* Report views on the left; the reopen control only exists while the side panel is collapsed. */
+.report-tabs-row{display:flex;align-items:flex-end;gap:var(--space-2);border-bottom:1px solid var(--color-border);margin:var(--space-2) 0 var(--space-3)}
+.report-tabs-row .report-tabs{border-bottom:0;flex:1;min-width:0;margin:0}
+.report-tabs-row #report-panel-reopen{min-height:var(--control-h-sm);margin-bottom:var(--space-1)}
 .report-actions{min-width:0;width:100%;justify-content:flex-end;gap:var(--space-2);flex-wrap:wrap}
 .report-actions :is(button,select){min-height:var(--control-h-md);font-size:var(--text-xs)}
 .report-version{min-width:0;max-width:100%}
@@ -335,3 +343,37 @@ dialog .section-title h2{font-size:var(--text-xl)}
 .runtime-permission-rules form :is(input,select){width:100%;min-width:0;font-size:var(--text-sm)}
 .runtime-permission-rules form button{justify-self:end}
 #chat-permissions-error{color:var(--color-danger);font-size:var(--text-sm);overflow-wrap:anywhere}
+/* Side panel: the report's own sources, grouped automatic checks, and optional feedback. */
+.report-sources-head{display:flex;align-items:baseline;gap:var(--space-2);margin-bottom:var(--space-2)}
+.report-sources-head h3{font-size:var(--text-sm);font-weight:var(--fw-semibold);margin:0}
+.report-sources-filter{margin-bottom:var(--space-1)}
+.report-sources-filter button{font-size:var(--text-xs);padding:var(--space-1) var(--space-2);min-height:var(--control-h-sm)}
+.report-source-list{list-style:none;margin:0 0 var(--space-3);padding:0}
+.report-source-row{display:flex;align-items:center;gap:var(--space-3);width:100%;min-height:var(--control-h-lg);padding:var(--space-2) var(--space-1);border:0;border-bottom:1px solid var(--color-border);border-radius:var(--radius-sm);background:transparent;text-align:left;font-weight:var(--fw-normal)}
+.report-source-row:hover{background:var(--color-surface-soft)}
+.report-source-text{display:grid;min-width:0;flex:1}
+.report-source-text .name{font-size:var(--text-sm);font-weight:var(--fw-medium);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-source-text .meta{font-size:var(--text-xs);color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-source-row .chip{flex:none}
+.report-sources-more{font-size:var(--text-xs);color:var(--color-link);margin-bottom:var(--space-3)}
+details.assistant-feedback{border-top:1px solid var(--color-border);padding-top:var(--space-2);margin-top:var(--space-4)}
+details.assistant-feedback>summary{display:flex;align-items:center;gap:var(--space-2);min-height:var(--control-h-md);list-style:none}
+details.assistant-feedback>summary::-webkit-details-marker{display:none}
+details.assistant-feedback>summary::before{content:"▸";color:var(--color-text-muted)}
+details.assistant-feedback[open]>summary::before{content:"▾"}
+details.assistant-feedback>summary h3{margin:0}
+details.assistant-feedback>summary .help{font-size:var(--text-xs)}
+.delivery-checks .tag{display:inline;font-family:var(--font);font-size:var(--text-xs);color:var(--color-text);white-space:normal;overflow-wrap:anywhere;margin:0}
+.delivery-checks .tag.warn{color:var(--color-warn)}
+.delivery-checks .tag.error{color:var(--color-danger)}
+.check-group{margin:var(--space-3) 0}
+.check-group h4{font-size:var(--text-xs);font-weight:var(--fw-semibold);color:var(--color-warn);margin:0 0 var(--space-1)}
+.check-line{padding:var(--space-1) 0;line-height:var(--leading-normal)}
+.check-attention .check-line{display:grid;grid-template-columns:var(--space-3) minmax(0,1fr);column-gap:var(--space-1)}
+.check-attention .check-line::before{content:"";width:var(--space-2);height:var(--space-2);margin-top:var(--space-2);border-radius:var(--radius-pill);background:var(--color-warn)}
+.check-attention .check-line:has(.tag.error)::before{background:var(--color-danger)}
+.check-attention .check-line>details{grid-column:2}
+.check-notes .tag,.check-passed .tag{color:var(--color-text-muted)}
+.check-passed>summary{font-size:var(--text-xs);color:var(--color-text-muted);min-height:var(--control-h-sm)}
+.check-clear{font-size:var(--text-xs);color:var(--color-text-muted);margin:var(--space-2) 0}
+.source-drawer-brand{font-size:var(--text-xs)}
