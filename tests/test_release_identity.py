@@ -85,6 +85,8 @@ def test_windows_checkout_and_frozen_archive_keep_shared_wheel_bytes(tmp_path, m
         'src/briefloop/__init__.py': b'__version__ = "1.2.3"\n',
         'src/briefloop/static/app.js': b'console.log("shared");\n',
         'src/briefloop/static/runtime-bridge.mjs': b'export const version = "shared";\n',
+        'src/briefloop/static/tokens.css': b':root { --shared: blue; }\n',
+        'src/briefloop/static/runtime-briefloop.svg': b'<svg>\n</svg>\n',
         'src/wikiskill/__init__.py': b'"""Shared package."""\n',
         'src/briefloop/static/sample.png': b'\x89PNG\r\n\x1a\n\x00\xffbinary\r\n',
         'pyproject.toml': b'[project]\nname = "briefloop"\nversion = "1.2.3"\n',
@@ -92,8 +94,12 @@ def test_windows_checkout_and_frozen_archive_keep_shared_wheel_bytes(tmp_path, m
         'LICENSE': b'Frozen license\n',
         'THIRD_PARTY_NOTICES.md': b'# Frozen notices\n',
     }
+    desktop_copies = {
+        'desktop/electron/assets/ui-tokens.css': inputs['src/briefloop/static/tokens.css'],
+        'desktop/electron/assets/briefloop-mark.svg': inputs['src/briefloop/static/runtime-briefloop.svg'],
+    }
     (origin / '.gitattributes').write_bytes((ROOT / '.gitattributes').read_bytes())
-    for name, data in inputs.items():
+    for name, data in {**inputs, **desktop_copies}.items():
         target = origin / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
@@ -107,6 +113,8 @@ def test_windows_checkout_and_frozen_archive_keep_shared_wheel_bytes(tmp_path, m
     for name, data in inputs.items():
         if name.startswith('src/'):
             assert (checkout / name).read_bytes() == data
+    for name, data in desktop_copies.items():
+        assert (checkout / name).read_bytes() == data
     with zipfile.ZipFile(io.BytesIO(backend.frozen_archive(commit, checkout))) as archive:
         for name, data in inputs.items():
             assert archive.read(name) == data

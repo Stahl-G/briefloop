@@ -8,3 +8,5 @@
 /src/briefloop/static/frontend-licenses.txt text eol=lf
 /frontend/ui-system.css text eol=lf
 /src/briefloop/static/style.css text eol=lf
+/desktop/electron/assets/ui-tokens.css text eol=lf
+/desktop/electron/assets/briefloop-mark.svg text eol=lf
