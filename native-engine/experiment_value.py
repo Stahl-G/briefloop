@@ -27,7 +27,7 @@ SLICES = Path.home() / 'Developer' / 'briefloop-eval' / 'slices'
 DIMENSIONS = ('evidence', 'coverage', 'analysis', 'expression')
 
 
-def leg(name, version, kind, repeat, model, variant, out):
+def leg(name, version, kind, repeat, model, variant, out, slices=str(SLICES)):
     sys.path.insert(0, str(HERE.parent / 'src'))
     sys.path.insert(0, str(HERE))
     import experiment_ab
@@ -38,8 +38,12 @@ def leg(name, version, kind, repeat, model, variant, out):
     from briefloop.native_harness import NativeHarness
     from briefloop.opencode_harness import OpencodeHarness
     work = Path(tempfile.mkdtemp(prefix=f'bl-value-{name}-{kind}-')).resolve()
-    shutil.copytree(SLICES / name, work / 'ws')
-    truth = seed_value.apply(work / 'ws', version, kind)
+    shutil.copytree(Path(slices) / name, work / 'ws')
+    cache = Path(slices) / 'paraphrases' / f'{name}.json'
+    paraphrases = json.loads(cache.read_text(encoding='utf-8'))['pairs'] if cache.exists() else {}
+    labelled = Path(slices) / 'labels' / f'{name}.json'
+    labels = json.loads(labelled.read_text(encoding='utf-8')) if labelled.exists() else None
+    truth = seed_value.apply(work / 'ws', version, kind, paraphrases, labels)
     record = {'slice': name, 'kind': kind, 'repeat': repeat, 'work': str(work), 'truth': truth}
     if truth is None:
         record['status'] = 'not_applicable'
@@ -88,7 +92,20 @@ def summarise(records):
         rows = [r for r in scored if r['kind'] == name and r['slice'] in base]
         k['legs_any_dimension_lower'] = sum(any(r['scores'][d] < base[r['slice']][d] for d in DIMENSIONS) for r in rows)
         del k['delta']
-    return {'control_scores': base, 'control_overall': base_overall, 'kinds': kinds,
+    # v2 metrics per kind, controls included: on score-invariant kinds these are
+    # false-positive rates, on the others detection rates (FBI: penalised = detected).
+    def flagged(r):
+        return any(f.get('kind') == 'no_implication' for f in (r.get('assessment') or {}).get('findings', []))
+    rates = {}
+    for name in sorted({r['kind'] for r in scored}):
+        rows = [r for r in scored if r['kind'] == name and r['slice'] in base]
+        if not rows:
+            continue
+        rates[name] = {'legs': len(rows), 'no_implication': sum(map(flagged, rows)),
+                       'analysis_must_fix': sum(r['scores']['analysis'] <= 2 for r in rows),
+                       'analysis_below_control_mean': sum(r['scores']['analysis'] < base[r['slice']]['analysis'] for r in rows),
+                       'meets_requirement': sum(r['overall'] == '达到要求' for r in rows)}
+    return {'control_scores': base, 'control_overall': base_overall, 'kinds': kinds, 'rates': rates,
             'failed_legs': [{'slice': r['slice'], 'kind': r['kind'], 'repeat': r['repeat'], 'error': r.get('error')}
                             for r in records if r.get('status') == 'failed'],
             'not_applicable': [(r['slice'], r['kind']) for r in records if r.get('status') == 'not_applicable']}
@@ -97,7 +114,8 @@ def summarise(records):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--set', default='dev')
-    parser.add_argument('--kinds', default='control,' + ','.join(__import__('seed_value').KINDS))
+    parser.add_argument('--kinds', default=','.join(['control', *__import__('seed_value').KINDS, *__import__('seed_value').V2_KINDS]))
+    parser.add_argument('--slices', default=str(SLICES), help='slice directory with manifest.json (and paraphrases/)')
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--concurrency', type=int, default=6)
     parser.add_argument('--model', default='opencode-go/deepseek-v4.1-flash')
@@ -108,13 +126,13 @@ def main():
     if out.exists():
         raise SystemExit(f'{out} exists; runs are never overwritten')
     out.mkdir(parents=True)
-    manifest = json.loads((SLICES / 'manifest.json').read_text(encoding='utf-8'))
+    manifest = json.loads((Path(args.slices).expanduser() / 'manifest.json').read_text(encoding='utf-8'))
     slices = [s for s in manifest['slices'] if s['set'] == args.set]
-    legs = [(s['name'], s['version'], kind, i, args.model, args.variant, str(out))
+    legs = [(s['name'], s['version'], kind, i, args.model, args.variant, str(out), str(Path(args.slices).expanduser()))
             for i in range(args.repeat) for s in slices for kind in args.kinds.split(',')]
     (out / 'plan.json').write_text(json.dumps({'model': args.model, 'variant': args.variant, 'legs': len(legs),
                                                'slices': [s['name'] for s in slices], 'kinds': args.kinds.split(','),
-                                               'repeat': args.repeat}, ensure_ascii=False, indent=1))
+                                               'repeat': args.repeat, 'slice_dir': str(args.slices)}, ensure_ascii=False, indent=1))
     records = []
     with ProcessPoolExecutor(args.concurrency, mp_context=get_context('spawn')) as pool:
         futures = {pool.submit(leg, *item): item for item in legs}

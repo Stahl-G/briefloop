@@ -29,7 +29,14 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# Chapters are level-2 headings by default; some reports use level 1 (--level 1).
+LEVEL = 2
 HEADING = re.compile(r'^## ', re.M)
+
+
+def set_level(level):
+    global LEVEL, HEADING
+    LEVEL, HEADING = level, re.compile('^' + '#' * level + ' ', re.M)
 CITATION = re.compile(r'\[@(src_[A-Za-z0-9]+)')
 
 
@@ -43,7 +50,7 @@ def _markdown_chapters(markdown):
 def _document_chapters(document):
     head, chapters = [], []
     for node in document.get('content', []):
-        if node.get('type') == 'heading' and node.get('attrs', {}).get('level') == 2:
+        if node.get('type') == 'heading' and node.get('attrs', {}).get('level') == LEVEL:
             chapters.append([node])
         elif chapters:
             chapters[-1].append(node)
@@ -93,7 +100,7 @@ def chapters(workspace, version):
     _, parts = _markdown_chapters(brief['markdown'])
     rows = []
     for i, part in enumerate(parts):
-        title = part.splitlines()[0][3:].strip()
+        title = part.splitlines()[0][LEVEL + 1:].strip()
         rows.append({'index': i, 'title': title, 'chars': len(part), 'sources': len(set(CITATION.findall(part)))})
     db.close()
     return rows
@@ -107,7 +114,7 @@ def cut(workspace, version, index, output):
     run_id = brief['run_id']
     head, parts = _markdown_chapters(brief['markdown'])
     chapter = parts[index]
-    title = chapter.splitlines()[0][3:].strip()
+    title = chapter.splitlines()[0][LEVEL + 1:].strip()
     markdown = head + chapter
     sources = set(CITATION.findall(markdown))
     document = None
@@ -204,6 +211,11 @@ def cut(workspace, version, index, output):
 
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+    args = [a for a in sys.argv[1:] if not a.startswith('--level=')]
+    for a in sys.argv[1:]:
+        if a.startswith('--level='):
+            set_level(int(a.split('=', 1)[1]))
+    sys.argv = [sys.argv[0], *args]
     command = sys.argv[1]
     if command == 'list':
         for row in chapters(sys.argv[2], sys.argv[3]):

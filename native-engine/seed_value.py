@@ -17,6 +17,11 @@ import sqlite3
 from pathlib import Path
 
 KINDS = ('filler', 'restated_source', 'off_topic', 'conclusions_removed')
+# Benchmark v2 (#757 design): graded removal, and two changes a good evaluator must
+# NOT penalise. Without score-invariant controls a stricter evaluator looks better.
+# They act on sentences labelled implication (label_sentences.py) and need those labels.
+V2_KINDS = ('implications_removed', 'implications_half_removed', 'implications_paraphrased', 'paragraphs_reordered')
+SCORE_INVARIANT = ('control', 'implications_paraphrased', 'paragraphs_reordered')
 
 FILLER = ('这一变化值得关注。从整体来看，相关情况仍需持续观察，各方面因素相互交织，未来走势存在一定不确定性。'
           '企业需要保持战略定力，积极应对挑战、把握机遇，在变局中寻求新的突破。')
@@ -55,7 +60,55 @@ def _sentences(paragraph):
     return re.findall(r'[^。！？]*[。！？](?:\s*\[@src_[A-Za-z0-9]+\])*', paragraph)
 
 
-def degrade(markdown, kind, source_text):
+def _plain(sentence):
+    return re.sub(r'\[@[^\]]*\]', '', sentence).replace('**', '').strip()
+
+
+def judgments(markdown, labels=None):
+    """Judgment sentences as (block, sentence index, text).
+
+    With labels (label_sentences.py, checked by a person) these are the sentences
+    labelled implication. Without, the legacy heuristic of conclusions_removed.
+    """
+    blocks, body = _body_paragraphs(markdown)
+    found = []
+    if labels is not None:
+        for paragraph in labels['paragraphs']:
+            if 'error' in paragraph:
+                continue
+            sentences = _sentences(blocks[paragraph['block']])
+            for item in paragraph['sentences']:
+                n = item['i']
+                if item['label'] == 'implication' and n < len(sentences) and _plain(sentences[n]) == item['text']:
+                    found.append((paragraph['block'], n, sentences[n]))
+        return found
+    for index in body:
+        sentences = _sentences(blocks[index])
+        if len(sentences) < 2:
+            continue
+        for n, sentence in enumerate(sentences):
+            if n == 0 or JUDGMENT.search(_plain(sentence)):
+                found.append((index, n, sentence))
+    return found
+
+
+def _remove(blocks, targets):
+    """Drop the given (block, sentence index) judgments, keeping each paragraph's facts."""
+    removed = []
+    for index in sorted({b for b, _ in targets}):
+        sentences = _sentences(blocks[index])
+        keep = [x for n, x in enumerate(sentences) if (index, n) not in targets]
+        removed += [x.strip() for n, x in enumerate(sentences) if (index, n) in targets]
+        if keep:
+            text = ''.join(keep).strip()
+            # A removed bold lead sentence leaves its closing marker behind.
+            if text.count('**') % 2:
+                text = text.replace('**', '', 1).strip()
+            blocks[index] = text
+    return removed
+
+
+def degrade(markdown, kind, source_text, paraphrases=None, labels=None):
     """Return (new markdown, truth) for one kind; truth=None if the report does not allow it."""
     blocks, body = _body_paragraphs(markdown)
     if not body:
@@ -104,10 +157,44 @@ def degrade(markdown, kind, source_text):
         if not removed:
             return markdown, None
         return '\n\n'.join(blocks), {'kind': kind, 'removed': removed, 'needles': []}
+    if kind in ('implications_removed', 'implications_half_removed', 'implications_paraphrased') and labels is None:
+        return markdown, None
+    if kind in ('implications_removed', 'implications_half_removed'):
+        # All labelled implications, or those of every other body paragraph (sensitivity).
+        chosen = set(body if kind == 'implications_removed' else body[::2])
+        targets = {(b, n) for b, n, _ in judgments(markdown, labels) if b in chosen}
+        removed = _remove(blocks, targets)
+        if not removed:
+            return markdown, None
+        return '\n\n'.join(blocks), {'kind': kind, 'removed': removed, 'needles': []}
+    if kind == 'implications_paraphrased':
+        # Score-invariant: the same judgments in other words, from a cached, checked paraphrase.
+        replaced = []
+        for index, n, sentence in judgments(markdown, labels):
+            new = (paraphrases or {}).get(_plain(sentence))
+            if not new:
+                continue
+            sentences = _sentences(blocks[index])
+            tail = re.findall(r'\s*\[@src_[A-Za-z0-9]+\]', sentences[n])
+            bold = sentences[n].lstrip().startswith('**')
+            sentences[n] = ('**' + new + '**' if bold else new) + ''.join(tail)
+            blocks[index] = ''.join(sentences)
+            replaced.append({'original': _plain(sentence), 'paraphrase': new})
+        if not replaced:
+            return markdown, None
+        return '\n\n'.join(blocks), {'kind': kind, 'replaced': replaced, 'needles': []}
+    if kind == 'paragraphs_reordered':
+        # Score-invariant: body paragraphs in reverse order; nothing added or removed.
+        if len(body) < 2:
+            return markdown, None
+        texts = [blocks[i] for i in body]
+        for i, text in zip(body, reversed(texts)):
+            blocks[i] = text
+        return '\n\n'.join(blocks), {'kind': kind, 'order': list(reversed(body)), 'needles': []}
     raise ValueError(kind)
 
 
-def apply(workspace, version_id, kind):
+def apply(workspace, version_id, kind, paraphrases=None, labels=None):
     """Plant `kind` (or nothing for 'control') into a copied workspace; return the truth."""
     from briefloop.document_model import document_hash, markdown_document
     from briefloop.store import Store
@@ -120,7 +207,8 @@ def apply(workspace, version_id, kind):
             return store.source_text(source_id)
         except (ValueError, OSError):
             return ''
-    markdown, truth = (brief['markdown'], {'kind': 'control'}) if kind == 'control' else degrade(brief['markdown'], kind, source_text)
+    markdown, truth = ((brief['markdown'], {'kind': 'control'}) if kind == 'control'
+                       else degrade(brief['markdown'], kind, source_text, paraphrases, labels))
     if truth is None:
         return None
     document = markdown_document(markdown)
