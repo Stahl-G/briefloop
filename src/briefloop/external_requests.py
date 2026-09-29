@@ -10,6 +10,7 @@ import re
 
 from .store import Store, Conflict, dump, now
 from .execution_records import sanitize
+from .platform_support import filesystem_path
 
 SCHEMA = '''CREATE TABLE IF NOT EXISTS external_requests(
  request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL,
@@ -116,7 +117,7 @@ def _operation(store, action, body):
             value['latest_version_id'] = versions[0]['id'] if versions else None
         if job['kind'] == 'export_docx' and job['status'] == 'complete':
             from .export_jobs import output_path
-            path = output_path(store, job)
+            path = filesystem_path(output_path(store, job))
             valid = path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == result.get('sha256')
             value['artifact_available'] = valid
             if valid:
