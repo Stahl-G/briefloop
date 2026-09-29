@@ -205,10 +205,12 @@ def test_unicode_upload_and_original_survive_workspace_reopen(tmp_path):
     assert reopened.snapshot()['wiki'] == '中文 Wiki；μm；😀'
 
 
-def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):
+@pytest.mark.parametrize('long_workspace', [False, True])
+def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path, long_workspace):
     from briefloop.workspaces import _request_shutdown, _read_api
     from briefloop.templates import BUILTIN_TEMPLATES
     root=tmp_path/'中文 fresh workspace'
+    if long_workspace:root=tmp_path/('中文 fresh-'+'w'*(224-len(str(tmp_path))-1-len('中文 fresh-')))
     marker=root/'server.json'
     entry=Path(sys.executable).with_name('briefloop.exe')
     assert entry.is_file(), 'Install briefloop before running the native startup check'
@@ -228,6 +230,35 @@ def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):
         english_names={label for filename,_,label in BUILTIN_TEMPLATES if '-en-' in filename}
         assert english_names
         assert {row['name'] for row in templates if row['language_hint']=='en'}==english_names
+        if long_workspace:
+            import hashlib
+            from io import BytesIO
+            from docx import Document
+            from briefloop.document_model import brief_document
+            from briefloop.platform_support import filesystem_path
+            from briefloop.store import Store
+            from briefloop.templates import export_template, rebuild_template_version
+            store=Store(root)
+            selected=next(row for row in templates if row['name']=='通用报告·品牌绿')
+            original=root/'templates'/selected['id']/'original.docx'
+            original_bytes=filesystem_path(original).read_bytes()
+            assert len(str(original))>260
+            assert hashlib.sha256(original_bytes).hexdigest()==selected['source_hash']
+            rebuilt=rebuild_template_version(store,selected['id'])
+            source=store.add_source('Synthetic material','Two deliveries this week.')
+            run=store.create_run({'title':'长路径合成验收','objective':'确定性模板导出','template_id':rebuilt['id']},[source['id']])
+            brief=store.publish(run['id'],{'title':'长路径合成验收','markdown':'# 长路径合成验收\n\nTwo deliveries this week.'},author='example')
+            blob=export_template(store,brief,brief_document(brief),{})
+            assert 'Two deliveries this week.' in '\n'.join(p.text for p in Document(BytesIO(blob)).paragraphs)
+            assert filesystem_path(original).read_bytes()==original_bytes
+            assert store.one('briefs',brief['id'])['author']=='example'
+            prepared=root/'templates'/rebuilt['id']/'prepared.docx'
+            filesystem_path(prepared).write_bytes(b'tampered synthetic template')
+            with pytest.raises(ValueError,match='底稿已变化'):
+                export_template(store,brief,brief_document(brief),{})
+            filesystem_path(original).write_bytes(b'tampered synthetic original')
+            with pytest.raises(ValueError,match='原件已变化'):
+                rebuild_template_version(store,selected['id'])
         # A valid session token alone must not stop a different service identity.
         for pid, workspace_id in ((0, info['workspace_id']), (info['pid'], 'wrong-workspace')):
             with pytest.raises(OSError, match='拒绝停止'):
