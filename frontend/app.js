@@ -46,6 +46,7 @@ import {revisionQuestionsUI} from './revision-questions.js';
 import {readersUI} from './readers.js';
 import {verificationBadge} from './skill-verification.js';
 import {previousReportUI} from './previous-report.js';
+import {nextReportUI} from './next-report.js';
 import {learningRetry} from './learning-retry.js';
 import {templatesUI,GENRE_META,ICONS,splitTemplateName} from './templates.js';
 import {createTemplateOutput} from './template-output.js';
@@ -175,6 +176,8 @@ function acceptCommand(){
 // Only editorial preferences lack a form control. Runtime/template snapshots are
 // deliberately rebuilt by the server and must never be copied from a prior run.
 let writingPreferencesOverride;
+const nextReport=nextReportUI({$,api,savedVersion,getTemplate:id=>{const t=state?.templates?.find(t=>t.id===id);return t?{...t,sections:parse(t.spec).sections||[]}:null},getCurrent:()=>current,confirm:message=>confirm(message),applyRequirements,notice,clearSources:()=>{selected.clear();referenceSelected.clear();document.querySelectorAll('[data-check],[data-reference-source]').forEach(input=>input.checked=false);renderReferenceSources()}});
+nextReport.bind();
 function preserveWritingPreferences(req,previous,override){
  if(!Object.prototype.hasOwnProperty.call(req,'writing_preferences'))req.writing_preferences=[...(Array.isArray(override)?override:Array.isArray(previous?.writing_preferences)?previous.writing_preferences:[])];
  return req;
@@ -553,7 +556,7 @@ async function previewReportTime(){
  try{const requirements={title:form.elements.title.value||'预览',objective:form.elements.objective.value||'预览'};for(const key of ['period','period_start','period_end','report_timezone'])requirements[key]=form.elements[key].value;const t=await api('report-time-preview',{requirements});if(ticket!==reportTimePreviewTicket)return;box.textContent=`系统日期：${t.today} · ${t.timezone}；报告范围：${t.start} 至 ${t.end_exclusive}（不含结束时刻）。提交时冻结。`;}catch(e){if(ticket===reportTimePreviewTicket)box.textContent=e.message}
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(!['fast','fast_web'].includes(req.completion_mode)&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(!['fast','fast_web'].includes(req.completion_mode)&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});nextReport.clear();showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){const s=await uploadSource(f);if(s.status==='ready')selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});if(s.status==='ready')selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
@@ -1819,7 +1822,8 @@ function readTemplateSections(){
  // Never submit a report whose chosen template is not ready; falling back to the
  // general layout would silently change the deliverable.
  if(template&&template.status&&template.status!=='ready')throw Error('所选模板尚未就绪：'+template.name+'；请改用通用模板，或等模板准备完成后再提交');
- const saved=templateId&&state.requirements?.template_id===templateId?state.requirements.sections||[]:[];
+ const reused=nextReport.requirementsForTemplate(templateId);
+ const saved=reused?.sections||(templateId&&state.requirements?.template_id===templateId?state.requirements.sections||[]:[]);
  return [...$('template-sections').querySelectorAll('[data-section-id]')].map(row=>{
   const base=original.find(s=>s.section_id===row.dataset.sectionId)||{},requirement=saved.find(s=>s.section_id===row.dataset.sectionId);
   return {section_id:row.dataset.sectionId,title:row.querySelector('[data-title]').value,purpose:row.querySelector('[data-purpose]')?.value??requirement?.purpose??base.purpose??'',mode:row.querySelector('select').value,placeholder:'待填充'};
@@ -1831,8 +1835,9 @@ function templateSections(){
 }
 function applyTemplateSectionEdits(){
  const templateId=$('template-select').value;
- if(!templateId||state?.requirements?.template_id!==templateId)return;
- for(const section of state.requirements.sections||[]){const row=[...$('template-sections').querySelectorAll('[data-section-id]')].find(r=>r.dataset.sectionId===section.section_id);if(row){row.querySelector('[data-title]').value=section.title;row.querySelector('select').value=section.mode||'required'}}
+ const reused=nextReport.requirementsForTemplate(templateId);
+ if(!templateId||(!reused&&state?.requirements?.template_id!==templateId))return;
+ for(const section of (reused||state.requirements).sections||[]){const row=[...$('template-sections').querySelectorAll('[data-section-id]')].find(r=>r.dataset.sectionId===section.section_id);if(row){row.querySelector('[data-title]').value=section.title;row.querySelector('select').value=section.mode||'required'}}
 }
 function unreadyTemplate(id){const template=(state?.templates||[]).find(t=>t.id===id);return template&&template.status&&template.status!=='ready'?template:null}
 function renderTemplates(first=false){
