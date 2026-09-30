@@ -65,3 +65,76 @@ def test_source_text_of_a_tracked_docx_reads_the_accepted_document(tmp_path):
     result = import_previous(store, '周报.docx', tracked_docx())
     text = store.source_text(result['source_id'])
     assert '每瓦0.310美元' in text and '0.290' not in text
+
+
+def test_imported_report_is_reference_only_for_new_runs(tmp_path):
+    import pytest
+    store = Store(tmp_path / 'ws')
+    previous = import_previous(store, 'weekly.md', '# 周报\n\n历史价格0.29。'.encode())
+    sid = previous['source_id']
+    assert next(s for s in store.snapshot()['sources'] if s['id'] == sid)['usage'] == 'previous_report'
+    with pytest.raises(ValueError, match='参考材料'):
+        store.create_run({'title': '本期周报', 'objective': '本期价格'}, [sid])
+    current = store.add_source('本期原件', '本期价格0.31。')
+    run = store.create_run({'title': '本期周报', 'objective': '本期价格', 'reference_source_ids': [sid]}, [current['id']])
+    assert store.source_ids(run['id']) == [current['id']]
+    with pytest.raises(ValueError, match='本期证据'):
+        store.attach_source(run['id'], sid)
+    another=store.create_run({'title':'本期','objective':'摘要'},[current['id']])
+    with pytest.raises(ValueError,match='事实引用'):
+        store.publish(another['id'],{'title':'本期','markdown':'历史价格0.29。','citations':[{'source_id':sid,'locator':'正文'}]})
+    assert store.source_ids(another['id']) == [current['id']]
+
+
+def test_docx_table_keeps_structure_and_separates_tracked_prices():
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = '地区'
+    table.cell(0, 1).text = '每瓦美元'
+    table.cell(1, 0).text = '美国'
+    p = table.cell(1, 1).paragraphs[0]
+    p._p.append(parse_xml(f'<w:del {NS}><w:r><w:delText>0.290</w:delText></w:r></w:del>'))
+    p._p.append(parse_xml(f'<w:ins {NS}><w:r><w:t>0.310</w:t></w:r></w:ins>'))
+    stream = BytesIO();doc.save(stream)
+    before, after, changed = docx_versions(stream.getvalue())
+    assert changed and '| 美国 | 0.290 |' in before and '| 美国 | 0.310 |' in after
+    assert '| 地区 | 每瓦美元 |\n| --- | --- |\n' in after
+    from markdown_it import MarkdownIt
+    html = MarkdownIt('commonmark').enable('table').render(after)
+    assert '<table>' in html and '<td>0.310</td>' in html and '0.290' not in html
+
+
+def test_content_control_and_deleted_table_row_are_preserved_as_versions(tmp_path):
+    doc=Document();table=doc.add_table(rows=3,cols=2)
+    for row,values in zip(table.rows,[('地区','价格'),('历史地区','0.290'),('美国','0.310')]):
+        for cell,text in zip(row.cells,values):cell.text=text
+    row=table.rows[1]._tr
+    properties=parse_xml(f'<w:trPr {NS}><w:del w:id="3"/></w:trPr>');row.insert(0,properties)
+    last=table.rows[2]._tr
+    table._tbl.remove(last)
+    control=parse_xml(f'<w:sdt {NS}><w:sdtContent/></w:sdt>')
+    control.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sdtContent').append(last)
+    table._tbl.append(control)
+    stream=BytesIO();doc.save(stream)
+    before,after,changed=docx_versions(stream.getvalue())
+    assert changed and '历史地区' in before and '历史地区' not in after
+    assert '| 美国 | 0.310 |' in before and '| 美国 | 0.310 |' in after
+    store=Store(tmp_path/'ws');result=import_previous(store,'weekly.docx',stream.getvalue())
+    text=store.source_text(result['source_id'])
+    assert '历史地区' not in text and '0.290' not in text and '0.310' in text
+
+
+def test_rich_revision_cannot_attach_previous_report_as_fact(tmp_path):
+    import pytest
+    store=Store(tmp_path/'ws')
+    prior=import_previous(store,'past.md','# 历史\n\n历史价格0.29。'.encode())
+    current=store.add_source('Current','本期价格0.31。')
+    run=store.create_run({'title':'本期','objective':'当前'},[current['id']])
+    brief=store.publish(run['id'],{'title':'本期','markdown':'本期价格0.31。'})
+    document={'type':'doc','content':[{'type':'paragraph','content':[
+        {'type':'text','text':'历史价格0.29。'},
+        {'type':'citation','attrs':{'sourceId':prior['source_id']}}]}]}
+    with pytest.raises(ValueError,match='事实引用'):
+        store.revise(brief['id'],editor_document=document)
+    assert store.source_ids(run['id']) == [current['id']]
+    assert len(store.rows('SELECT id FROM briefs WHERE run_id=?',(run['id'],))) == 1

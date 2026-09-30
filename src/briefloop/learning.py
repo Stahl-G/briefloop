@@ -14,10 +14,11 @@ def enqueue_feedback(store, *, automatic=False, confirmed_plan=None):
     with store.tx() as c:
         rows=[dict(r) for r in c.execute('SELECT * FROM feedback WHERE batch_id IS NULL ORDER BY rowid')]
         if not rows:return {'status':'idle','message':'暂无未处理反馈'}
-        # One batch learns one scope: the workspace, or one saved reader (#858).
-        # The oldest waiting feedback decides; other scopes wait for the next batch.
-        scope=lambda row:json.loads(row['data']).get('reader_id') if row['kind']=='revision_edit' else None
-        reader_id=scope(rows[0]);rows=[r for r in rows if scope(r)==reader_id]
+        # Reader-only feedback is retained until shared applicability has been
+        # validated. Do not create a separate skill library or generalize it.
+        rows=[r for r in rows if not (r['kind']=='revision_edit' and json.loads(r['data']).get('reader_id'))]
+        if not rows:return {'status':'awaiting_reader_scope','message':'读者专属反馈已保存；共享技能适用条件验收前暂不自动学习'}
+        reader_id=None
         if c.execute("SELECT id FROM jobs WHERE kind='learn' AND status IN ('queued','running')").fetchone():
             return {'status':'pending','message':'已有学习任务，新反馈会进入下一批'}
         latest=datetime.fromisoformat(rows[-1]['created'])
@@ -48,6 +49,7 @@ def _experience(store, job):
     for fid in payload['feedback_ids']:
         f=store.rows('SELECT * FROM feedback WHERE id=?',(fid,))[0]
         b=store.one('briefs',f['version_id']);run=store.one('runs',b['run_id']);data=json.loads(f['data'])
+        if f['kind']=='revision_edit' and data.get('reader_id'):continue
         if f['kind']=='revision' or f['kind']=='revision_edit':
             # Split revisions pass only their taste/reader-specific edits (#858):
             # fact corrections and unanswered questions never become writing feedback.
@@ -55,7 +57,7 @@ def _experience(store, job):
             if edits is not None and not edits:continue
         if run['id'] not in run_ids:run_ids.append(run['id'])
         if f['kind']=='revision_edit':
-            text={'kind':'user_revision_edits','requirements':json.loads(run['requirements']),'brief':b['markdown'],
+            text={'kind':'user_revision_edits','requirements':json.loads(run['requirements']),
                   'edits':[{k:e[k] for k in ('op','heading','before','after','category','decided_by')} for e in edits],
                   'sources':[store.one('sources',s) for s in store.source_ids(run['id'])]}
         elif f['kind']=='revision' and edits is not None:
@@ -420,7 +422,7 @@ def triage_prompt(store,folder,backend='codex'):
 
 
 def triage(store,runtime,job,folder,backend):
-    """Split and classify this batch's unsplit revisions; one Evaluator turn per batch."""
+    """Split and classify unsplit revisions in one authorized Evaluator session."""
     from . import revision_edits
     items=revision_edits.pending(store,json.loads(job['payload'])['feedback_ids'])
     if not items:return None
@@ -428,11 +430,17 @@ def triage(store,runtime,job,folder,backend):
     (folder/'input.json').write_text(dump(items),encoding='utf-8')
     saved=folder/'triage.json'
     if not saved.exists():
+        from .learning_budget import verify
+        try:verify(json.loads(job['payload']).get('authorization'),json.loads(job['payload']).get('budget',{}))
+        except LearningAuthorizationRequired as exc:raise InterruptedError(str(exc)) from None
+        if store.rows("SELECT seq FROM events WHERE job_id=? AND kind='revision_triage_started'",(job['id'],)):
+            raise InterruptedError('分类调用未留下完整结果；原记录保留，请重新确认预算后重试，不能自动追加调用')
         staged=stage_job(store,job,'evaluator',mode='triage')
         if backend=='briefloop-native':
             from .native_roles import triage_packet
             triage_packet(store,items,folder)
             staged={**staged,'native_packet':{'role':'evaluator','evaluation_mode':'triage'}}
+        store.event(job['id'],'revision_triage_started',{'logical_sessions':1,'host_internal_turns':'unknown'})
         runtime.execute(staged,triage_prompt(store,folder,backend),folder)
     result=json.loads(saved.read_text(encoding='utf-8'))
     revision_edits.record(store,items,result,job_id=job['id'])
@@ -520,8 +528,13 @@ def _baseline_for_attempt(store, case, learning_payload):
 
 def learn(store,runtime,job):
     payload=json.loads(job['payload'])
+    if payload.get('reader_id'):
+        raise InterruptedError('读者专属学习链暂不启用；原反馈与任务进度保留，等待共享适用条件验收')
+    from .readers import validate_global_skill
+    try:validate_global_skill(store,payload.get('skill_id'))
+    except ValueError as exc:raise InterruptedError(str(exc)) from None
     from .learning_budget import verify
-    try:verify(payload.get('authorization'))
+    try:verify(payload.get('authorization'),payload.get('budget',{}))
     except LearningAuthorizationRequired as exc:
         # Pause instead of failing: the batch keeps its feedback and trials and
         # runs once the user confirms the bound (#727 review F3).
@@ -612,6 +625,11 @@ def apply_accepted(store,job,study,state):
     accepted=[x for x in state['history'] if x['accepted']]
     if not accepted:return
     decision=accepted[-1];payload=json.loads(job['payload'])
+    if payload.get('reader_id'):
+        if not store.rows("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'",(job['id'],)):
+            store.event(job['id'],'adoption_processed',{'applied':False,'reader_id':payload['reader_id'],
+                         'reason':'读者专属学习链暂不启用；反馈与候选原件保留'})
+        return
     text=(Path(study)/decision['skill']['file']).read_text(encoding='utf-8')
     # A retained version includes its role binding. Keep legacy rows immutable;
     # target order and duplicate roles do not change the effective binding.

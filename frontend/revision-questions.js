@@ -19,15 +19,16 @@ export function revisionQuestionsUI({api,action,$=lookup}){
  function bind(box){
   box.querySelectorAll('[data-answer]').forEach(button=>button.onclick=()=>{
    const edit=button.closest('[data-edit]').dataset.edit,category=button.dataset.answer;
-   action(()=>api('revision-answer',{edit_id:edit,category}),category==='skip'?'已跳过，这处改动不进入学习':category==='fact_correction'?'已记为事实纠错，不作为写作经验':'已记下，会进入下一次学习');
+   action(()=>api('revision-answer',{edit_id:edit,category}),category==='skip'?'已跳过，这处改动不进入学习':category==='fact_correction'?'已记为事实纠错，不作为写作经验':category==='reader_specific'?'读者特定改动已保留；未绑定读者时保持未确认，不进入全局学习':'已记下，会进入下一次学习');
   });
  }
  function render(value){
-  const questions=value?.questions||[],corrections=value?.fact_corrections||[];
+  const questions=value?.questions||[],unconfirmed=value?.unconfirmed||[],corrections=value?.fact_corrections||[];
   const box=$('revision-questions');
   if(box){
-   box.hidden=!questions.length;
+   box.hidden=!questions.length&&!unconfirmed.length;
    box.innerHTML=questions.length?`<h3>${questions.length} 处改动需要你确认原因</h3><p class="help">只问拿不准、改动较大的地方。事实纠错不会写进写作技巧；跳过的改动不进入学习。</p>${questions.map(questionHTML).join('')}`:'';
+   if(unconfirmed.length)box.innerHTML+=`<details><summary>${unconfirmed.length} 处未确认改动 · 不进入学习</summary><p class="help">无需逐条处理。你也可以展开后确认改动原因。</p>${unconfirmed.map(questionHTML).join('')}</details>`;
    bind(box);
   }
   const ledger=$('fact-corrections');

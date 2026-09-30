@@ -13,7 +13,7 @@ function block(name){
  const line=source.slice(prefix,source.indexOf('\n',start));
  return line.trimEnd().endsWith('}')&&!line.trimEnd().endsWith('{')?line:source.slice(prefix,end+2);
 }
-const plan={cases:3,rounds:1,rounds_with_explicit_requirement:2,trial_generations_per_round:6,max_trial_generations:12,backend_label:'Codex CLI',model:'gpt-5.6-luna',role_models:{evaluator:{model:'separate-review-model'}},web:false,price:'unknown',fingerprint:'a'.repeat(64)};
+const plan={cases:3,rounds:1,rounds_with_explicit_requirement:2,trial_generations_per_round:6,triage_turns_per_batch:1,max_trial_generations:12,backend_label:'Codex CLI',model:'gpt-5.6-luna',role_models:{evaluator:{model:'separate-review-model'}},web:false,price:'unknown',fingerprint:'a'.repeat(64)};
 
 function context(answer){
  const calls=[],prompts=[];
@@ -29,6 +29,7 @@ test('turning automatic learning on shows the bound and records only a confirmat
  assert.deepEqual(cancelled.calls,[]);
  assert.match(cancelled.prompts[0],/每轮最多用 3 份历史报告/);
  assert.match(cancelled.prompts[0],/试写合计不超过 12 次/);
+ assert.match(cancelled.prompts[0],/1 个独立改动分类会话/);
  assert.match(cancelled.prompts[0],/Codex CLI · gpt-5\.6-luna/);
  assert.match(cancelled.prompts[0],/角色模型 evaluator=separate-review-model/);
  assert.match(cancelled.prompts[0],/不含宿主内部子 agent 的回合或 token 数/);

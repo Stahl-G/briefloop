@@ -5,10 +5,10 @@ decisions the reader makes with it and their preferences. No personal or
 interpersonal notes. A run freezes the profile it was written for, so a later
 edit to the profile does not rewrite what an old report was asked to do.
 
-Each reader also has its own learning scope. Reader-specific edits are learned
-in that reader's WikiSkill chain and produce that reader's skill; general
-edits keep the workspace chain. The two never inherit from each other, so a
-preference one reader has does not leak into every other report.
+Reader labels are applicability conditions, not separate skill libraries.
+Reader-specific edits stay saved for later learning once shared applicability
+conditions and cross-reader acceptance are implemented. Historical per-reader
+skill and Wiki records remain visible, but do not become active automatically.
 """
 import json
 
@@ -66,26 +66,57 @@ def frozen(store, reader_id):
     return {key: value[key] for key in ('id', 'name', 'decisions', 'preferences')}
 
 
+def reader_scope_ids(store, skill_id):
+    """Readers associated with a skill or its ancestry, including old bindings.
+
+    Clearing a binding must not erase a verification's applicability record; a
+    descendant of a reader skill cannot silently become a workspace-wide skill.
+    """
+    if not skill_id:
+        return ()
+    parents = {row['id']: row['parent_id'] for row in store.rows('SELECT id,parent_id FROM skills')}
+    ancestry = set()
+    while skill_id and skill_id not in ancestry:
+        ancestry.add(skill_id)
+        skill_id = parents.get(skill_id)
+    readers = {reader_id for reader_id, bound in (store.meta('reader_skills') or {}).items()
+               if bound in ancestry}
+    readers.update(row['reader_id'] for row in store.rows('SELECT skill_id,reader_id FROM skill_verifications')
+                   if row['skill_id'] in ancestry and row['reader_id'])
+    return tuple(sorted(readers))
+
+
+def validate_global_skill(store, skill_id):
+    """Reject a reader-scoped skill before any workspace-wide binding changes."""
+    if not skill_id:
+        return
+    store.one('skills', skill_id)
+    if reader_scope_ids(store, skill_id):
+        raise ValueError('读者专属技能及其派生版本尚未通过跨读者验证，不能启用为工作区技能')
+
+
 def skill_for(store, reader_id):
-    """The skill a new run for this reader starts from: the reader's own, else the workspace's."""
-    if reader_id:
-        own = (store.meta('reader_skills') or {}).get(reader_id)
-        if own:
-            return own
-    return store.meta('active_skill')
+    """New reports use the workspace skill; historical reader skills stay inactive."""
+    skill_id = store.meta('active_skill')
+    return None if reader_scope_ids(store, skill_id) else skill_id
 
 
 def bind_skill(store, reader_id, skill_id):
     profile(store, reader_id)
     if skill_id:
-        store.one('skills', skill_id)
+        raise ValueError('读者独立技能暂未启用；读者特定修改会保留，等待适用条件与跨读者验证')
     with store.tx() as c:
         row = c.execute("SELECT value FROM meta WHERE key='reader_skills'").fetchone()
         skills = json.loads(row['value']) if row else {}
-        if skill_id:
-            skills[reader_id] = skill_id
-        else:
-            skills.pop(reader_id, None)
+        previous = skills.pop(reader_id, None)
+        if previous:
+            # Legacy bindings may predate verification records. Preserve their
+            # reader applicability before removing the live binding. This is
+            # provenance only: no improvement or successful verification claim.
+            from .skill_verification import register
+            register(c, previous, reader_id, [], None)
+            c.execute('UPDATE skill_verifications SET reader_id=COALESCE(reader_id,?),updated=? WHERE skill_id=?',
+                      (reader_id, now(), previous))
         c.execute("INSERT OR REPLACE INTO meta VALUES('reader_skills',?)", (dump(skills),))
     store.event(None, 'reader_skill_binding', {'reader_id': reader_id, 'skill_id': skill_id})
 
@@ -106,5 +137,6 @@ def listing(store):
     for row in rows:
         path = wiki_path(store, row['id'])
         out.append({key: row[key] for key in ('id', 'name', 'decisions', 'preferences')} |
-                   {'skill_id': skills.get(row['id']), 'wiki': path.read_text(encoding='utf-8') if path.exists() else ''})
+                   {'skill_id': skills.get(row['id']), 'skill_enabled': False,
+                    'wiki': path.read_text(encoding='utf-8') if path.exists() else ''})
     return out

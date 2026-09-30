@@ -53,9 +53,10 @@ def docx_versions(data):
     """Markdown of the document before and after its tracked changes, and
     whether it had any."""
     from docx import Document
+    from .docx_text import _blocks, _property
     body = Document(BytesIO(data)).element.body
     before, after, changed = [], [], False
-    for block in body:
+    for block in _blocks(body, {'p', 'tbl'}):
         if block.tag == W + 'p':
             old, new = _paragraph_versions(block)
             level = _heading_level(block)
@@ -66,15 +67,23 @@ def docx_versions(data):
                 after.append(prefix + new)
             changed = changed or old != new
         elif block.tag == W + 'tbl':
-            for row in block.iter(W + 'tr'):
-                cells = [[_paragraph_versions(p) for p in cell.iter(W + 'p')] for cell in row.iter(W + 'tc')]
-                old = ' | '.join(' '.join(v[0] for v in cell if v[0]) for cell in cells)
-                new = ' | '.join(' '.join(v[1] for v in cell if v[1]) for cell in cells)
-                if old.strip(' |'):
-                    before.append('| ' + old + ' |')
-                if new.strip(' |'):
-                    after.append('| ' + new + ' |')
+            old_rows, new_rows = [], []
+            for row in _blocks(block, {'tr'}):
+                cells = [[_paragraph_versions(p) for p in cell.iter(W + 'p')] for cell in _blocks(row, {'tc'})]
+                old = [' '.join(v[0] for v in cell if v[0]) for cell in cells]
+                new = [' '.join(v[1] for v in cell if v[1]) for cell in cells]
+                deleted = _property(row, 'trPr', 'del') is not None
+                inserted = _property(row, 'trPr', 'ins') is not None
+                if any(old) and not inserted:old_rows.append(old)
+                if any(new) and not deleted:new_rows.append(new)
+                changed = changed or deleted or inserted
                 changed = changed or old != new
+            for rows, destination in ((old_rows, before), (new_rows, after)):
+                if rows:
+                    width = max(map(len, rows))
+                    lines = ['| ' + ' | '.join(cell.replace('|', r'\|').replace('\n', '<br>') for cell in row + [''] * (width-len(row))) + ' |' for row in rows]
+                    lines.insert(1, '| ' + ' | '.join(['---'] * width) + ' |')
+                    destination.append('\n'.join(lines))
     return '\n\n'.join(before), '\n\n'.join(after), changed
 
 
@@ -110,7 +119,7 @@ def import_previous(store, name, data):
         provenance.write_text(json.dumps(metadata, ensure_ascii=False, sort_keys=True), encoding='utf-8')
     title = _title(name, before)
     run = store.create_run({'title': title, 'objective': '往期报告（导入）：用于反推简报约定和学习当时的改稿', 'allow_web': False,
-                            'fact_check': False}, [source['id']], remember_requirements=False)
+                            'fact_check': False}, [source['id']], remember_requirements=False, previous_report_import=True)
     original = store.publish(run['id'], {'title': title, 'markdown': before}, author='import')
     revision = None
     if changed and after.strip() and after != before:
@@ -119,3 +128,14 @@ def import_previous(store, name, data):
                                                    'original': original['id'], 'revision': revision['id'] if revision else None})
     return {'status': 'imported', 'source_id': source['id'], 'run_id': run['id'], 'title': title,
             'version_id': (revision or original)['id'], 'tracked_changes': bool(revision)}
+
+
+def source_usage(store, source_id):
+    path = store.root / 'sources' / (source_id + '.provenance.json')
+    if not path.is_file():return None
+    try:return json.loads(path.read_text(encoding='utf-8')).get('usage')
+    except (OSError, ValueError):return None
+
+
+def annotate_sources(store, sources):
+    return [{**source, 'usage': source_usage(store, source['id'])} for source in sources]

@@ -7,13 +7,13 @@ each edit as taste, fact correction or reader-specific (a model judgment), and
 Python routes them with fixed rules:
 
 - taste edits become writing feedback for the workspace's WikiSkill chain;
-- reader-specific edits of a report written for a saved reader go to that
-  reader's own chain (readers.py); without a saved reader they stay general;
+- reader-specific edits carry their saved reader tag and stay out of global
+  learning; without a saved reader they stay unconfirmed;
 - fact corrections stay in the workspace's correction ledger and never become
   writing skills (a wrong number is a source/check problem, not a style);
-- an edit the Evaluator is unsure about and that is large enough to matter is
-  held back and asked once in the feedback panel. A skipped question keeps the
-  edit out of learning; an answer re-enters it as new feedback.
+- every edit the Evaluator is unsure about stays out of learning. Larger edits
+  are asked once in the feedback panel; smaller ones stay unconfirmed and can
+  be confirmed later. A skipped question keeps the edit out of learning.
 """
 from difflib import SequenceMatcher
 import json
@@ -24,8 +24,8 @@ from .store import dump, now, uid
 CATEGORIES = ('taste', 'fact_correction', 'reader_specific')
 LEARNED = ('taste', 'reader_specific')
 CATEGORY_LABELS = {'taste': '口味', 'fact_correction': '事实纠错', 'reader_specific': '读者特定'}
-# An unsure edit below this many changed characters is not worth a question;
-# the Evaluator's best guess is used instead.
+# Only larger unsure edits prompt a question. Smaller ones remain unconfirmed;
+# the threshold never allows a best guess into learning.
 QUESTION_MIN_CHARS = 30
 NUMBER = re.compile(r'[-+]?\d+(?:[.,]\d+)*%?')
 
@@ -84,7 +84,7 @@ def triage_errors(result, items):
         if not isinstance(entry, dict):
             return 'edits 每项需要是对象'
         key = (entry.get('feedback_id'), entry.get('edit_id'))
-        if key not in expected:
+        if not all(isinstance(value, str) for value in key) or key not in expected:
             return f'未知的改动 {key}'
         if entry.get('category') not in CATEGORIES:
             return f'{key}：category 只能是 {"、".join(CATEGORIES)}'
@@ -94,7 +94,8 @@ def triage_errors(result, items):
             return f'{key}：reason 需要写明判断依据'
         allowed = learned.get(key[0], set())
         repeats = entry.get('repeats', [])
-        if not isinstance(repeats, list) or not set(repeats) <= allowed:
+        if (not isinstance(repeats, list) or not all(isinstance(value, str) and value for value in repeats)
+                or not set(repeats) <= allowed):
             return f'{key}：repeats 只能列出该改稿 learned_edits 里的 id（没有重复则 []）'
         seen.append(key)
     if len(seen) != len(set(seen)) or set(seen) != expected:
@@ -137,15 +138,19 @@ def record(store, items, result, *, job_id):
     for item in items:
         for edit in item['edits']:
             verdict = verdicts[(item['feedback_id'], edit['edit_id'])]
-            ask = not verdict['confident'] and edit['changed_chars'] >= QUESTION_MIN_CHARS
+            uncertain = not verdict['confident']
+            missing_reader = verdict['category'] == 'reader_specific' and not item.get('reader_id')
+            unconfirmed = uncertain or missing_reader
+            ask = uncertain and edit['changed_chars'] >= QUESTION_MIN_CHARS
             data = {**edit, 'model_category': verdict['category'], 'confident': verdict['confident'],
                     'reason': verdict['reason'].strip(), 'run_id': item['run_id'], 'reader_id': item.get('reader_id'),
                     'repeats': sorted(set(verdict.get('repeats') or [])),
+                    'repeats_provided': 'repeats' in verdict,
                     'triage_job': job_id}
-            routed = not ask and verdict['category'] == 'reader_specific' and item.get('reader_id')
+            routed = not unconfirmed and verdict['category'] == 'reader_specific'
             rows.append((uid('edit'), item['feedback_id'], edit['edit_id'], dump(data),
-                         None if ask else verdict['category'], None if ask else 'evaluator',
-                         'asked' if ask else 'routed' if routed else 'classified', now(), now()))
+                         None if unconfirmed else verdict['category'], None if unconfirmed else 'evaluator',
+                         'asked' if ask else 'unconfirmed' if unconfirmed else 'routed' if routed else 'classified', now(), now()))
     with store.tx() as c:
         c.executemany('INSERT OR IGNORE INTO revision_edits VALUES(?,?,?,?,?,?,?,?,?)', rows)
         # Reader-specific edits leave this batch as feedback of their reader's scope.
@@ -165,7 +170,10 @@ def learnable(store, feedback_id):
     rows = store.rows('SELECT * FROM revision_edits WHERE feedback_id=? ORDER BY rowid', (feedback_id,))
     if not rows:
         return None
-    return [_view(row) for row in rows if row['status'] in ('classified', 'answered') and row['category'] in LEARNED]
+    # This feedback belongs to the workspace. Reader-specific edits are emitted
+    # separately with a reader tag; even historical rows cannot leak here.
+    edits = [_view(row) for row in rows if row['status'] == 'classified' and row['category'] == 'taste']
+    return [edit for edit in edits if edit['decided_by'] == 'user' or edit['confident'] is True]
 
 
 def _view(row):
@@ -175,6 +183,8 @@ def _view(row):
             'category': row['category'], 'category_label': CATEGORY_LABELS.get(row['category'], ''),
             'decided_by': row['decided_by'], 'status': row['status'], 'reason': data.get('reason', ''),
             'model_category': data.get('model_category'), 'changed_chars': data.get('changed_chars', 0),
+            'confident': data.get('confident', False), 'repeats': data.get('repeats') or [],
+            'repeats_provided': data.get('repeats_provided', False),
             'run_id': data.get('run_id'), 'reader_id': data.get('reader_id')}
 
 
@@ -187,15 +197,15 @@ def answer(store, edit_id, category):
         row = c.execute('SELECT * FROM revision_edits WHERE id=?', (edit_id,)).fetchone()
         if row is None:
             raise ValueError('没有这处改动')
-        if row['status'] != 'asked':
+        if row['status'] not in ('asked', 'unconfirmed'):
             raise ValueError('这处改动已经处理过')
-        status = 'skipped' if category == 'skip' else 'answered'
+        reader_id = json.loads(row['data']).get('reader_id') if category == 'reader_specific' else None
+        status = 'skipped' if category == 'skip' else 'unconfirmed' if category == 'reader_specific' and not reader_id else 'answered'
         c.execute('UPDATE revision_edits SET category=?,decided_by=?,status=?,updated=? WHERE id=?',
                   (None if category == 'skip' else category, 'user', status, now(), edit_id))
         feedback = None
-        if category in LEARNED:
+        if status == 'answered' and category in LEARNED:
             version = c.execute('SELECT version_id FROM feedback WHERE id=?', (row['feedback_id'],)).fetchone()['version_id']
-            reader_id = json.loads(row['data']).get('reader_id') if category == 'reader_specific' else None
             feedback = uid('feedback')
             c.execute('INSERT INTO feedback VALUES(?,?,?,?,?,?)', (feedback, version, 'revision_edit',
                       dump({'edit_ids': [edit_id], **({'reader_id': reader_id} if reader_id else {})}), None, now()))
@@ -203,16 +213,19 @@ def answer(store, edit_id, category):
 
 
 def snapshot(store):
-    """What the feedback panel shows: open questions and the correction ledger."""
+    """Open questions, optional later confirmations, and the correction ledger."""
     questions = [_view(row) for row in store.rows("SELECT * FROM revision_edits WHERE status='asked' ORDER BY rowid")]
+    unconfirmed = [_view(row) for row in store.rows("SELECT * FROM revision_edits WHERE status='unconfirmed' ORDER BY rowid")]
     corrections = [_view(row) for row in store.rows(
         "SELECT * FROM revision_edits WHERE category='fact_correction' ORDER BY rowid DESC LIMIT 50")]
-    return {'questions': questions, 'fact_corrections': corrections}
+    return {'questions': questions, 'unconfirmed': unconfirmed, 'fact_corrections': corrections}
 
 
 def edits_by_id(store, edit_ids):
     rows = [store.rows('SELECT * FROM revision_edits WHERE id=?', (eid,)) for eid in edit_ids]
-    return [_view(r[0]) for r in rows if r and r[0]['status'] in ('answered', 'routed') and r[0]['category'] in LEARNED]
+    edits = [_view(r[0]) for r in rows if r and r[0]['status'] in ('answered', 'routed') and r[0]['category'] in LEARNED]
+    return [edit for edit in edits if (edit['decided_by'] == 'user' or edit['confident'] is True)
+            and (edit['category'] == 'taste' or edit['reader_id'])]
 
 
 def learned_ids(store, feedback_ids):

@@ -690,7 +690,7 @@ class Worker:
             if row is None or row['batch_id']!=jid:
                 raise ValueError('反馈已移交其他批次或不存在，不能重复学习')
 
-    def retry_with_current_model(self,jid):
+    def retry_with_current_model(self,jid,*,confirmed_plan=None):
         """Start a linked review/learning attempt without rewriting its history."""
         class ExistingRetry(Exception):
             pass
@@ -710,7 +710,13 @@ class Worker:
             payload={key:original[key] for key in fields}
             # A retry inherits the authorization and bound the user confirmed for
             # this batch; a batch without one still has to be confirmed again.
-            payload.update({key:original[key] for key in ('authorization','budget') if key in original})
+            payload.update({key:original[key] for key in ('authorization','budget','reader_id') if key in original})
+            if job['kind']=='learn':
+                from .learning_budget import authorization,plan
+                settings=self.store.settings()
+                payload['authorization']=authorization(settings,'manual',confirmed=confirmed_plan)
+                payload['budget']=plan(settings)
+                payload['k']=settings['k']
             if job['kind']=='review':self.store.one('briefs',payload['version_id'])
             payload['retry_of_job_id']=jid
             # Store.enqueue freezes the current settings (including role models and

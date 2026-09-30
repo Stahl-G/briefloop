@@ -27,3 +27,14 @@ test('a question names the section and the change, escapes text and posts one an
  assert.equal(boxes['revision-questions'].hidden,true);
  assert.match(boxes['fact-corrections'].innerHTML,/Evaluator 判断/);
 });
+
+
+test('small unconfirmed edits remain optional and outside learning',()=>{
+ const boxes={'revision-questions':element(),'fact-corrections':element(),'revision-questions-hint':element()};
+ const ui=revisionQuestionsUI({api:async()=>{},action:fn=>fn(),$:id=>boxes[id]});
+ ui.render({questions:[],unconfirmed:[{id:'small',op:'replace',before:'0.31',after:'0.27'}]});
+ assert.equal(boxes['revision-questions'].hidden,false);
+ assert.equal(boxes['revision-questions-hint'].hidden,true);
+ assert.match(boxes['revision-questions'].innerHTML,/<details>/);
+ assert.match(boxes['revision-questions'].innerHTML,/不进入学习/);
+});

@@ -1,14 +1,14 @@
 // Reader profiles (#858): pick a saved reader for a report, and manage profiles
-// and each reader's own skill on the learning page.
+// and retain historical reader-specific learning records on the learning page.
 import {$ as lookup,esc} from './dom.js';
 
 export function readersUI({api,action,$=lookup}){
- let editing=null,known=[];
- function fillSelect(readers){
+ let editing=null,known=[],initialized=false;
+ function fillSelect(readers,readerId){
   const select=$('reader-select');if(!select)return;
-  const value=select.value;
+  const value=initialized?select.value:readerId??select.value;
   select.innerHTML='<option value="">不指定读者档案</option>'+readers.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
-  select.value=readers.some(r=>r.id===value)?value:'';
+  select.value=readers.some(r=>r.id===value)?value:'';initialized=true;
  }
  function onSelect(){
   const select=$('reader-select'),audience=select?.form?.elements?.audience;if(!select||!audience)return;
@@ -17,17 +17,17 @@ export function readersUI({api,action,$=lookup}){
   if(chosen&&(!audience.value.trim()||audience.value==='自己'||known.some(r=>r.name===audience.value)))audience.value=chosen.name;
  }
  function profileHTML(reader){
-  return `<div class="reader-profile" data-reader="${esc(reader.id)}"><div class="reader-profile-head"><strong>${esc(reader.name)}</strong><span>${reader.skill_id?'专属技能 '+esc(reader.skill_id):'沿用工作区技能'}</span></div>${reader.decisions?`<p><small>用报告做什么决定</small>${esc(reader.decisions)}</p>`:''}${reader.preferences?`<p><small>偏好</small>${esc(reader.preferences)}</p>`:''}<div class="reader-profile-actions"><button type="button" class="outline" data-reader-edit>编辑</button>${reader.skill_id?'<button type="button" class="outline" data-reader-unbind>回到工作区技能</button>':''}<button type="button" class="ghost" data-reader-archive>归档</button></div>${reader.wiki?`<details><summary>这位读者的经验</summary><pre class="reader-wiki">${esc(reader.wiki)}</pre></details>`:''}</div>`;
+  return `<div class="reader-profile" data-reader="${esc(reader.id)}"><div class="reader-profile-head"><strong>${esc(reader.name)}</strong><span>${reader.skill_id?'历史专属技能 '+esc(reader.skill_id)+'（暂不启用）':'使用工作区技能'}</span></div>${reader.decisions?`<p><small>用报告做什么决定</small>${esc(reader.decisions)}</p>`:''}${reader.preferences?`<p><small>偏好</small>${esc(reader.preferences)}</p>`:''}<div class="reader-profile-actions"><button type="button" class="outline" data-reader-edit>编辑</button>${reader.skill_id?'<button type="button" class="outline" data-reader-unbind>清除历史绑定</button>':''}<button type="button" class="ghost" data-reader-archive>归档</button></div>${reader.wiki?`<details><summary>历史读者经验（暂不启用）</summary><pre class="reader-wiki">${esc(reader.wiki)}</pre></details>`:''}</div>`;
  }
  function renderList(readers){
   const box=$('reader-profiles');if(!box)return;
-  box.innerHTML=readers.length?readers.map(profileHTML).join(''):'<p class="help">还没有读者档案。写给固定读者的报告，建一个档案后，只针对这位读者的改法会单独学习。</p>';
+  box.innerHTML=readers.length?readers.map(profileHTML).join(''):'<p class="help">还没有读者档案。写给固定读者的报告，建一个档案后，报告会记录用途与偏好。读者特定改动先保留，等待适用条件与跨读者验证。</p>';
   box.querySelectorAll('[data-reader]').forEach(node=>{
    const reader=readers.find(r=>r.id===node.dataset.reader);
    node.querySelector('[data-reader-edit]').onclick=()=>openForm(reader);
    node.querySelector('[data-reader-archive]').onclick=()=>action(()=>api('reader-archive',{id:reader.id}),'读者档案已归档，旧报告保留原样');
    const unbind=node.querySelector('[data-reader-unbind]');
-   if(unbind)unbind.onclick=()=>action(()=>api('reader-skill',{reader_id:reader.id,skill_id:null}),'这位读者的下一份报告改用工作区技能');
+   if(unbind)unbind.onclick=()=>action(()=>api('reader-skill',{reader_id:reader.id,skill_id:null}),'已清除历史专属技能绑定');
   });
  }
  function openForm(reader=null){
@@ -47,6 +47,6 @@ export function readersUI({api,action,$=lookup}){
   }
   const select=$('reader-select');if(select)select.addEventListener('change',onSelect);
  }
- function render(readers=[]){known=readers;fillSelect(readers);renderList(readers)}
+ function render(readers=[],{readerId}={}){known=readers;fillSelect(readers,readerId);renderList(readers)}
  return {render,bind,openForm};
 }

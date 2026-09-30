@@ -3,7 +3,7 @@
 import {$ as lookup} from './dom.js';
 
 export function previousReportPrompt(title){
- return `/discuss 这是我们已经交付过的一期报告《${title}》（见附件）。请阅读它，反推这份周期报告的简报约定：读者是谁、读完要做什么决定；沿用的章节结构；数字单位、时间范围与来源等口径；刻意不写的内容。看不出来的列为未决项，不要猜。整理好后给出 briefloop-requirements，读者清楚时再给一个 briefloop-reader。`;
+ return `/discuss 这是我们已经交付过的一期报告《${title}》（见附件）。请阅读它，反推这份周期报告的简报约定：读者是谁、读完要做什么决定；沿用的章节结构；数字单位、时间范围与来源等口径；有明确依据的禁区（没有写不等于禁止）。往期数字不是本期事实；全部约定先作为待确认建议，看不出来的列为未决项，不要猜。整理好后给出 briefloop-requirements，读者清楚时再给一个 briefloop-reader。`;
 }
 
 export function readerBlock(text){
@@ -12,7 +12,7 @@ export function readerBlock(text){
   return {name:value.name.trim(),decisions:typeof value.decisions==='string'?value.decisions:'',preferences:typeof value.preferences==='string'?value.preferences:''}}catch{return null}
 }
 
-export function previousReportUI({api,uploadPayload,getUploadLimits,openChat,notice,$=lookup}){
+export function previousReportUI({api,uploadPayload,getUploadLimits,openChat,notice,saveReader,$=lookup}){
  async function importFile(file){
   const result=await api('import-previous',await uploadPayload(file,getUploadLimits(),{}));
   await openChat({text:previousReportPrompt(result.title),source_id:result.source_id});
@@ -23,5 +23,10 @@ export function previousReportUI({api,uploadPayload,getUploadLimits,openChat,not
   const input=$('previous-report-file');
   if(input)input.onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;try{await importFile(file)}catch(error){notice(error.message,true)}};
  }
- return {bind,importFile};
+ function appendReaderAction(node,text){
+  const reader=readerBlock(text);if(!reader||!saveReader)return;
+  const button=document.createElement('button');button.type='button';button.className='outline apply-requirements';button.textContent='保存为读者档案';
+  button.onclick=()=>saveReader(reader);node.append(button);
+ }
+ return {bind,importFile,appendReaderAction};
 }

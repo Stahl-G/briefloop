@@ -82,6 +82,7 @@ def document_text(document):
         if depth > 50: raise ValueError('DOCX 表格嵌套过深')
         lines.append('[DOCX ' + path + ']')
         for row_index, row in enumerate(_blocks(element, {'tr'}), 1):
+            if _property(row, 'trPr', 'del') is not None:continue
             before = _columns(row, 'trPr', 'gridBefore', 0)
             after = _columns(row, 'trPr', 'gridAfter', 0)
             lines.append(f'[DOCX {path} row {row_index} gridBefore={before} gridAfter={after}]')
