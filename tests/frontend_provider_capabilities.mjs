@@ -10,6 +10,8 @@ const capabilities=createProviderCapabilities({$});
 for(const value of [null,true,false]){
   capabilities.load({supports_reasoning:value},'native');
   assert.equal($('custom-reasoning-capability').hidden,false);
+  assert.match($('provider-save-help').textContent,/BriefLoop Agent/);
+  assert.doesNotMatch($('provider-save-help').textContent,/OpenCode/);
   assert.deepEqual(capabilities.read('native'),{supports_reasoning:value});
 }
 capabilities.load({supports_reasoning:true},'native');
@@ -17,6 +19,8 @@ capabilities.reset('native');
 assert.deepEqual(capabilities.read('native'),{supports_reasoning:null});
 capabilities.load({supports_reasoning:true},'opencode');
 assert.equal($('custom-reasoning-capability').hidden,true);
+assert.match($('provider-save-help').textContent,/本机 OpenCode/);
+assert.doesNotMatch($('provider-save-help').textContent,/BriefLoop Agent/);
 assert.equal($('custom-supports-reasoning').value,'');
 assert.deepEqual(capabilities.read('opencode'),{});
 capabilities.load({supports_reasoning:'true'},'native');

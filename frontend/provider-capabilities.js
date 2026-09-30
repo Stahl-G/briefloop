@@ -4,6 +4,9 @@ export function createProviderCapabilities({$}) {
   function reset(engine) {
     field().value='';
     $('custom-reasoning-capability').hidden=engine!=='native';
+    $('provider-save-help').textContent=engine==='native'
+      ?'保存同名 Provider 会更新 BriefLoop Agent 的本机接口地址；填写 Key 会更新该 Provider 的本机凭据。仅保存配置，不测试推理、不启动任务。'
+      :'保存同名 Provider 会更新本机 OpenCode 的接口地址；填写 Key 会更新该 Provider 的本机凭据。仅保存配置，不测试推理、不启动任务。';
   }
   function load(config,engine) {
     reset(engine);
