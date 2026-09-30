@@ -105,6 +105,9 @@ class Requirements(Model):
     company_context_revision: str | None = None
     company_context_required: bool = False
     audience: str = "自己"
+    # A saved reader profile (#858); create_run freezes it into reader_profile.
+    reader_id: str | None = Field(default=None, max_length=80)
+    reader_profile: dict | None = None
     # Report body language. The interface, internal records and review notes
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"
@@ -542,6 +545,13 @@ class SaveRevision(Model):
     markdown: str = ''
     editor_document: dict | None = None
     allow_markdown_conversion: bool = Field(default=False, strict=True)
+
+
+class ReaderSave(Model):
+    id: str | None = Field(default=None, max_length=80)
+    name: str = Field(min_length=1, max_length=80)
+    decisions: str = Field(default='', max_length=1000)
+    preferences: str = Field(default='', max_length=2000)
 
 
 class RevisionAnswer(Model):

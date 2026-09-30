@@ -6,7 +6,9 @@ into block-level edits (deterministic), the independent Evaluator classifies
 each edit as taste, fact correction or reader-specific (a model judgment), and
 Python routes them with fixed rules:
 
-- taste and reader-specific edits become writing feedback for WikiSkill;
+- taste edits become writing feedback for the workspace's WikiSkill chain;
+- reader-specific edits of a report written for a saved reader go to that
+  reader's own chain (readers.py); without a saved reader they stay general;
 - fact corrections stay in the workspace's correction ledger and never become
   writing skills (a wrong number is a source/check problem, not a style);
 - an edit the Evaluator is unsure about and that is large enough to matter is
@@ -112,7 +114,7 @@ def pending(store, feedback_ids):
             continue
         run = store.one('runs', after['run_id'])
         requirements = json.loads(run['requirements'])
-        items.append({'feedback_id': fid, 'run_id': run['id'],
+        items.append({'feedback_id': fid, 'run_id': run['id'], 'reader_id': (requirements.get('reader_profile') or {}).get('id'),
                       'reader': {key: requirements.get(key, '') for key in ('title', 'objective', 'audience')},
                       'source_ids': store.source_ids(run['id']), 'edits': edits})
     return items
@@ -130,12 +132,23 @@ def record(store, items, result, *, job_id):
             verdict = verdicts[(item['feedback_id'], edit['edit_id'])]
             ask = not verdict['confident'] and edit['changed_chars'] >= QUESTION_MIN_CHARS
             data = {**edit, 'model_category': verdict['category'], 'confident': verdict['confident'],
-                    'reason': verdict['reason'].strip(), 'run_id': item['run_id'], 'triage_job': job_id}
+                    'reason': verdict['reason'].strip(), 'run_id': item['run_id'], 'reader_id': item.get('reader_id'),
+                    'triage_job': job_id}
+            routed = not ask and verdict['category'] == 'reader_specific' and item.get('reader_id')
             rows.append((uid('edit'), item['feedback_id'], edit['edit_id'], dump(data),
                          None if ask else verdict['category'], None if ask else 'evaluator',
-                         'asked' if ask else 'classified', now(), now()))
+                         'asked' if ask else 'routed' if routed else 'classified', now(), now()))
     with store.tx() as c:
         c.executemany('INSERT OR IGNORE INTO revision_edits VALUES(?,?,?,?,?,?,?,?,?)', rows)
+        # Reader-specific edits leave this batch as feedback of their reader's scope.
+        by_reader = {}
+        for row in rows:
+            if row[6] == 'routed':
+                by_reader.setdefault((row[1], json.loads(row[3])['reader_id']), []).append(row[0])
+        for (fid, reader_id), edit_ids in by_reader.items():
+            version = c.execute('SELECT version_id FROM feedback WHERE id=?', (fid,)).fetchone()['version_id']
+            c.execute('INSERT INTO feedback VALUES(?,?,?,?,?,?)', (uid('feedback'), version, 'revision_edit',
+                      dump({'edit_ids': edit_ids, 'reader_id': reader_id}), None, now()))
 
 
 def learnable(store, feedback_id):
@@ -154,7 +167,7 @@ def _view(row):
             'category': row['category'], 'category_label': CATEGORY_LABELS.get(row['category'], ''),
             'decided_by': row['decided_by'], 'status': row['status'], 'reason': data.get('reason', ''),
             'model_category': data.get('model_category'), 'changed_chars': data.get('changed_chars', 0),
-            'run_id': data.get('run_id')}
+            'run_id': data.get('run_id'), 'reader_id': data.get('reader_id')}
 
 
 def answer(store, edit_id, category):
@@ -174,9 +187,10 @@ def answer(store, edit_id, category):
         feedback = None
         if category in LEARNED:
             version = c.execute('SELECT version_id FROM feedback WHERE id=?', (row['feedback_id'],)).fetchone()['version_id']
+            reader_id = json.loads(row['data']).get('reader_id') if category == 'reader_specific' else None
             feedback = uid('feedback')
-            c.execute('INSERT INTO feedback VALUES(?,?,?,?,?,?)',
-                      (feedback, version, 'revision_edit', dump({'edit_ids': [edit_id]}), None, now()))
+            c.execute('INSERT INTO feedback VALUES(?,?,?,?,?,?)', (feedback, version, 'revision_edit',
+                      dump({'edit_ids': [edit_id], **({'reader_id': reader_id} if reader_id else {})}), None, now()))
     return {'id': edit_id, 'status': status, 'category': None if category == 'skip' else category, 'feedback_id': feedback}
 
 
@@ -190,4 +204,4 @@ def snapshot(store):
 
 def edits_by_id(store, edit_ids):
     rows = [store.rows('SELECT * FROM revision_edits WHERE id=?', (eid,)) for eid in edit_ids]
-    return [_view(r[0]) for r in rows if r and r[0]['status'] == 'answered' and r[0]['category'] in LEARNED]
+    return [_view(r[0]) for r in rows if r and r[0]['status'] in ('answered', 'routed') and r[0]['category'] in LEARNED]

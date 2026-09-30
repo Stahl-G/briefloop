@@ -14,7 +14,7 @@ import time
 from .platform_support import WorkspaceLock, filesystem_path
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
-from .models import Requirements, Settings, SaveRevision, Comment, RevisionAnswer
+from .models import Requirements, Settings, SaveRevision, Comment, RevisionAnswer, ReaderSave
 from .runtime import Worker
 from .harness import HarnessManager
 from .interactive_runtime import InteractiveRuntime
@@ -757,6 +757,16 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.brief_view(store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)['id'])
+                elif path=='/api/reader-save':
+                    from .readers import save as save_reader
+                    value=ReaderSave.model_validate(body)
+                    result=save_reader(store,reader_id=value.id,name=value.name,decisions=value.decisions,preferences=value.preferences)
+                elif path=='/api/reader-archive':
+                    from .readers import archive
+                    result=archive(store,str(body.get('id') or ''))
+                elif path=='/api/reader-skill':
+                    from .readers import bind_skill
+                    bind_skill(store,str(body.get('reader_id') or ''),body.get('skill_id'));result={'ok':True}
                 elif path=='/api/revision-answer':
                     from .revision_edits import answer
                     value=RevisionAnswer.model_validate(body);result=answer(store,value.edit_id,value.category)

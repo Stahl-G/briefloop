@@ -733,7 +733,8 @@ class Worker:
                     from wikiskill import feedback_loop
                     if feedback_loop.work(study)['phase']=='complete':
                         raise ValueError('这批反馈的学习已经完成，请恢复原任务以完成保存')
-                    row=connection.execute("SELECT value FROM meta WHERE key='last_study'").fetchone()
+                    from .readers import scope_meta
+                    row=connection.execute("SELECT value FROM meta WHERE key=?",(scope_meta('last_study',original.get('reader_id')),)).fetchone()
                     if row and json.loads(row['value']) not in (None,str(study)):
                         raise ValueError('已有更新的学习记录，请使用最新任务')
                 for fid in original['feedback_ids']:

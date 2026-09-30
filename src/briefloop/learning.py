@@ -14,11 +14,16 @@ def enqueue_feedback(store, *, automatic=False, confirmed_plan=None):
     with store.tx() as c:
         rows=[dict(r) for r in c.execute('SELECT * FROM feedback WHERE batch_id IS NULL ORDER BY rowid')]
         if not rows:return {'status':'idle','message':'暂无未处理反馈'}
+        # One batch learns one scope: the workspace, or one saved reader (#858).
+        # The oldest waiting feedback decides; other scopes wait for the next batch.
+        scope=lambda row:json.loads(row['data']).get('reader_id') if row['kind']=='revision_edit' else None
+        reader_id=scope(rows[0]);rows=[r for r in rows if scope(r)==reader_id]
         if c.execute("SELECT id FROM jobs WHERE kind='learn' AND status IN ('queued','running')").fetchone():
             return {'status':'pending','message':'已有学习任务，新反馈会进入下一批'}
         latest=datetime.fromisoformat(rows[-1]['created'])
         settings=store.settings()
         from .learning_budget import authorization, automatic_allowed, plan
+        from .readers import skill_for as reader_skill
         # Worker idleness, a reopened page or an agent request never stands in for
         # the user's confirmation, and the plan is re-checked inside this batch.
         if automatic and not automatic_allowed(settings):
@@ -28,7 +33,8 @@ def enqueue_feedback(store, *, automatic=False, confirmed_plan=None):
         record=authorization(settings,'automatic' if automatic else 'manual',confirmed=confirmed_plan)
         jid=uid('job')
         payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],'budget':plan(settings),'authorization':record,
-                 'targets':settings['skill_targets'],'skill_id':store.meta('active_skill'),'runtime':store.runtime_config(),
+                 'targets':settings['skill_targets'],'skill_id':reader_skill(store,reader_id),'runtime':store.runtime_config(),
+                 **({'reader_id':reader_id} if reader_id else {}),
                  'role_models':store.role_model_config(),'agent_backend':settings.get('agent_backend','codex')}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
         c.executemany('UPDATE feedback SET batch_id=? WHERE id=?',[(jid,r['id']) for r in rows])
@@ -81,18 +87,23 @@ def _experience(store, job):
     # Only a few existing tasks. Their source snapshots, not user rewrites, go to generation.
     run_ids=run_ids[-3:]
     others=store.rows("SELECT * FROM runs WHERE mode='normal' ORDER BY created DESC")
+    reader_id=payload.get('reader_id')
     for r in others:
         if len(run_ids)>=3:break
+        # A reader's batch is validated only on reports written for that reader.
+        if reader_id and (json.loads(r['requirements']).get('reader_profile') or {}).get('id')!=reader_id:continue
         if r['id'] not in run_ids and store.rows("SELECT id FROM briefs WHERE run_id=? AND author='agent'",(r['id'],)):
             run_ids.append(r['id'])
     return items,run_ids
 
 
-def _sync_wiki(store,study):
-    if store.meta('last_study')!=str(study):
+def _sync_wiki(store,study,reader_id=None):
+    from .readers import scope_meta,wiki_path,profile
+    if store.meta(scope_meta('last_study',reader_id))!=str(study):
         raise ValueError('已有更新的学习记录；旧任务不能覆盖当前 Wiki')
     state=feedback_loop.work(study)
-    text='# 工作区 Wiki\n\n以下是从修订与执行中整理的经验，不是本期事实来源。\n'
+    text=('# 工作区 Wiki\n\n以下是从修订与执行中整理的经验，不是本期事实来源。\n' if not reader_id else
+          '# 读者 Wiki：'+profile(store,reader_id,active_only=False)['name']+'\n\n只用于写给这位读者的报告；不是本期事实来源。\n')
     explicit=[x for x in state['feedback'] if x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
     if explicit:
         text+='\n## 人类明确要求（持续保留）\n'
@@ -103,7 +114,7 @@ def _sync_wiki(store,study):
             text+='\n技能待完善：人类要求保留，候选需要修改后继续验证；本轮未采纳。\n'
     text+='\n反馈来源：'+', '.join(str(x.get('source'))+' ['+('人类明确要求' if x.get('learning_intent')=='explicit_requirement' else '自动发现' if x.get('origin')=='automatic' else '人类反馈')+']' for x in state['feedback'])+'\n'
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
-    destination=store.root/'wiki/index.md'
+    destination=wiki_path(store,reader_id);destination.parent.mkdir(parents=True,exist_ok=True)
     temporary=destination.with_suffix('.tmp');temporary.write_text(text,encoding='utf-8');temporary.replace(destination)
     from .notifications import wiki_changed
     wiki_changed(store,text)
@@ -149,7 +160,7 @@ def _role(store,runtime,job,study,round_number,phase):
         runtime.execute(staged,prompt,stage,resume_on_complete=True)
         state=feedback_loop.work(study)
         if state['phase']==phase:raise RuntimeError(f'{phase} 尚未完成或结果未被 WikiSkill 收集')
-        _sync_wiki(store,study)
+        _sync_wiki(store,study,json.loads(job['payload']).get('reader_id'))
         return
     command=agent_command('wikiskill',backend=backend)
     common=COMMON if backend=='codex' else COMMON_OPENCODE
@@ -166,7 +177,7 @@ def _role(store,runtime,job,study,round_number,phase):
     runtime.execute(stage_job(store,job,phase),prompt,stage,resume_on_complete=True)
     state=feedback_loop.work(study)
     if state['phase']==phase:raise RuntimeError(f'{phase} 尚未完成或结果未被 WikiSkill 收集')
-    _sync_wiki(store,study)
+    _sync_wiki(store,study,json.loads(job['payload']).get('reader_id'))
 
 
 def validated_workflow(value):
@@ -512,12 +523,14 @@ def learn(store,runtime,job):
         raise InterruptedError(str(exc)) from None
     root=store.root/'jobs'/job['id'];root.mkdir(exist_ok=True)
     study=root/'study';context=root/'context.json'
+    from .readers import scope_meta
+    reader_id=payload.get('reader_id');study_key=scope_meta('last_study',reader_id)
     if not context.exists():
         from .backends import validate_backend
         triage(store,runtime,job,root/'triage',validate_backend(payload.get('agent_backend','codex')))
         feedback,cases=_experience(store,job)
         from wikiskill.product import write
-        write(context,{'feedback':feedback,'cases':cases,'previous_study':store.meta('last_study')},immutable=True)
+        write(context,{'feedback':feedback,'cases':cases,'previous_study':store.meta(study_key)},immutable=True)
     ctx=json.loads(context.read_text(encoding='utf-8'))
     if not ctx['feedback']:
         # Every edit was a fact correction or is waiting for the user's answer:
@@ -528,7 +541,7 @@ def learn(store,runtime,job):
     skill_path=None
     if current:
         skill_path=root/'initial-skill.md';skill_path.write_text(current['content'],encoding='utf-8')
-    previous=store.meta('last_study')
+    previous=store.meta(study_key)
     if study.exists() and previous and previous not in (str(study),ctx.get('previous_study')):
         raise ValueError('已有后续学习记录，不能直接恢复旧学习任务；请基于当前 Wiki 发起新的反馈学习。旧进度保留。')
     feedback=ctx['feedback']
@@ -549,7 +562,7 @@ def learn(store,runtime,job):
     host=study_runtime(study) if (study/'config.json').exists() else __import__('briefloop.backends',fromlist=['validate_backend']).validate_backend(payload.get('agent_backend','codex'))
     feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=rounds,previous=previous,runtime=host,**({'requirement_sources':requirement_sources} if requirement_sources else {}))
     # Only this worker writes the workspace's Wiki; one study at a time.
-    store.set_meta('last_study',str(study))
+    store.set_meta(study_key,str(study))
     state=feedback_loop.work(study)
     cases,skipped=_eligible_cases(store,ctx['cases'])
     from wikiskill.product import write
@@ -585,7 +598,7 @@ def learn(store,runtime,job):
         if {p['case_id'] for p in result['pairs']}!={x['case_id'] for x in comparisons}:raise ValueError('比较案例不完整')
         state=feedback_loop.finish(study,pairs=result['pairs'],reason=result.get('reason',''),evidence_file=folder/'comparison.json')
     apply_accepted(store,job,study,state)
-    _sync_wiki(store,study)
+    _sync_wiki(store,study,reader_id)
     return {'study':str(study),'rounds':len(state['history']),'history':state['history'],'active_skill':store.meta('active_skill'),'skipped_cases':skipped,'comparison_skipped':state.get('comparison_skipped')}
 
 
@@ -602,8 +615,18 @@ def apply_accepted(store,job,study,state):
     with store.tx() as c:
         if c.execute("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'",(job['id'],)).fetchone():return
         c.execute('INSERT OR IGNORE INTO skills VALUES(?,?,?,?,?,?)',(sid,payload['skill_id'],text,dump(targets),decision.get('reason',''),now()))
-        row=c.execute("SELECT value FROM meta WHERE key='active_skill'").fetchone()
-        current=json.loads(row['value']) if row else None
-        applied=current==payload['skill_id']
-        if applied:c.execute("INSERT OR REPLACE INTO meta VALUES('active_skill',?)",(dump(sid),))
-        c.execute('INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)',(job['id'],'adoption_processed',dump({'skill_id':sid,'applied':applied,'reason':decision.get('reason','') if applied else '保留用户在比较期间的技能选择'}),now()))
+        reader_id=payload.get('reader_id')
+        if reader_id:
+            # A reader's skill binds only that reader's future reports.
+            row=c.execute("SELECT value FROM meta WHERE key='reader_skills'").fetchone()
+            bound=json.loads(row['value']) if row else {}
+            row=c.execute("SELECT value FROM meta WHERE key='active_skill'").fetchone()
+            current=bound.get(reader_id) or (json.loads(row['value']) if row else None)
+            applied=current==payload['skill_id']
+            if applied:c.execute("INSERT OR REPLACE INTO meta VALUES('reader_skills',?)",(dump({**bound,reader_id:sid}),))
+        else:
+            row=c.execute("SELECT value FROM meta WHERE key='active_skill'").fetchone()
+            current=json.loads(row['value']) if row else None
+            applied=current==payload['skill_id']
+            if applied:c.execute("INSERT OR REPLACE INTO meta VALUES('active_skill',?)",(dump(sid),))
+        c.execute('INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)',(job['id'],'adoption_processed',dump({'skill_id':sid,'applied':applied,**({'reader_id':reader_id} if reader_id else {}),'reason':decision.get('reason','') if applied else '保留用户在比较期间的技能选择'}),now()))

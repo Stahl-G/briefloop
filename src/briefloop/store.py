@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS assessments(id TEXT PRIMARY KEY, version_id TEXT NOT 
  data TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, version_id TEXT NOT NULL REFERENCES briefs(id),
  kind TEXT NOT NULL, data TEXT NOT NULL, batch_id TEXT, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS readers(id TEXT PRIMARY KEY, name TEXT NOT NULL, decisions TEXT NOT NULL, preferences TEXT NOT NULL,
+ status TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS revision_edits(id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL REFERENCES feedback(id),
  edit_key TEXT NOT NULL, data TEXT NOT NULL, category TEXT, decided_by TEXT, status TEXT NOT NULL,
  created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(feedback_id, edit_key));
@@ -356,6 +358,13 @@ class Store:
             require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'),
                                    options.get('review_runtime',self.settings().get('review_runtime')),
                                    options.get('review_mode',self.settings().get('review_mode','standard')))
+        if not req.reader_id:req.reader_id=None
+        if clone is None and req.reader_id:
+            # The run keeps the profile it was written for (#858); later edits do not rewrite it.
+            from .readers import frozen
+            req.reader_profile=frozen(self,req.reader_id)
+            if not req.audience.strip() or req.audience=='自己':req.audience=req.reader_profile['name']
+        elif clone is None:req.reader_profile=None
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
@@ -387,11 +396,17 @@ class Store:
         validate_request(self,req,source_ids)
         if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
+        from .readers import skill_for as reader_skill
+        stored=req.model_dump()
+        # Runs without a saved reader keep the exact requirement shape older
+        # learning comparisons were frozen against.
+        if stored.get('reader_id') is None:
+            stored.pop('reader_id',None);stored.pop('reader_profile',None)
         rid = uid("run")
         with self.tx() as c:
-            c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(req.model_dump()), dump(source_ids), options.get("skill_id",self.meta("active_skill")), now(), options.get("mode","normal")))
+            c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(stored), dump(source_ids), options["skill_id"] if "skill_id" in options else reader_skill(self,req.reader_id), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
-                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(req.model_dump()),))
+                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(stored),))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
         return self.one("runs", rid)
@@ -870,6 +885,7 @@ class Store:
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
         from .revision_edits import snapshot as revision_snapshot
+        from .readers import listing as reader_listing
         from .task_labels import reported_labels
         from . import office_cli
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
@@ -884,6 +900,7 @@ class Store:
                 **browsing,
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
                 "revision_edits": revision_snapshot(self),
+                "readers": reader_listing(self),
                 "jobs": jobs,
                 "task_labels": reported_labels(),
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
