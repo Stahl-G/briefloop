@@ -807,7 +807,9 @@ class Worker:
         owner=json.loads(job['payload'] or '{}').get('inline_owner_job_id')
         key=job['id'] if job['id'] in self.budget.snapshot()['held'] else owner
         if key not in self.budget.snapshot()['held']:return None
-        base=1 if key==job['id'] else self.budget.snapshot()['held'][key]
+        # Inline trials replace the learning coordinator while it waits. The
+        # reservation has one active root session, not one root per trial.
+        base=1
         # The report itself holds one session; everything above it is Scouts.
         return lambda want:self.budget.grow(key,base+want)-base
 
@@ -819,7 +821,7 @@ class Worker:
             # A report starts with itself and one Scout; other tasks need one session.
             if job['kind']=='generate':
                 if not reports_full and free>=2:return job
-            elif self.current is None and free>=1:return job
+            elif self.current is None and free>=(2 if job['kind']=='learn' else 1):return job
         return None
 
     def loop(self):
@@ -847,7 +849,7 @@ class Worker:
                 if self.stopping.is_set():break
                 job=self._next_runnable(jobs)
                 if job is None:continue
-                if not self.budget.reserve(job['id'],2 if job['kind']=='generate' else 1):continue
+                if not self.budget.reserve(job['id'],2 if job['kind'] in ('generate','learn') else 1):continue
                 with self.store.tx() as c:
                     claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
                                       (now(),job['id'])).rowcount
@@ -902,7 +904,7 @@ class Worker:
                 result=run_review(self.store,self.runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
             elif job['kind']=='learn':
                 from .learning import learn
-                result=learn(self.store,self.runtime,job)
+                result=learn(self.store,self.runtime,job,worker=self)
             else:raise ValueError('Unknown job kind')
             self._settle_job(job['id'],'complete',result=result,runtime=self.runtime)
         except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))

@@ -275,9 +275,12 @@ def _generate_trial(store,job,case,skill,folder,tag):
     trial_payload=json.loads(trial['payload'])
     for key in ('runtime','role_models','agent_backend','max_parallel'):
         if trial_payload.get(key)!=conditions[key]:raise ValueError('保存的学习宿主或模型条件不一致')
-    worker=Worker(store)
-    # Shared runtime ensures Stop cancels the current trial rather than an unrelated child.
-    worker.runtime=job['_runtime']
+    worker=job.get('_worker')
+    if worker is None:
+        worker=Worker(store)
+        worker.runtime=job['_runtime']
+    # Production reuses the owner, including its session budget, cancellation
+    # and Store wakeup callback; a new Worker would silently bypass that budget.
     if trial['status']!='complete':
         try:
             value=worker.generate(trial,score=False);value['learning_conditions']=conditions
@@ -436,7 +439,8 @@ def _baseline_for_attempt(store, case, learning_payload):
     return None
 
 
-def learn(store,runtime,job):
+def learn(store,runtime,job,*,worker=None):
+    if worker is not None:job={**job,'_worker':worker}
     payload=json.loads(job['payload'])
     from .learning_budget import verify
     try:verify(payload.get('authorization'))

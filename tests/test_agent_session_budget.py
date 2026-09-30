@@ -2,6 +2,7 @@
 import json
 import threading
 import time
+import pytest
 
 from briefloop.model_budget import ModelBudget
 from briefloop.runtime import Worker
@@ -52,9 +53,53 @@ def test_dispatch_waits_for_sessions_and_scouts_shrink_to_what_is_free(tmp_path)
     assert worker._scout_budget(first)(4) == 3
     # A learning trial runs inline; its Scouts count against the learning job.
     worker.budget.release('g1')
-    worker.budget.reserve('t1', 1)
+    worker.budget.reserve('t1', 2)
     trial = _job(store, 'trial', 'generate', 'running', {'inline_owner_job_id': 't1'})
     assert worker._scout_budget(trial)(2) == 2 and worker.budget.snapshot()['held'] == {'t1': 3}
+    # A second inline trial must reuse the same root, not charge old Scouts as roots.
+    assert worker._scout_budget(trial)(2) == 2 and worker.budget.snapshot()['held'] == {'t1': 3}
+
+
+def test_learning_waits_for_its_minimum_scout_slot(tmp_path):
+    store = Store(tmp_path)
+    store.update_settings({'max_agent_sessions': 3})
+    worker = Worker(store)
+    worker.budget.reserve('report', 2)
+    learning = _job(store, 'learning', 'learn')
+    other = _job(store, 'other', 'assess')
+    assert worker._next_runnable([learning, other])['id'] == 'other'
+
+
+def test_inline_trial_uses_actual_owner_budget_and_wakeup(tmp_path, monkeypatch):
+    from briefloop.learning import _generate_trial
+    store = Store(tmp_path)
+    store.update_settings({'max_agent_sessions': 4, 'model': 'test-model', 'model_selection_required': False})
+    source = store.add_source('Facts', 'Revenue was 12 million USD.')
+    case = store.create_run({'title': 'Report', 'objective': 'Explain revenue', 'allow_web': False}, [source['id']])
+    runtime = object()
+    owner = Worker(store, runtime=runtime)
+    job = store.enqueue('learn', {})
+    store.update_job(job['id'], 'running')
+    owner.budget.reserve(job['id'], 2)
+    owner.budget.reserve('other-report', 2)
+    wakeup = store._job_wakeup
+
+    class ReachedTrial(Exception):
+        pass
+
+    def generate(self, trial, *, score):
+        assert self is owner
+        assert self.runtime is runtime
+        assert self._scout_budget(trial)(4) == 1
+        assert owner.budget.snapshot()['in_use'] == 4
+        assert store._job_wakeup == wakeup
+        raise ReachedTrial
+
+    monkeypatch.setattr(Worker, 'generate', generate)
+    with pytest.raises(ReachedTrial):
+        _generate_trial(store, {**job, '_runtime': runtime, '_worker': owner}, case, None,
+                        tmp_path / 'jobs' / job['id'] / 'case' / 'candidate', 'candidate')
+    assert owner.budget.snapshot()['held'] == {job['id']: 2, 'other-report': 2}
 
 
 def test_a_report_review_starts_on_a_full_budget_but_a_separate_review_waits(tmp_path, monkeypatch):
