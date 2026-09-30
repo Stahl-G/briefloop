@@ -37,12 +37,28 @@ def enqueue_feedback(store, *, automatic=False, confirmed_plan=None):
 
 
 def _experience(store, job):
+    from . import revision_edits
     payload=json.loads(job['payload']);items=[];run_ids=[]
     for fid in payload['feedback_ids']:
         f=store.rows('SELECT * FROM feedback WHERE id=?',(fid,))[0]
         b=store.one('briefs',f['version_id']);run=store.one('runs',b['run_id']);data=json.loads(f['data'])
+        if f['kind']=='revision' or f['kind']=='revision_edit':
+            # Split revisions pass only their taste/reader-specific edits (#858):
+            # fact corrections and unanswered questions never become writing feedback.
+            edits=revision_edits.edits_by_id(store,data['edit_ids']) if f['kind']=='revision_edit' else revision_edits.learnable(store,fid)
+            if edits is not None and not edits:continue
         if run['id'] not in run_ids:run_ids.append(run['id'])
-        if f['kind']=='revision':
+        if f['kind']=='revision_edit':
+            text={'kind':'user_revision_edits','requirements':json.loads(run['requirements']),'brief':b['markdown'],
+                  'edits':[{k:e[k] for k in ('op','heading','before','after','category','decided_by')} for e in edits],
+                  'sources':[store.one('sources',s) for s in store.source_ids(run['id'])]}
+        elif f['kind']=='revision' and edits is not None:
+            before=store.one('briefs',data['before'])
+            text={'kind':'user_revision_edits','requirements':json.loads(run['requirements']),'before':before['markdown'],
+                  'edits':[{k:e[k] for k in ('op','heading','before','after','category','decided_by')} for e in edits],
+                  'excluded':'事实纠错与待用户确认的改动不在此列，不作为写作经验',
+                  'sources':[store.one('sources',s) for s in store.source_ids(run['id'])]}
+        elif f['kind']=='revision':
             before=store.one('briefs',data['before'])
             diff='\n'.join(difflib.unified_diff(before['markdown'].splitlines(),b['markdown'].splitlines(),fromfile='before',tofile='user_revision',lineterm=''))
             text={'kind':'user_revision','requirements':json.loads(run['requirements']),'before':before['markdown'],
@@ -362,6 +378,56 @@ def compare(store,runtime,job,comparisons,folder,backend,*,submission_contract=N
     return json.loads((folder/'comparison.json').read_text(encoding='utf-8'))
 
 
+TRIAGE_RULES='''逐处判断用户改动的性质（category），只看这一处改动本身：
+- taste：措辞、结构、详略、语气、排序、标题等写法偏好；原稿内容本身没有错。
+- fact_correction：原稿的数字、事实、主体、日期、来源说法或统计口径有误，用户改正了它；来源在本轮之后正常更新导致的改动也算这一类（不是写作经验）。
+- reader_specific：只因为这位读者的用途、身份或忌讳才这样改，换一位读者未必要改。
+能对照来源判断时先看来源：改动后的内容与来源一致、原稿与来源不一致，是 fact_correction。
+confident：你有把握时为 true；只看改动前后文字无法判断原因、多种解释都合理时为 false，不要猜成有把握。
+reason 写一句具体依据（例如对照了哪份来源、哪个数字）。不改稿、不补搜、不评价改动好坏。'''
+
+
+def triage_prompt(store,folder,backend='codex'):
+    material=f"读取 {folder/'input.json'}：每个 item 是一次用户改稿，edits 是拆好的单处改动（before 改前、after 改后、heading 所在章节），reader 是这份报告的读者与目的。来源目录 {store.root/'sources'}。"
+    output='写 triage.json：'
+    context=EVALUATOR_CONTEXT
+    if backend=='briefloop-native':
+        context='本次分类只能读取固定任务包：路径一律相对任务包根目录。\n'
+        material='读取 input.json：每个 item 是一次用户改稿，edits 是拆好的单处改动（before 改前、after 改后、heading 所在章节），reader 是这份报告的读者与目的。来源原文在 sources/<来源ID>.txt。'
+        output='调用 submit_triage 提交（运行器当场校验，未通过时按错误修正后重交，不要把 JSON 写进回复正文）：'
+    return context+f'''
+本轮是改动分类模式。{material}
+本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具。
+{TRIAGE_RULES}
+{output}{{"edits":[{{"feedback_id":"...","edit_id":"...","category":"taste|fact_correction|reader_specific","confident":true,"reason":"具体依据"}}]}}。每处改动须且只能给一条。
+'''
+
+
+def triage(store,runtime,job,folder,backend):
+    """Split and classify this batch's unsplit revisions; one Evaluator turn per batch."""
+    from . import revision_edits
+    items=revision_edits.pending(store,json.loads(job['payload'])['feedback_ids'])
+    if not items:return None
+    folder.mkdir(parents=True,exist_ok=True)
+    (folder/'input.json').write_text(dump(items),encoding='utf-8')
+    saved=folder/'triage.json'
+    if not saved.exists():
+        staged=stage_job(store,job,'evaluator',mode='triage')
+        if backend=='briefloop-native':
+            from .native_roles import triage_packet
+            triage_packet(store,items,folder)
+            staged={**staged,'native_packet':{'role':'evaluator','evaluation_mode':'triage'}}
+        runtime.execute(staged,triage_prompt(store,folder,backend),folder)
+    result=json.loads(saved.read_text(encoding='utf-8'))
+    revision_edits.record(store,items,result,job_id=job['id'])
+    asked=[e for e in revision_edits.snapshot(store)['questions'] if e['feedback_id'] in {i['feedback_id'] for i in items}]
+    if asked:
+        from .notifications import post
+        post(store,f"revision-questions:{job['id']}",'learning',f'{len(asked)} 处改动需要你确认原因',
+             body='在反馈面板里选择每处改动是口味、事实纠错还是只针对这位读者；跳过的改动不进入学习。',target={'job_id':job['id']})
+    return result
+
+
 def _attempt_source_snapshot(store,job,result):
     """Read the saved attempt, never reconstruct its past from a live run."""
     if 'source_snapshot' in result:
@@ -447,10 +513,17 @@ def learn(store,runtime,job):
     root=store.root/'jobs'/job['id'];root.mkdir(exist_ok=True)
     study=root/'study';context=root/'context.json'
     if not context.exists():
+        from .backends import validate_backend
+        triage(store,runtime,job,root/'triage',validate_backend(payload.get('agent_backend','codex')))
         feedback,cases=_experience(store,job)
         from wikiskill.product import write
         write(context,{'feedback':feedback,'cases':cases,'previous_study':store.meta('last_study')},immutable=True)
     ctx=json.loads(context.read_text(encoding='utf-8'))
+    if not ctx['feedback']:
+        # Every edit was a fact correction or is waiting for the user's answer:
+        # nothing becomes writing feedback, so no study and no trial generations.
+        return {'study':None,'rounds':0,'history':[],'active_skill':store.meta('active_skill'),'skipped_cases':[],
+                'comparison_skipped':'本批没有可作为写作经验的改动（事实纠错或待确认）'}
     current=store.one('skills',payload['skill_id']) if payload['skill_id'] else None
     skill_path=None
     if current:

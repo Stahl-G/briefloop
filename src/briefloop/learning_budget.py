@@ -43,6 +43,8 @@ def plan(settings):
         'max_trial_generations': MAX_CASES * TRIALS_PER_CASE * rounds,
         # Each round also runs the maintainer and proposer turns and one pairwise comparison.
         'other_turns_per_round': 3,
+        # One Evaluator turn per batch splits and classifies new user revisions (#858).
+        'triage_turns_per_batch': 1,
         'web': False,
         'backend': backend,
         'backend_label': BACKEND_LABELS.get(backend, backend),

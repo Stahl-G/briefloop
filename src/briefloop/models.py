@@ -544,6 +544,11 @@ class SaveRevision(Model):
     allow_markdown_conversion: bool = Field(default=False, strict=True)
 
 
+class RevisionAnswer(Model):
+    edit_id: str = Field(min_length=1)
+    category: Literal['taste','fact_correction','reader_specific','skip']
+
+
 class Comment(Model):
     learning_intent: Literal['feedback','explicit_requirement'] = 'feedback'
     version_id: str

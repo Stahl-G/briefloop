@@ -15,6 +15,7 @@ ENDED = {'completed', 'done', 'closed', 'failed', 'errored', 'interrupted', 'can
 def role_label(role):
     text=str(role or '子任务')
     if any(key in text.lower() for key in ('evaluator','scorer','assessor')):
+        if any(key in text.lower() for key in ('triage','改动分类')):return 'Evaluator · 改动分类'
         if any(key in text.lower() for key in ('assessor','pairwise','比较')):return 'Evaluator · 比较'
         if any(key in text.lower() for key in ('scorer','single','评分')):return 'Evaluator · 评分'
         return 'Evaluator'
@@ -100,6 +101,8 @@ class ProgressTracker:
         elif role in ('evaluator', 'scorer', 'assessor'):
             self.phase = (('comparison', '比较候选稿', 'Evaluator 正在比较新旧稿件')
                           if context.get('evaluation_mode') == 'pairwise' else
+                          ('triage', '改动分类', 'Evaluator 正在判断每处改动的性质')
+                          if context.get('evaluation_mode') == 'triage' else
                           ('evaluation', '独立评分', 'Evaluator 正在独立评分'))
         elif role in ('maintainer', 'proposer'):
             self.phase = (('maintainer', '整理反馈经验', 'Maintainer 正在整理反馈经验')

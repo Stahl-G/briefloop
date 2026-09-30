@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS assessments(id TEXT PRIMARY KEY, version_id TEXT NOT 
  data TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, version_id TEXT NOT NULL REFERENCES briefs(id),
  kind TEXT NOT NULL, data TEXT NOT NULL, batch_id TEXT, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS revision_edits(id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL REFERENCES feedback(id),
+ edit_key TEXT NOT NULL, data TEXT NOT NULL, category TEXT, decided_by TEXT, status TEXT NOT NULL,
+ created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(feedback_id, edit_key));
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
  payload TEXT NOT NULL, result TEXT, error TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
@@ -866,6 +869,7 @@ class Store:
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
+        from .revision_edits import snapshot as revision_snapshot
         from .task_labels import reported_labels
         from . import office_cli
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
@@ -879,6 +883,7 @@ class Store:
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 **browsing,
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
+                "revision_edits": revision_snapshot(self),
                 "jobs": jobs,
                 "task_labels": reported_labels(),
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),

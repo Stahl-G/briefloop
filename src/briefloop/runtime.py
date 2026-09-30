@@ -125,7 +125,7 @@ def stage_job(store, job, role, *, mode=None):
     if role in ('scorer','assessor','evaluator'):
         role='evaluator'
         mode=mode or ('pairwise' if original_role=='assessor' else 'single')
-        if mode not in ('single','pairwise'):
+        if mode not in ('single','pairwise','triage'):
             raise ValueError('Unknown evaluation mode: '+mode)
     payload=json.loads(job['payload'])
     base=payload['runtime'] if 'runtime' in payload else store.runtime_config()
