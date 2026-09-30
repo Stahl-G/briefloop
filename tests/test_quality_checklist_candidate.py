@@ -158,3 +158,53 @@ def test_native_submit_and_store_preserve_candidate_fields_and_empty_is_uncovere
     assert restored['analysis_checks'] == []
     assert candidate_assessment(restored, SPEC, BODY)['analysis_check_coverage']['status'] == 'not_checked'
     assert not revision_reasons(restored, [], analysis_context={'spec': SPEC, 'markdown': BODY})
+
+
+
+def test_manual_chapter_and_assignment_keep_placeholder_without_automatic_judgment():
+    body = '## 数据\n本期交付数据保留。\n\n## 人工意见\n待填充'
+    section_spec = resolve({'title': '合成人工章', 'objective': '整理本期数据。', 'sections': [
+        {'section_id': 'manual', 'title': '人工意见', 'mode': 'manual',
+         'purpose': '给出扩容观察节点，留给人工填写'}]})
+    assignment_spec = resolve({'title': '合成分工', 'objective': '整理本期数据。',
+                               'manual_sections': ['人工意见由人工填写，仅保留待填充']})
+    alias_spec = copy.deepcopy(assignment_spec)
+    next(item for item in alias_spec['requirement_items'] if item['kind'] == 'manual')['kind'] = 'manual_assignment'
+    for spec, quote in [(section_spec, '给出扩容观察节点'),
+                        (assignment_spec, '人工意见由人工填写，仅保留待填充'),
+                        (alias_spec, '人工意见由人工填写，仅保留待填充')]:
+        item = check(chapter_quote='## 人工意见', requirement_quote=quote)
+        for score in [passing(analysis_checks=[item]), passing(overall='建议修改', analysis=2,
+                analysis_checks=[item], findings=[{'kind': 'no_implication', 'dimension': 'analysis',
+                    'severity': 'major', 'description': '模型误判人工章缺判断', 'report_quote': '待填充'}])]:
+            before = copy.deepcopy(score)
+            prepared = candidate_assessment(score, spec, body)
+            derived = prepared['analysis_checks'][0]
+            assert derived['status'] == 'manual' and derived['preservation_note']
+            assert derived['expectation'] == 'required' and derived['rationale'] == item['rationale']
+            assert not prepared['findings']
+            assert not revision_reasons(prepared, [], analysis_context={'spec': spec, 'markdown': body})
+            assert score == before and body.endswith('待填充')
+    for item in [check(chapter_quote='## 人工意见', requirement_quote='从不存在的要求'),
+                 check(chapter_quote='## 人工意见', requirement_quote='给出扩容观察节点',
+                       judgment_quote='本期交付数据保留。')]:
+        derived = validate_analysis_checks(passing(analysis_checks=[item]), section_spec, body)[0]
+        assert derived['status'] == 'uncertain' and derived['validation_errors']
+        assert 'preservation_note' not in derived
+    # Preserve the older unstructured overall fallback. This patch does not
+    # resolve why the model recommended changes or hide other real defects.
+    bare = passing(overall='建议修改', analysis=2, analysis_checks=[
+        check(chapter_quote='## 人工意见', requirement_quote='给出扩容观察节点')])
+    derived = candidate_assessment(bare, section_spec, body)
+    assert derived['analysis_checks'][0]['status'] == 'manual'
+    assert revision_reasons(derived, [], analysis_context={'spec': section_spec, 'markdown': body}) == [
+        {'type': 'overall', 'overall': '建议修改'}]
+
+
+def test_manual_assignment_cannot_exempt_another_chapter():
+    spec=resolve({'title':'合成分工','objective':'影响章给出扩容判断。',
+                  'manual_sections':['人工意见由人工填写，仅保留待填充']})
+    body='## 影响\n仅交付数据。\n\n## 人工意见\n待填充'
+    item=check(chapter_quote='## 影响',requirement_quote='人工意见由人工填写，仅保留待填充')
+    result=validate_analysis_checks(passing(analysis_checks=[item]),spec,body)[0]
+    assert result['status'] == 'missing' and 'preservation_note' not in result

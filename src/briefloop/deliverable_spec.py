@@ -275,7 +275,8 @@ def validate_analysis_checks(assessment, spec, markdown):
     remains uncertain, never passed or a compulsory repair. Raw assessment is kept.
     """
     data = assessment if isinstance(assessment, dict) else assessment.model_dump()
-    requirements = [item['text'] for item in spec.get('requirement_items', [])]
+    requirement_items = spec.get('requirement_items', [])
+    requirements = [item['text'] for item in requirement_items]
     results, spans = [], []
     for index, original in enumerate(data.get('analysis_checks', [])):
         item = original if isinstance(original, dict) else original.model_dump()
@@ -289,8 +290,9 @@ def validate_analysis_checks(assessment, spec, markdown):
         import re
         chapter_title = re.sub(r'^ {0,3}#{1,6}[ \t]+|[ \t]+#+[ \t]*$', '',
                                markdown[span[0]:span[1]].split('\n', 1)[0]).strip() if span else ''
-        section_requirements = [section.get('purpose', '') for section in spec.get('sections', [])
-                                if span and section.get('title') == chapter_title]
+        chapter_sections = [section for section in spec.get('sections', [])
+                            if span and section.get('title') == chapter_title]
+        section_requirements = [section.get('purpose', '') for section in chapter_sections]
         quote = check['requirement_quote']
         if quote and not any(quote in text for text in requirements + section_requirements):
             errors.append('requirement_quote 不在原始要求或本章冻结 purpose 中。')
@@ -301,14 +303,24 @@ def validate_analysis_checks(assessment, spec, markdown):
         judgment = check['judgment_quote']
         if judgment and (not span or markdown[span[0]:span[1]].count(judgment) != 1):
             errors.append('judgment_quote 不在同一章中连续逐字唯一存在。')
+        manual_section = any(section.get('mode') == 'manual' for section in chapter_sections)
+        manual_requirement = bool(quote) and bool(chapter_title) and any(quote in requirement['text']
+            and chapter_title in requirement['text']
+            and requirement.get('kind') in ('manual', 'manual_assignment') for requirement in requirement_items)
         if errors or check['expectation'] == 'uncertain':
             status = 'uncertain'
+        elif manual_section or manual_requirement:
+            # Frozen human assignment wins over a model's required expectation.
+            # Keep the original model fields; only the controller-derived action changes.
+            status = 'manual'
         elif check['expectation'] == 'required':
             status = 'judgment_present' if judgment.strip() else 'missing'
         else:
             status = check['expectation']
         results.append({**check, 'id': f'analysis_chapter:{index}', 'status': status,
                         'validation_errors': errors})
+        if status == 'manual':
+            results[-1]['preservation_note'] = '冻结要求将本章或该条内容留给人工，仅保留占位；模型判断不能赋予自动补写权限。'
         spans.append(span)
     for index, span in enumerate(spans):
         if span and spans.count(span) > 1:
