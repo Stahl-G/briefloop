@@ -22,7 +22,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import seed_value  # noqa: E402
-from label_sentences import PROMPT, RULES  # noqa: E402
+from label_sentences import (PROMPT, RULES, frozen_source, sentence_units, cache_identity,
+                             matching_cache, write_cache)  # noqa: E402
 
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['paragraphs'],
           'properties': {'paragraphs': {'type': 'array', 'items': {
@@ -74,26 +75,29 @@ def main():
     parser.add_argument('--slices', required=True)
     parser.add_argument('--cli', choices=['codex', 'devin'], default='codex')
     parser.add_argument('--model')
-    parser.add_argument('--out', help='subdirectory; default labels-<rules>-<model>')
+    parser.add_argument('--out', '--out-dir', help='subdirectory; default labels-<rules>-<model>')
     parser.add_argument('--effort', default='medium')
     args = parser.parse_args()
     args.model = args.model or {'codex': 'gpt-6.1-sol', 'devin': 'swe-2-high'}[args.cli]
-    root = Path(args.slices).expanduser()
+    root = Path(args.slices).expanduser().resolve()
     out = root / (args.out or f'labels-{RULES}-{args.model}')
-    out.mkdir(exist_ok=True)
+    tasks = []
     for entry in json.loads((root / 'manifest.json').read_text(encoding='utf-8'))['slices']:
+        markdown, requirements, reader = frozen_source(root, entry)
+        # Derive exact sentence units from the frozen text, not another model's answers.
+        units = sentence_units(markdown)
+        prompt = PROMPT.format(reader=reader).rsplit('只输出', 1)[0] + NOTE + json.dumps(units, ensure_ascii=False)
+        identity = cache_identity(entry, markdown, requirements, reader, args.cli, args.model, prompt,
+                                  effort=args.effort if args.cli == 'codex' else None,
+                                  extra={'schema': SCHEMA})
         target = out / f"{entry['name']}.json"
-        db = sqlite3.connect(root / entry['name'] / 'briefloop.db')
-        markdown = db.execute('SELECT markdown FROM briefs WHERE id=?', (entry['version'],)).fetchone()[0]
-        digest = hashlib.sha256(markdown.encode()).hexdigest()
-        if target.exists() and json.loads(target.read_text())['markdown_sha256'] == digest:
+        if matching_cache(target, identity):
             continue
-        # The reader line and sentence split are taken from the first annotator's file, so every annotator labels the same units.
-        reference = json.loads((root / 'labels' / f"{entry['name']}.json").read_text())
-        units = [{'block': p['block'], 'sentences': [s['text'] for s in p['sentences']]} for p in reference['paragraphs'] if 'sentences' in p]
+        tasks.append((entry, reader, units, prompt, identity, target))
+    out.mkdir(parents=True, exist_ok=True)
+    for entry, reader, units, prompt, identity, target in tasks:
         if not units:
             continue
-        prompt = PROMPT.format(reader=reference['reader']).rsplit('只输出', 1)[0] + NOTE + json.dumps(units, ensure_ascii=False)
         runner = run_codex if args.cli == 'codex' else run_devin
         result, tool_use, usage = runner(args, prompt)
         if result is None:
@@ -102,21 +106,33 @@ def main():
         if tool_use:
             print(entry['name'], 'rejected: the run used tools', flush=True)
             continue
-        by_block = {p['block']: p['labels'] for p in result['paragraphs']}
+        proposed = result.get('paragraphs', []) if isinstance(result, dict) else []
+        by_block = {}
+        for paragraph in proposed if isinstance(proposed, list) else []:
+            if isinstance(paragraph, dict):
+                by_block.setdefault(paragraph.get('block'), []).append(paragraph.get('labels'))
         paragraphs = []
         for unit in units:
-            labels = by_block.get(unit['block'])
-            if not labels or len(labels) != len(unit['sentences']):
-                paragraphs.append({'block': unit['block'], 'error': 'invalid_labels', 'sentences': unit['sentences'], 'labels': labels})
+            answers = by_block.get(unit['block'], [])
+            labels = answers[0] if len(answers) == 1 else None
+            if (not isinstance(labels, list) or len(labels) != len(unit['sentences'])
+                    or any(label not in ('fact', 'implication') for label in labels)):
+                paragraphs.append({**unit, 'error': 'invalid_labels', 'labels': labels})
                 continue
             paragraphs.append({'block': unit['block'], 'sentences': [{'i': n, 'text': t, 'label': label}
-                                                                      for n, (t, label) in enumerate(zip(unit['sentences'], labels))]})
-        target.write_text(json.dumps({'slice': entry['name'], 'markdown_sha256': digest, 'models': [f'{args.cli}/{args.model}'],
-                                      'effort': args.effort, 'rules': RULES, 'reader': reference['reader'], 'paragraphs': paragraphs,
-                                      'usage': usage}, ensure_ascii=False, indent=1))
-        counts = [s['label'] for p in paragraphs for s in p.get('sentences', [])]
+                               for n, (t, label) in enumerate(zip(unit['sentences'], labels))]})
+        extra_blocks = set(by_block) - {unit['block'] for unit in units}
+        complete = not extra_blocks and not any('error' in p for p in paragraphs)
+        write_cache(target, {'slice': entry['name'], 'version': entry['version'],
+                            'markdown_sha256': identity['markdown_sha256'],
+                            'reader_contract_sha256': identity['reader_contract_sha256'],
+                            'reader_sha256': identity['reader_sha256'], 'cache_identity': identity,
+                            'complete': complete, 'requested_model': args.model,
+                            'models': [f'{args.cli}/{args.model}'], 'effort': args.effort,
+                            'rules': RULES, 'reader': reader, 'paragraphs': paragraphs, 'usage': usage})
+        counts = [s['label'] for p in paragraphs for s in p.get('sentences', []) if isinstance(s, dict)]
         print(entry['name'], 'implication', counts.count('implication'), 'fact', counts.count('fact'),
-              'invalid', sum('error' in p for p in paragraphs), flush=True)
+              'invalid', sum('error' in p for p in paragraphs) + bool(extra_blocks), flush=True)
 
 
 if __name__ == '__main__':

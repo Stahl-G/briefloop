@@ -108,21 +108,51 @@ def event_stats(folder):
 
 
 def evaluate(store, runtime, job, version_id, folder):
-    """Score one version through Worker.assess_version, the product path.
+    """Explicit ordinary Evaluator experiment; never claim a Reviewer result.
 
-    The slices are internal reports, which a backend with the restricted
-    Reviewer sends to review instead; here the evaluator path is forced the
-    way a backend without that capability takes it (assessment_without_review).
+    This override is confined to an isolated experimental process. Product
+    review availability and formal delivery rules are not changed.
     """
+    import hashlib
     import briefloop.review_capability as capability
-    from briefloop.runtime import Worker, stage_job
-    capability.restricted_review = lambda backend: False
-    worker = Worker(store, runtime=runtime)
-    brief = store.one('briefs', version_id)
-    folder.mkdir(parents=True, exist_ok=True)
-    backend = json.loads(job['payload'])['agent_backend']
-    worker.assess_version(stage_job(store, job, 'evaluator', mode='single'), brief, folder, backend)
-    return json.loads(store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version_id,))[0]['data'])
+    import briefloop.runtime as product_runtime
+    original_available = capability.review_available
+    original_prompt = product_runtime.assessment_prompt
+    receipt = {'requested_route': 'evaluator', 'route': None,
+               'experiment_override': 'review_available=False', 'prompt_sha256': None}
+
+    def capture_prompt(*args, **kwargs):
+        prompt = original_prompt(*args, **kwargs)
+        receipt['prompt_sha256'] = hashlib.sha256(prompt.encode()).hexdigest()
+        receipt['route'] = 'evaluator'
+        return prompt
+
+    capability.review_available = lambda *args, **kwargs: False
+    product_runtime.assessment_prompt = capture_prompt
+    try:
+        worker = product_runtime.Worker(store, runtime=runtime)
+        brief = store.one('briefs', version_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        backend = json.loads(job['payload'])['agent_backend']
+        worker.assess_version(product_runtime.stage_job(store, job, 'evaluator', mode='single'), brief, folder, backend)
+        if receipt['route'] != 'evaluator' or (folder / 'review').exists() or not (folder / 'assessment.json').is_file():
+            raise ValueError('Evaluator experiment route/artifact mismatch')
+        if backend == 'briefloop-native':
+            packet = folder / 'packet'
+            if not all((packet / name).is_file() for name in ('input.json', 'assessment.schema.json')):
+                raise ValueError('Native evaluator frozen packet missing')
+            receipt['packet_input_sha256'] = hashlib.sha256((packet / 'input.json').read_bytes()).hexdigest()
+        receipt['assessment_sha256'] = hashlib.sha256((folder / 'assessment.json').read_bytes()).hexdigest()
+        (folder / 'evaluator-route.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+        rows = store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version_id,))
+        if not rows:
+            raise ValueError('Evaluator returned no saved assessment')
+        return json.loads(rows[0]['data'])
+    finally:
+        capability.review_available = original_available
+        product_runtime.assessment_prompt = original_prompt
+        if folder.exists() and not (folder / 'evaluator-route.json').exists():
+            (folder / 'evaluator-route.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=None, role='reviewer'):
@@ -191,18 +221,22 @@ def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=
             pass
 
 
-def run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backend, model, variant, repeat_index, truth):
+def run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backend, model, variant, repeat_index, truth, quality_candidate=False):
     from briefloop.models import Assessment
-    from briefloop.store import uid
     try:
-        # Written directly: the main-chain gate still refuses native assess jobs.
-        jid = uid('job')
+        # Admit through the product interface; an unavailable route fails before
+        # a paid call. Claim only this job in this isolated experimental copy.
         payload = {'version_id': version_id, 'agent_backend': backend,
                    'runtime': {'model': model, 'model_variant': variant},
                    'role_models': {'evaluator': {'model': model, 'model_variant': variant}}}
+        if quality_candidate:
+            payload['quality_checklist_candidate'] = 'chapter-v1'
+        job = store.enqueue('assess', payload)
+        jid = job['id']
         with store.tx() as c:
-            c.execute("INSERT INTO jobs(id,kind,payload,status,result,error,created,updated) VALUES(?,?,?,?,?,?,datetime('now'),datetime('now'))",
-                      (jid, 'assess', json.dumps(payload), 'running', None, None))
+            claimed = c.execute("UPDATE jobs SET status='running' WHERE id=? AND status='queued'", (jid,)).rowcount
+            if claimed != 1:
+                raise ValueError('Experimental assessment job could not be claimed')
         job = store.one('jobs', jid)
         folder = work / 'ws' / 'jobs' / jid
         folder.mkdir(parents=True, exist_ok=True)
@@ -223,6 +257,10 @@ def run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backe
             })
         except Exception as exc:
             outcome.update({'wall_seconds': round(time.monotonic() - t0, 1), 'status': 'failed', 'error': str(exc)[:500]})
+        route_file = folder / 'evaluator-route.json'
+        receipt = json.loads(route_file.read_text()) if route_file.exists() else {}
+        outcome.update({'route': receipt.get('route'), 'prompt_sha256': receipt.get('prompt_sha256'),
+                        'route_receipt': str(route_file), 'quality_candidate': quality_candidate})
         outcome['usage'] = usage_totals(folder)
         outcome['events'] = event_stats(folder)
         return outcome

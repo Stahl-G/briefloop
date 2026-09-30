@@ -153,13 +153,8 @@ _EVALUATION_RULES = '''读者要求与四维评价：
 证据：核对具体主张、来源及支持范围，保留准确状态和必要条件；披露缺口不能抵消错误，也不把正确表达的计划或预测判为错误。
 覆盖：逐项对照原始要求与 reader_contract，查找漏项和错误归类；作者登记的条目不证明覆盖完整。必答问题只有“尚未核验”仍是未完成；明确人工填写部分按占位要求检查。
 分析：看事实如何支持业务判断及可用的行动或观察节点，识别无依据的因果、外推和统一保证。列出分析标签、谨慎提醒或研究步骤不算提供分析价值。
-分析也衡量这份稿件值不值得读（洞见与论证支撑）：关键变化是否落到对本轮读者有依据的影响判断、取舍或观察节点；事实是否被组织起来支撑结论，而不是按来源顺序并列；是否有综合多份材料才得到、单看任一来源得不到的判断。判断必须有材料依据，不要求来源不支持的外推；材料确实不足时写明不足，也算完成分析。只罗列事实、复述来源而不下判断，即使每句都有来源，也不是充分完成。
-分析分锚点：4=多数关键变化都有有依据的影响判断且论证清楚；3=主要结论有判断和依据，个别段落只有事实；2=多数段落只罗列事实或复述来源，读者要自己推断含义，需要实质补写；1=基本是材料拼接。分析≤2 时，总体判断不得为「达到要求」。
-正反例（示意，与本稿无关）——反：「A 公司三季度关店 120 家，同店销售下降 4%，门店租金上涨 8%。」（事实并列，没有对读者的含义）。正：「A 公司三季度关店 120 家、同店销售下降 4%，同时租金上涨 8%，说明收缩主要由单店盈利恶化驱动而非主动调整；若四季度同店销售仍为负，其年度开店目标大概率下调，这是下一次需要核对的节点。」（事实 → 有依据的判断 → 可观察节点）。
 区分事实陈述与行动建议：明确写成“建议／应／可”的动作，核查其事实前提、业务关联及可行性，不要求来源已经提出同一建议；不能仅因来源未点名执行部门就判建议为虚构事实。若正文声称部门已采取行动、已确定安排或拥有特定权限，仍须核查依据；建议也不能夹带无依据的数值、因果保证或组织事实。
 表达：按目标读者、篇幅和明确写作偏好评估，核查语言挤占正文、机械标签和重复解释是具体交付问题。发现时给出正文片段、违反的要求、对阅读的影响和修订目标；不能以“披露充分／态度谨慎”为表达加分。对企业内部模式，若仍存在影响阅读的成片内部检查清单或重复标签，表达不应评为充分完成（4/5）；说明基于语义与上下文的判断，不用关键词计数代替审阅。表达分锚点：4=对目标读者直接可用，仅有很小可选优化；3=已满足要求，剩余为非必要润色；2=存在明确违约或反复噪音，需要用户实质删改；1=更像研究记录或材料拼接。表达≤2 时，总体判断不得仍为「达到要求」；出现该矛盾按实际记录，不替系统改分。
-表达也衡量信息密度与切题：没有信息量的套话和空泛表态、同一事实换个说法再列一遍、准确但与本轮读者问题或约定条款无关的背景，都占用读者注意力，是成本而不是加分。
-与价值有关的发现用 kind 标明类别：no_implication（只罗列或复述、缺少有依据的影响判断，dimension=analysis）、filler（套话与空泛表态）、restatement（重复已有事实）、off_topic（与读者问题无关的材料），后三类 dimension=expression。写出原句，并说明删去或改写后读者能得到什么。
 四维分数分别反映任务完成程度，不相互抵消。未核验、证据反驳、覆盖不足、审阅失败与无发现分别记录；无发现不证明全部重要主张已检查。'''
 
 
@@ -178,7 +173,7 @@ def instructions(spec, role='analyst', *, include_spec=True):
         'analyst': '''写作交付：reader_content 决定需要完成的回答，research_method 约束取证和推理，writing_preference 决定呈现，manual_assignment 决定保留的占位。对照原始要求检查解释是否遗漏或扭曲，用户原话优先。研究交接中标为待证、没有已登记来源引用的 learnings 不能直接写成正文事实：先按本轮证据补齐引用；补不齐就丢弃，或作为明确未核验事项记入 gaps，不冒充已核验结论。提交前通读正文，检查事实、判断、图表和读者用途是否连贯，精简重复背景与检查语言；同时确认准确状态、负面事实和必要条件没有被删。''',
         'evaluator': _EVALUATION_RULES,
         'reviewer': _EVALUATION_RULES + '\n只检查已有正文、证据、约定和记录，不自行改稿、编译新约定、重新计算或补搜。需要补查或修改时提交给主Agent。',
-        'revision': '''针对性修订：复用被审版本的原始要求和 reader_contract，处理发现及受影响内容。明确错误改正或移除；覆盖不足在剩余权限与预算内补齐，仍未完成则保留未决状态。研究记录归位后通读正文，不能只把问题移到核查记录、追加提醒或删除必要条件来宣称解决。no_implication 发现：在材料支持的范围内补写对读者的影响判断、取舍或观察节点，材料不足就写明不足，不编造外推；filler、restatement、off_topic 发现：删去或压缩，不用新的套话替换。不要新增循环；提交实际修改及对应依据供独立复核。''',
+        'revision': '''针对性修订：复用被审版本的原始要求和 reader_contract，处理发现及受影响内容。明确错误改正或移除；覆盖不足在剩余权限与预算内补齐，仍未完成则保留未决状态。研究记录归位后通读正文，不能只把问题移到核查记录、追加提醒或删除必要条件来宣称解决。不要新增循环；提交实际修改及对应依据供独立复核。''',
     }[role]
     if role in ('evaluator', 'reviewer'):
         reader = '以下是被审报告的交付标准，用来核对产物；其中补查、改稿等动作由主Agent执行。\n' + reader
@@ -237,3 +232,111 @@ def save_reader_contract(store, run_id, value):
         raise ValueError('这份产物约定已绑定稿件；新要求需建立新的要求/报告版本，不能覆盖历史解释')
     store.set_meta(key,checked)
     return checked
+
+
+ANALYSIS_CHECKLIST_CANDIDATE = 'chapter-v1'
+
+
+def analysis_check_instructions(spec):
+    """Explicit experiment appendix; ordinary role instructions never include it."""
+    return '''章级分析检查候选（仅本轮显式实验，不替代四维评价）：
+先判断每章在本轮读者约定中的职责，再检查它是否已有职责所需的判断。不是每个段落、章节或正确事实都必须有 so-what；不按含义句比例、关键词或段落数量评分。
+在 assessment.analysis_checks 为每个待检查的章写一项：chapter_quote 是可唯一定位本章的逐字片段（优先包括标题）；requirement_quote 是原始 requirement_items.text 或本章已冻结 sections.purpose 中支持职责判断的连续原话；expectation 为 required / optional / not_required / uncertain；judgment_quote 是本章已有判断的原句，没有则为空；rationale 先解释职责，再说明判断是否已有。
+required 仅用于明确要求本章完成影响判断、取舍或观察节点的情况。纯新闻列表、事实说明、资料表格/输入章可为 not_required；职责不明确、要求的适用章不清楚或材料不足以确定判断应存在时为 uncertain，不强迫补写。不能用邻章判断充当本章已完成，也不能把通用“行业重要/值得关注”当具体判断。
+即使判断与原句事实都正确，也先看职责；事实章可不写分析。required 且确无判断时才记录缺失；已有判断即逐字给出 judgment_quote，缺少、编造或不匹配的引用不得当检查通过。
+套话 filler、重复 restatement、离题 off_topic 属独立表达问题；不要改名为 no_implication，也不要仅因类别名把可选润色升级成必修。保留原四维印象分；不要把任意分析低分自动变成修订要求。
+示例（虚构，不能用作报告事实）：要求“数据章列出季度指标”时，“## 数据\n交付 100 台，上季 90 台。”为 not_required，不需强行预测；要求“影响章给出本次扩容决策的观察节点”时，同一事实只有列表而没有判断可为 required 且缺失。已写“交付比上季多 10 台；是否继续扩容，应结合下一季度订单覆盖率核对”时，原句已有有条件的观察节点，不应报缺失；不能据 100/90 台断言需求驱动或未来必然增长。职责不清楚则 uncertain。
+有明确 required 缺失时仍须说明材料边界：补写材料支持的取舍/观察节点，或明确相关判断尚不能形成；不要求制造因果或预测。检查范围与不确定性保存在检查记录中。'''
+
+
+def _analysis_chapter_span(markdown, quote):
+    """Locate an exact unique quote and its Markdown chapter; no semantic inference."""
+    import re
+    if not quote.strip() or markdown.count(quote) != 1:
+        return None
+    start = markdown.index(quote)
+    headings = list(re.finditer(r'^ {0,3}(#{1,6})[ \t]+.*$', markdown, re.MULTILINE))
+    preceding = [heading for heading in headings if heading.start() <= start]
+    heading = preceding[-1] if preceding else None
+    lower = heading.start() if heading else 0
+    level = len(heading.group(1)) if heading else 0
+    following = [item for item in headings if item.start() > start
+                 and (not heading or len(item.group(1)) <= level)]
+    upper = following[0].start() if following else len(markdown)
+    if start + len(quote) > upper:
+        return None
+    return lower, upper
+
+
+def validate_analysis_checks(assessment, spec, markdown):
+    """Validate provenance only. The model owns expectation and semantic judgment.
+
+    Returned status cannot be supplied by the model. A missing/ambiguous reference
+    remains uncertain, never passed or a compulsory repair. Raw assessment is kept.
+    """
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    requirements = [item['text'] for item in spec.get('requirement_items', [])]
+    results, spans = [], []
+    for index, original in enumerate(data.get('analysis_checks', [])):
+        item = original if isinstance(original, dict) else original.model_dump()
+        check = {key: item.get(key, '') for key in ('chapter_quote', 'requirement_quote', 'expectation', 'judgment_quote', 'rationale')}
+        errors = []
+        span = _analysis_chapter_span(markdown, check['chapter_quote'])
+        if span is None:
+            errors.append('chapter_quote 必须连续逐字存在并可唯一定位一章。')
+        # Only a purpose belonging to this quoted chapter may authorize a repair;
+        # a neighboring chapter's purpose is not a blanket analysis requirement.
+        import re
+        chapter_title = re.sub(r'^ {0,3}#{1,6}[ \t]+|[ \t]+#+[ \t]*$', '',
+                               markdown[span[0]:span[1]].split('\n', 1)[0]).strip() if span else ''
+        section_requirements = [section.get('purpose', '') for section in spec.get('sections', [])
+                                if span and section.get('title') == chapter_title]
+        quote = check['requirement_quote']
+        if quote and not any(quote in text for text in requirements + section_requirements):
+            errors.append('requirement_quote 不在原始要求或本章冻结 purpose 中。')
+        if check['expectation'] == 'required' and not quote.strip():
+            errors.append('required 缺少明确职责要求的原话。')
+        if check['expectation'] not in ('required', 'optional', 'not_required', 'uncertain') or not check['rationale'].strip():
+            errors.append('缺少有效职责判断或说明。')
+        judgment = check['judgment_quote']
+        if judgment and (not span or markdown[span[0]:span[1]].count(judgment) != 1):
+            errors.append('judgment_quote 不在同一章中连续逐字唯一存在。')
+        if errors or check['expectation'] == 'uncertain':
+            status = 'uncertain'
+        elif check['expectation'] == 'required':
+            status = 'judgment_present' if judgment.strip() else 'missing'
+        else:
+            status = check['expectation']
+        results.append({**check, 'id': f'analysis_chapter:{index}', 'status': status,
+                        'validation_errors': errors})
+        spans.append(span)
+    for index, span in enumerate(spans):
+        if span and spans.count(span) > 1:
+            results[index]['status'] = 'uncertain'
+            results[index]['validation_errors'].append('同一章返回多个检查，不能判定职责检查完成。')
+    return results
+
+
+def candidate_assessment(assessment, spec, markdown):
+    """Revision-only view; original scores/findings and saved draft remain untouched."""
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    checked = validate_analysis_checks(data, spec, markdown)
+    result = deepcopy(data)
+    result['analysis_checks'] = checked
+    result['analysis_check_coverage'] = {
+        'status': 'not_checked' if not checked else ('partial' if any(check['status'] == 'uncertain' for check in checked) else 'reported'),
+        'reported_chapters': len(checked),
+        'uncertain_chapters': sum(check['status'] == 'uncertain' for check in checked),
+        'scope': '未返回章级检查即未覆盖；已返回也不代表全部章节覆盖或语义判定通过。'}
+    raw = result.get('findings', [])
+    result['analysis_check_unverified_findings'] = [finding for finding in raw if finding.get('kind') == 'no_implication']
+    result['findings'] = [finding for finding in raw if finding.get('kind') != 'no_implication']
+    for check in checked:
+        if check['status'] != 'missing':
+            continue
+        result['findings'].append({'dimension': 'analysis', 'severity': 'minor',
+            'kind': 'no_implication', 'description': check['rationale'],
+            'report_quote': check['chapter_quote'], 'requirement': check['requirement_quote'],
+            'suggestion': '仅在材料支持范围内完成本章明确职责；可用有条件的取舍或观察节点，材料不足则说明相关判断尚不能形成，不编造因果或预测。',
+            'check_ids': [check['id']]})
+    return result

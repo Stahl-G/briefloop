@@ -442,6 +442,15 @@ class Finding(Model):
     block_ids: list[str] = Field(default_factory=list)
 
 
+class AnalysisCheck(Model):
+    """Opt-in chapter experiment; no score or repair authority by itself."""
+    chapter_quote: str = Field(default='', description='本章中连续逐字存在且可唯一定位的片段，优先包含章节标题。')
+    requirement_quote: str = Field(default='', description='支持本章职责判断的原始要求或已冻结章节 purpose 连续逐字片段；不能自拟要求。')
+    expectation: Literal['required', 'optional', 'not_required', 'uncertain']
+    judgment_quote: str = Field(default='', description='本章已有影响判断、取舍或观察节点的原句；确无时为空，不用邻章判断代替。')
+    rationale: str = Field(default='', description='先说明章节职责是否要求判断，再说明判断是否已有及其依据；不按比例计数。')
+
+
 class Assessment(Model):
     brief_hash: str
     status: Literal["complete", "incomplete"] = "complete"
@@ -452,6 +461,7 @@ class Assessment(Model):
     analysis: int | None = Field(default=None, ge=1, le=5)
     expression: int | None = Field(default=None, ge=1, le=5)
     checks: list[dict] = Field(default_factory=list)
+    analysis_checks: list[AnalysisCheck] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -509,9 +519,6 @@ def assessment_checks(checks, findings, expected=()):
 # "must fix": the existing single revision is triggered even when the overall verdict
 # would otherwise look passing.
 MUST_FIX_EXPRESSION = 2
-# Analysis anchor 2 means most paragraphs only list or restate facts and the reader
-# must infer what they mean (#757). The same single revision applies.
-MUST_FIX_ANALYSIS = 2
 
 
 def missing_findings(assessment) -> str | None:
@@ -529,22 +536,13 @@ def must_fix(assessment) -> bool:
     data = assessment if isinstance(assessment, dict) else assessment.model_dump()
     if data.get('status') != 'complete':
         return False
-    return bool(must_fix_dimensions(data))
-
-
-def must_fix_dimensions(assessment) -> dict:
-    """Dimensions at or below their must-fix anchor, with their scores."""
-    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
-    if data.get('status') != 'complete':
-        return {}
-    limits = {'expression': MUST_FIX_EXPRESSION, 'analysis': MUST_FIX_ANALYSIS}
-    return {name: data[name] for name, limit in limits.items()
-            if isinstance(data.get(name), int) and data[name] <= limit}
+    score = data.get('expression')
+    return isinstance(score, int) and score <= MUST_FIX_EXPRESSION
 
 
 def overall_inconsistent(assessment) -> bool:
     """A must-fix body cannot be summarised as '达到要求'; flag the self-contradiction
-    instead of silently letting a low expression or analysis score pass as complete."""
+    instead of silently letting a low expression score pass as complete."""
     data = assessment if isinstance(assessment, dict) else assessment.model_dump()
     return data.get('overall') == '达到要求' and must_fix(data)
 
