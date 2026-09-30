@@ -80,3 +80,14 @@ def test_comparison_requires_both_nonactual_vintages(category):
         assert result['calculations'][0]['change']==expected
         if expected is None:assert '截至日' in result['gaps'][0]
         else:assert not result['gaps']
+
+
+def test_cross_period_forecasts_do_not_assume_publication_order():
+    # Different target periods may legitimately be forecast on different dates.
+    result=prepare_report_data({'records':[dict(metric='Demand',unit='units',
+        current=12,current_date='2027-12-31',as_of='2026-09-08',
+        previous=10,previous_date='2026-12-31',previous_as_of='2026-09-09',
+        source_id='s1',category='forecast',previous_category='forecast',
+        previous_unit='units',previous_tax_basis='',comparable=True,comparison='pct')]})
+    assert result['calculations'][0]['change']==20.0
+    assert not result['gaps']
