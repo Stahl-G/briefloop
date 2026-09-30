@@ -52,7 +52,9 @@ print('READY', flush=True)
 def _run_with_owner_pipe(script, *args):
     root = Path(__file__).resolve().parents[1]
     process = subprocess.Popen(
-        [sys.executable, '-c', script, *args],
+        # Match the service entrypoint: on Windows cli.main otherwise first
+        # re-execs itself for UTF-8, legitimately preserving the caller's stdin.
+        [sys.executable, '-X', 'utf8', '-c', script, *args],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={**os.environ, 'PYTHONPATH': str(root / 'src')},
     )
