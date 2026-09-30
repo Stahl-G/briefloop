@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, version_id TEXT NOT NUL
  kind TEXT NOT NULL, data TEXT NOT NULL, batch_id TEXT, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS readers(id TEXT PRIMARY KEY, name TEXT NOT NULL, decisions TEXT NOT NULL, preferences TEXT NOT NULL,
  status TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS skill_verifications(skill_id TEXT PRIMARY KEY, reader_id TEXT, status TEXT NOT NULL,
+ learned_edits TEXT NOT NULL, job_id TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS revision_edits(id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL REFERENCES feedback(id),
  edit_key TEXT NOT NULL, data TEXT NOT NULL, category TEXT, decided_by TEXT, status TEXT NOT NULL,
  created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(feedback_id, edit_key));
@@ -886,6 +888,7 @@ class Store:
         from .learning_budget import snapshot as learning_authorization
         from .revision_edits import snapshot as revision_snapshot
         from .readers import listing as reader_listing
+        from .skill_verification import refresh as skill_refresh
         from .task_labels import reported_labels
         from . import office_cli
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
@@ -901,6 +904,7 @@ class Store:
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
                 "revision_edits": revision_snapshot(self),
                 "readers": reader_listing(self),
+                "skill_verifications": skill_refresh(self),
                 "jobs": jobs,
                 "task_labels": reported_labels(),
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),

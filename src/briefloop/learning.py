@@ -395,7 +395,8 @@ TRIAGE_RULES='''逐处判断用户改动的性质（category），只看这一�
 - reader_specific：只因为这位读者的用途、身份或忌讳才这样改，换一位读者未必要改。
 能对照来源判断时先看来源：改动后的内容与来源一致、原稿与来源不一致，是 fact_correction。
 confident：你有把握时为 true；只看改动前后文字无法判断原因、多种解释都合理时为 false，不要猜成有把握。
-reason 写一句具体依据（例如对照了哪份来源、哪个数字）。不改稿、不补搜、不评价改动好坏。'''
+reason 写一句具体依据（例如对照了哪份来源、哪个数字）。不改稿、不补搜、不评价改动好坏。
+item 带 learned_edits 时，那是这份报告所用技能此前学过的改动：逐处判断本次改动是否又在改同一类问题（技能没能避免，用户只好再改一次），在 repeats 列出对应 learned_edits 的 id；不是重复则 []。'''
 
 
 def triage_prompt(store,folder,backend='codex'):
@@ -410,7 +411,7 @@ def triage_prompt(store,folder,backend='codex'):
 本轮是改动分类模式。{material}
 本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具。
 {TRIAGE_RULES}
-{output}{{"edits":[{{"feedback_id":"...","edit_id":"...","category":"taste|fact_correction|reader_specific","confident":true,"reason":"具体依据"}}]}}。每处改动须且只能给一条。
+{output}{{"edits":[{{"feedback_id":"...","edit_id":"...","category":"taste|fact_correction|reader_specific","confident":true,"reason":"具体依据","repeats":[]}}]}}。每处改动须且只能给一条。
 '''
 
 
@@ -612,6 +613,8 @@ def apply_accepted(store,job,study,state):
     # target order and duplicate roles do not change the effective binding.
     targets=sorted(set(payload['targets']))
     sid='skill_'+content_hash(dump({'content':text,'targets':targets}))[:16]
+    from .revision_edits import learned_ids
+    learned=learned_ids(store,payload.get('feedback_ids',[]))
     with store.tx() as c:
         if c.execute("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'",(job['id'],)).fetchone():return
         c.execute('INSERT OR IGNORE INTO skills VALUES(?,?,?,?,?,?)',(sid,payload['skill_id'],text,dump(targets),decision.get('reason',''),now()))
@@ -629,4 +632,7 @@ def apply_accepted(store,job,study,state):
             current=json.loads(row['value']) if row else None
             applied=current==payload['skill_id']
             if applied:c.execute("INSERT OR REPLACE INTO meta VALUES('active_skill',?)",(dump(sid),))
+        if applied:
+            from .skill_verification import register
+            register(c,sid,reader_id,learned,job['id'])
         c.execute('INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)',(job['id'],'adoption_processed',dump({'skill_id':sid,'applied':applied,**({'reader_id':reader_id} if reader_id else {}),'reason':decision.get('reason','') if applied else '保留用户在比较期间的技能选择'}),now()))

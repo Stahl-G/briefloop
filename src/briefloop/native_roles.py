@@ -436,7 +436,9 @@ TRIAGE_TOOLS = [
                         'properties': {'feedback_id': {'type': 'string'}, 'edit_id': {'type': 'string'},
                                        'category': {'type': 'string', 'enum': ['taste', 'fact_correction', 'reader_specific']},
                                        'confident': {'type': 'boolean'},
-                                       'reason': {'type': 'string', 'description': '判断依据，例如对照了哪份来源'}}}}}},
+                                       'reason': {'type': 'string', 'description': '判断依据，例如对照了哪份来源'},
+                                       'repeats': {'type': 'array', 'items': {'type': 'string'},
+                                                   'description': '本次改动重复了 learned_edits 中哪些已学改动的 id；没有则 []'}}}}}},
      'handler': submit_triage},
 ]
 

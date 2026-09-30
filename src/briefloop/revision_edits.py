@@ -78,6 +78,7 @@ def triage_errors(result, items):
     if not isinstance(result, dict) or not isinstance(result.get('edits'), list):
         return '结果需要 edits 列表'
     expected = {(item['feedback_id'], edit['edit_id']) for item in items for edit in item['edits']}
+    learned = {item['feedback_id']: {e['id'] for e in item.get('learned_edits') or []} for item in items}
     seen = []
     for entry in result['edits']:
         if not isinstance(entry, dict):
@@ -91,6 +92,10 @@ def triage_errors(result, items):
             return f'{key}：confident 需要 true 或 false'
         if not isinstance(entry.get('reason'), str) or not entry['reason'].strip():
             return f'{key}：reason 需要写明判断依据'
+        allowed = learned.get(key[0], set())
+        repeats = entry.get('repeats', [])
+        if not isinstance(repeats, list) or not set(repeats) <= allowed:
+            return f'{key}：repeats 只能列出该改稿 learned_edits 里的 id（没有重复则 []）'
         seen.append(key)
     if len(seen) != len(set(seen)) or set(seen) != expected:
         missing = sorted(expected - set(seen))
@@ -114,7 +119,9 @@ def pending(store, feedback_ids):
             continue
         run = store.one('runs', after['run_id'])
         requirements = json.loads(run['requirements'])
+        from .skill_verification import learned_for_run
         items.append({'feedback_id': fid, 'run_id': run['id'], 'reader_id': (requirements.get('reader_profile') or {}).get('id'),
+                      'learned_edits': learned_for_run(store, run['id']),
                       'reader': {key: requirements.get(key, '') for key in ('title', 'objective', 'audience')},
                       'source_ids': store.source_ids(run['id']), 'edits': edits})
     return items
@@ -133,6 +140,7 @@ def record(store, items, result, *, job_id):
             ask = not verdict['confident'] and edit['changed_chars'] >= QUESTION_MIN_CHARS
             data = {**edit, 'model_category': verdict['category'], 'confident': verdict['confident'],
                     'reason': verdict['reason'].strip(), 'run_id': item['run_id'], 'reader_id': item.get('reader_id'),
+                    'repeats': sorted(set(verdict.get('repeats') or [])),
                     'triage_job': job_id}
             routed = not ask and verdict['category'] == 'reader_specific' and item.get('reader_id')
             rows.append((uid('edit'), item['feedback_id'], edit['edit_id'], dump(data),
@@ -205,3 +213,18 @@ def snapshot(store):
 def edits_by_id(store, edit_ids):
     rows = [store.rows('SELECT * FROM revision_edits WHERE id=?', (eid,)) for eid in edit_ids]
     return [_view(r[0]) for r in rows if r and r[0]['status'] in ('answered', 'routed') and r[0]['category'] in LEARNED]
+
+
+def learned_ids(store, feedback_ids):
+    """The edits a learning batch learned from: what an adopted skill is checked against."""
+    ids = []
+    for fid in feedback_ids:
+        rows = store.rows('SELECT * FROM feedback WHERE id=?', (fid,))
+        if not rows:
+            continue
+        row = rows[0]
+        if row['kind'] == 'revision':
+            ids += [e['id'] for e in learnable(store, fid) or []]
+        elif row['kind'] == 'revision_edit':
+            ids += [e['id'] for e in edits_by_id(store, json.loads(row['data'])['edit_ids'])]
+    return ids
