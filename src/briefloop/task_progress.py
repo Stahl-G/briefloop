@@ -4,6 +4,7 @@ import re
 from .research_plan import frozen, pending_requests
 from .research_budget import snapshot
 from .task_labels import label as task_label
+from .progress import public_failure
 
 ACTIVE = ('queued', 'running')
 
@@ -130,6 +131,8 @@ def summary(store, job_id):
         if brief:stage='初稿已保存，完整核验待继续' if not running else '正在完成初稿'
         for item in stages:
             if item.get('id')=='evaluate':item.update(label='完整核验待继续',status='pending')
+    if running and not child and p.get('runtime_notice'):
+        stage=public_text(p.get('stage')) or stage
     return {'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
             'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,
@@ -141,4 +144,4 @@ def summary(store, job_id):
             'gaps': [{'text': public_text(g.get('question') or g.get('description') or g.get('reason'))} for r in opened for g in r.get('gaps', [])],
             'agents': agents, 'stages': stages, 'timeline': timeline[-12:],
             'version_id': brief['id'] if brief else None,
-            'error': '任务未完成，请打开任务查看错误与恢复选项。' if job['status'] in ('failed', 'interrupted') else None}
+            'error': (public_failure(job.get('error')) or '任务未完成，请打开任务查看错误与恢复选项。') if job['status'] in ('failed', 'interrupted') else None}
