@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS assessments(id TEXT PRIMARY KEY, version_id TEXT NOT 
  data TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, version_id TEXT NOT NULL REFERENCES briefs(id),
  kind TEXT NOT NULL, data TEXT NOT NULL, batch_id TEXT, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS readers(id TEXT PRIMARY KEY, name TEXT NOT NULL, decisions TEXT NOT NULL, preferences TEXT NOT NULL,
+ status TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS skill_verifications(skill_id TEXT PRIMARY KEY, reader_id TEXT, status TEXT NOT NULL,
+ learned_edits TEXT NOT NULL, job_id TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS revision_edits(id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL REFERENCES feedback(id),
+ edit_key TEXT NOT NULL, data TEXT NOT NULL, category TEXT, decided_by TEXT, status TEXT NOT NULL,
+ created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(feedback_id, edit_key));
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
  payload TEXT NOT NULL, result TEXT, error TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
@@ -353,6 +360,13 @@ class Store:
             require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'),
                                    options.get('review_runtime',self.settings().get('review_runtime')),
                                    options.get('review_mode',self.settings().get('review_mode','standard')))
+        if not req.reader_id:req.reader_id=None
+        if clone is None and req.reader_id:
+            # The run keeps the profile it was written for (#858); later edits do not rewrite it.
+            from .readers import frozen
+            req.reader_profile=frozen(self,req.reader_id)
+            if not req.audience.strip() or req.audience=='自己':req.audience=req.reader_profile['name']
+        elif clone is None:req.reader_profile=None
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
@@ -377,6 +391,9 @@ class Store:
         if set(source_ids) & set(req.reference_source_ids):
             raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
+            from .previous_report import source_usage
+            if not options.get('previous_report_import') and source_usage(self,sid)=='previous_report':
+                raise ValueError('往期报告只用于约定和写法参考；请放入参考材料，并另选本期原始来源')
             source=self.one("sources", sid)
             if source['status'] in ('queued','extracting','cancelled','interrupted'):
                 raise ValueError('来源尚未读取完成，请等待或重新读取：'+source['name'])
@@ -384,11 +401,20 @@ class Store:
         validate_request(self,req,source_ids)
         if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
+        from .readers import skill_for as reader_skill
+        if 'skill_id' in options and clone is None and options.get('mode','normal')=='normal':
+            from .readers import validate_global_skill
+            validate_global_skill(self,options['skill_id'])
+        stored=req.model_dump()
+        # Runs without a saved reader keep the exact requirement shape older
+        # learning comparisons were frozen against.
+        if stored.get('reader_id') is None:
+            stored.pop('reader_id',None);stored.pop('reader_profile',None)
         rid = uid("run")
         with self.tx() as c:
-            c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(req.model_dump()), dump(source_ids), options.get("skill_id",self.meta("active_skill")), now(), options.get("mode","normal")))
+            c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(stored), dump(source_ids), options["skill_id"] if "skill_id" in options else reader_skill(self,req.reader_id), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
-                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(req.model_dump()),))
+                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(stored),))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
         return self.one("runs", rid)
@@ -397,6 +423,8 @@ class Store:
         run=self.one('runs',run_id)
         if source_id in json.loads(run['requirements']).get('reference_source_ids',[]):
             raise ValueError('风格参考不能登记为本期证据')
+        from .previous_report import source_usage
+        if source_usage(self,source_id)=='previous_report':raise ValueError('往期报告不能登记为本期证据，请作为参考材料使用')
         self.one('sources',source_id)
         with self.tx() as c:
             c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,source_id))
@@ -409,7 +437,7 @@ class Store:
     def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
         # Explicit source-document imports are user-authored first versions,
         # not generated drafts or revisions that should trigger learning.
-        if author not in ('agent', 'example', 'user'):raise ValueError('无效稿件作者')
+        if author not in ('agent', 'example', 'user', 'import'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
         run=self.one("runs", run_id)
@@ -429,13 +457,14 @@ class Store:
             from .reconciliation import exists
             if not exists(self,run_id,draft.reconciliation_id):
                 raise ValueError('稿件引用的对照记录不存在或不属于本报告：'+draft.reconciliation_id)
-        for ref in draft.citations:
-            try:self.one("sources", ref.source_id)
+        def validate_fact_citation(source_id):
+            try:self.one("sources", source_id)
             except ValueError:
-                # A made-up or mistyped id must say which one, not "Record not found".
-                raise ValueError('引用的来源 '+ref.source_id+' 不在本工作区；请使用登记工具返回的真实 source_id') from None
-            if ref.source_id in references:
-                raise ValueError('风格参考不能作为报告事实引用')
+                raise ValueError('引用的来源 '+source_id+' 不在本工作区；请使用登记工具返回的真实 source_id') from None
+            from .previous_report import source_usage
+            if source_id in references or source_usage(self,source_id)=='previous_report':
+                raise ValueError('往期报告或风格参考不能作为报告事实引用')
+        for ref in draft.citations:validate_fact_citation(ref.source_id)
         if draft.report_data is not None:
             from .report_tools import prepare_for_run
             prepared=prepare_for_run(self,run_id,draft.report_data.model_dump(mode='json'))
@@ -454,6 +483,9 @@ class Store:
         detail=draft.model_dump(mode='json',exclude={'markdown','editor_document'})
         from .figure_support import sync_content_citations
         sync_content_citations(self,run_id,detail,draft.editor_document,assets)
+        # Data rows, editor nodes and figures can append citations after input
+        # validation. Check the final set before publishing or attaching sources.
+        for ref in detail['citations']:validate_fact_citation(ref['source_id'])
         if draft.editor_document is not None:detail['document_schema']=1
         if company_review:detail['company_context']={'revision':company_review['revision'],'review':company_review}
         with self.tx() as c:
@@ -798,8 +830,8 @@ class Store:
             c.execute("INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)", (job_id, kind, dump(data), now()))
 
     def bind_skill(self, skill_id):
-        if skill_id:
-            self.one("skills", skill_id)
+        from .readers import validate_global_skill
+        validate_global_skill(self,skill_id)
         self.set_meta("active_skill", skill_id)
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
@@ -863,9 +895,13 @@ class Store:
         from .report_browsing import hot_state
         browsing=hot_state(self,jobs,run_id=run_id,version_id=version_id,pending_run=pending_run)
         from .search_policy import annotate_sources
+        from .previous_report import annotate_sources as annotate_source_usage
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
+        from .revision_edits import snapshot as revision_snapshot
+        from .readers import listing as reader_listing, reader_scope_ids, skill_for
+        from .skill_verification import refresh as skill_refresh
         from .task_labels import reported_labels
         from . import office_cli
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
@@ -875,14 +911,17 @@ class Store:
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row), 'language_hint':template_language_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
-                "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
+                "sources": annotate_source_usage(self,annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created"))),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 **browsing,
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
+                "revision_edits": revision_snapshot(self),
+                "readers": reader_listing(self),
+                "skill_verifications": skill_refresh(self),
                 "jobs": jobs,
                 "task_labels": reported_labels(),
-                "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
-                "active_skill": self.meta("active_skill"),
+                "skills": [{**s,"reader_scope_ids":reader_scope_ids(self,s["id"])} for s in self.rows("SELECT * FROM skills ORDER BY rowid DESC")],
+                "active_skill": skill_for(self,None),
                 "wiki": (self.root/"wiki/index.md").read_text(encoding='utf-8') if (self.root/"wiki/index.md").exists() else ""}
 
 

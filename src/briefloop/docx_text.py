@@ -26,6 +26,8 @@ def _paragraph_text(paragraph):
             parts.append(element.tail or '')
             continue
         kind = _name(element)
+        # Tracked deletions are not part of the document as it now reads.
+        if kind in ('del', 'moveFrom'): continue
         if kind in ('br', 'cr'): parts.append('\n')
         elif kind == 'tab': parts.append('\t')
         parts.append(element.text or '')
@@ -80,6 +82,7 @@ def document_text(document):
         if depth > 50: raise ValueError('DOCX 表格嵌套过深')
         lines.append('[DOCX ' + path + ']')
         for row_index, row in enumerate(_blocks(element, {'tr'}), 1):
+            if _property(row, 'trPr', 'del') is not None:continue
             before = _columns(row, 'trPr', 'gridBefore', 0)
             after = _columns(row, 'trPr', 'gridAfter', 0)
             lines.append(f'[DOCX {path} row {row_index} gridBefore={before} gridAfter={after}]')

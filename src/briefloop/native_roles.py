@@ -397,6 +397,51 @@ COMPARISON_TOOLS = [
      'handler': submit_comparison},
 ]
 
+# -- triage Evaluator (#858: what kind of change each user edit is) -----------
+
+def triage_packet(store, items, folder):
+    """Freeze a triage: the split edits as written for every host and the text
+    of the sources their reports used."""
+    packet = Path(folder) / 'packet'
+    packet.mkdir(parents=True, exist_ok=True)
+    (packet / 'input.json').write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding='utf-8')
+    for sid in sorted({sid for item in items for sid in item.get('source_ids') or []}):
+        try:
+            (packet / 'sources').mkdir(exist_ok=True)
+            (packet / 'sources' / f'{sid}.txt').write_text(store.source_text(sid), encoding='utf-8')
+        except (ValueError, OSError):
+            pass
+    return packet
+
+
+def submit_triage(store, config, args):
+    from .revision_edits import triage_errors
+    packet = Path(config['packet_root'])
+    items = json.loads((packet / 'input.json').read_text(encoding='utf-8'))
+    result = {'edits': args.get('edits')}
+    error = triage_errors(result, items)
+    if error:
+        raise ToolError('分类结果未通过校验，修正后重新提交：' + error)
+    _atomic(packet.parent / 'triage.json', json.dumps(result, ensure_ascii=False, indent=1))
+    return {'content': [{'type': 'text', 'text': '分类结果已通过校验并保存，本次分类结束。'}], 'settle': json.dumps(result, ensure_ascii=False)}
+
+
+TRIAGE_TOOLS = [
+    {'name': 'submit_triage', 'label': '提交改动分类', 'settles': True,
+     'description': '提交每处用户改动的性质：edits 对每处改动各一条，填写 feedback_id、edit_id、category（taste/fact_correction/reader_specific）、confident（是否有把握）和 reason（具体依据）。当场校验，通过即保存并结束。',
+     'guide': '提交 {edits:[{feedback_id, edit_id, category, confident, reason}]}；每处改动一条，拿不准时 confident=false。',
+     'parameters': {'type': 'object', 'required': ['edits'], 'additionalProperties': False,
+                    'properties': {'edits': {'type': 'array', 'items': {
+                        'type': 'object', 'required': ['feedback_id', 'edit_id', 'category', 'confident', 'reason'],
+                        'properties': {'feedback_id': {'type': 'string'}, 'edit_id': {'type': 'string'},
+                                       'category': {'type': 'string', 'enum': ['taste', 'fact_correction', 'reader_specific']},
+                                       'confident': {'type': 'boolean'},
+                                       'reason': {'type': 'string', 'description': '判断依据，例如对照了哪份来源'},
+                                       'repeats': {'type': 'array', 'items': {'type': 'string'},
+                                                   'description': '本次改动重复了 learned_edits 中哪些已学改动的 id；没有则 []'}}}}}},
+     'handler': submit_triage},
+]
+
 # -- scout ------------------------------------------------------------------
 
 READ_CHARS = 60_000
@@ -729,6 +774,8 @@ def _tools(role, mode=None, config=None):
             tools.extend(tool_specs())
             tools = [with_revision_base(t) for t in tools]
         return tools
+    if role == 'evaluator' and mode == 'triage':
+        return TRIAGE_TOOLS
     if role == 'evaluator' and mode == 'pairwise':
         from .comparison_contract import extend_schema, frozen_contract, validate_cases
         contract = frozen_contract(config or {})
