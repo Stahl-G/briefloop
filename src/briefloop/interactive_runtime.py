@@ -375,7 +375,7 @@ class InteractiveRuntime:
                     if status in ('interrupted', 'cancelled'):
                         raise InterruptedError('会话已中断，已生成内容保留，可恢复')
                     if status != 'completed':
-                        raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
+                        raise RuntimeError(tracker.failure_message or 'Agent 执行失败；详情保存在会话与任务日志')
                     return result
                 minutes = timing['hard_timeout_minutes']
                 if minutes > 0 and time.monotonic() - started > minutes * 60:

@@ -48,3 +48,33 @@ def test_child_turn_receipts_drive_progress_without_inventing_activity_liveness(
         assert row['stage'] == '子任务本轮已结束，正在整理与交接'
         assert next(s['status'] for s in row['stages'] if s['id'] == 'research') == 'active'
     assert not store.rows('SELECT id FROM jobs')
+
+
+def test_provider_retries_project_each_attempt_without_leaking_error_details(tmp_path):
+    store=Store(tmp_path/'workspace');folder=store.root/'jobs'/'retry';folder.mkdir(parents=True)
+    log=folder/'events.jsonl';tracker=ProgressTracker(store,'retry',folder)
+    def emit(kind,message):
+        with log.open('a') as out:
+            out.write(json.dumps({'type':kind,'data':{'message':message}})+'\n')
+        tracker.update()
+        row=store.rows("SELECT data FROM events WHERE job_id='retry' AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1")[0]
+        assert 'SECRET' not in row['data']
+        return json.loads(row['data'])
+    previous=None
+    for attempt in range(1,7):
+        row=emit('runtime.status',f'retry {attempt}/6: Connection error. https://SECRET')
+        assert f'{attempt}/6' in row['message']
+        assert row['runtime_notice']
+        assert row['last_activity'] and row['last_activity']!=previous
+        previous=row['last_activity']
+    assert len(store.rows("SELECT seq FROM events WHERE job_id='retry' AND kind='runtime_progress'"))==6
+    row=emit('runtime.status','provider retry exhausted: Connection error. SECRET')
+    assert row['stage']=='模型服务重试已结束'
+    row=emit('error','Connection error. SECRET')
+    assert row['stage']=='模型连接失败'
+    assert tracker.failure_message==row['message']
+    # A resumed turn must not inherit the earlier transport failure.
+    emit('turn.started','')
+    assert tracker.failure_message is None
+    row=emit('error','Unknown SECRET')
+    assert row['stage']=='模型执行遇到错误' and tracker.failure_message is None

@@ -12,6 +12,13 @@ from .platform_support import filesystem_path
 ENDED = {'completed', 'done', 'closed', 'failed', 'errored', 'interrupted', 'cancelled', 'canceled', 'shutdown'}
 
 
+def public_failure(message):
+    """Classify transport failures; never publish provider text or request URLs."""
+    if re.match(r'^(?:connection error|api connection error|connect(?:ion)? timeout|模型连接失败)', str(message or '').strip(), re.I):
+        return '模型连接失败；请检查网络和模型服务后重试，已有来源与稿件保留。'
+    return None
+
+
 def role_label(role):
     text=str(role or '子任务')
     if any(key in text.lower() for key in ('evaluator','scorer','assessor')):
@@ -79,6 +86,7 @@ class ProgressTracker:
         self.store=store;self.job_id=job_id;self.folder=Path(folder)
         self.signature=None;self.offset=0;self.tail=b'';self.message='';self.workers={}
         self.runtime_issue=None
+        self.failure_message=None
         rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job_id,))
         self.last=rows[0]['data'] if rows else None
         context = context or {}
@@ -155,14 +163,31 @@ class ProgressTracker:
                     elif kind=='child.turn.completed':
                         status=data.get('status')
                         row['status']=status if isinstance(status,str) and status in ENDED else 'unknown'
+                if kind=='turn.started':
+                    self.runtime_issue=None
+                    self.failure_message=None
+                if kind=='runtime.status':
+                    message=str(data.get('message') or '')
+                    retry=re.match(r'^retry (\d{1,3})/(\d{1,3}):',message)
+                    if retry:
+                        attempt,limit=map(int,retry.groups())
+                        if 1<=attempt<=limit:
+                            self.failure_message=None
+                            self.runtime_issue=('模型服务正在重试',f'模型请求暂未成功，正在第 {attempt}/{limit} 次自动重试；已有来源与稿件保留。')
+                    elif message.startswith('provider retry exhausted:'):
+                        reason=public_failure(message.partition(':')[2].strip())
+                        self.failure_message=reason
+                        self.runtime_issue=('模型服务重试已结束',reason or '自动重试未成功，正在保存失败记录；已有来源与稿件保留。')
                 if kind=='error':
                     # Provider errors may contain request URLs, credentials, or
                     # raw tool output. Classify locally; only fixed text is public.
                     detail=event.get('data') or event.get('error') or event
                     message=detail.get('message','') if isinstance(detail,dict) else ''
+                    self.failure_message=public_failure(message)
                     reconnect=bool(re.search(r'reconnect|waiting for network|retrying|重连',str(message),re.I))
                     self.runtime_issue=(
                         ('模型连接中断，正在重试','正在等待模型连接恢复；已有来源和产物保留。') if reconnect else
+                        ('模型连接失败',self.failure_message) if self.failure_message else
                         ('模型执行遇到错误','模型返回错误，正在等待运行状态更新；已有来源和产物保留。'))
                 elif kind in ('item.started','item.completed') and item.get('type') in (
                         'agent_message','agentMessage','command_execution','commandExecution','collab_tool_call',
@@ -215,7 +240,7 @@ class ProgressTracker:
             stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]
         message=self.message
         if self.runtime_issue:stage,message=self.runtime_issue
-        value={'stage':stage,'message':message,'agents':workers,'stages':stages,'draft_ready':paths[3].exists() or self.has_saved_draft}
+        value={'stage':stage,'message':message,'runtime_notice':bool(self.runtime_issue),'agents':workers,'stages':stages,'draft_ready':paths[3].exists() or self.has_saved_draft}
         def semantic(item):
             if isinstance(item,dict):return {key:semantic(part) for key,part in item.items() if key!='last_activity'}
             if isinstance(item,list):return [semantic(part) for part in item]
