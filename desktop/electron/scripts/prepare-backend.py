@@ -57,7 +57,31 @@ def verify_wheel(wheel: Path, version: str, expected_hash: str | None = None) ->
     return digest
 
 
-def stage_wheel(wheel: Path, manifest: dict, output: Path) -> None:
+LOCK = 'desktop/electron/backend-requirements.txt'
+LOCK_MARKER = '# pyproject-dependencies-sha256: '
+
+
+def frozen_lock(commit: str | None, root: Path = ROOT) -> bytes:
+    """The hash-locked dependency list of the frozen source, refused when stale (#851)."""
+    if commit:
+        show = lambda path: subprocess.check_output(['git', 'show', f'{commit}:{path}'], cwd=root)
+        lock, pyproject = show(LOCK), show('pyproject.toml')
+    else:
+        lock, pyproject = (root / LOCK).read_bytes(), (root / 'pyproject.toml').read_bytes()
+    dependencies = tomllib.loads(pyproject.decode('utf-8'))['project']['dependencies']
+    expected = hashlib.sha256(json.dumps(sorted(dependencies)).encode()).hexdigest()
+    recorded = [line[len(LOCK_MARKER):].strip() for line in lock.decode('utf-8').splitlines() if line.startswith(LOCK_MARKER)]
+    if recorded != [expected]:
+        raise ValueError('backend-requirements.txt does not match pyproject.toml dependencies; '
+                         'run desktop/electron/scripts/lock-backend.py and review the diff')
+    return lock
+
+
+def lock_identity(lock: bytes) -> dict:
+    return {'requirements': 'requirements.txt', 'requirements_sha256': hashlib.sha256(lock).hexdigest()}
+
+
+def stage_wheel(wheel: Path, manifest: dict, output: Path, lock: bytes | None = None) -> None:
     output.mkdir(parents=True, exist_ok=True)
     existing = output / 'manifest.json'
     if existing.exists():
@@ -69,6 +93,10 @@ def stage_wheel(wheel: Path, manifest: dict, output: Path) -> None:
         raise ValueError("Refusing to overwrite a different same-name wheel")
     if wheel.resolve() != target.resolve():
         shutil.copy2(wheel, target)
+    if lock is not None:
+        if hashlib.sha256(lock).hexdigest() != manifest.get('requirements_sha256'):
+            raise ValueError('Dependency lock differs from the manifest')
+        (output / manifest['requirements']).write_bytes(lock)
     pending = output / 'manifest.pending'
     pending.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     pending.replace(existing)
@@ -106,8 +134,9 @@ def main() -> None:
         if not re.fullmatch(r'[0-9a-f]{64}', args.sha256 or ''):
             parser.error('--wheel requires an explicit --sha256')
         digest = verify_wheel(args.wheel, version, args.sha256)
-        manifest = {**identity, 'wheel': args.wheel.name, 'sha256': digest}
-        stage_wheel(args.wheel, manifest, output)
+        lock = frozen_lock(args.release_commit)
+        manifest = {**identity, 'wheel': args.wheel.name, 'sha256': digest, **lock_identity(lock)}
+        stage_wheel(args.wheel, manifest, output, lock)
         print(json.dumps(manifest, indent=2))
         return
     if args.sha256:
@@ -126,7 +155,10 @@ def main() -> None:
         manifest = json.loads(recorded.read_text())
         wheel = registry / manifest['wheel']
         verify_wheel(wheel, version, manifest['sha256'])
-        stage_wheel(wheel, manifest, output)
+        lock = frozen_lock(args.release_commit)
+        if lock_identity(lock) != {k: manifest.get(k) for k in ('requirements', 'requirements_sha256')}:
+            raise ValueError('Registry build used a different dependency lock; use a new version')
+        stage_wheel(wheel, manifest, output, lock)
         print(json.dumps({**manifest, 'reused': True}, indent=2))
         return
     with claim.open('x', encoding='utf-8') as stream:
@@ -165,13 +197,14 @@ def main() -> None:
         digest = verify_wheel(wheel, version)
         if args.release_commit:
             frozen_source(args.release_commit)
-        manifest = {**identity, 'wheel': wheel.name, 'sha256': digest}
+        lock = frozen_lock(args.release_commit)
+        manifest = {**identity, 'wheel': wheel.name, 'sha256': digest, **lock_identity(lock)}
         # Registry is immutable: no regeneration of the same version, even if ZIP timestamps differ.
         with (registry / wheel.name).open('xb') as stream:
             stream.write(wheel.read_bytes())
         with (registry / 'backend-manifest.json').open('x', encoding='utf-8') as stream:
             json.dump(manifest, stream, indent=2)
-        stage_wheel(registry / wheel.name, manifest, output)
+        stage_wheel(registry / wheel.name, manifest, output, lock)
         print(json.dumps({**manifest, 'bytes': wheel.stat().st_size, 'output': str(output)}, indent=2))
 
 
