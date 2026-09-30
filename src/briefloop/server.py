@@ -4,6 +4,7 @@ from importlib.resources import files
 from urllib.parse import urlsplit, parse_qs, quote
 import base64
 import json
+import sqlite3
 import secrets
 import os
 import select
@@ -52,7 +53,9 @@ def _service_status(server):
                           'SELECT s.id,s.title,s.status,s.runtime FROM chat_sessions s WHERE '+BUSY_SQL+' ORDER BY s.rowid')]
         return {'pid':os.getpid(),'workspace_id':server.store.meta('workspace_id'),
                 'busy':bool(jobs or sessions or server._active_posts),'jobs':jobs,'sessions':sessions,
-                'draining':server.draining}
+                'draining':server.draining,
+                # Diagnosable storage: the linked SQLite build and the journal mode in effect (#731).
+                'database':{'sqlite_version':sqlite3.sqlite_version,'journal_mode':server.store.journal_mode}}
 
 
 def _close_service(server):
@@ -265,7 +268,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     observed=active[selected][1] if selected in active else reviews[selected] if selected in reviews else (next(iter(reviews.values())) if reviews and not worker.current else worker.runtime)
                     if selected and selected not in active and selected not in reviews and selected!=worker.current:observed=None
                     proc=observed.process if observed else None
-                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active or selected in reviews else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active or selected in reviews else worker.current,'generation_job_ids':list(active),'agent_sessions':worker.budget.snapshot(),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source-status':
                     source=store.one('sources',q['id'][0])
                     # Status polling reads only bounded metadata, never the original or extracted body.

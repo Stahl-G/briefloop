@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT N
 """
 
 
+def wal_supported(version=None):
+    """SQLite builds without the WAL-reset race fix (https://sqlite.org/wal.html §11) keep the rollback journal."""
+    v = tuple(version or sqlite3.sqlite_version_info)
+    return v >= (3, 51, 3) or (3, 50, 7) <= v < (3, 51, 0) or (3, 44, 6) <= v < (3, 45, 0)
+
+
 class Store:
     def __init__(self, workspace):
         self._job_wakeup = None
@@ -142,6 +148,9 @@ class Store:
             c.executescript(SOURCE_UPDATE_SCHEMA)
             c.executescript(FACT_CHECK_SCHEMA)
             c.executescript(OFFICE_SCHEMA)
+            # executescript commits first, so the IMMEDIATE lock is gone by now. Take it
+            # again: concurrent first opens must not both add the same column (#731).
+            if not c.in_transaction:c.execute("BEGIN IMMEDIATE")
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
@@ -149,6 +158,24 @@ class Store:
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
             c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))
+
+        self.journal_mode = self._journal_mode()
+
+    def _journal_mode(self):
+        """Use WAL where the SQLite build is safe for it (#731); report the mode actually in effect."""
+        c = sqlite3.connect(self.db, timeout=10)
+        try:
+            c.execute("PRAGMA busy_timeout=10000")
+            mode = c.execute("PRAGMA journal_mode").fetchone()[0]
+            if mode != 'wal' and wal_supported():
+                # Persistent per database file. A file system without WAL support, or a
+                # connection holding a lock, leaves the previous mode; that is not an error.
+                mode = c.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            return mode
+        except sqlite3.OperationalError:
+            return c.execute("PRAGMA journal_mode").fetchone()[0]
+        finally:
+            c.close()
 
     @contextmanager
     def tx(self):

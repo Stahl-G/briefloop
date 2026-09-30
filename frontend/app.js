@@ -54,6 +54,7 @@ import {reportExportUI} from './report-export.js';
 import {excelExportUI} from './excel-export.js';
 import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,DEEP_LENGTH,INDUSTRY_LENGTH,lengthUnit,runLanguage} from './report-language.js';
 import {createLengthControls} from './length-controls.js';
+import {sessionBudgetUI} from './session-budget.js';
 import {createReportSources} from './report-sources.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
@@ -86,6 +87,7 @@ const parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
 let state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
 const reportSources=createReportSources({$,esc,getState:()=>state,getCurrent:()=>current,runSourceIds,sourceState,sourceStatusChip,sourceTitle,sourceHost,openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
+const sessionBudget=sessionBudgetUI({$,api,action,notice,getState:()=>state});
 const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta,svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:closeSourceDrawer,onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
 const retryLearning=learningRetry({api,getPlan:()=>state?.learning_authorization?.plan,confirm:text=>confirm(text),describePlan:learningPlanText});
@@ -2395,6 +2397,7 @@ function syncCompactReportControls(){
   const action=note.querySelector('[data-fact-action]');action.textContent=availability.action;
  });
  const reports=$('max-reports');if(reports&&document.activeElement!==reports&&!reports.dataset.editing)reports.value=state.settings.max_reports||4;
+ sessionBudget.sync();
 }
 function mountCompactReportControls(){
  const paramsPanel=$('composer-params-panel')||$('chat-input').closest('form');
@@ -2404,7 +2407,7 @@ function mountCompactReportControls(){
  const fact=$('requirements').elements.fact_check.closest('label');fact.classList.add('compact-legacy-option');fact.hidden=true;if(fact.nextElementSibling?.classList.contains('help'))fact.nextElementSibling.hidden=true;
  const label=document.createElement('label');label.textContent='同时生成报告数 ';const input=document.createElement('input');input.id='max-reports';input.type='number';input.min='1';input.max='16';input.value='4';label.append(input);$('settings-view-execution').append(label);
  input.oninput=()=>{input.dataset.editing='1'};input.onchange=()=>{const value=Number(input.value);return action(async()=>{const result=await api('settings',{max_reports:value});state.settings.max_reports=result.max_reports;delete input.dataset.editing;notice('并发数已保存；已运行报告继续，新任务按空位开始')})};
- const save=document.createElement('button');save.type='button';save.className='outline';save.textContent='保存并发数';save.onclick=()=>input.onchange();label.append(save);
+ const save=document.createElement('button');save.type='button';save.className='outline';save.textContent='保存并发数';save.onclick=()=>input.onchange();label.append(save);sessionBudget.mount(label);
  for(const control of [$('chat-allow-web'),$('requirements').elements.allow_web])control.addEventListener('change',syncCompactReportControls);
  syncCompactReportControls();
 }
