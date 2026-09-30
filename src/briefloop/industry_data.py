@@ -50,6 +50,8 @@ def prepare_report_data(payload):
             elif not row.comparable: reason='尚未确认产品、地区、期间及口径可比'
             elif row.previous_unit is None or row.previous_tax_basis is None or row.previous_category is None: reason='缺少比较值单位、税口径或数据类别'
             elif row.previous_unit!=row.unit or row.previous_tax_basis!=row.tax_basis or row.previous_category!=row.category: reason='比较口径不一致'
+            elif row.category!='actual' and row.previous_as_of is None: reason='比较预测、指引或一致预期缺少取得数据的截至日 previous_as_of'
+            elif row.category!='actual' and row.previous_date==row.current_date and row.previous_as_of>row.as_of: reason='同一目标期的比较值数据截至日晚于本期数据截至日，不能按先后版本计算'
             elif row.comparison=='pct' and row.previous==0: reason='比较值为零，不能计算百分比'
             elif row.comparison=='bp' and row.unit not in ('%','percent'): reason='基点变化要求输入为百分数（例如 4.5 表示 4.5%）'
             else:

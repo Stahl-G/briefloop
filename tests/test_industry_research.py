@@ -67,3 +67,27 @@ def test_missing_current_date_becomes_a_gap_not_a_draft_failure():
     assert '未注明' in prepared['markdown']
     draft=BriefDraft(title='报告',markdown='正文',report_data={'records':[record]})
     assert draft.report_data.records[0].current_date is None
+
+
+@pytest.mark.parametrize('category',['forecast','guidance','consensus'])
+def test_comparison_requires_both_nonactual_vintages(category):
+    base=dict(metric='Demand',unit='units',current=12,current_date='2027-12-31',
+              previous=10,previous_date='2027-12-31',source_id='s1',category=category,
+              as_of='2026-09-08',previous_category=category,previous_unit='units',
+              previous_tax_basis='',comparable=True,comparison='pct')
+    for vintage,expected in [(None,None),('2026-09-09',None),('2026-09-01',20.0)]:
+        result=prepare_report_data({'records':[{**base,'previous_as_of':vintage}]})
+        assert result['calculations'][0]['change']==expected
+        if expected is None:assert '截至日' in result['gaps'][0]
+        else:assert not result['gaps']
+
+
+def test_cross_period_forecasts_do_not_assume_publication_order():
+    # Different target periods may legitimately be forecast on different dates.
+    result=prepare_report_data({'records':[dict(metric='Demand',unit='units',
+        current=12,current_date='2027-12-31',as_of='2026-09-08',
+        previous=10,previous_date='2026-12-31',previous_as_of='2026-09-09',
+        source_id='s1',category='forecast',previous_category='forecast',
+        previous_unit='units',previous_tax_basis='',comparable=True,comparison='pct')]})
+    assert result['calculations'][0]['change']==20.0
+    assert not result['gaps']
