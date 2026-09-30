@@ -25,6 +25,30 @@ def labels_for(markdown):
                            for b in body]}
 
 
+def test_restatement_preserves_each_numeric_facts_own_citations():
+    lead = '这组数据意味着供应商之间的交付情况存在差异，需要结合各自的订单范围理解，不能把不同公司的数据混为一个结论。[@src_intro]'
+    first = '甲公司本期交付80件，统计范围仅包含已签收的采购订单[@src_a]。'
+    second = '乙公司本期交付75件，统计范围仅包含已经结算的采购订单。[@src_b][@src_c]'
+    markdown = '# 标题\n\n## 交付\n\n' + lead + first + second
+    changed, truth = seed_value.degrade(markdown, 'restated_source', lambda _: '')
+    assert truth is not None
+    assert first in truth['inserted'] and second in truth['inserted']
+    assert 'src_intro' not in truth['inserted']
+    assert truth['source_ids'] == ['src_a', 'src_b', 'src_c']
+    assert 'source_id' not in truth  # Multiple facts are not attributed to one source.
+    assert markdown in changed
+
+
+@pytest.mark.parametrize('fact', [
+    '甲公司交付80件，但该句没有自己的引文，不能借用另一个数字的来源。',
+    '甲公司交付情况按已签收采购订单进行统计，未提供具体数量。[@src_123]',
+])
+def test_restatement_does_not_borrow_citations_or_count_source_id_digits(fact):
+    lead = '这些材料用于比较本期供应商的交付情况，要求分别保留各自的统计口径和来源，避免在后续判断中混淆。[@src_lead]'
+    markdown = '# 标题\n\n## 交付\n\n' + lead + fact + '乙公司已交付75件。[@src_b]'
+    assert seed_value.degrade(markdown, 'restated_source', lambda _: '') == (markdown, None)
+
+
 def test_removal_really_deletes_entire_paragraph_and_truth():
     markdown = '# 标题\n\n## 一节\n\n' + paragraph('A')
     for kind in ('conclusions_removed', 'implications_removed'):
