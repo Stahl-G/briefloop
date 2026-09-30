@@ -7,7 +7,7 @@ Perturbations now act on sentences labelled here. A model proposes the labels;
 a person checks a sample in the annotation page before any run relies on them,
 and the agreement is reported with the results.
 
-Definition (the operational one from the design): an implication sentence says
+Definition (the operational one from the design; grey zones A–E in PROMPT): an implication sentence says
 what a fact or development means for this report's reader — a consequence, a
 trade-off, a decision to make, or something to watch — and rests on the
 material. Caveats, "worth watching", restating a fact in other words, and
@@ -27,11 +27,19 @@ sys.path.insert(0, str(HERE))
 import seed_value  # noqa: E402
 from paraphrase_judgments import request  # noqa: E402
 
+# r2 (2026-09-30): the five grey zones where annotators split, settled by the user.
+RULES = 'r2'
 PROMPT = '''你在给一份中文研究报告的句子做标注。读者与任务：{reader}
-逐句判断类别：
-- implication：说明某个事实或变化对本报告读者意味着什么——后果、取舍、需要做的决定或需要观察的节点，并且以报告里的材料为依据。
-- fact：陈述发生了什么、数字、日期、来源说法、口径说明、谨慎提醒；换一种说法重复事实、「值得关注」之类的空泛表态、没有依据的推测，都不算 implication。
+逐句判断类别。先问：这句只是在说发生了什么，还是在说这对读者意味着什么？
+- implication：说出了后果、取舍、需要做的决定或具体要盯的节点之一，并且能从报告里的材料推出。
+- fact：陈述发生了什么、数字、日期、来源说法、口径说明、谨慎提醒；换一种说法重复事实、「值得关注」「影响深远」之类的空泛表态、没有依据的推测，都不算 implication。
 一句话里既有事实又有影响判断时，标 implication。
+边界规则：
+A. 解释传导路径的句子：落到读者的收入、成本、融资或合规等后果上，标 implication；只讲政策或机制本身如何运作，标 fact。
+B. 带论断的小标题句：按内容判断；说出了后果或压力，标 implication；只是话题名，标 fact。
+C.「后续观察……」清单：只列出要看什么，标 fact；同时说明为什么看、出现什么结果意味着什么，标 implication。
+D. 数据缺口、无法核验、口径限制的说明：标 fact。
+E. 竞争定位（某公司是谁的竞争者、属于哪一类）：只给定位，标 fact；说出这对读者意味着什么（价格压力、客户重叠等），标 implication。
 只输出 JSON：{{"labels": [与输入等长、顺序一致，每项为 "implication" 或 "fact"]}}。
 段落句子：'''
 
@@ -40,9 +48,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--slices', required=True)
     parser.add_argument('--model', default='opencode-go/deepseek-v4.1-flash')
+    parser.add_argument('--out', default='labels', help='subdirectory; second annotators write to labels-<name>')
     args = parser.parse_args()
     root = Path(args.slices).expanduser()
-    out = root / 'labels'
+    out = root / args.out
     out.mkdir(exist_ok=True)
     for entry in json.loads((root / 'manifest.json').read_text(encoding='utf-8'))['slices']:
         target = out / f"{entry['name']}.json"
@@ -60,7 +69,11 @@ def main():
             sentences = [seed_value._plain(s) for s in seed_value._sentences(blocks[index])]
             if not sentences:
                 continue
-            model, answer, used = request(args.model, PROMPT.format(reader=reader) + json.dumps(sentences, ensure_ascii=False))
+            try:
+                model, answer, used = request(args.model, PROMPT.format(reader=reader) + json.dumps(sentences, ensure_ascii=False))
+            except (RuntimeError, ValueError, KeyError) as error:
+                paragraphs.append({'block': index, 'error': str(error)[:300], 'sentences': sentences})
+                continue
             labels = answer.get('labels', [])
             models.add(model)
             usage.append(used)
@@ -70,7 +83,7 @@ def main():
             paragraphs.append({'block': index, 'sentences': [{'i': n, 'text': t, 'label': label}
                                                               for n, (t, label) in enumerate(zip(sentences, labels))]})
         target.write_text(json.dumps({'slice': entry['name'], 'markdown_sha256': digest, 'models': sorted(models),
-                                      'reader': reader, 'paragraphs': paragraphs, 'usage': usage}, ensure_ascii=False, indent=1))
+                                      'rules': RULES, 'reader': reader, 'paragraphs': paragraphs, 'usage': usage}, ensure_ascii=False, indent=1))
         counts = [s['label'] for p in paragraphs for s in p.get('sentences', []) if isinstance(s, dict)]
         print(entry['name'], 'paragraphs', len(paragraphs), 'implication', counts.count('implication'), 'fact', counts.count('fact'),
               'invalid', sum('error' in p for p in paragraphs), flush=True)

@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import sys
+import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
@@ -47,14 +48,19 @@ def check(original, new):
 
 def request(model, content):
     """One JSON-object chat call through the native engine's saved provider; returns (model, answer, usage)."""
-    provider = json.loads(Path('~/.config/briefloop/native-engine/providers.json').expanduser().read_text())[model]
+    providers = json.loads(Path('~/.config/briefloop/native-engine/providers.json').expanduser().read_text())
+    # Other models on the same gateway reuse its saved endpoint and key.
+    provider = providers.get(model) or next(v for k, v in providers.items() if k.split('/', 1)[0] == model.split('/', 1)[0])
     body = {'model': model.split('/', 1)[1], 'response_format': {'type': 'json_object'},
             'messages': [{'role': 'user', 'content': content}]}
     http = urllib.request.Request(provider['base_url'].rstrip('/') + '/chat/completions', data=json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + provider['api_key'],
                                               'User-Agent': 'briefloop-eval/1', 'x-opencode-session': 'briefloop-eval-' + uuid.uuid4().hex})
-    with urllib.request.urlopen(http, timeout=300) as response:
-        data = json.loads(response.read())
+    try:
+        with urllib.request.urlopen(http, timeout=300) as response:
+            data = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f'{model}: HTTP {error.code} {error.read()[:300]!r}') from None
     return data.get('model'), json.loads(data['choices'][0]['message']['content']), data.get('usage')
 
 

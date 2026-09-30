@@ -2,6 +2,7 @@
 
   python annotation_items.py seed --slices DIR --out items.json   # items to write into the annotation page
   python annotation_items.py score --slices DIR --items items.json --answers answers.json
+  python annotation_items.py agree --slices DIR --dirs labels-r2-a labels-r2-b ...   # annotator agreement
 
 Three item kinds: a blind sentence-label check of sampled paragraphs, one
 "should this chapter carry implications for this reader?" question per slice,
@@ -81,9 +82,37 @@ def score(root, items, answers):
     return report
 
 
+def votes(root, dirs):
+    """{(slice, block, i): {dir: label}} over the sentences every annotator labelled."""
+    table = {}
+    for d in dirs:
+        for f in (root / d).glob('*.json'):
+            data = json.loads(f.read_text())
+            for p in data['paragraphs']:
+                for s in p.get('sentences', []):
+                    table.setdefault((data['slice'], p['block'], s['i']), {})[d] = (s['label'], s['text'])
+    return {k: v for k, v in table.items() if len(v) == len(dirs)}
+
+
+def agree(root, dirs):
+    table = votes(root, dirs)
+    report = {'sentences': len(table), 'unanimous': sum(len({l for l, _ in v.values()}) == 1 for v in table.values()) / max(len(table), 1),
+              'pairs': {}}
+    for n, a in enumerate(dirs):
+        for b in dirs[n + 1:]:
+            x = [table[k][a][0] for k in table]
+            y = [table[k][b][0] for k in table]
+            report['pairs'][f'{a} vs {b}'] = dict(zip(('agreement', 'kappa'), kappa(x, y)))
+    report['implication_share'] = {d: sum(v[d][0] == 'implication' for v in table.values()) / max(len(table), 1) for d in dirs}
+    report['disagreements'] = [{'slice': k[0], 'block': k[1], 'i': k[2], 'text': next(iter(v.values()))[1],
+                                'votes': {d: v[d][0] for d in dirs}} for k, v in sorted(table.items()) if len({l for l, _ in v.values()}) > 1]
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['seed', 'score'])
+    parser.add_argument('command', choices=['seed', 'score', 'agree'])
+    parser.add_argument('--dirs', nargs='+')
     parser.add_argument('--slices', required=True)
     parser.add_argument('--out')
     parser.add_argument('--items')
@@ -94,6 +123,8 @@ def main():
         items = seed(root)
         Path(args.out).write_text(json.dumps(items, ensure_ascii=False, indent=1))
         print({k: sum(i['kind'] == k for i in items) for k in ('sentence', 'chapter', 'paraphrase')})
+    elif args.command == 'agree':
+        print(json.dumps(agree(root, args.dirs), ensure_ascii=False, indent=1))
     else:
         items = json.loads(Path(args.items).read_text())
         answers = json.loads(Path(args.answers).read_text())
