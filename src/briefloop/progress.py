@@ -173,7 +173,7 @@ class ProgressTracker:
                         attempt,limit=map(int,retry.groups())
                         if 1<=attempt<=limit:
                             self.failure_message=None
-                            self.runtime_issue=('模型服务正在重试',f'模型请求暂未成功，正在第 {attempt}/{limit} 次自动重试；已有来源与稿件保留。')
+                            self.runtime_issue=(f'模型服务正在重试（{attempt}/{limit}）',f'模型请求暂未成功，正在第 {attempt}/{limit} 次自动重试；已有来源与稿件保留。')
                     elif message.startswith('provider retry exhausted:'):
                         reason=public_failure(message.partition(':')[2].strip())
                         self.failure_message=reason

@@ -65,6 +65,7 @@ def test_provider_retries_project_each_attempt_without_leaking_error_details(tmp
         row=emit('runtime.status',f'retry {attempt}/6: Connection error. https://SECRET')
         assert f'{attempt}/6' in row['message']
         assert row['runtime_notice']
+        assert f'{attempt}/6' in row['stage']
         assert row['last_activity'] and row['last_activity']!=previous
         previous=row['last_activity']
     assert len(store.rows("SELECT seq FROM events WHERE job_id='retry' AND kind='runtime_progress'"))==6
