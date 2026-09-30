@@ -125,7 +125,7 @@ def stage_job(store, job, role, *, mode=None):
     if role in ('scorer','assessor','evaluator'):
         role='evaluator'
         mode=mode or ('pairwise' if original_role=='assessor' else 'single')
-        if mode not in ('single','pairwise'):
+        if mode not in ('single','pairwise','triage'):
             raise ValueError('Unknown evaluation mode: '+mode)
     payload=json.loads(job['payload'])
     base=payload['runtime'] if 'runtime' in payload else store.runtime_config()
@@ -694,7 +694,7 @@ class Worker:
             if row is None or row['batch_id']!=jid:
                 raise ValueError('反馈已移交其他批次或不存在，不能重复学习')
 
-    def retry_with_current_model(self,jid):
+    def retry_with_current_model(self,jid,*,confirmed_plan=None):
         """Start a linked review/learning attempt without rewriting its history."""
         class ExistingRetry(Exception):
             pass
@@ -714,7 +714,13 @@ class Worker:
             payload={key:original[key] for key in fields}
             # A retry inherits the authorization and bound the user confirmed for
             # this batch; a batch without one still has to be confirmed again.
-            payload.update({key:original[key] for key in ('authorization','budget') if key in original})
+            payload.update({key:original[key] for key in ('authorization','budget','reader_id') if key in original})
+            if job['kind']=='learn':
+                from .learning_budget import authorization,plan
+                settings=self.store.settings()
+                payload['authorization']=authorization(settings,'manual',confirmed=confirmed_plan)
+                payload['budget']=plan(settings)
+                payload['k']=settings['k']
             if job['kind']=='review':self.store.one('briefs',payload['version_id'])
             payload['retry_of_job_id']=jid
             # Store.enqueue freezes the current settings (including role models and
@@ -737,7 +743,8 @@ class Worker:
                     from wikiskill import feedback_loop
                     if feedback_loop.work(study)['phase']=='complete':
                         raise ValueError('这批反馈的学习已经完成，请恢复原任务以完成保存')
-                    row=connection.execute("SELECT value FROM meta WHERE key='last_study'").fetchone()
+                    from .readers import scope_meta
+                    row=connection.execute("SELECT value FROM meta WHERE key=?",(scope_meta('last_study',original.get('reader_id')),)).fetchone()
                     if row and json.loads(row['value']) not in (None,str(study)):
                         raise ValueError('已有更新的学习记录，请使用最新任务')
                 for fid in original['feedback_ids']:

@@ -15,7 +15,7 @@ import time
 from .platform_support import WorkspaceLock, filesystem_path
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
-from .models import Requirements, Settings, SaveRevision, Comment
+from .models import Requirements, Settings, SaveRevision, Comment, RevisionAnswer, ReaderSave
 from .runtime import Worker
 from .harness import HarnessManager
 from .interactive_runtime import InteractiveRuntime
@@ -709,6 +709,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/report-data/prepare':
                     from .report_tools import prepare_for_run
                     result=prepare_for_run(store,body['run_id'],body['data'])
+                elif path=='/api/import-previous':
+                    from .previous_report import import_previous
+                    result=import_previous(store,body.get('name','report.docx'),_upload_data(body))
                 elif path=='/api/import-revision':
                     from .word_import import import_revision
                     result=import_revision(store,body['base_version'],body.get('name','revision.docx'),
@@ -760,6 +763,22 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.brief_view(store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)['id'])
+                elif path=='/api/reader-save':
+                    from .readers import save as save_reader
+                    value=ReaderSave.model_validate(body)
+                    result=save_reader(store,reader_id=value.id,name=value.name,decisions=value.decisions,preferences=value.preferences)
+                elif path=='/api/reader-archive':
+                    from .readers import archive
+                    result=archive(store,str(body.get('id') or ''))
+                elif path=='/api/reader-skill':
+                    from .readers import bind_skill
+                    bind_skill(store,str(body.get('reader_id') or ''),body.get('skill_id'));result={'ok':True}
+                elif path=='/api/revision-answer':
+                    from .revision_edits import answer
+                    value=RevisionAnswer.model_validate(body);result=answer(store,value.edit_id,value.category)
+                    if result['feedback_id']:
+                        from .learning import enqueue_feedback
+                        result['learning']=enqueue_feedback(store,automatic=True)
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/native/provider':
@@ -810,7 +829,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     # change in another window cannot enlarge this batch (#727).
                     result=enqueue_feedback(store,confirmed_plan=body.get('confirm_plan'))
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
-                elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id']) if body.get('use_current_model') is True else worker.resume(body['job_id'])
+                elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id'],confirmed_plan=body.get('confirm_plan')) if body.get('use_current_model') is True else worker.resume(body['job_id'])
                 elif path=='/api/task-dismiss':
                     job=store.one('jobs',body['job_id'])
                     if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('只有已结束且未完成的任务可以清除')

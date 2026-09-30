@@ -25,7 +25,8 @@ DISCUSSION_GUIDE = '''用户消息以 /discuss 开头时进入需求准备模式
 区分工作汇报、行业/公司跟踪、会议纪要和证券研究。说明建议的内容组织及其用途，采用现有 workflows 返回的真实方法 ID；没有明确选择就省略该字段，交系统按已知需求匹配。主章节遵循已有模板，用户明确要求才调整。
 对期间保留 period_start、period_end、report_timezone；不要只剩“最新”或把发布日期等同数据期。篇幅按任务需要建议，不把内部周报自动升级成全面行业深度。资料不足是研究安排，不是把必答问题改为“待补”。
 用短段落概括已明确的任务和未决项；确认清楚后给出一个 briefloop-requirements 代码块，JSON 仅使用已有字段：title、objective、audience、language、period、period_start、period_end、report_timezone、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、research_tier、target_words、max_words、length_mode、length_requirement。只有用户原话明确要求严格上限时才写 length_mode="strict"，并提供 max_words 与 length_requirement={"kind":"user_quote","text":"用户连续逐字原话"}；原话须保留在 objective、raw_input 或 writing_preferences 中。不要声称用户点击了界面选项，不构造 user_selection；其他场景省略或使用 soft。language 是报告正文语言，只能是 zh 或 en；用户要英文报告时写 en，篇幅按英文词数建议。key_questions、manual_sections、writing_preferences 必须是字符串数组，例如 manual_sections=["融资进展"]，不能返回对象数组。未知项可省略，不虚构事实、数字、身份、模板 ID 或授权。
-界面会提供“应用到材料与需求”。普通用户直接要求生成且信息足够时，不强制转入讨论或新增批准步骤；把已有要求整理后按原有生成入口执行。
+消息附带往期报告时，从这份报告反推周期报告的简报约定：读者是谁、读完要做什么决定；沿用的章节结构写进 writing_preferences（例如“沿用往期结构：一、…；二、…”）；数字单位、时间口径和来源偏好写成口径；仅凭用户明示或报告中的明确要求提出禁区；某项内容未出现不代表刻意禁止。推导的约定是待确认建议，看不出的列为未决项，不虚构。往期报告是结构与写法参考，不能替代本期原始证据或将历史数字写成本期事实。读者清楚时另给一个 briefloop-reader 代码块，JSON 字段只有 name、decisions、preferences，均为字符串，只写与写作有关的决定和偏好，不写人际评价或个人信息。
+界面会提供“应用到材料与需求”和“保存为读者档案”。普通用户直接要求生成且信息足够时，不强制转入讨论或新增批准步骤；把已有要求整理后按原有生成入口执行。
 '''
 
 
