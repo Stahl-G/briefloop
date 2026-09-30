@@ -52,7 +52,9 @@ print('READY', flush=True)
 def _run_with_owner_pipe(script, *args):
     root = Path(__file__).resolve().parents[1]
     process = subprocess.Popen(
-        [sys.executable, '-c', script, *args],
+        # Match the service entrypoint: on Windows cli.main otherwise first
+        # re-execs itself for UTF-8, legitimately preserving the caller's stdin.
+        [sys.executable, '-X', 'utf8', '-c', script, *args],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={**os.environ, 'PYTHONPATH': str(root / 'src')},
     )
@@ -115,6 +117,62 @@ print(json.dumps(results))
     import json
     results = json.loads(_run_with_owner_pipe(script))
     assert results == {'curl': 'EOF', 'pdftotext': 'EOF', 'version_probe': 'EOF'}
+
+
+def test_workspace_and_cli_start_children_receive_eof(tmp_path):
+    """Exercise both launch sites while the desktop owner keeps stdin open."""
+    script = r'''
+import json, subprocess, sys
+from pathlib import Path
+from types import SimpleNamespace
+from briefloop import cli, workspaces
+
+original_run, original_popen = subprocess.run, subprocess.Popen
+command = [sys.executable, '-c',
+           'import sys; print("EOF" if not sys.stdin.buffer.read(1) else "SHARED", flush=True)']
+class Probed(Exception):
+    pass
+def probe_run(args, **kwargs):
+    kwargs['timeout'] = 3
+    try:
+        output = original_run(command, **kwargs).stdout.strip()
+    except subprocess.TimeoutExpired:
+        output = 'SHARED'
+    raise Probed(output)
+def probe_popen(args, **kwargs):
+    # Preserve the launch site's stdin and process flags, replacing only the
+    # service executable and its log destination with a bounded EOF probe.
+    kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    child = original_popen(command, **kwargs)
+    try:
+        output, _ = child.communicate(timeout=3)
+        result = output.decode().strip()
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.communicate(timeout=3)
+        result = 'SHARED'
+    raise Probed(result)
+def observe(call):
+    try:
+        call()
+    except Probed as exc:
+        return str(exc)
+    return 'NOT_SPAWNED'
+
+root = Path(sys.argv[1])
+target = root / 'target'; target.mkdir()
+workspaces._active_server = lambda *args: None
+subprocess.run = probe_run
+workspace = observe(lambda: workspaces.open_workspace(SimpleNamespace(root=root / 'current'), str(target)))
+subprocess.run = original_run
+subprocess.Popen = probe_popen
+sys.argv = ['briefloop', 'start', '--workspace', str(root / 'cli'), '--paused']
+started = observe(cli.main)
+print(json.dumps({'workspace_start': workspace, 'cli_serve': started}))
+'''
+    import json
+    results = json.loads(_run_with_owner_pipe(script, str(tmp_path)))
+    assert results == {'workspace_start': 'EOF', 'cli_serve': 'EOF'}
 
 
 def test_every_service_spawn_chooses_stdin_explicitly():

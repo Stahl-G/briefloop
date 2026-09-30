@@ -4,6 +4,7 @@ from importlib.resources import files
 from urllib.parse import urlsplit, parse_qs, quote
 import base64
 import json
+import sqlite3
 import secrets
 import os
 import select
@@ -14,7 +15,7 @@ import time
 from .platform_support import WorkspaceLock, filesystem_path
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
-from .models import Requirements, Settings, SaveRevision, Comment
+from .models import Requirements, Settings, SaveRevision, Comment, RevisionAnswer, ReaderSave
 from .runtime import Worker
 from .harness import HarnessManager
 from .interactive_runtime import InteractiveRuntime
@@ -52,7 +53,9 @@ def _service_status(server):
                           'SELECT s.id,s.title,s.status,s.runtime FROM chat_sessions s WHERE '+BUSY_SQL+' ORDER BY s.rowid')]
         return {'pid':os.getpid(),'workspace_id':server.store.meta('workspace_id'),
                 'busy':bool(jobs or sessions or server._active_posts),'jobs':jobs,'sessions':sessions,
-                'draining':server.draining}
+                'draining':server.draining,
+                # Diagnosable storage: the linked SQLite build and the journal mode in effect (#731).
+                'database':{'sqlite_version':sqlite3.sqlite_version,'journal_mode':server.store.journal_mode}}
 
 
 def _close_service(server):
@@ -265,7 +268,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     observed=active[selected][1] if selected in active else reviews[selected] if selected in reviews else (next(iter(reviews.values())) if reviews and not worker.current else worker.runtime)
                     if selected and selected not in active and selected not in reviews and selected!=worker.current:observed=None
                     proc=observed.process if observed else None
-                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active or selected in reviews else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active or selected in reviews else worker.current,'generation_job_ids':list(active),'agent_sessions':worker.budget.snapshot(),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source-status':
                     source=store.one('sources',q['id'][0])
                     # Status polling reads only bounded metadata, never the original or extracted body.
@@ -706,6 +709,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/report-data/prepare':
                     from .report_tools import prepare_for_run
                     result=prepare_for_run(store,body['run_id'],body['data'])
+                elif path=='/api/import-previous':
+                    from .previous_report import import_previous
+                    result=import_previous(store,body.get('name','report.docx'),_upload_data(body))
                 elif path=='/api/import-revision':
                     from .word_import import import_revision
                     result=import_revision(store,body['base_version'],body.get('name','revision.docx'),
@@ -757,6 +763,22 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.brief_view(store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)['id'])
+                elif path=='/api/reader-save':
+                    from .readers import save as save_reader
+                    value=ReaderSave.model_validate(body)
+                    result=save_reader(store,reader_id=value.id,name=value.name,decisions=value.decisions,preferences=value.preferences)
+                elif path=='/api/reader-archive':
+                    from .readers import archive
+                    result=archive(store,str(body.get('id') or ''))
+                elif path=='/api/reader-skill':
+                    from .readers import bind_skill
+                    bind_skill(store,str(body.get('reader_id') or ''),body.get('skill_id'));result={'ok':True}
+                elif path=='/api/revision-answer':
+                    from .revision_edits import answer
+                    value=RevisionAnswer.model_validate(body);result=answer(store,value.edit_id,value.category)
+                    if result['feedback_id']:
+                        from .learning import enqueue_feedback
+                        result['learning']=enqueue_feedback(store,automatic=True)
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/native/provider':
@@ -807,7 +829,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     # change in another window cannot enlarge this batch (#727).
                     result=enqueue_feedback(store,confirmed_plan=body.get('confirm_plan'))
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
-                elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id']) if body.get('use_current_model') is True else worker.resume(body['job_id'])
+                elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id'],confirmed_plan=body.get('confirm_plan')) if body.get('use_current_model') is True else worker.resume(body['job_id'])
                 elif path=='/api/task-dismiss':
                     job=store.one('jobs',body['job_id'])
                     if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('只有已结束且未完成的任务可以清除')

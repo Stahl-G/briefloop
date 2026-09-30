@@ -10,3 +10,4 @@
 /src/briefloop/static/style.css text eol=lf
 /desktop/electron/assets/ui-tokens.css text eol=lf
 /desktop/electron/assets/briefloop-mark.svg text eol=lf
+/desktop/electron/backend-requirements.txt text eol=lf

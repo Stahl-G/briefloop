@@ -16,6 +16,12 @@ function verifyBackend(desktop = path.resolve(__dirname, '..')) {
   }
   const digest = createHash('sha256').update(fs.readFileSync(path.join(backend, manifest.wheel))).digest('hex');
   if (digest !== manifest.sha256) throw Error('Backend wheel SHA-256 mismatch.');
+  // The App installs dependencies only from this hash-locked list (#851).
+  const lock = path.join(backend, manifest.requirements || '');
+  if (manifest.requirements !== 'requirements.txt' || !fs.existsSync(lock)
+      || createHash('sha256').update(fs.readFileSync(lock)).digest('hex') !== manifest.requirements_sha256) {
+    throw Error('Backend dependency lock is missing or differs from the manifest. Stage it with prepare-backend.py.');
+  }
   if (/^\d+\.\d+\.\d+$/.test(pkg.version)) {
     if (manifest.channel !== 'release' || !/^[a-f0-9]{40}$/.test(manifest.source_commit || '')) {
       throw Error('Stable App requires a frozen release backend. Local candidates must use a prerelease version.');

@@ -71,7 +71,7 @@ export function createReportBrowsing({api,getState,getCurrent,openBrief,page,not
    const result=await historyPage(current.run_id,append?historyData?.next_cursor||'':'');
    if(ticket!==historyTicket||getCurrent()?.run_id!==current.run_id||!$('history-dialog').open)return;
    historyData={...result,items:append?[...historyData.items,...result.items]:result.items};
-   $('history-list').innerHTML=historyData.items.map(b=>`<button class="history-row" data-history-version="${esc(b.id)}"><strong>${b.id===b.latest_version_id?'当前稿件':b.author==='agent'?'生成稿件':'历史快照'}</strong><span>${dateTimeSeconds(b.created)}</span></button>`).join('')+(result.next_cursor?'<button type="button" data-testid="history-load-more">加载更多历史版本</button>':'');
+   $('history-list').innerHTML=historyData.items.map(b=>`<button class="history-row" data-history-version="${esc(b.id)}"><strong>${b.id===b.latest_version_id?'当前稿件':b.author==='agent'?'生成稿件':b.author==='import'?'往期原稿':'历史快照'}</strong><span>${dateTimeSeconds(b.created)}</span></button>`).join('')+(result.next_cursor?'<button type="button" data-testid="history-load-more">加载更多历史版本</button>':'');
    $('history-list').querySelectorAll('[data-history-version]').forEach(button=>button.onclick=()=>{if(openBrief(historyData.items.find(b=>b.id===button.dataset.historyVersion))){$('history-dialog').close()}});
    const more=$('history-list').querySelector('[data-testid="history-load-more"]');if(more)more.onclick=()=>{more.disabled=true;read(true).catch(error=>{more.disabled=false;notice(error.message,true)})};
   }

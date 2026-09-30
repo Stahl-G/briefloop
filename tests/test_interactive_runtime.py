@@ -124,3 +124,25 @@ def test_legacy_review_binding_rejects_changed_execution_or_packet(tmp_path,chan
     runtime=InteractiveRuntime(store,backends={'opencode':harness})
     with pytest.raises(ValueError):runtime.execute(stage,'Resume original review',folder)
     assert len(harness.starts)==1 and marker.read_bytes()==original
+
+
+def test_failed_provider_connection_reaches_job_error_as_fixed_public_text(tmp_path):
+    store=Store(tmp_path/'workspace')
+    store.set_meta('settings',{**store.settings(),'model':'synthetic-model'})
+    job=store.enqueue('generate',{})
+    folder=store.root/'jobs'/job['id']
+    class FailedHarness(FakeHarness):
+        def start_internal(self,text,**kwargs):
+            super().start_internal(text,**kwargs)
+            sid=kwargs['session_id'];self.finish(sid,'failed')
+            snap=self.sessions[sid]
+            snap['events'].append({'seq':3,'kind':'error','data':{'message':'Connection error. SECRET https://private.invalid'}})
+    runtime=InteractiveRuntime(store,FailedHarness())
+    with pytest.raises(RuntimeError,match='模型连接失败') as exc:
+        runtime.execute(job,'synthetic',folder)
+    assert 'SECRET' not in str(exc.value)
+    store.update_job(job['id'],'failed',error=str(exc.value))
+    from briefloop.task_progress import summary
+    result=summary(store,job['id'])
+    assert '模型连接失败' in result['error']
+    assert 'SECRET' not in json.dumps(result)

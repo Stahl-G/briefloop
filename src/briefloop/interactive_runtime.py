@@ -52,7 +52,7 @@ def _usable_output(job, folder, store=None):
         try:ScoutResult.model_validate(json.loads(filesystem_path(folder/'result.json').read_text(encoding='utf-8-sig')));return True
         except (OSError,ValueError):return False
     if role in ('evaluator','scorer','assessor'):
-        name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
+        name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'triage.json' if job.get('evaluation_mode')=='triage' else 'assessment.json'
     elif job['kind'] in ('generate','revise'):name='draft.json'
     elif job['kind']=='assess':name='assessment.json'
     else:return True  # WikiSkill handoffs already request resume_on_complete.
@@ -237,7 +237,7 @@ class InteractiveRuntime:
                 _write(marker, binding)
             snapshot = harness.snapshot(binding['session_id'])
         else:
-            evaluation_title='Evaluator · 比较' if job.get('evaluation_mode')=='pairwise' else 'Evaluator · 评分'
+            evaluation_title={'pairwise':'Evaluator · 比较','triage':'Evaluator · 改动分类'}.get(job.get('evaluation_mode'),'Evaluator · 评分')
             title = {'evaluator': evaluation_title, 'scorer': 'Evaluator · 评分', 'assessor': 'Evaluator · 比较', 'maintainer': '整理反馈经验', 'proposer': '提出技能改进'}.get(job.get('runtime_role'))
             title = title or task_label(job['kind'], '简报任务')
             session = harness.create_session(title, runtime, folder)
@@ -303,7 +303,7 @@ class InteractiveRuntime:
                 label = {'company_review':'先检查并维护本轮企业背景，完成后再进入报告写作。', 'generate': '请按已保存的要求研究来源并生成简报。',
                          'assess': '请核对这份简报的要求、内容与来源并给出评分。',
                          'learn': '请继续整理反馈、更新经验并完成当前技能改进步骤。'}.get(job['kind'], '请完成当前简报任务。')
-                evaluation_label='请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。' if job.get('evaluation_mode')=='pairwise' else '请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。'
+                evaluation_label={'pairwise':'请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。','triage':'请使用 Evaluator 改动分类模式，对照来源判断每处用户改动的性质。'}.get(job.get('evaluation_mode'),'请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。')
                 label = {'evaluator': evaluation_label, 'scorer': '请使用 Evaluator 单稿评分模式核对简报。', 'assessor': '请使用 Evaluator 成对比较模式核对新旧稿件。', 'maintainer': '请从反馈中整理可复用经验。', 'proposer': '请依据经验提出技能改进。'}.get(job.get('runtime_role'), label)
                 harness.start_internal(filesystem_path(folder / 'prompt.md').read_text(encoding='utf-8'), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
@@ -375,7 +375,7 @@ class InteractiveRuntime:
                     if status in ('interrupted', 'cancelled'):
                         raise InterruptedError('会话已中断，已生成内容保留，可恢复')
                     if status != 'completed':
-                        raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
+                        raise RuntimeError(tracker.failure_message or 'Agent 执行失败；详情保存在会话与任务日志')
                     return result
                 minutes = timing['hard_timeout_minutes']
                 if minutes > 0 and time.monotonic() - started > minutes * 60:

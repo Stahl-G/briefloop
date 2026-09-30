@@ -33,7 +33,7 @@
   --c-amber-700: #8a6d1a;
   --c-red-700:   #a5472e;
 
-  /* 分类(与 frontend/app.js 的 GENRE_META 同源,两处必须同步)
+  /* 分类:唯一数值来源。GENRE_META 只引用类别名,不保存色值。
      色相约束:不得使用绿 / 红 / 黄 —— 已被主操作 / 错误 / 警告独占 */
   --c-cat-blue-fg:    #1565C0;  --c-cat-blue-bg:    #E8F1FD;  /* 商业 / 周报 */
   --c-cat-magenta-fg: #AD1457;  --c-cat-magenta-bg: #FCE9F1;  /* 证券 / 对比 */
@@ -171,10 +171,8 @@
   border-radius: var(--radius-sm);
 }
 
-/* 深色底控件换反色环,否则绿环在绿底上不可见 */
-:where(.primary, .chip--danger, .chip--warn):focus-visible {
-  outline-color: var(--color-focus-inverse);
-}
+/* 实心主按钮的焦点:保留绿色外环,另加白色内环与填充隔开,见 ui-system.css。
+   外环不能换成白色 —— 它落在浅色页面底上,会看不见。 */
 
 /* =============================================================
    深色模式:v1 不实现。

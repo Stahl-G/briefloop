@@ -66,6 +66,32 @@ def test_stable_backend_cannot_be_built_as_an_unpublished_local_candidate(tmp_pa
     assert 'Stable versions require' in capsys.readouterr().err
 
 
+def test_dependency_lock_must_match_pyproject_and_ships_with_the_wheel(tmp_path):
+    dependencies = ['pydantic>=2,<3', 'pypdf>=5']
+    (tmp_path / 'pyproject.toml').write_text('[project]\nversion = "1.2.3"\ndependencies = ' + json.dumps(dependencies) + '\n')
+    lock_path = tmp_path / backend.LOCK
+    lock_path.parent.mkdir(parents=True)
+    digest = hashlib.sha256(json.dumps(sorted(dependencies)).encode()).hexdigest()
+    lock_path.write_text(f'# header\n{backend.LOCK_MARKER}{digest}\npydantic==2.13.5 --hash=sha256:{"0" * 64}\n')
+    lock = backend.frozen_lock(None, tmp_path)
+    wheel = tmp_path / 'briefloop-1.2.3rc1-py3-none-any.whl'
+    wheel.write_bytes(b'candidate')
+    manifest = dict(version='1.2.3rc1', wheel=wheel.name, sha256=hashlib.sha256(b'candidate').hexdigest(),
+                    source_commit=None, channel='prerelease', **backend.lock_identity(lock))
+    backend.stage_wheel(wheel, manifest, tmp_path / 'backend', lock)
+    assert (tmp_path / 'backend/requirements.txt').read_bytes() == lock
+    with pytest.raises(ValueError, match='differs from the manifest'):
+        backend.stage_wheel(wheel, manifest, tmp_path / 'other', lock + b'# edited\n')
+    # A dependency change without regenerating the lock is refused before any build.
+    (tmp_path / 'pyproject.toml').write_text('[project]\nversion = "1.2.3"\ndependencies = ["pydantic>=2,<3"]\n')
+    with pytest.raises(ValueError, match='lock-backend.py'):
+        backend.frozen_lock(None, tmp_path)
+
+
+def test_committed_dependency_lock_matches_pyproject():
+    backend.frozen_lock(None, ROOT)
+
+
 def test_prerelease_identity_is_preserved_across_python_and_electron():
     assert versions.desktop_version('1.2.3rc2') == '1.2.3-rc.2'
     assert versions.desktop_version('1.2.3.dev7') == '1.2.3-dev.7'

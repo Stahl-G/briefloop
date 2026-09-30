@@ -198,7 +198,10 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   if (!app || !path.isAbsolute(payloadPath || '')) throw Error('Invalid environment configuration');
   const directory = path.join(app.getPath('userData'), 'environments');
   const activeFile = path.join(directory, 'active.json');
-  let data = {state: 'checking', phase: 'idle', pythonVersion: null, error: null, retryable: false};
+  // reason says why setup is needed: first-install, update (an older App's environment
+  // is active) or repair (the matching environment failed its checks).
+  let data = {state: 'checking', phase: 'idle', pythonVersion: null, error: null, retryable: false,
+    reason: null, version: null, previousVersion: null};
   let verified = null, pending = null, controller = null, cleanupFailure = null;
   const status = () => structuredClone(data);
   const publish = patch => { data = {...data, ...patch}; changed(status()); return status(); };
@@ -228,7 +231,17 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(wheel)) { checkAbort(signal); hash.update(chunk); }
     if (hash.digest('hex') !== manifest.sha256.toLowerCase()) throw new EnvironmentError('payload_hash', '随包运行组件校验失败，请重新安装 App。');
-    return {...manifest, sha256: manifest.sha256.toLowerCase(), wheelPath: wheel};
+    // The hash-locked dependency list shipped with the wheel (#851).
+    if (manifest.requirements !== 'requirements.txt' || !/^[a-f0-9]{64}$/i.test(manifest.requirements_sha256 || '')) {
+      throw new EnvironmentError('invalid_payload', '随包依赖清单无效，请重新安装 App。');
+    }
+    const requirements = path.join(payloadPath, manifest.requirements);
+    const lockStat = await fs.lstat(requirements);
+    if (!lockStat.isFile() || lockStat.isSymbolicLink()
+        || createHash('sha256').update(await fs.readFile(requirements)).digest('hex') !== manifest.requirements_sha256.toLowerCase()) {
+      throw new EnvironmentError('payload_hash', '随包依赖清单校验失败，请重新安装 App。');
+    }
+    return {...manifest, sha256: manifest.sha256.toLowerCase(), wheelPath: wheel, requirementsPath: requirements};
   }
   async function probe(candidate, signal) {
     const executable = typeof candidate === 'string' ? candidate : candidate.executable;
@@ -274,12 +287,14 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   async function inspectImpl(signal, {startup = false} = {}) {
     verified = null;
     const manifest = await payload(signal);
+    publish({version: manifest.version});
     let active;
     try { if ((await fs.lstat(directory)).isSymbolicLink()) throw new EnvironmentError('unsafe_path', 'App 运行环境目录不可用。'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     try { active = JSON.parse(await fs.readFile(activeFile, 'utf8')); } catch {}
-    const matches = active?.schema === 1 && UUID.test(active.environmentId || '') && active.sha256 === manifest.sha256
-      && active.version === manifest.version && active.wheel === manifest.wheel && active.platform === platform && active.arch === arch;
+    const recorded = active?.schema === 1 && UUID.test(active.environmentId || '') && active.platform === platform && active.arch === arch;
+    const matches = recorded && active.sha256 === manifest.sha256 && active.version === manifest.version && active.wheel === manifest.wheel;
+    publish({reason: matches ? 'repair' : recorded ? 'update' : 'first-install', previousVersion: recorded && !matches ? active.version || null : null});
     if (startup && matches && path.isAbsolute(active.hostPython || '')) {
       try {
         await fs.access(active.hostPython, platform === 'win32' ? constants.F_OK : constants.X_OK);
@@ -305,10 +320,40 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); }
     }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
-    return {manifest, python};
+    return {manifest, python, previous: recorded ? active.environmentId : null,
+      // An update on the same base Python can start from a copy of the environment it replaces.
+      cloneFrom: recorded && !matches && active.hostPython === python.executable ? active.environmentId : null};
   }
-  async function prepareImpl(signal) {
-    const {manifest, python} = await inspectImpl(signal);
+  // Query command lines only (never process environments). If process discovery
+  // fails or a Python process cannot be attributed, defer cleanup conservatively.
+  async function prune(keep, signal) {
+    try {
+      const current = JSON.parse(await fs.readFile(activeFile, 'utf8'));
+      if (current.environmentId !== keep[0]) return;
+      let commands;
+      if (platform === 'win32') {
+        const shell = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+        const script = "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(python|pythonw|briefloop).*' } | ForEach-Object { if (!$_.CommandLine) { throw 'Unavailable process command' }; $_.CommandLine }) | ConvertTo-Json -Compress";
+        const raw = (await run(shell, ['-NoProfile', '-NonInteractive', '-Command', script], signal, 10000)).stdout.trim();
+        const result = raw ? JSON.parse(raw) : [];
+        commands = Array.isArray(result) ? result : [result];
+      } else {
+        commands = (await run('/bin/ps', ['-ww', '-axo', 'command='], signal, 10000)).stdout.split(/\r?\n/).filter(Boolean);
+      }
+      const root = directory.toLowerCase();
+      if (commands.some(command => /(?:^|[\/\\\s])python(?:w|[0-9.]*)?(?:\.exe)?(?:\s|$)/i.test(command) && !command.toLowerCase().includes(root))) return;
+      const used = commands.join('\n').toLowerCase();
+      for (const entry of await fs.readdir(directory, {withFileTypes: true})) {
+        checkAbort(signal);
+        if (!entry.isDirectory() || !UUID.test(entry.name) || keep.includes(entry.name) || used.includes(entry.name.toLowerCase())) continue;
+        const target = path.join(directory, entry.name);
+        if ((await fs.lstat(target)).isSymbolicLink()) continue;
+        await fs.rm(target, {recursive: true, force: true}).catch(() => {});
+      }
+    } catch { /* Cleanup must never turn a successful update into a failure. */ }
+  }
+  async function prepareImpl(signal, inspected) {
+    const {manifest, python, previous, cloneFrom} = inspected || await inspectImpl(signal);
     if (!python || data.state === 'ready') return status();
     let id, created = false, committed = false, safeToRemove = true;
     try {
@@ -316,16 +361,49 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       if ((await fs.lstat(directory)).isSymbolicLink()) throw new EnvironmentError('unsafe_path', 'App 运行环境目录不可用。');
       id = randomUUID();
       const target = path.join(directory, id);
-      await fs.mkdir(target, {mode: 0o700}); created = true;
       phase('installing', 'create-venv');
-      await run(python.executable, ['-I', '-m', 'venv', target], signal, 120000);
-      phase('installing', 'install-dependencies');
       const executable = environmentPython(id);
-      await run(executable, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input',
-        'install', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple', manifest.wheelPath], signal, 15 * 60 * 1000);
-      await validate(id, manifest, signal);
+      const pip = ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input'];
+      const fresh = async () => {
+        await fs.mkdir(target, {mode: 0o700}); created = true;
+        await run(python.executable, ['-I', '-m', 'venv', target], signal, 120000);
+      };
+      const install = async () => {
+        phase('installing', 'install-dependencies');
+        await run(executable, [...pip, 'install', '--require-hashes', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple',
+          '-r', manifest.requirementsPath], signal, 15 * 60 * 1000);
+        // Dependencies come only from the lock; the wheel itself was verified by its manifest hash.
+        await run(executable, [...pip, 'install', '--no-deps', '--no-index', '--force-reinstall', manifest.wheelPath], signal, 5 * 60 * 1000);
+        await validate(id, manifest, signal);
+      };
+      // macOS: an APFS clone of the replaced environment costs no copy and no disk;
+      // unchanged locked packages are then already satisfied and need no network.
+      // A missing source, a failed clone or a clone that does not install and verify
+      // falls back to a fresh venv from the same lock; the replaced one is untouched.
+      let cloned = false;
+      if (platform === 'darwin' && cloneFrom && UUID.test(cloneFrom)) {
+        try {
+          const source = path.join(directory, cloneFrom);
+          if (!(await fs.lstat(source)).isDirectory()) throw Error('Not an environment');
+          await fs.access(environmentPython(cloneFrom));
+          created = true;
+          await run('/bin/cp', ['-c', '-R', source, target], signal, 120000);
+          await install();
+          cloned = true;
+        } catch (error) {
+          if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error;
+          checkAbort(signal);
+          await fs.rm(target, {recursive: true, force: true});
+          created = false;
+        }
+      }
+      if (!cloned) {
+        await fresh();
+        await install();
+      }
       phase('installing', 'activate-environment');
       const record = {schema: 1, environmentId: id, version: manifest.version, wheel: manifest.wheel, sha256: manifest.sha256,
+        requirementsSha256: manifest.requirements_sha256, cloned,
         hostPython: python.executable, pythonVersion: python.version, platform, arch};
       const temporary = path.join(directory, `active-${randomUUID()}.tmp`);
       try {
@@ -336,6 +414,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         committed = true;
       } finally { await fs.rm(temporary, {force: true}); }
       verified = {python: executable, basePython: python.executable, node: process.execPath, nodeIsElectron: true};
+      await prune([id, previous].filter(Boolean), signal);
       return publish({state: 'ready', phase: 'ready', error: null, retryable: false});
     } catch (error) {
       if (error.code === 'cleanup_failed') { safeToRemove = false; error.partialDirectory = id && created ? path.join(directory, id) : null; }
@@ -351,7 +430,13 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   }
   return {
     status,
-    startup: () => operation(async signal => {await inspectImpl(signal, {startup: true}); return status();}),
+    // A user who prepared an environment before already agreed to the download; after an
+    // App update the matching environment is rebuilt without asking again.
+    startup: () => operation(async signal => {
+      const inspected = await inspectImpl(signal, {startup: true});
+      if (data.state === 'needs-setup' && data.reason === 'update') return prepareImpl(signal, inspected);
+      return status();
+    }),
     inspect: () => operation(async signal => {await inspectImpl(signal); return status();}),
     prepare: () => operation(prepareImpl),
     runtime: () => {if (!verified || data.state !== 'ready') throw Error('运行环境尚未验证就绪，请先完成环境准备。'); return {...verified};},

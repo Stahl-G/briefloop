@@ -105,6 +105,9 @@ class Requirements(Model):
     company_context_revision: str | None = None
     company_context_required: bool = False
     audience: str = "自己"
+    # A saved reader profile (#858); create_run freezes it into reader_profile.
+    reader_id: str | None = Field(default=None, max_length=80)
+    reader_profile: dict | None = None
     # Report body language. The interface, internal records and review notes
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"
@@ -306,6 +309,9 @@ class Settings(RoleModel):
     auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
+    # Workspace-wide ceiling on concurrent agent sessions: reports, their Scouts,
+    # separate reviews and the main task lane together (#728).
+    max_agent_sessions: int = Field(default=12, ge=2, le=64)
     # Legacy settings key now means a soft planning target, never a deadline.
     timeout_minutes: int = Field(default=60, ge=0, le=240)
     hard_timeout_minutes: int = Field(default=0, ge=0, le=1440)
@@ -542,6 +548,18 @@ class SaveRevision(Model):
     markdown: str = ''
     editor_document: dict | None = None
     allow_markdown_conversion: bool = Field(default=False, strict=True)
+
+
+class ReaderSave(Model):
+    id: str | None = Field(default=None, max_length=80)
+    name: str = Field(min_length=1, max_length=80)
+    decisions: str = Field(default='', max_length=1000)
+    preferences: str = Field(default='', max_length=2000)
+
+
+class RevisionAnswer(Model):
+    edit_id: str = Field(min_length=1)
+    category: Literal['taste','fact_correction','reader_specific','skip']
 
 
 class Comment(Model):

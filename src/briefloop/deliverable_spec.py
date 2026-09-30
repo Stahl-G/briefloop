@@ -66,6 +66,11 @@ def resolve(requirements, template=None, *, reader_contract=None):
             'requirement_items': requirement_items(requirements),
             'references': '正文短编号，图表简注，文末精简来源表；详细核查另存',
             'interpretation_rule': 'objective及requirement_items保留用户原始要求；reader_contract是待对照原文核查的执行解释，不得降级或替换明确要求。'}
+    if requirements.get('reader_profile'):
+        # Only runs written for a saved reader carry it, so older contracts keep their identity.
+        profile = requirements['reader_profile']
+        spec['reader_profile'] = {'name': profile.get('name', ''), 'decisions': profile.get('decisions', ''),
+                                  'preferences': profile.get('preferences', '')}
     if requirements.get('target_minutes') is not None:
         spec['target_minutes'] = requirements['target_minutes']
     # Legacy max_words stays advisory without changing its saved contract hash.

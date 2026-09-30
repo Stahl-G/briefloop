@@ -2,7 +2,7 @@
 
 桌面 App 不内置完整 Python。`environment.cjs` 检测本机 Python 3.11 或更高版本；未找到时明确引导安装 Python，检测本身不安装软件。用户触发准备后，使用随包 wheel 的声明依赖创建 App 专属 venv，不修改系统 Python 或工作区的环境。
 
-正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测；安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
+正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测。状态中的 `reason` 说明原因：`first-install`（没有本平台的已激活记录）、`update`（已激活记录来自另一个随包 wheel）、`repair`（记录一致但检查失败）。`update` 时启动会直接重建环境，因为用户此前已同意过联网准备；`first-install` 与 `repair` 仍等待用户选择。安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
 
 ## 主进程接口
 
@@ -27,6 +27,8 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 - `pythonVersion`: 检测到的 Python 版本或 null。
 - `error`: null 或 `{code,message}`，只有固定安全提示，不复制子进程原始输出、路径、环境变量或网络诊断。
 - `retryable`: 是否可重新检测或准备。
+- `reason`: `first-install`、`update`、`repair` 或 null（尚未检测）。
+- `version`: 随包 BriefLoop 版本；`previousVersion`: `update` 时被替换环境的版本，否则为 null。
 
 没有模拟百分比。重复调用时复用当前操作 Promise；启动检查尚未结束时，界面应禁用准备按钮。`runtime()` 只返回主进程可用的 `{python, node: process.execPath, nodeIsElectron: true}`，不得把这些路径当成 renderer 提供的命令。服务启动层应按约定以 Electron Node 模式启动桥接进程；本模块不修改其环境或启动业务服务。
 
@@ -37,10 +39,11 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 `payloadPath` 是主进程固定的绝对目录，包含 `manifest.json` 和指定 wheel：
 
 ```json
-{"version":"0.20.0","wheel":"briefloop-0.20.0-py3-none-any.whl","sha256":"wheel 文件的 64 位 SHA-256"}
+{"version":"0.20.0","wheel":"briefloop-0.20.0-py3-none-any.whl","sha256":"wheel 文件的 64 位 SHA-256",
+ "requirements":"requirements.txt","requirements_sha256":"依赖锁定清单的 64 位 SHA-256"}
 ```
 
-每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。
+每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；新环境激活后保留当前和上一份环境，查询进程命令行并跳过仍被使用的环境，其余 UUID 环境自动清理；进程查询失败或 Python 进程无法归属时暂缓清理，不影响启动；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。
 
 宿主查找只使用 PATH 中的绝对目录和标准安装路径，包括 macOS Homebrew、Python.framework，及 Windows Python 安装目录、`py.exe -0p` launcher 清单。跳过相对 PATH 条目以及可能打开商店的 Python WindowsApps 别名。先列出已有解释器再直接探测，避免新版 Python install manager 在无解释器时自动安装；子进程也显式关闭 manager 自动安装并移除旧 launcher 安装开关。[Windows Python 文档](https://docs.python.org/3/using/windows.html)
 
@@ -50,12 +53,17 @@ launcher 返回的实际解释器路径必须可用，且 Python 版本满足要
 
 环境位于 `app.getPath('userData')/environments/<UUID>`。创建后不改名，避免 venv 脚本的绝对 shebang 失效；这是 Python 官方注明的 venv 限制。[Python venv 文档](https://docs.python.org/3/library/venv.html)
 
+`requirements.txt` 是随 wheel 分发的依赖锁定清单：每个依赖固定版本，并列出所有平台、所有受支持 Python 版本的 wheel 哈希。它由 `scripts/lock-backend.py` 从 `pyproject.toml` 生成并提交到仓库（`desktop/electron/backend-requirements.txt`）；依赖变化而清单没有重新生成时，`prepare-backend.py` 拒绝发行。安装时只从这份清单装依赖，所以同一个版本在所有机器上装到的依赖完全相同（#851）。
+
 准备过程固定执行：
 
-1. `python -I -m venv <UUID 目录>`。
-2. venv Python 的 `-I -m pip --isolated --disable-pip-version-check --no-input install --only-binary=:all: --index-url https://pypi.org/simple <随包 wheel>`。
+1. 新建环境：`python -I -m venv <UUID 目录>`。App 更新时，如果是 macOS、基础 Python 没变、被替换的环境仍然完整，改为用 `cp -c -R` 对它做 APFS 克隆（不实际复制数据、不额外占用磁盘）。克隆失败、或克隆出来的环境在后面的安装或验证里失败，就删掉副本，改为新建 venv 重来；被替换的环境始终不动。
+2. 按锁定清单安装依赖：venv Python 的 `-I -m pip --isolated --disable-pip-version-check --no-input install --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r <requirements.txt>`。克隆的环境里，版本没变的包已经满足，不访问索引；依赖都没变时，断网也能完成。
+2a. 安装后端 wheel：`install --no-deps --no-index --force-reinstall <随包 wheel>`。它的哈希已由 manifest 核对，依赖只来自上一步的清单。
 3. 在隔离模式下导入 `briefloop`、`wikiskill`、`mcp`、`docx`、`lxml`、`PIL`、`pypdf`、`pypdfium2`、`openpyxl`，核对解释器确在目标 venv、安装的 BriefLoop 版本与清单一致。
-4. 执行 `pip check`。全部通过后 fsync 并原子替换 `active.json`，才公开 `ready`。
+4. 执行 `pip check`。全部通过后 fsync 并原子替换 `active.json`，才公开 `ready`。`active.json` 同时记录清单哈希 `requirementsSha256` 与是否由克隆得到（`cloned`）。
+
+实测（2026-09-29，macOS arm64，Python 3.12.13，从 0.26.2 的环境克隆，索引地址指向不可达的本地端口以模拟断网）：克隆 1.4 秒，按清单安装依赖 0.5 秒（38 个依赖全部已满足，没有访问索引），安装 wheel 0.7 秒，导入验证与 `pip check` 8.0 秒，合计约 10.7 秒。此前的做法是新建 venv 并联网安装，仅安装一步就约 20 秒，断网时会失败。依赖版本变化的更新、以及 Windows 上的完整安装还没有实测。
 
 进程不继承 PYTHON/PIP 配置变量、VIRTUAL_ENV 或 ELECTRON_RUN_AS_NODE。设置 `PIP_CONFIG_FILE` 为平台空设备，连全局 pip 配置也不读取；索引固定为 PyPI，不接受 renderer 指定 URL。只安装预编译 wheel，不因某个 Python 版本缺轮子而启动源码构建。[Python 隔离模式](https://docs.python.org/3/using/cmdline.html#cmdoption-I)、[pip install](https://pip.pypa.io/en/stable/cli/pip_install/)
 

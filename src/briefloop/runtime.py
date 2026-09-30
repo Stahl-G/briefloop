@@ -125,7 +125,7 @@ def stage_job(store, job, role, *, mode=None):
     if role in ('scorer','assessor','evaluator'):
         role='evaluator'
         mode=mode or ('pairwise' if original_role=='assessor' else 'single')
-        if mode not in ('single','pairwise'):
+        if mode not in ('single','pairwise','triage'):
             raise ValueError('Unknown evaluation mode: '+mode)
     payload=json.loads(job['payload'])
     base=payload['runtime'] if 'runtime' in payload else store.runtime_config()
@@ -184,7 +184,7 @@ def _research_handoff(store, run_id, plan):
     return None
 
 
-def generation_prompt(store, run, folder, backend='codex'):
+def generation_prompt(store, run, folder, backend='codex', scout_budget=None):
     from .research_handoff import PLANNING_GUIDE, GAP_UPDATE_GUIDE
     from .models import normalize_search_provider
     opencode_tool = opencode_subagent_tool() if backend == 'opencode' else None
@@ -222,6 +222,8 @@ def generation_prompt(store, run, folder, backend='codex'):
         # Neither later settings nor a wider plan expands that ceiling.
         max_parallel=min(research_plan.get('frozen_runtime',{}).get('max_parallel',max_parallel),
                          research_plan.get('structure',{}).get('parallel',max_parallel))
+    # The workspace session budget may allow fewer Scouts than wanted, never fewer than one.
+    if scout_budget:max_parallel=max(1,min(max_parallel,scout_budget(max_parallel)))
     scout_slots=[]
     # File allocation only: the Orchestrator still chooses topics and task count.
     # Native subagents may share cwd, so every output contract is absolute.
@@ -499,6 +501,8 @@ class Worker:
         self._report_runtime_factory=report_runtime_factory
         self._review_runtime_factory=review_runtime_factory
         self._review_jobs={}
+        from .model_budget import ModelBudget
+        self.budget=ModelBudget(lambda:self.store.settings().get('max_agent_sessions',12))
         self._execution_local=threading.local()
         self.opened_paused=False
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
@@ -690,7 +694,7 @@ class Worker:
             if row is None or row['batch_id']!=jid:
                 raise ValueError('反馈已移交其他批次或不存在，不能重复学习')
 
-    def retry_with_current_model(self,jid):
+    def retry_with_current_model(self,jid,*,confirmed_plan=None):
         """Start a linked review/learning attempt without rewriting its history."""
         class ExistingRetry(Exception):
             pass
@@ -710,7 +714,13 @@ class Worker:
             payload={key:original[key] for key in fields}
             # A retry inherits the authorization and bound the user confirmed for
             # this batch; a batch without one still has to be confirmed again.
-            payload.update({key:original[key] for key in ('authorization','budget') if key in original})
+            payload.update({key:original[key] for key in ('authorization','budget','reader_id') if key in original})
+            if job['kind']=='learn':
+                from .learning_budget import authorization,plan
+                settings=self.store.settings()
+                payload['authorization']=authorization(settings,'manual',confirmed=confirmed_plan)
+                payload['budget']=plan(settings)
+                payload['k']=settings['k']
             if job['kind']=='review':self.store.one('briefs',payload['version_id'])
             payload['retry_of_job_id']=jid
             # Store.enqueue freezes the current settings (including role models and
@@ -733,7 +743,8 @@ class Worker:
                     from wikiskill import feedback_loop
                     if feedback_loop.work(study)['phase']=='complete':
                         raise ValueError('这批反馈的学习已经完成，请恢复原任务以完成保存')
-                    row=connection.execute("SELECT value FROM meta WHERE key='last_study'").fetchone()
+                    from .readers import scope_meta
+                    row=connection.execute("SELECT value FROM meta WHERE key=?",(scope_meta('last_study',original.get('reader_id')),)).fetchone()
                     if row and json.loads(row['value']) not in (None,str(study)):
                         raise ValueError('已有更新的学习记录，请使用最新任务')
                 for fid in original['feedback_ids']:
@@ -765,12 +776,19 @@ class Worker:
                 job=next(((row,run_id) for row in jobs for run_id in [self._review_run_id(row)] if run_id is None or run_id not in busy),None)
                 if job is None:continue
                 job,run_id=job
+                # A report's own review runs on the report's sessions; anything else needs one.
+                # A running parent (a report, or a learning trial run inline) waits for this review.
+                parent=json.loads(job['payload'] or '{}').get('parent_job_id')
+                charged=not(parent and self.store.rows("SELECT 1 FROM jobs WHERE id=? AND status='running'",(parent,)))
+                if charged and not self.budget.reserve(job['id'],1):continue
                 with self.store.tx() as c:
                     changed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",(now(),job['id'])).rowcount
-                if not changed:continue
+                if not changed:
+                    self.budget.release(job['id']);continue
                 from .interactive_runtime import InteractiveRuntime
                 try:runtime=self._review_runtime_factory() if self._review_runtime_factory else InteractiveRuntime(self.store,backends=self.runtime.backends)
                 except Exception as exc:
+                    self.budget.release(job['id'])
                     self._settle_job(job['id'],'failed',error=str(exc));continue
                 runtime.cancelled.clear()
                 thread=threading.Thread(target=self._execute_review_job,args=(job,runtime),name='briefloop-review-'+job['id'],daemon=True)
@@ -788,15 +806,29 @@ class Worker:
         except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
         finally:
             with self._claim_lock:self._review_jobs.pop(job['id'],None)
+            self.budget.release(job['id'])
             self.wake()
+
+    def _scout_budget(self,job):
+        """Scouts count against the session budget of the job that runs the report."""
+        owner=json.loads(job['payload'] or '{}').get('inline_owner_job_id')
+        key=job['id'] if job['id'] in self.budget.snapshot()['held'] else owner
+        if key not in self.budget.snapshot()['held']:return None
+        # Inline trials replace the learning coordinator while it waits. The
+        # reservation has one active root session, not one root per trial.
+        base=1
+        # The report itself holds one session; everything above it is Scouts.
+        return lambda want:self.budget.grow(key,base+want)-base
 
     def _next_runnable(self,jobs):
         """Oldest queued job that can start now; a blocked head never hides later work."""
         reports_full=len(self._generation_jobs)>=self.store.settings()['max_reports']
+        free=self.budget.free()
         for job in jobs:
+            # A report starts with itself and one Scout; other tasks need one session.
             if job['kind']=='generate':
-                if not reports_full:return job
-            elif self.current is None:return job
+                if not reports_full and free>=2:return job
+            elif self.current is None and free>=(2 if job['kind']=='learn' else 1):return job
         return None
 
     def loop(self):
@@ -824,14 +856,17 @@ class Worker:
                 if self.stopping.is_set():break
                 job=self._next_runnable(jobs)
                 if job is None:continue
+                if not self.budget.reserve(job['id'],2 if job['kind'] in ('generate','learn') else 1):continue
                 with self.store.tx() as c:
                     claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
                                       (now(),job['id'])).rowcount
-                if not claimed:continue
+                if not claimed:
+                    self.budget.release(job['id']);continue
                 if job['kind']=='generate':
                     from .interactive_runtime import InteractiveRuntime
                     try:runtime=self._report_runtime_factory() if self._report_runtime_factory else InteractiveRuntime(self.store,backends=self.runtime.backends)
                     except Exception as exc:
+                        self.budget.release(job['id'])
                         self._settle_job(job['id'],'failed',error=str(exc));continue
                     thread=threading.Thread(target=self._execute_main_job,args=(job,runtime),name='briefloop-report-'+job['id'],daemon=True)
                     self._generation_jobs[job['id']]=(thread,runtime)
@@ -876,7 +911,7 @@ class Worker:
                 result=run_review(self.store,self.runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
             elif job['kind']=='learn':
                 from .learning import learn
-                result=learn(self.store,self.runtime,job)
+                result=learn(self.store,self.runtime,job,worker=self)
             else:raise ValueError('Unknown job kind')
             self._settle_job(job['id'],'complete',result=result,runtime=self.runtime)
         except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
@@ -903,6 +938,7 @@ class Worker:
             with self._claim_lock:
                 self._generation_jobs.pop(job["id"],None)
                 if self.current==job["id"]:self.current=None
+            self.budget.release(job["id"])
             if hasattr(self._execution_local,"runtime"):del self._execution_local.runtime
             self.wake()
 
@@ -1237,7 +1273,7 @@ class Worker:
                         checkpoint[0]=True
         from .connectors.runtime_tools import generation_access
         with generation_access(self,job) as connector_instructions:
-            prompt=generation_prompt(self.store,run,folder,backend)+connector_instructions
+            prompt=generation_prompt(self.store,run,folder,backend,scout_budget=self._scout_budget(job))+connector_instructions
             result=self.runtime.execute(job,prompt,folder,publish)
             publish()
             if not self.store.rows('SELECT id FROM briefs WHERE id=?',(latest[0],)):
