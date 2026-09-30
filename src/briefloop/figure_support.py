@@ -37,6 +37,12 @@ def sync_content_citations(store, run_id, detail, document, figures):
         if sid not in present:
             ref={'source_id':sid,'locator':locator,'excerpt':''}
             citations.append(ref);derived.append(ref);present.add(sid)
+    # The final set includes bibliography, data rows, rich nodes and figures.
+    # Every saving path calls this helper before committing a draft/revision.
+    from .previous_report import source_usage
+    for ref in citations:
+        if ref['source_id'] in references or source_usage(store,ref['source_id'])=='previous_report':
+            raise ValueError('往期报告或风格参考不能作为报告事实引用')
     detail['citations']=citations
     detail['content_citations']=derived
 
