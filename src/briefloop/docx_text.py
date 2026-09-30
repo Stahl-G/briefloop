@@ -26,6 +26,8 @@ def _paragraph_text(paragraph):
             parts.append(element.tail or '')
             continue
         kind = _name(element)
+        # Tracked deletions are not part of the document as it now reads.
+        if kind in ('del', 'moveFrom'): continue
         if kind in ('br', 'cr'): parts.append('\n')
         elif kind == 'tab': parts.append('\t')
         parts.append(element.text or '')

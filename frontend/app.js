@@ -45,6 +45,7 @@ import {appUpdatesUI} from './app-updates.js';
 import {revisionQuestionsUI} from './revision-questions.js';
 import {readersUI} from './readers.js';
 import {verificationBadge} from './skill-verification.js';
+import {previousReportUI,readerBlock} from './previous-report.js';
 import {templatesUI,GENRE_META,ICONS,splitTemplateName} from './templates.js';
 import {createTemplateOutput} from './template-output.js';
 import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
@@ -88,6 +89,8 @@ const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
 const readerProfiles=readersUI({api,action:(...args)=>action(...args)});
 readerProfiles.bind();
+const previousReport=previousReportUI({api,uploadPayload,getUploadLimits,notice:(...args)=>notice(...args),openChat:async({text,source_id})=>{await openChatHome();chat.attachments.add(source_id);renderAttachments();$('chat-input').value=text;rememberDraft();updateComposer();$('chat-input').focus()}});
+previousReport.bind();
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
 function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先选择 Agent 和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph();renderReports()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
@@ -418,9 +421,9 @@ function render(first){
 function renderVersionSelect(){
  const visible=[];
  for(const runId of [...new Set(state.briefs.map(b=>b.run_id))]){
-  const versions=state.briefs.filter(b=>b.run_id===runId),latest=versions[0],original=[...versions].reverse().find(b=>['agent','example'].includes(b.author));
-  if(latest)visible.push({brief:latest,label:latest.author==='example'?'合成示例':latest.author==='user'?'当前编辑稿':latest.parent_id?quickReport.versionLabel(latest):'生成原稿'});
-  if(original&&original.id!==latest?.id)visible.push({brief:original,label:original.author==='example'?'合成示例':'生成原稿'});
+  const versions=state.briefs.filter(b=>b.run_id===runId),latest=versions[0],original=[...versions].reverse().find(b=>['agent','example','import'].includes(b.author));
+  if(latest)visible.push({brief:latest,label:latest.author==='example'?'合成示例':latest.author==='import'?'往期原稿':latest.author==='user'?'当前编辑稿':latest.parent_id?quickReport.versionLabel(latest):'生成原稿'});
+  if(original&&original.id!==latest?.id)visible.push({brief:original,label:original.author==='example'?'合成示例':original.author==='import'?'往期原稿':'生成原稿'});
  }
  if(current&&!visible.some(v=>v.brief.id===current.id))visible.push({brief:current,label:'正在查看历史快照'});
  const pendingOptions=state.jobs.filter(j=>j.kind==='generate'&&['queued','running'].includes(j.status)&&!state.briefs.some(b=>b.run_id===parse(j.payload).run_id)).map(j=>{const rid=parse(j.payload).run_id,r=state.runs.find(r=>r.id===rid);return `<option value="run:${esc(rid)}">${esc(parse(r?.requirements).title||'新报告')} · ${j.status==='queued'?'排队中':'正在生成'}</option>`}).join('');
@@ -837,7 +840,7 @@ $('version-diff').onclick=()=>action(async()=>{
  const history=typeof reportBrowsing==='undefined'?{items:versions.slice(index+1)}:await reportBrowsing.comparisonVersions(target);if(current!==target)return;
  const older=history.items;let nextCursor=history.next_cursor;
  if(!older.length){notice('这是第一稿，还没有可比较的上一版本');return}
- const label=b=>moment(b.created)+' · '+(b.author==='agent'?'AI 稿件':b.author==='user'?'用户修改':'原稿');
+ const label=b=>moment(b.created)+' · '+(b.author==='agent'?'AI 稿件':b.author==='user'?'用户修改':b.author==='import'?'往期原稿':'原稿');
  function fillComparison(){ $('diff-base').innerHTML=older.map((b,i)=>`<option value="${esc(b.id)}">${i===0?'上一稿 · ':!b.parent_id?'第一稿 · ':''}${esc(label(b))}</option>`).join('')+(nextCursor?'<option value="more">加载更多历史版本…</option>':'')}fillComparison();
  $('diff-target').textContent='当前稿 · '+label(target);
  function documentFor(b){
@@ -1044,7 +1047,7 @@ function renderMessages(){
   const label=message.role==='user'?'你':(message.mode==='notice'?'任务状态':'BriefLoop');
   node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div>${reasoningHTML(message)}<div class="message-body">${message.text?esc(message.text):(streaming?typingHTML():'')}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}${messageActionsHTML()}`;
   const reasoning=node.querySelector('.message-reasoning');if(reasoning&&reasoningOpen)reasoning.open=true;
-  const reqBlock=/```briefloop-requirements\s*([\s\S]*?)```/.exec(message.text||'');if(reqBlock){const apply=document.createElement('button');apply.type='button';apply.className='outline apply-requirements';apply.textContent='应用到材料与需求';apply.onclick=()=>applyRequirements(reqBlock[1].trim());node.append(apply)}
+  const reqBlock=/```briefloop-requirements\s*([\s\S]*?)```/.exec(message.text||'');if(reqBlock){const apply=document.createElement('button');apply.type='button';apply.className='outline apply-requirements';apply.textContent='应用到材料与需求';apply.onclick=()=>applyRequirements(reqBlock[1].trim());node.append(apply)}const reader=readerBlock(message.text);if(reader){const save=document.createElement('button');save.type='button';save.className='outline apply-requirements';save.textContent='保存为读者档案';save.onclick=()=>action(async()=>{const saved=await api('reader-save',reader);await refresh();const select=$('reader-select');if(select){select.value=saved.id;select.dispatchEvent(new Event('change'))}},'读者档案已保存，并选为这份报告的读者');node.append(save)}
   workspaceProposal(node,message.text);
   bindMessageActions(node,message);
   node.querySelectorAll('[data-message-source]').forEach(button=>button.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(button.dataset.messageSource)))));

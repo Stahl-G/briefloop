@@ -236,6 +236,10 @@ def _eligible_cases(store,ids):
     cases=[];skipped=[]
     for case_id in ids:
         case=store.one('runs',case_id);evidence=[]
+        if not store.rows("SELECT id FROM briefs WHERE run_id=? AND author='agent' LIMIT 1",(case_id,)):
+            # An imported previous report has no BriefLoop draft to compare against (#858).
+            skipped.append({'case_id':case_id,'reason':'往期导入报告没有 BriefLoop 生成稿，不做试写比较'})
+            continue
         for sid in store.source_ids(case_id):
             provenance=store.root/'sources'/(sid+'.provenance.json')
             metadata=json.loads(provenance.read_text(encoding='utf-8')) if provenance.is_file() else {}

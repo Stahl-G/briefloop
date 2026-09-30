@@ -706,6 +706,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/report-data/prepare':
                     from .report_tools import prepare_for_run
                     result=prepare_for_run(store,body['run_id'],body['data'])
+                elif path=='/api/import-previous':
+                    from .previous_report import import_previous
+                    result=import_previous(store,body.get('name','report.docx'),_upload_data(body))
                 elif path=='/api/import-revision':
                     from .word_import import import_revision
                     result=import_revision(store,body['base_version'],body.get('name','revision.docx'),

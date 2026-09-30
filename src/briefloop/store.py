@@ -429,7 +429,7 @@ class Store:
     def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
         # Explicit source-document imports are user-authored first versions,
         # not generated drafts or revisions that should trigger learning.
-        if author not in ('agent', 'example', 'user'):raise ValueError('无效稿件作者')
+        if author not in ('agent', 'example', 'user', 'import'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
         run=self.one("runs", run_id)
