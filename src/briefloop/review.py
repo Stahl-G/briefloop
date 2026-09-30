@@ -681,7 +681,7 @@ def accept_review(store,review_id,value,dry_run=False):
     if review['result']:
         if ReviewOutput.model_validate(review['result']).model_dump()!=result.model_dump():raise ValueError('已保存Review不可覆盖，请建立新审阅')
         if dry_run:return result
-        if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
+        if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump(),verify_locations=False)
         with store.tx() as c:_save_assessment(c,review_id,result)
         from .review_learning import record_verified_corrections
         record_verified_corrections(store,review_id)
@@ -755,6 +755,12 @@ def accept_review(store,review_id,value,dry_run=False):
                 choices = sorted({cid for parent in mixed for cid in mixed_parent_clauses[parent]})
                 raise ValueError('重大要求或执行缺口不能引用混合父 requirement_id='+','.join(mixed)
                                  +'；请引用本次冻结的具体 clause_id='+','.join(choices))
+    from .finding_anchors import validate_findings
+    preview_path=filesystem_path(packet/'reader-preview.md')
+    preview=preview_path.read_text(encoding='utf-8') if 'reader-preview.md' in review['data'].get('files',{}) else ''
+    validate_findings(current['document'],result.findings,reader_preview=preview)
+    if result.assessment is not None:
+        validate_findings(current['document'],result.assessment.findings,reader_preview=preview)
     expected_responses=set(_response_scope(store,packet,result.version_id))
     checks={}
     for check in result.response_checks:
@@ -776,7 +782,7 @@ def accept_review(store,review_id,value,dry_run=False):
             try:record(store,'evidence_spans',span_id)
             except ValueError:raise ValueError('冲突复核引用了不存在的证据片段：'+span_id) from None
     if result.status=='complete' and set(conflict_ids)!=allowed_conflicts:raise ValueError('完整审阅遗漏冲突复核')
-    if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
+    if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump(),verify_locations=False)
     if dry_run:return result
     with store.tx() as c:
         existing=c.execute('SELECT result FROM reviews WHERE id=?',(review_id,)).fetchone()
@@ -1068,6 +1074,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 {output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
+report_quote 如提供，须为本版正文或阅读预览中的连续原话，不能用省略号拼接；block_ids 如提供必须对应引文所在段落。缺失内容可省略引文并关联实际要求；历史 response_to 可以保留旧引文。位置匹配不代表事实已核实。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression 或软条款的 missing_requirement/execution_gap；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
 '''

@@ -684,7 +684,7 @@ class Store:
             for finding in context['revision_context']['findings'])
         return context
 
-    def validate_assessment(self, version_id, value):
+    def validate_assessment(self, version_id, value, *, verify_locations=True):
         """Read-only admission checks shared by persistence and retry caching."""
         brief = self.one("briefs", version_id)
         assessment = Assessment.model_validate(value)
@@ -695,6 +695,12 @@ class Store:
         for f in assessment.findings:
             if f.source_id:
                 self.one("sources", f.source_id)
+        if verify_locations:
+            from .finding_anchors import validate_findings
+            from .document_model import brief_document
+            from .exports import reader_markdown
+            brief=self.one('briefs',version_id)
+            validate_findings(brief_document(brief),assessment.findings,reader_preview=reader_markdown(self,brief))
         return assessment
 
     def assess(self, version_id, value, *, basis=None, expected_checks=None):
