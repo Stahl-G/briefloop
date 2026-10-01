@@ -5,6 +5,8 @@ const path = require('node:path');
 const {spawn} = require('node:child_process');
 const {StringDecoder} = require('node:string_decoder');
 const {createHash, randomUUID} = require('node:crypto');
+const {CHECK_LOCK} = require('./dependency-lock-check.cjs');
+const {reuseWindowsDependencies} = require('./windows-dependency-reuse.cjs');
 
 class EnvironmentError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -293,7 +295,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     try { active = JSON.parse(await fs.readFile(activeFile, 'utf8')); } catch {}
     const recorded = active?.schema === 1 && UUID.test(active.environmentId || '') && active.platform === platform && active.arch === arch;
-    const matches = recorded && active.sha256 === manifest.sha256 && active.version === manifest.version && active.wheel === manifest.wheel;
+    const matches = recorded && active.sha256 === manifest.sha256 && active.version === manifest.version && active.wheel === manifest.wheel && active.requirementsSha256 === manifest.requirements_sha256;
     publish({reason: matches ? 'repair' : recorded ? 'update' : 'first-install', previousVersion: recorded && !matches ? active.version || null : null});
     if (startup && matches && path.isAbsolute(active.hostPython || '')) {
       try {
@@ -322,7 +324,9 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
     return {manifest, python, previous: recorded ? active.environmentId : null,
       // An update on the same base Python can start from a copy of the environment it replaces.
-      cloneFrom: recorded && !matches && active.hostPython === python.executable ? active.environmentId : null};
+      cloneFrom: recorded && !matches && active.hostPython === python.executable && active.pythonVersion === python.version ? active.environmentId : null,
+      sameLock: recorded && active.requirementsSha256 === manifest.requirements_sha256,
+      previousRecord: recorded ? active : null};
   }
   // Query command lines only (never process environments). If process discovery
   // fails or a Python process cannot be attributed, defer cleanup conservatively.
@@ -353,8 +357,9 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     } catch { /* Cleanup must never turn a successful update into a failure. */ }
   }
   async function prepareImpl(signal, inspected) {
-    const {manifest, python, previous, cloneFrom} = inspected || await inspectImpl(signal);
+    const {manifest, python, previous, cloneFrom, sameLock, previousRecord} = inspected || await inspectImpl(signal);
     if (!python || data.state === 'ready') return status();
+    publish({reuseFallback: null});
     let id, created = false, committed = false, safeToRemove = true;
     try {
       await fs.mkdir(directory, {recursive: true, mode: 0o700});
@@ -368,10 +373,19 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         await fs.mkdir(target, {mode: 0o700}); created = true;
         await run(python.executable, ['-I', '-m', 'venv', target], signal, 120000);
       };
-      const install = async () => {
-        phase('installing', 'install-dependencies');
-        await run(executable, [...pip, 'install', '--require-hashes', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple',
-          '-r', manifest.requirementsPath], signal, 15 * 60 * 1000);
+      const install = async ({reuse = false} = {}) => {
+        let dependenciesReady = false;
+        if (reuse && sameLock) {
+          phase('installing', 'check-existing-dependencies');
+          dependenciesReady = JSON.parse((await run(executable, ['-I', '-c', CHECK_LOCK, manifest.requirementsPath], signal, 60000)).stdout.trim()).matches === true;
+        }
+        if (dependenciesReady) phase('installing', 'reuse-dependencies');
+        else {
+          phase('installing', reuse ? 'update-dependencies' : 'install-dependencies');
+          await run(executable, [...pip, 'install', '--require-hashes', '--only-binary=:all:', '--index-url', 'https://pypi.org/simple',
+            '-r', manifest.requirementsPath], signal, 15 * 60 * 1000);
+        }
+        phase('installing', 'install-backend');
         // Dependencies come only from the lock; the wheel itself was verified by its manifest hash.
         await run(executable, [...pip, 'install', '--no-deps', '--no-index', '--force-reinstall', manifest.wheelPath], signal, 5 * 60 * 1000);
         await validate(id, manifest, signal);
@@ -387,19 +401,37 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
           if (!(await fs.lstat(source)).isDirectory()) throw Error('Not an environment');
           await fs.access(environmentPython(cloneFrom));
           created = true;
+          phase('installing', 'clone-environment');
           await run('/bin/cp', ['-c', '-R', source, target], signal, 120000);
-          await install();
+          await install({reuse: true});
           cloned = true;
         } catch (error) {
           if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error;
           checkAbort(signal);
+          publish({reuseFallback: '已有运行环境未通过复用检查，将重新准备；旧环境仍保留。'});
           await fs.rm(target, {recursive: true, force: true});
           created = false;
         }
       }
       if (!cloned) {
         await fresh();
-        await install();
+        let reused = false;
+        if (platform === 'win32' && previous && sameLock) {
+          try {
+            phase('installing', 'reuse-windows-dependencies');
+            const result = await reuseWindowsDependencies({source: path.join(directory, previous), target,
+              previous: previousRecord, python, manifest, platform, arch, run, signal});
+            reused = result.eligible;
+            publish({reusedDependencyCount: result.reused.length});
+          } catch (error) {
+            if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error;
+            checkAbort(signal);
+            publish({reuseFallback: '已有依赖无法安全复用，将重新准备；旧环境仍保留。'});
+            await fs.rm(target, {recursive: true, force: true}); created = false;
+            await fresh();
+          }
+        }
+        await install({reuse: reused});
       }
       phase('installing', 'activate-environment');
       const record = {schema: 1, environmentId: id, version: manifest.version, wheel: manifest.wheel, sha256: manifest.sha256,

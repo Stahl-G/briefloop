@@ -14,7 +14,7 @@ test('actual Electron launches the unpacked supervisor while preserving an ordin
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const directory=path.join(root,'中文 空格'),source=path.join(directory,'source');
   await fs.mkdir(source,{recursive:true});
-  for(const name of ['environment.cjs','windows-process.ps1','windows-process.cs'])
+  for(const name of ['environment.cjs','dependency-lock-check.cjs','windows-dependency-reuse.cjs','windows-process.ps1','windows-process.cs'])
     await fs.copyFile(path.join(__dirname,'..',name),path.join(source,name));
   const archive=path.join(directory,'app.asar');
   await asar.createPackageWithOptions(source,archive,{unpack:'{windows-process.ps1,windows-process.cs}'});

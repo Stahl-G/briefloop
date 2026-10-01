@@ -39,7 +39,7 @@ DTO 字段：
 
 ## 当前 macOS 路径
 
-macOS 当前默认使用 `installMode: 'zip'`：下载、校验、解压后打开 Finder，由用户替换 App；首次安装仍用 DMG。当前发行未做 Developer ID 签名或 Apple 公证，不声称原地自动升级。显式 `dmg` 模式仍可打开已验证的 DMG。
+macOS 当前默认使用 `installMode: 'zip'`：下载、校验、解压后打开 Finder，由用户替换 App；首次安装仍用 DMG。Finder 中的“安装位置”指向当前已安装 App 的实际父目录（例如 ~/Applications）；未从 Applications 目录运行时默认 /Applications。当前发行未做 Developer ID 签名或 Apple 公证，不声称原地自动升级。显式 `dmg` 模式仍可打开已验证的 DMG。
 
 更新检查只读取固定的 `https://github.com/Stahl-G/briefloop/releases/latest/download/release-manifest.json`，不调用匿名 GitHub REST API，也不读取用户 GitHub 凭据。此清单从 0.26.1 开始随正式工件发布，含稳定版本、冻结源码提交、各工件字节数及 SHA-256。清单缺失时显示明确错误，不回退到可能已限流的 REST 接口。
 

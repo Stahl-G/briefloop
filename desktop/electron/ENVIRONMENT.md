@@ -2,7 +2,7 @@
 
 桌面 App 不内置完整 Python。`environment.cjs` 检测本机 Python 3.11 或更高版本；未找到时明确引导安装 Python，检测本身不安装软件。用户触发准备后，使用随包 wheel 的声明依赖创建 App 专属 venv，不修改系统 Python 或工作区的环境。
 
-正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测。状态中的 `reason` 说明原因：`first-install`（没有本平台的已激活记录）、`update`（已激活记录来自另一个随包 wheel）、`repair`（记录一致但检查失败）。`update` 时启动会直接重建环境，因为用户此前已同意过联网准备；`first-install` 与 `repair` 仍等待用户选择。安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
+正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测。状态中的 `reason` 说明原因：`first-install`（没有本平台的已激活记录）、`update`（已激活记录来自另一个随包 wheel）、`repair`（记录一致但检查失败）。`update` 时启动会自动准备候选环境，优先复用已验证依赖，因为用户此前已同意过联网准备；`first-install` 与 `repair` 仍等待用户选择。安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
 
 ## 主进程接口
 
@@ -26,6 +26,7 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 - `phase`: `idle`、`verify-payload`、`check-runtime`、`detect-python`、`needs-setup`、`create-venv`、`install-dependencies`、`verify-imports`、`verify-dependencies`、`activate-environment`、`ready`。
 - `pythonVersion`: 检测到的 Python 版本或 null。
 - `error`: null 或 `{code,message}`，只有固定安全提示，不复制子进程原始输出、路径、环境变量或网络诊断。
+- `reuseFallback`: 复用失败时的固定安全说明，或 null；不复制原始错误。
 - `retryable`: 是否可重新检测或准备。
 - `reason`: `first-install`、`update`、`repair` 或 null（尚未检测）。
 - `version`: 随包 BriefLoop 版本；`previousVersion`: `update` 时被替换环境的版本，否则为 null。
@@ -55,10 +56,10 @@ launcher 返回的实际解释器路径必须可用，且 Python 版本满足要
 
 `requirements.txt` 是随 wheel 分发的依赖锁定清单：每个依赖固定版本，并列出所有平台、所有受支持 Python 版本的 wheel 哈希。它由 `scripts/lock-backend.py` 从 `pyproject.toml` 生成并提交到仓库（`desktop/electron/backend-requirements.txt`）；依赖变化而清单没有重新生成时，`prepare-backend.py` 拒绝发行。安装时只从这份清单装依赖，所以同一个版本在所有机器上装到的依赖完全相同（#851）。
 
-准备过程固定执行：
+准备过程执行：
 
-1. 新建环境：`python -I -m venv <UUID 目录>`。App 更新时，如果是 macOS、基础 Python 没变、被替换的环境仍然完整，改为用 `cp -c -R` 对它做 APFS 克隆（不实际复制数据、不额外占用磁盘）。克隆失败、或克隆出来的环境在后面的安装或验证里失败，就删掉副本，改为新建 venv 重来；被替换的环境始终不动。
-2. 按锁定清单安装依赖：venv Python 的 `-I -m pip --isolated --disable-pip-version-check --no-input install --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r <requirements.txt>`。克隆的环境里，版本没变的包已经满足，不访问索引；依赖都没变时，断网也能完成。
+1. 在独立 UUID 目录准备候选环境。macOS 在基础 Python 路径和精确版本不变时，优先用 `cp -c -R` 克隆旧环境；不支持克隆或候选验证失败时显示固定安全原因，回退新建 venv，旧环境保持不变。Windows 始终新建 venv 和启动脚本；仅在 Python、平台、架构和依赖锁哈希一致时，按安装记录校验包版本、wheel ABI、RECORD 文件哈希及路径后复制可复用文件。带入口脚本、可执行 `.pth`、越界文件或不兼容标签的包跳过，随后正常安装。Windows 因此是部分依赖复用，不承诺断网升级。
+2. 同锁复用候选先用只读检查核对当前平台适用的全部固定版本。完全匹配时跳过依赖安装命令，只更新下一步的应用 wheel；否则按随包锁定清单执行 `pip --isolated --disable-pip-version-check --no-input install --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r <requirements.txt>`，补齐缺失或变化的依赖。首次安装仍需要完整准备。界面区分复用依赖、更新依赖与安装后端。
 2a. 安装后端 wheel：`install --no-deps --no-index --force-reinstall <随包 wheel>`。它的哈希已由 manifest 核对，依赖只来自上一步的清单。
 3. 在隔离模式下导入 `briefloop`、`wikiskill`、`mcp`、`docx`、`lxml`、`PIL`、`pypdf`、`pypdfium2`、`openpyxl`，核对解释器确在目标 venv、安装的 BriefLoop 版本与清单一致。
 4. 执行 `pip check`。全部通过后 fsync 并原子替换 `active.json`，才公开 `ready`。`active.json` 同时记录清单哈希 `requirementsSha256` 与是否由克隆得到（`cloned`）。
