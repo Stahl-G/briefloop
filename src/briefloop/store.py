@@ -131,7 +131,7 @@ class Store:
         self.db = self.root/"briefloop.db"
         with self.tx() as c:
             c.executescript(SCHEMA)
-            c.executescript("CREATE INDEX IF NOT EXISTS briefs_run ON briefs(run_id); CREATE INDEX IF NOT EXISTS assessments_version ON assessments(version_id); CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind);")
+            c.executescript("CREATE INDEX IF NOT EXISTS briefs_run ON briefs(run_id); CREATE INDEX IF NOT EXISTS assessments_version ON assessments(version_id); CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind); CREATE INDEX IF NOT EXISTS events_writer_version ON events(json_extract(data,'$.version_id'),seq) WHERE kind='writer_version';")
             from .schedules import SCHEMA as SCHEDULE_SCHEMA
             c.executescript(SCHEDULE_SCHEMA)
             from .evidence import SCHEMA as EVIDENCE_SCHEMA
@@ -471,7 +471,7 @@ class Store:
         acquired=self.rows('SELECT source_id FROM run_sources WHERE run_id=? ORDER BY rowid',(run_id,))
         return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
 
-    def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
+    def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent', writer=None):
         # Explicit source-document imports are user-authored first versions,
         # not generated drafts or revisions that should trigger learning.
         if author not in ('agent', 'example', 'user', 'import'):raise ValueError('无效稿件作者')
@@ -542,11 +542,14 @@ class Store:
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, author, draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
+                if author=='agent':
+                    from .version_execution import insert_receipt
+                    insert_receipt(c,vid,sha,writer)
             for ref in detail['citations']:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None, *, citations=None, author='user', allow_markdown_conversion=False):
+    def revise(self, base_version, markdown='', editor_document=None, *, citations=None, author='user', allow_markdown_conversion=False, writer=None):
         if author not in ('user','agent'):raise ValueError('无效修订作者')
         if type(allow_markdown_conversion) is not bool:raise ValueError('明确转换标记必须是布尔值')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
@@ -612,6 +615,9 @@ class Store:
                     detail['report_data_needs_review']=True
             sha=document_hash(editor_document) if editor_document is not None else content_hash(markdown)
             c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, base["run_id"], base_version, author, markdown, sha, dump(detail), dump(editor_document) if editor_document is not None else None, now()))
+            if author=='agent':
+                from .version_execution import insert_receipt
+                insert_receipt(c,vid,sha,writer)
             if author=='user' and semantic_signature(markdown)!=semantic_signature(base['markdown']):
                 c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (uid("feedback"), vid, "revision", dump({"before": base_version, "after": vid}), None, now()))
         return self.one("briefs", vid)
@@ -908,6 +914,8 @@ class Store:
             length_mode=req.get('length_mode','soft'),length_requirement=req.get('length_requirement'))
         from .report_browsing import context
         brief['context']=context(self,version_id)
+        brief['execution_provenance']=brief['context']['execution_provenance']
+        brief['execution_revision']=brief['context']['execution_revision']
         brief['latest_version_id']=brief['context']['latest']['id']
         brief['position']=self.rows('SELECT rowid AS position FROM briefs WHERE id=?',(version_id,))[0]['position']
         from .plain_isolation import public_notes

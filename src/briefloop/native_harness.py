@@ -334,7 +334,8 @@ class NativeHarness:
                 status = 'cancelled'
                 return
             try:
-                self._engine_session(sid, config, session['cwd'])
+                reported=self._engine_session(sid, config, session['cwd'])
+                self.chat.event(sid,'runtime/reported',{'message_id':mid,'backend':'briefloop-native','model':reported.get('model'),'effort':reported.get('thinking'),'source':'native.session_response'})
             except Exception as exc:
                 self.chat.event(sid, 'runtime/admission',
                                 {'execution_id': execution, 'status': 'failed'})

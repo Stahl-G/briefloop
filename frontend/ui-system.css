@@ -471,6 +471,11 @@ body{font-variant-numeric:tabular-nums}
 
 .rail-tabs [data-report-tab="assistant"]{display:inline-flex;align-items:center;gap:var(--space-1)}
 
+.report-version-info dd{overflow-wrap:anywhere}
+.report-version-info .muted,.report-chat-help p{font-size:var(--text-sm);color:var(--color-text-muted);line-height:var(--leading-normal)}
+.report-version-info summary,.report-chat-help summary{cursor:pointer;color:var(--color-text-secondary);font-size:var(--text-sm)}
+.report-chat-help{position:relative}
+.report-chat-help[open] p{position:absolute;right:0;top:100%;z-index:var(--z-dropdown);width:220px;padding:var(--space-3);background:var(--surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-md)}
 /* Shared execution chooser, staged until Apply. */
 #runtime-model-picker{width:min(calc(var(--rail-width) + var(--space-6)),calc(100% - var(--space-6)));max-height:calc(100% - var(--space-6));padding:var(--space-4);overflow:auto}
 #runtime-model-picker .section-title{gap:var(--space-3);margin-bottom:var(--space-3)}

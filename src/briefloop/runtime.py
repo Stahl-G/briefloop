@@ -1271,7 +1271,9 @@ class Worker:
                                  +'）；原稿保留在 draft-invalid.json') from None
             sha=document_hash(normalized.editor_document)
             known={row['id'] for row in self.store.rows('SELECT id FROM briefs WHERE run_id=?',(run['id'],))}
-            try:record=self.store.publish(run['id'],data,version_id=vid)
+            from .version_execution import publication
+            writer=publication(self.store,job,draft=data)
+            try:record=self.store.publish(run['id'],data,version_id=vid,writer=writer)
             except Conflict:
                 for row in self.store.rows("SELECT id,hash FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid DESC",(run['id'],)):
                     if row['hash']!=sha or not self.store.generated_by(row['id'],job['id']):continue
@@ -1281,11 +1283,12 @@ class Worker:
                 newest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]['id']
                 if newest!=latest[0]:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
-                try:record=self.store.publish(run['id'],data,parent_id=latest[0])
+                try:record=self.store.publish(run['id'],data,parent_id=latest[0],writer=writer)
                 except Conflict:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
             latest[0]=record['id']
-            if record['id'] not in known:self._remember_generated_sources(folder,record)
+            if record['id'] not in known:
+                self._remember_generated_sources(folder,record)
             from .review_capability import review_available
             if (not draft_first and self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
                     and json.loads(run['requirements']).get('writing_mode')=='internal_report'
@@ -1493,7 +1496,8 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
                 from .document_model import markdown_document
                 value['editor_document']=markdown_document(value['markdown'])
             try:
-                revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'])
+                from .version_execution import publication
+                revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'],writer=publication(self.store,job,revision=True))
                 self._remember_generated_sources(folder,revised)
             except Conflict as exc:
                 latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']

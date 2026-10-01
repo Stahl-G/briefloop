@@ -363,6 +363,8 @@ class InteractiveRuntime:
                         finals=[m for m in replies if m.get('phase')=='final_answer' or m.get('channel')=='final']
                         final=(finals or replies)[-1]['text'] if replies else ''
                         if not final.strip():raise ValueError('模型未返回完整正文，运行记录已保留')
+                        from .version_execution import record_plain_output
+                        record_plain_output(self.store,job,folder.name,final,sid,binding['message_id'])
                         filesystem_path(folder/'response.txt').write_text(final,encoding='utf-8')
                     if status=='completed' and job.get('readonly_output'):
                         name=job['readonly_output']
