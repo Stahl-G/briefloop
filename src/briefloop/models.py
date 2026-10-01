@@ -294,7 +294,7 @@ class ReviewRuntime(RoleModel):
     """The backend and model the independent Reviewer runs on, chosen apart
     from the main chain. Mode-specific capability admission decides whether
     this backend can provide standard or strict review."""
-    backend: Literal['codex', 'opencode', 'briefloop-native']
+    backend: Literal['codex', 'opencode','briefloop-native','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode']
     model: str = Field(min_length=1, max_length=100)
     model_variant: str | None = Field(default=None, min_length=1, max_length=100)
 

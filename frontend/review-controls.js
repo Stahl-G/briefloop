@@ -6,7 +6,9 @@ export const reviewModeLabel=review=>Object.hasOwn(REVIEW_MODES,review.review_mo
 
 export function reviewModeMetadataHTML(review,backendLabel=id=>id){
  const mode=review.review_mode,known=Object.hasOwn(REVIEW_MODES,mode);
- return `<p class="help" data-testid="review-mode-record">${esc(reviewModeLabel(review))}${known?' · '+esc(SCOPE[mode]):''}${review.review_backend?' · 执行后端：'+esc(backendLabel(review.review_backend)):''}</p>`;
+ const observed=review.review_isolation==='observed';
+ const scope=observed?'执行引擎用自带权限运行，未强制只读'+(review.host_tools?.length?'；期间使用了：'+review.host_tools.join('、'):'；未报告工具调用'):known?SCOPE[mode]:'';
+ return `<p class="help" data-testid="review-mode-record">${esc(reviewModeLabel(review))}${scope?' · '+esc(scope):''}${review.review_backend?' · 执行后端：'+esc(backendLabel(review.review_backend)):''}</p>`;
 }
 
 // Choices and admission use server-declared capabilities. This module never

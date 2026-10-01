@@ -921,6 +921,8 @@ def review_status(store,version_id):
                 {**{k:r[k] for k in ('id','status','created')},'result':json.loads(r['result']) if r['result'] else None,
                  'review_mode':json.loads(r['data']).get('review_mode'),
                  'review_backend':json.loads(r['data']).get('review_backend'),
+                 'review_isolation':json.loads(r['data']).get('review_isolation'),
+                 'host_tools':json.loads(r['data']).get('host_tools',[]),
                  'claim_items':[{'claim_id':check['claim_id'],'statement':claim_text.get(check['claim_id'],'')}
                                 for check in (json.loads(r['result']).get('claim_checks',[]) if r['result'] else [])],
                  **_review_requirement_index(store,r)} for r in reviews],
@@ -998,8 +1000,10 @@ def run_review(store,runtime,job,version_id,folder):
         fingerprint,files=build_packet(store,version_id,folder);identity=uid('review')
         from .deliverable_spec import clause_items as _clause_items
         protocol='clauses_v1' if _clause_items(_snapshot(store,version_id)['requirements']) else 'legacy'
+        from .review_capability import review_isolation
         data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol,
-              'review_mode':review_mode,'review_backend':review_backend}
+              'review_mode':review_mode,'review_backend':review_backend,
+              'review_isolation':review_isolation(review_backend,review_mode)}
         with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',(identity,version_id,job['id'],fingerprint,'queued',dump(data),None,now(),now()))
         filesystem_path(marker).write_text(dump({'review_id':identity}),encoding='utf-8');review=get_review(store,identity)
     # A transport-complete result can have failed only schema admission. Retry
@@ -1127,6 +1131,11 @@ report_quote 如提供，须为本版正文或阅读预览中的连续原话，�
             validate_applicable_review(store,identity,version_id)
             repair=prompt+'\n上次回复的 JSON 结构未通过校验：'+str(exc)+'。仅修正字段结构，保留已完成核查的判断和依据，不重新研究或改稿。assessment.checks 是对象数组，可省略或使用 []，不能填写字符串数组。仍只回复完整 JSON。'
             runtime.execute(stage,repair,folder,resume_on_complete=True)
+        if review['data'].get('review_isolation')=='observed':
+            # What the host reported using while it reviewed on its own permissions.
+            from .plain_isolation import tool_uses
+            data={**review['data'],'host_tools':tool_uses(folder)}
+            with store.tx() as c:c.execute('UPDATE reviews SET data=?,updated=? WHERE id=?',(dump(data),now(),identity))
         return accept_review(store,identity,json.loads(filesystem_path(folder/'review.json').read_text(encoding='utf-8-sig')))
     except Exception as exc:
         with store.tx() as c:c.execute('UPDATE reviews SET status=?,updated=? WHERE id=? AND result IS NULL',('cancelled' if isinstance(exc,InterruptedError) else 'incomplete',now(),identity))

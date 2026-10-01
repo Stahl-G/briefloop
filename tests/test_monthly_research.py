@@ -87,3 +87,14 @@ def test_role_model_chosen_on_another_engine_follows_the_main_model(tmp_path):
     assert store.role_model_config()['evaluator']['model'] == 'gemini-3.8-flash'
     store.update_settings({'agent_backend': 'codex', 'model': 'gpt-6-sol'})
     assert store.role_model_config()['evaluator']['model'] == 'gpt-6-luna'
+
+
+def test_cli_hosts_review_on_their_own_permissions_and_say_so():
+    from briefloop.review_capability import review_available, review_isolation, require_for_fact_check, summary
+    for backend in ('claude', 'antigravity', 'codebuddy'):
+        assert review_available(backend) and review_isolation(backend) == 'observed'
+        require_for_fact_check(backend)  # no longer refused
+        assert not review_available(backend, review_mode='strict')
+    assert review_isolation('codex') == 'enforced' and review_isolation('briefloop-native', 'strict') == 'enforced'
+    choices = {c['id']: c for c in summary()['review_choices']}
+    assert choices['claude']['isolation'] == 'observed' and choices['codex']['isolation'] == 'enforced'

@@ -3,7 +3,7 @@
 Both use the same version/evidence/findings validation. Mode describes execution
 isolation, not whether an accepted semantic review is valid for delivery.
 """
-from .backends import BACKENDS, BACKEND_LABELS, REVIEW_ONLY_BACKENDS, supports, validate_backend
+from .backends import BACKENDS, BACKEND_LABELS, BRIDGE_BACKENDS, REVIEW_ONLY_BACKENDS, supports, validate_backend
 from .opencode_version import installed_major as _opencode_major
 
 CODE = 'review_backend_unsupported'
@@ -26,7 +26,19 @@ def restricted_review(backend):
 
 def standard_review(backend):
     backend = validate_backend(backend)
-    return supports(backend, 'standard_review') and (backend != 'opencode' or _opencode_major() in (1, 2))
+    if backend == 'opencode':
+        return supports(backend, 'standard_review') and _opencode_major() in (1, 2)
+    # CLI hosts without a verified read-only channel still review, on their own
+    # permissions; the review record says so instead of the user being blocked.
+    return supports(backend, 'standard_review') or backend in BRIDGE_BACKENDS
+
+
+def review_isolation(backend, review_mode='standard'):
+    """'enforced' when the host withholds writes/tools for the review, 'observed' when it runs natively."""
+    backend = validate_backend(backend)
+    if normalize_mode(review_mode) == 'strict' or supports(backend, 'standard_review'):
+        return 'enforced'
+    return 'observed'
 
 
 def supports_review(backend, review_mode='standard'):
@@ -53,6 +65,7 @@ def review_available(backend, review_runtime=None, review_mode='standard'):
 
 def review_choices(review_mode='standard'):
     return [{'id': name, 'label': BACKEND_LABELS[name], 'experimental': name in REVIEW_ONLY_BACKENDS,
+             'isolation': review_isolation(name, review_mode),
              'review_modes': [mode for mode in ('standard', 'strict') if supports_review(name, mode)]}
             for name in BACKENDS if supports_review(name, review_mode)]
 
