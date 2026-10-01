@@ -51,7 +51,24 @@
     },
     "dmg": {
       "sign": false,
-      "writeUpdateInfo": true
+      "writeUpdateInfo": true,
+      "background": "assets/dmg-background.png",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 210
+        },
+        {
+          "x": 390,
+          "y": 210,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "publish": null,
     "win": {

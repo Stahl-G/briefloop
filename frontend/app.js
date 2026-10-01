@@ -18,6 +18,8 @@ import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
 import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress,isLocalFileJob} from './job-presentation.js';
 import {taskProgressCard} from './task-progress.js';
+import {researchProcessHTML,processDisclosureKey} from './research-process.js';
+import {CitationPresentation,createCitationSources} from './citation-sources.js';
 import {copyText} from './clipboard.js';
 import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
@@ -54,6 +56,8 @@ import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
 import {reportExportUI} from './report-export.js';
 import {excelExportUI} from './excel-export.js';
 import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,lengthUnit,runLanguage} from './report-language.js';
+import {createMarketConvention} from './market-convention.js';
+import {MarketDataColors} from './market-decorations.js';
 import {createLengthControls} from './length-controls.js';
 import {createReportFormDefaults} from './report-form-defaults.js';
 import {sessionBudgetUI} from './session-budget.js';
@@ -88,7 +92,8 @@ document.addEventListener('click',e=>{const node=e.target.closest?.('.must-fix,.
 const parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
 let state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
-const reportSources=createReportSources({$,esc,getState:()=>state,getCurrent:()=>current,runSourceIds,sourceState,sourceStatusChip,sourceTitle,sourceHost,openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
+const reportSources=createReportSources({$,esc,getState:()=>state,getCurrent:()=>current,runSourceIds,sourceState,sourceStatusChip,sourceTitle,sourceHost,getEditor:()=>editor,reveal:()=>setReportTab('sources'),openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
+const citationSources=createCitationSources({element:$('editor'),getSources:()=>state?.sources||[],getCurrent:()=>current,focusSource:id=>reportSources.focus(id),openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
 const sessionBudget=sessionBudgetUI({$,api,action,notice,getState:()=>state});
 const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta,svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:closeSourceDrawer,onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
@@ -131,8 +136,8 @@ function figureIdFromUrl(value){
 function mapFigureImages(markdown,toApi,version){
  return markdown.replace(figureImagePattern,(whole,prefix,src,title='',suffix)=>{const id=figureIdFromUrl(src);if(!id)return whole;const target=toApi?'/api/figure?id='+encodeURIComponent(id)+'&version='+encodeURIComponent(version||''):'briefloop-figure:'+id;return prefix+target+title+suffix});
 }
-const toEditor=(md,version=current?.id)=>mapFigureImages(md.replace(/\\?\[@(src\\?_[a-zA-Z0-9]+)\\?\]/g,(_,raw)=>{const id=raw.replaceAll('\\','');return `[${(state.sources.findIndex(s=>s.id===id)+1)||'?'}](#source-${id})`}),true,version);
-const fromEditor=md=>mapFigureImages(md.replace(/\[([^\]]+)\]\(#source-(src_[a-zA-Z0-9]+)\)/g,(_,label,id)=>`${/^(?:\d+|\?)$/.test(label)?'':label}[@${id}]`),false);
+const toEditor=(md,version=current?.id)=>{const ids=[];return mapFigureImages(md.replace(/\\?\[@(src\\?_[a-zA-Z0-9_-]+)\\?\]/g,(_,raw)=>{const id=raw.replaceAll('\\','');if(!ids.includes(id))ids.push(id);return `[${ids.indexOf(id)+1}](#source-${id})`}),true,version)};
+const fromEditor=md=>mapFigureImages(md.replace(/\[([^\]]+)\]\(#source-(src_[a-zA-Z0-9_-]+)\)/g,(_,label,id)=>`${/^(?:\d+|\?)$/.test(label)?'':label}[@${id}]`),false);
 // END_FIGURE_EDITOR_MAPPING
 function updateDownloads(brief){
  const query='version='+encodeURIComponent(brief.id);$('download').href='/api/download?'+query;$('download-docx').href='/api/download?format=docx&'+query;
@@ -234,18 +239,18 @@ function openTask(job){
  else if(payload.run_id){if(!showPendingReport(payload.run_id))return;}
  page('report');refreshProgress();
 }
-const taskSnapshots=new Map(),taskExpanded=new Set(),taskMaterials=new Set(),taskActions=new Map();
+const taskSnapshots=new Map(),taskExpanded=new Map(),taskMaterials=new Set(),taskActions=new Map();
 let taskGraphRequest=null;
 function visibleReportTasks(){
  const all=(state.jobs||[]).filter(j=>taskLabel(j.kind)).sort((a,b)=>new Date(b.created)-new Date(a.created));
  const activeParents=new Set(all.filter(j=>['queued','running'].includes(j.status)).map(j=>j.id));
  return (renderTasks.showAll?all:all.filter(j=>['queued','running','failed','interrupted','cancelled'].includes(j.status)&&!activeParents.has(parse(j.payload).parent_job_id))).slice(0,15);
 }
-function taskCardHTML(j){const cached=taskSnapshots.get(j.id);return taskProgressCard(j,cached?.data,{label:bannerTitle(j)||taskLabel(j.kind),kindLabel:taskLabel(j.kind),expanded:taskExpanded.has(j.id),materials:taskMaterials.has(j.id),error:cached?.error,busy:taskActions.get(j.id)})}
+function taskCardHTML(j){const cached=taskSnapshots.get(j.id);return taskProgressCard(j,cached?.data,{label:bannerTitle(j)||taskLabel(j.kind),kindLabel:taskLabel(j.kind),expanded:taskExpanded.get(processDisclosureKey(j,cached?.data||{})),materials:taskMaterials.has(j.id),error:cached?.error,busy:taskActions.get(j.id)})}
 function bindTaskCards(){
  const box=$('report-task-cards');
  const mutate=async(id,route,label)=>{if(taskActions.has(id))return;taskActions.set(id,label);renderTasks();try{await action(()=>api(route,{job_id:id}))}finally{taskActions.delete(id);renderTasks()}};
- box.querySelectorAll('[data-task-detail]').forEach(d=>d.ontoggle=()=>{if(d.open)taskExpanded.add(d.dataset.taskDetail);else taskExpanded.delete(d.dataset.taskDetail)});
+ box.querySelectorAll('[data-task-detail]').forEach(d=>d.ontoggle=()=>{taskExpanded.set(d.dataset.processState,d.open)});
  box.querySelectorAll('[data-task-materials]').forEach(d=>d.ontoggle=()=>{if(d.open)taskMaterials.add(d.dataset.taskMaterials);else taskMaterials.delete(d.dataset.taskMaterials)});
  box.querySelectorAll('[data-task-open]').forEach(b=>b.onclick=()=>openTask(taskFor(b.dataset.taskOpen)));
  box.querySelectorAll('[data-task-stop]').forEach(b=>b.onclick=()=>mutate(b.dataset.taskStop,'stop','正在停止任务…'));
@@ -409,7 +414,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.filter(s=>s.status==='ready'&&s.usage!=='previous_report').forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');reportLanguageForm.restore(state.requirements?.language);initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();quickReport.sync();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.filter(s=>s.status==='ready'&&s.usage!=='previous_report').forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();office.syncSettingsToggle();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');reportLanguageForm.restore(state.requirements?.language);reportMarket.restore();initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();quickReport.sync();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} ${s.status!=='ready'||s.usage==='previous_report'?'disabled':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${esc(s.usage==='previous_report'?'往期报告 · 参考用途':sourceStatusLabel(s))}</span>${['failed','cancelled','interrupted'].includes(s.status)?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);if(s.status==='ready')selected.add(s.id);notice(sourceStatusLabel(s),['failed','cancelled','interrupted'].includes(s.status))}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -466,8 +471,8 @@ function tryOpenPending(){
  return false;
 }
 async function loadBrief(b){if(typeof reportBrowsing!=='undefined')return reportBrowsing.loadBrief(b);if(!b||'markdown' in b)return b;const bodies=openBrief.bodies||(openBrief.bodies=new Map()),cached=bodies.get(b.id);if(cached&&cached.hash===b.hash)return cached;const full=await api('brief?id='+encodeURIComponent(b.id));bodies.set(full.id,full);return full}
-function openBrief(b,{follow=false}={}){if(!b)return false;if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}if(!('markdown' in b)){const cached=openBrief.bodies?.get(b.id);if(!cached||cached.hash!==b.hash){/* Polled state lists versions only. Choosing one records the request; it opens (and clears pending reports) only when its body arrives and is still the latest choice. */if(openBrief.request?.id===b.id&&openBrief.request.hash===b.hash)return true;const request=openBrief.request={id:b.id,hash:b.hash};request.promise=loadBrief(b).then(full=>{if(openBrief.request!==request)return false;openBrief.request=null;return openBrief(full,{follow})}).catch(e=>{if(openBrief.request===request){openBrief.request=null;notice(e.message,true)}return false});return true}b=cached}openBrief.request=null;if(typeof reportBrowsing!=='undefined')reportBrowsing.adopt(b);(openBrief.bodies||(openBrief.bodies=new Map())).set(b.id,b);while(openBrief.bodies.size>6)openBrief.bodies.delete(openBrief.bodies.keys().next().value);pendingRun=null;followUpdates=follow;current=b;renderVersionSelect();syncPendingReport();renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:(state.briefs.find(x=>x.run_id===b.run_id)?.id||b.latest_version_id)===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=(state.briefs.find(x=>x.run_id===b.run_id)?.id||b.latest_version_id)!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
-function changed(){followUpdates=false;dirty=true;assessmentPanel.bumpDeliveryTicket();const check=$('assessment').querySelector('.delivery-checks');if(check)updatePanel(check,'有未保存修改；保存后重新检查。');renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
+function openBrief(b,{follow=false}={}){if(!b)return false;if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}if(!('markdown' in b)){const cached=openBrief.bodies?.get(b.id);if(!cached||cached.hash!==b.hash){/* Polled state lists versions only. Choosing one records the request; it opens (and clears pending reports) only when its body arrives and is still the latest choice. */if(openBrief.request?.id===b.id&&openBrief.request.hash===b.hash)return true;const request=openBrief.request={id:b.id,hash:b.hash};request.promise=loadBrief(b).then(full=>{if(openBrief.request!==request)return false;openBrief.request=null;return openBrief(full,{follow})}).catch(e=>{if(openBrief.request===request){openBrief.request=null;notice(e.message,true)}return false});return true}b=cached}openBrief.request=null;if(typeof reportBrowsing!=='undefined')reportBrowsing.adopt(b);(openBrief.bodies||(openBrief.bodies=new Map())).set(b.id,b);while(openBrief.bodies.size>6)openBrief.bodies.delete(openBrief.bodies.keys().next().value);pendingRun=null;followUpdates=follow;current=b;if(typeof citationSources!=='undefined')citationSources.hide();renderVersionSelect();syncPendingReport();renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:(state.briefs.find(x=>x.run_id===b.run_id)?.id||b.latest_version_id)===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,MarketDataColors,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,CitationPresentation.configure({getSources:()=>state?.sources||[]}),Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=(state.briefs.find(x=>x.run_id===b.run_id)?.id||b.latest_version_id)!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
+function changed(){reportSources.render();followUpdates=false;dirty=true;assessmentPanel.bumpDeliveryTicket();const check=$('assessment').querySelector('.delivery-checks');if(check)updatePanel(check,'有未保存修改；保存后重新检查。');renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
 $('version-select').onchange=e=>{const value=e.target.value;if(value.startsWith('run:'))showPendingReport(value.slice(4));else openBrief(state.briefs.find(b=>b.id===value));refreshProgress()};
 let savePromise=null,lastSaveError=null;
 function save(){
@@ -556,7 +561,7 @@ async function previewReportTime(){
  try{const requirements={title:form.elements.title.value||'预览',objective:form.elements.objective.value||'预览'};for(const key of ['period','period_start','period_end','report_timezone'])requirements[key]=form.elements[key].value;const t=await api('report-time-preview',{requirements});if(ticket!==reportTimePreviewTicket)return;reportFormDefaults.setWindow(t,requirements);box.textContent=`系统日期：${t.today} · ${t.timezone}；报告范围：${t.start} 至 ${t.end_exclusive}（不含结束时刻）。提交时冻结。`;}catch(e){if(ticket===reportTimePreviewTicket)box.textContent=e.message}
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(!['fast','fast_web'].includes(req.completion_mode)&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();reportFormDefaults.prepare(req);req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(!['fast','fast_web'].includes(req.completion_mode)&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();reportFormDefaults.prepare(req);reportMarket.prepare(req);req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){const s=await uploadSource(f);if(s.status==='ready')selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});if(s.status==='ready')selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
@@ -652,7 +657,7 @@ window.addEventListener('pageshow',()=>{startup.suspended=false;if(!startup.paus
 void startWorkspace();
 // END_WORKSPACE_STARTUP
 
-$('editor').addEventListener('click',e=>{const a=e.target.closest('a[href^="#source-"]');if(a){e.preventDefault();const id=a.getAttribute('href').slice(8);action(async()=>{const r=await api('source?id='+id);showSource(r)})}});
+
 
 function gradeSummary(a){return a?`评分：证据 ${a.evidence??'—'}/5 · 覆盖 ${a.coverage??'—'}/5 · 分析 ${a.analysis??'—'}/5 · 表达 ${a.expression??'—'}/5\n${a.summary}\n`:'尚未评分\n'}
 
@@ -680,11 +685,11 @@ function effectiveReportJobs(){
   return true;
  });
 }
-function stageRailHTML(stages){
- if(!Array.isArray(stages)||!stages.length)return '';
- const lanes=stages.filter(s=>s.agents&&s.agents.length);
- return `<div class="stage-rail">${stages.map(s=>`<div class="stage ${esc(s.status||'pending')}"><span class="stage-dot"></span><span class="stage-name">${esc(s.label)}</span></div>`).join('')}</div>`+
-  (lanes.length?`<div class="stage-lanes">${lanes.map(s=>`<div class="stage-lane"><span class="stage-lane-name">${esc(s.label)}</span><div class="stage-agents">${s.agents.map(a=>{const status=a.status||'running';const cls=['completed','done','closed'].includes(status)?'done':['failed','errored'].includes(status)?'failed':'running';return `<span class="agent-chip ${cls}" title="${esc(a.task||'')}"><i></i>${esc(a.role||'子任务')}</span>`}).join('')}</div></div>`).join('')}</div>`:'');
+const runProcessChoices=new Map();
+function runProcessHTML(job,p){return researchProcessHTML(job,p,{expanded:runProcessChoices.get(processDisclosureKey(job,p))})}
+function bindRunProcess(){
+ const detail=$('run-progress').querySelector?.('[data-process-state]');
+ if(detail)detail.ontoggle=()=>runProcessChoices.set(detail.dataset.processState,detail.open);
 }
 let progressRequest=null;
 function jobModelLabel(job,started={}){const payload=parse(job.payload),runtime=payload.runtime||started.runtime;const backend=runtime?.agent_backend||runtime?.backend||payload.agent_backend||payload.backend||started.agent_backend||started.backend;return modelLabel({...runtime,agent_backend:backend})}
@@ -692,11 +697,12 @@ function progressSelection(){
  const relevant=withoutSupersededRetries(effectiveReportJobs());
  const job=relevant.find(j=>j.status==='running')||relevant.find(j=>j.status==='queued');
  const paused=job?null:relevant.find(j=>['cancelled','interrupted','failed'].includes(j.status));
- return {job,paused,key:JSON.stringify([current?.id,pendingRun,(job||paused)?.id,(job||paused)?.status])};
+ const finished=!job&&!paused&&current?relevant.find(j=>j.status==='complete'&&['generate','revise','assess','review','fact_check'].includes(j.kind)):null;
+ return {job,paused,finished,key:JSON.stringify([current?.id,pendingRun,(job||paused||finished)?.id,(job||paused||finished)?.status])};
 }
 async function refreshProgress(){
  if(!state)return;
- const {job,paused,key}=progressSelection();
+ const {job,paused,finished,key}=progressSelection();
  if(progressRequest?.key===key)return;
  const request={key};progressRequest=request;
  // A stop, retry, completion or report switch supersedes old network replies.
@@ -705,6 +711,7 @@ async function refreshProgress(){
  try{
  if(typeof isLocalFileJob!=='undefined'&&isLocalFileJob(job||paused)){await localFileProgress.render(job||paused,isCurrent);return;}
  if(!job){
+ if(finished){const progress=await api('task-progress?job='+encodeURIComponent(finished.id));if(!isCurrent())return;$('run-progress').hidden=false;$('run-progress').innerHTML=runProcessHTML(finished,progress);bindRunProcess();return}
  $('run-progress').hidden=!paused;
  if(paused){const service=await api('runtime');if(!isCurrent())return;$('run-progress').innerHTML=`<div class="section-title"><h2>${paused.status==='failed'?'任务未完成':'任务已暂停'}</h2><button id="paused-resume" class="primary">恢复任务（沿用原模型）</button></div><p>当前没有继续执行这个任务。已有来源和产物保留。</p><p class="help">本地服务 PID ${service.server_pid||'—'}（页面与任务管理） · ${service.pid?'模型进程 PID '+service.pid:'本工作区没有模型进程'}</p><p class="help">${esc(paused.error||'')}</p><p class="help">恢复会沿用原来的模型与后端。审阅和学习也可按当前模型重试，旧任务记录会保留。</p>${['review','learn'].includes(paused.kind)?`<button id="paused-retry-current" class="outline">${paused.kind==='learn'?'确认预算后重试':'按当前模型重试'}</button>`:''}<button id="paused-settings" class="outline">修改模型与要求</button><button id="paused-dismiss" class="outline">清除这个任务</button>`;if($('paused-retry-current'))$('paused-retry-current').onclick=()=>action(()=>retryLearning(paused));$('paused-settings').onclick=()=>page('setup');$('paused-resume').onclick=()=>action(()=>api('resume',{job_id:paused.id}),'已按页面显示的模型提交');$('paused-dismiss').onclick=()=>action(()=>api('task-dismiss',{job_id:paused.id}),'已清除这个未完成任务')}
  return
@@ -714,7 +721,7 @@ async function refreshProgress(){
    $('run-progress').hidden=false;$('run-progress').innerHTML=`<div class="section-title"><h2>${job.status==='queued'?'来源复查已排队':'正在复查来源'}</h2><button class="outline" id="progress-stop">停止任务</button></div><p>${esc(source?.name||'当前来源')}</p><p class="help">按本轮联网范围和预算获取新快照；已有来源与报告保留。复查完成后，来源变化仍需判断和复核。</p>`;
    $('progress-stop').onclick=()=>action(()=>api('stop',{job_id:job.id}));return;
   }
-  const [events,live]=await Promise.all([api('events?job='+job.id),api('runtime?job_id='+encodeURIComponent(job.id))]);
+  const [events,live,publicProgress]=await Promise.all([api('events?job='+job.id),api('runtime?job_id='+encodeURIComponent(job.id)),api('task-progress?job='+encodeURIComponent(job.id))]);
   if(!isCurrent())return;
   const last=[...events].reverse().find(e=>e.kind==='runtime_progress');
   const p=last?parse(last.data):{};p.started=[...events].reverse().find(e=>e.kind==='job_started')?.created;const started=[...events].reverse().find(e=>e.kind==='runtime_started');const start=started?parse(started.data):{};
@@ -727,15 +734,14 @@ async function refreshProgress(){
   }
   const run=state.runs.find(r=>r.id===parse(job.payload).run_id);
   const req=run?parse(run.requirements):{};
-  const agents=p.agents||[];
   const stageLabel=typeof p.stage==='string'?p.stage:(p.stages||[]).find(item=>item.status==='active')?.label;
   const elapsed=Math.max(0,Math.floor((Date.now()-new Date(p.started||job.created))/1000));
   const mins=Math.floor(elapsed/60),secs=elapsed%60;
   // Independent review/check jobs need not own the main runtime's PID.
   const running=job.status==='running';
-  const labels={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败'};
   $('run-progress').hidden=false;
-  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${taskLabel(job.kind)||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">${job.status==='queued'?'排队等待':p.started?'已执行':'起始时间待确认'} ${job.status==='queued'||p.started?`${mins} 分 ${secs} 秒`:''} · ${req.target_minutes?'目标约 '+req.target_minutes+' 分钟'+(running&&p.started&&elapsed>req.target_minutes*60?' · 已超过目标，继续执行':''):'未设目标用时'}${req.hard_timeout_minutes?' · 单轮最长运行 '+req.hard_timeout_minutes+' 分钟':''} <button id="progress-timeout" class="subtle-button">后续任务设置</button>${run?` · ${run.initial_source_count??parse(run.source_ids||'[]').length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+clock(p.last_activity):''}</p>`;
+  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${taskLabel(job.kind)||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">${job.status==='queued'?'排队等待':p.started?'已执行':'起始时间待确认'} ${job.status==='queued'||p.started?`${mins} 分 ${secs} 秒`:''} · ${req.target_minutes?'目标约 '+req.target_minutes+' 分钟'+(running&&p.started&&elapsed>req.target_minutes*60?' · 已超过目标，继续执行':''):'未设目标用时'}${req.hard_timeout_minutes?' · 单轮最长运行 '+req.hard_timeout_minutes+' 分钟':''} <button id="progress-timeout" class="subtle-button">后续任务设置</button>${run?` · ${run.initial_source_count??parse(run.source_ids||'[]').length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${runProcessHTML(job,{...publicProgress,stage:pendingRequests.length?'等待你的确认':publicProgress.stage||stageLabel,started:publicProgress.started||p.started})}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+clock(p.last_activity):''}</p>`;
+  bindRunProcess();
   if(pendingRequests.length){
    $('run-progress').insertAdjacentHTML('beforeend',`<div class="agent-question" role="status"><strong>有 ${pendingRequests.length} 项操作等待确认</strong><p>打开任务对话，查看具体操作并选择允许、拒绝或补充信息。回答后任务会继续。</p><button id="progress-requests" class="primary">查看并处理</button></div>`);
    $('progress-requests').onclick=()=>selectChat(taskSession);
@@ -1601,7 +1607,9 @@ lengthControls.init();
 const reportFormDefaults=createReportFormDefaults({$,onChange:()=>{validateLengthInputs();reflectBudgetPreset()}});
 reportFormDefaults.init();
 // Automatic lengths follow language, purpose, research depth and report period.
-const reportLanguageForm=reportLanguageUI({notice,onChange:()=>reportFormDefaults.sync()});
+const reportMarket=createMarketConvention({$,api,notice,getState:()=>state,getCurrent:()=>current});
+reportMarket.init();
+const reportLanguageForm=reportLanguageUI({notice,onChange:()=>{reportFormDefaults.sync();reportMarket.syncLanguage()}});
 reportLanguageForm.init();
 function presetLengths(extent){const presets=LANGUAGE_LENGTHS[reportLanguageForm.current()];return presets[extent]||presets.balanced}
 function initializeLengthInputs(requirements){
@@ -2123,6 +2131,7 @@ function renderReportStatus(){
 }
 function renderAssistantSummary(){
  reportSources.render();
+ reportMarket.render();
  const box=$('assistant-summary');if(!box)return;
  if(!current){box.innerHTML='';return}
  const run=(state.runs||[]).find(r=>r.id===current.run_id),req=run?parse(run.requirements):{};
@@ -2155,10 +2164,10 @@ document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{c
 try{if(localStorage.getItem('briefloop-report-panel')==='closed')collapseReportPanel()}catch{}
 /* ===== Object pages: reports / sources / templates ===== */
 function reportStatus(b){
- if(b.report_status){const labels={scored:'已评分',released:'已正式交付',running:'处理中',draft:'草稿'};return {key:b.report_status,label:labels[b.report_status]+(b.report_status==='scored'&&b.assessment_overall?' · '+b.assessment_overall:''),cls:['scored','released'].includes(b.report_status)?'ok':''}}
+ if(b.report_status){const labels={scored:'已评分',released:'已正式交付',running:'处理中',draft:'草稿'};return {key:b.report_status,label:labels[b.report_status]+(b.report_status==='scored'&&b.assessment_overall?' · '+b.assessment_overall:''),cls:b.report_status==='released'?'delivered':b.report_status==='scored'?'ok':''}}
  const a=(state.assessments||[]).find(x=>x.version_id===b.id);
  if(a){const d=parse(a.data);if(d.status==='complete')return {key:'scored',label:'已评分'+(d.overall?' · '+d.overall:''),cls:'ok'}}
- if((state.jobs||[]).some(j=>j.kind==='release'&&j.status==='complete'&&parse(j.payload).version_id===b.id))return {key:'released',label:'已正式交付',cls:'ok'};
+ if((state.jobs||[]).some(j=>j.kind==='release'&&j.status==='complete'&&parse(j.payload).version_id===b.id))return {key:'released',label:'已正式交付',cls:'delivered'};
  if((state.jobs||[]).some(j=>['generate','revise','assess','review'].includes(j.kind)&&['queued','running'].includes(j.status)&&(()=>{const p=parse(j.payload);return p.run_id===b.run_id||p.version_id===b.id})()))return {key:'running',label:'处理中',cls:''};
  return {key:'draft',label:'草稿',cls:''};
 }
@@ -2175,7 +2184,7 @@ function runConflicts(runId){
 function reportDescription(b){if(b.objective)return b.objective;const run=(state.runs||[]).find(r=>r.id===b.run_id);const req=run?parse(run.requirements):{};if(req.objective)return req.objective;const md=(b.markdown||b.excerpt||'').replace(/[#>*`\[\]]/g,' ').replace(/\s+/g,' ').trim();return md.slice(0,120)}
 function renderReports(){reportBrowsing.render()}
 function sourceState(s){return s.status!=='ready'?s.status:s.needs_visual?'visual':'ready'}
-function sourceStatusChip(st){return `<span class="chip ${st==='ready'?'ok':st==='visual'?'warn':'danger'}">${st==='ready'?'可用':st==='visual'?'需视觉读取':esc(sourceStatusLabel({status:st}))}</span>`}
+function sourceStatusChip(st){return `<span class="chip ${st==='ready'?'success':st==='visual'?'warn':'danger'}">${st==='ready'?'可用':st==='visual'?'需视觉读取':esc(sourceStatusLabel({status:st}))}</span>`}
 function sourceIsWeb(s){return !!(s&&s.url)}
 function sourceHost(s){try{return new URL(s.url||s.name).hostname.replace(/^www\./,'')}catch{return ''}}
 function sourceTitle(s){const n=(s&&s.name)||'';let label;if(n&&!/^https?:\/\//i.test(n))label=n;else{const u=(s&&s.url)||n;try{const p=new URL(u);let seg=decodeURIComponent((p.pathname.split('/').filter(Boolean).pop()||''));seg=seg.replace(/\.[a-z0-9]{1,5}$/i,'').replace(/[-_]+/g,' ').trim();label=seg||p.hostname.replace(/^www\./,'')}catch{label=n||(s&&s.id)||'来源'}}return label.length>160?label.slice(0,159)+'…':label}

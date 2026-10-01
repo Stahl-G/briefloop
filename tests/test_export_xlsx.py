@@ -106,7 +106,8 @@ def test_base_render_typing_merges_styles_and_result_record(tmp_path):
     workbook = _open(tmp_path, result)
     assert workbook.sheetnames == ['目录', '区域对比-华东', '区域对比-华东-2']  # both tables share the heading
     merged = workbook['区域对比-华东']
-    assert [str(span) for span in merged.merged_cells.ranges] == ['A2:A3']
+    assert {str(span) for span in merged.merged_cells.ranges} == {'A2:A3', 'A5:B5'}
+    assert merged['A5'].value == '本文件包含人工智能生成内容，请核实后使用'
     header = merged['A2']
     assert header.font.bold is True and header.fill.fill_type == 'solid'
     assert 'E8F0F8' in str(header.fill.start_color.rgb).upper()

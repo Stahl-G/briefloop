@@ -18,7 +18,7 @@ from .document_model import brief_document, table_layout
 from .platform_support import filesystem_path, path_redirected
 
 LAYOUTS = ('sheets', 'single')
-XLSX_RENDERER_VERSION = 4
+XLSX_RENDERER_VERSION = 5
 NO_TABLES_MESSAGE = '报告没有可导出的表格，无需生成 Excel'
 INDEX_SHEET_TITLE = '目录'
 # openpyxl rejects ':\\/?*[]' and control characters in sheet titles, silently
@@ -48,7 +48,8 @@ def export_xlsx_input(store, brief, layout_id, *, enhanced=None):
     document = brief_document(brief)
     if enhanced is None:
         enhanced = office_cli.enhancement_ready(store)
-    return {'renderer': XLSX_RENDERER_VERSION, 'layout': layout_id, 'enhanced': bool(enhanced),
+    from .export_labeling import brief_label
+    return {'ai_label': brief_label(store, brief, language=requirements.get('language')), 'renderer': XLSX_RENDERER_VERSION, 'layout': layout_id, 'enhanced': bool(enhanced),
             'version_id': brief['id'], 'brief_hash': brief['hash'],
             'document': document, 'detail': json.loads(brief['detail']),
             'requirements': requirements}
@@ -387,6 +388,13 @@ def _literal_text(target, text):
     return target
 
 
+def _authored_text_colors(node):
+    if not node: return []
+    colors = [mark.get('attrs', {}).get('color') for mark in node.get('marks', [])
+              if mark.get('type') == 'textStyle' and mark.get('attrs', {}).get('color')]
+    return colors + [color for child in node.get('content', []) for color in _authored_text_colors(child)]
+
+
 def _paint_cell(target, text, cell, *, header_row):
     from openpyxl.styles import Alignment, Font, PatternFill
     attrs = cell.get('attrs', {}) if cell else {}
@@ -407,6 +415,10 @@ def _paint_cell(target, text, cell, *, header_row):
     target.alignment = Alignment(**alignment)
     if cell is not None and cell.get('type') == 'tableHeader':
         target.font = Font(bold=True)
+    authored = set(_authored_text_colors(cell))
+    if len(authored) == 1:
+        from copy import copy
+        font = copy(target.font); font.color = next(iter(authored)).lstrip('#'); target.font = font
 
 
 def _paint_table(ws, model, top):
@@ -492,7 +504,7 @@ def _fit_sheet(ws, models=(), *, contents=False):
                 ws.row_dimensions[number].height = max(ws.row_dimensions[number].height or 0, height)
 
 
-def xlsx_bytes(document, detail, requirements, layout_id):
+def xlsx_bytes(document, detail, requirements, layout_id, *, label=None):
     """Deterministic openpyxl rendering; the base artifact needs no OfficeCLI."""
     from openpyxl import Workbook
     global _BORDER
@@ -517,8 +529,8 @@ def xlsx_bytes(document, detail, requirements, layout_id):
         _literal_text(index.cell(row=1, column=1), title).font = Font(bold=True)
         if report_date:
             _literal_text(index.cell(row=2, column=1), report_date)
-        for column, label in enumerate(labels['columns'], 1):
-            cell = index.cell(row=3, column=column, value=label)
+        for column, heading_label in enumerate(labels['columns'], 1):
+            cell = index.cell(row=3, column=column, value=heading_label)
             cell.font = Font(bold=True)
         for row, model in enumerate(models, 4):
             index.cell(row=row, column=1, value=row - 3)
@@ -533,9 +545,28 @@ def xlsx_bytes(document, detail, requirements, layout_id):
             # Freeze below the header row (title row 1 + header row 2 → A3); a
             # worksheet has one frozen pane, so 'single' freezes nothing at all.
             sheet.freeze_panes = f'A{model["title_row"] + (1 if model["header"] else 0) + 1}'
+    from copy import copy
+    from .market_convention import market_colors, semantic_delta_spans
+    from .export_labeling import add_xlsx_notice, office_properties, export_properties
+    colors = market_colors(requirements)
+    for model in models:
+        sheet = workbook[model['sheet']]
+        for index, texts in enumerate(model['texts']):
+            if model['header'] and index == 0: continue
+            for column, value in enumerate(texts):
+                context = model['texts'][0][column] if model['header'] and not model['spans'] else ''
+                spans = semantic_delta_spans(value, context=context)
+                # Whole-cell font color is safe only for one complete numeric/arrow
+                # value. Mixed prose/directions stay neutral instead of miscoloring.
+                if (len(spans) == 1 and not value[:spans[0][0]].strip() and not value[spans[0][1]:].strip()
+                        and not _authored_text_colors(model['rows'][index][column])):
+                    target = sheet.cell(_grid_row(model, index), column+1)
+                    font = copy(target.font); font.color = colors[spans[0][2]]; target.font = font
+                    alignment = copy(target.alignment); alignment.horizontal = 'right'; target.alignment = alignment
+    add_xlsx_notice(workbook, label)
     buffer = BytesIO()
     workbook.save(buffer)
-    return buffer.getvalue()
+    return office_properties(buffer.getvalue(), export_properties(label, requirements))
 
 
 def _enhanced_mismatches(staging, plan, base_blob):
@@ -545,6 +576,11 @@ def _enhanced_mismatches(staging, plan, base_blob):
     ZIP alone is insufficient: a renderer may drop a sheet or overwrite text.
     """
     import warnings
+    from .export_labeling import read_office_properties
+    required = read_office_properties(base_blob)
+    found = read_office_properties(filesystem_path(staging).read_bytes())
+    if any(found.get(key) != value for key, value in required.items()):
+        raise ValueError('增强工作簿未保留导出元数据标识')
     from openpyxl import load_workbook
     with warnings.catch_warnings():
         # officecli writes data bars as an x14 extension; openpyxl warns on read.
@@ -560,6 +596,8 @@ def _enhanced_mismatches(staging, plan, base_blob):
             changes = {item['path']: item['props'] for item in plan['commands'] if item['command'] == 'set'}
             for sheet in base:
                 actual = enhanced[sheet.title]
+                if any(str(getattr(actual, kind)) != str(getattr(sheet, kind)) for kind in ('oddFooter','evenFooter','firstFooter')):
+                    raise ValueError('增强工作簿未保留打印标识')
                 if ((actual.max_row, actual.max_column) != (sheet.max_row, sheet.max_column)
                         or set(actual.merged_cells.ranges) != set(sheet.merged_cells.ranges)):
                     raise ValueError('增强工作簿的表格结构与基础件不一致')
@@ -607,7 +645,7 @@ def generate_xlsx(store, job, cancelled):
         raise ValueError('导出输入已变化，请对当前报告重新生成 Excel')
     detail, requirements, layout_id = identity['detail'], identity['requirements'], payload['layout']
     stage(2, '展开表格并生成工作簿')
-    blob = xlsx_bytes(identity['document'], detail, requirements, layout_id)
+    blob = xlsx_bytes(identity['document'], detail, requirements, layout_id, label=identity['ai_label'])
     stage(3, '写入 Excel 文件' + ('并应用增强' if payload.get('enhanced') else ''))
     destination = output_path_xlsx(store, job)
     temporary = destination.with_suffix('.tmp')

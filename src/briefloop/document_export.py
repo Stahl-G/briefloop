@@ -107,7 +107,7 @@ def without_duplicate_cover_heading(document,title):
     return result
 
 
-def render_document(doc, document, *, figures=None, sources=None, citations=None, append_sources=True, styles=None, language=None):
+def render_document(doc, document, *, figures=None, sources=None, citations=None, append_sources=True, styles=None, language=None, protected_runs=None):
     from .industry_export import append_figure
     labels = reader_labels(language)
     document = normalize_document(document); figures = figures or {}; sources = sources or {}; styles = styles or {}
@@ -189,6 +189,8 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
             if 'code' in marks: run.font.name = 'Consolas'
             if marks.get('textStyle', {}).get('color'):
                 run.font.color.rgb = RGBColor.from_string(marks['textStyle']['color'][1:])
+            if protected_runs is not None and ('code' in marks or marks.get('textStyle', {}).get('color')):
+                protected_runs.add(run._r)
             if href:
                 link = OxmlElement('w:hyperlink')
                 link.set(qn('r:id'), paragraph.part.relate_to(href, RELATIONSHIP_TYPE.HYPERLINK, is_external=True))
@@ -212,6 +214,8 @@ def render_document(doc, document, *, figures=None, sources=None, citations=None
             if attrs.get('textAlign'): p.alignment = ALIGN[attrs['textAlign']]
             if depth: p.paragraph_format.left_indent = Mm(depth * 5)
             inline(p, children)
+            if kind == 'codeBlock' and protected_runs is not None:
+                protected_runs.update(run._r for run in p.runs)
             # Short standalone bold labels are commonly authored as paragraphs
             # before lists. Keep the label with its first item in Word.
             if (kind == 'paragraph' and not list_style and children

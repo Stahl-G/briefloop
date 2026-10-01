@@ -225,6 +225,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,snapshot)
                 elif u.path=='/api/brief':
                     self.send(200,store.brief_view(q['id'][0]))
+                elif u.path=='/api/export-label':
+                    from .export_labeling import brief_label
+                    from .market_convention import resolve_market
+                    if q.get('workspace_id', [store.meta('workspace_id')])[0] != store.meta('workspace_id'):
+                        raise ValueError('工作区已切换，请在原工作区导出')
+                    brief = store.one('briefs', q['version'][0])
+                    requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
+                    self.send(200, {'label': brief_label(store, brief, language=requirements.get('language')),
+                                    'market_convention': resolve_market(requirements)})
                 elif u.path=='/api/reports':
                     from .report_browsing import reports
                     self.send(200,reports(store,**{key:q[key][0] for key in ('cursor','limit','q','status','days','sources','source_id') if key in q}))
@@ -486,6 +495,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
                     from .exports import reader_markdown,docx_bytes
+                    from .export_labeling import brief_label, markdown_label
+                    label=brief_label(store,b)
                     md=reader_markdown(store,b)
                     if q.get('format',['md'])[0]=='bundle':
                         from .figure_support import markdown_bundle
@@ -501,9 +512,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                             report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
                             period=req.get('period',''),report_data=report_data,figures=export_figures(store,b),
                             document=json.loads(b['editor_document']) if b.get('editor_document') else None,
-                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])},citations=detail.get('citations',[])),
+                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])},citations=detail.get('citations',[]),label=label,requirements=req),
                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
-                    else:self.send(200,md.encode(),'text/markdown; charset=utf-8',download_name='report.md')
+                    else:self.send(200,markdown_label(md,label).encode(),'text/markdown; charset=utf-8',download_name='report.md')
                 elif u.path in ('/','/index.html'):
                     self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
                 elif u.path[1:] in icon_names:
@@ -564,6 +575,27 @@ def _make_server(workspace, port, *, paused, backend, lock):
             from .source_ingestion import receive_upload
             source=receive_upload(store,name,n,lambda sink:self._read_body(n,upload=True,sink=sink))
             self.send(202,source)
+        def _label_pdf(self):
+            self.close_connection=True  # validation may reject before consuming the raw body
+            from .export_labeling import brief_label, pdf_properties
+            query=parse_qs(urlsplit(self.path).query)
+            if query.get('workspace_id', [''])[0] != store.meta('workspace_id'):
+                raise ValueError('工作区已切换，请在原工作区导出 PDF')
+            brief=store.one('briefs', query.get('version', [''])[0])
+            requirements=json.loads(store.one('runs', brief['run_id'])['requirements'])
+            from .market_convention import resolve_market
+            if query.get('market_convention', [''])[0] != resolve_market(requirements):
+                raise ValueError('报告配色设置已变化，请重新导出 PDF')
+            n=int(self.headers.get('Content-Length','0'))
+            if not 0<n<=MAX_PDF_UPLOAD_BYTES:
+                self.close_connection=True
+                self.send(413, {'error':'PDF 为空或超过 100 MiB，未写入导出标识'});return
+            data=self._read_body(n)
+            if not data.startswith(b'%PDF-'):raise ValueError('PDF 文件格式无效')
+            try:result=pdf_properties(data, brief_label(store, brief), requirements)
+            except Exception as error:raise ValueError('PDF 导出标识未能写入，请重新导出') from error
+            self.send(200,result,'application/pdf')
+
         def do_POST(self):
             path=urlsplit(self.path).path
             control=path in ('/api/service-stop','/api/stop','/api/harness/cancel','/api/connectors/task-revoke')
@@ -595,6 +627,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 expected=f'http://127.0.0.1:{self.server.server_port}'
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
                     self.send(403,{'error':'页面会话已过期，请刷新后重试'});return
+                if urlsplit(self.path).path=='/api/export-pdf-label':
+                    self._label_pdf();return
                 if urlsplit(self.path).path=='/api/upload-file':
                     self._upload_file();return
                 n=int(self.headers.get('Content-Length','0'))
@@ -732,6 +766,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         raise ValueError('工作区已切换，请回到原工作区重新选择文件')
                     from .template_conversion import convert_request
                     result=convert_request(store,body['name'],_upload_data(body),body['template_id'],body.get('request_id'))
+                elif path=='/api/report-settings':
+                    from .market_convention import save_report_settings
+                    result=save_report_settings(store,body)
                 elif path=='/api/reports/delete':result=store.delete_report(body['version_id'])
                 elif path=='/api/export':
                     if body.get('workspace_id',store.meta('workspace_id'))!=store.meta('workspace_id'):

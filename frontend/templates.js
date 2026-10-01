@@ -31,7 +31,7 @@ export const ICONS={
  // Two buildings separated by a slash — competitor / dual-entity compare (Downloads icon ref)
  buildingsSlash:'<path d="M4 21V9.5L9 6v15"/><path d="M4 21h7"/><line x1="6.2" y1="11" x2="7.8" y2="11"/><line x1="6.2" y1="14" x2="7.8" y2="14"/><line x1="6.2" y1="17" x2="7.8" y2="17"/><line x1="13.2" y1="5.5" x2="17.8" y2="18.5"/><path d="M14 21v-9.5L18.5 8.5V21"/><path d="M14 21h7"/><line x1="16" y1="14" x2="17.5" y2="14"/><line x1="16" y1="17" x2="17.5" y2="17"/>',
 };
-const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
+const THEME_COLORS={'品牌黛蓝':'#2448B8','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
 const THEME_ORDER=Object.keys(THEME_COLORS);
 export function splitTemplateName(name){const i=name.lastIndexOf('·');return i<0?{genre:name,theme:''}:{genre:name.slice(0,i),theme:name.slice(i+1)}}
 // Reinstalled builtins can retain earlier hashes. Show one ready, newest
@@ -58,7 +58,7 @@ export function templatesUI({notice,action,page,renderWorkflowChoices,templateSe
   if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
   if(!choices.some(t=>t.id===templatePick&&t.status==='ready')){
    const saved=list.find(t=>t.id===state.settings?.default_template_id),sameStyle=saved&&builtins.find(t=>t.name===saved.name&&t.status==='ready');
-   templatePick=(choices.find(t=>t.id===saved?.id&&t.status==='ready')||sameStyle||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌绿'&&t.status==='ready')||choices.find(t=>t.status==='ready'))?.id||null;
+   templatePick=(choices.find(t=>t.id===saved?.id&&t.status==='ready')||sameStyle||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌黛蓝'&&t.status==='ready')||choices.find(t=>t.status==='ready'))?.id||null;
   }
   const genres={};for(const item of builtins)(genres[item.genre]??=[]).push(item);
   for(const items of Object.values(genres))items.sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));

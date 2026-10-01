@@ -50,7 +50,15 @@ async function exportReportPdf(event, request) {
     printer.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
     printer.webContents.on('will-navigate', navigation => navigation.preventDefault());
     await printer.loadFile(file);
-    const data = await printer.webContents.printToPDF({printBackground: true, preferCSSPageSize: true});
+    let data = await printer.webContents.printToPDF({printBackground: true, preferCSSPageSize: true});
+    if (request.version_id) {
+      if (!service?.info || service.info.url !== workspaceOrigin || service.info.workspace_id !== request.workspace_id) throw Error('工作区已切换，请在原工作区导出 PDF。');
+      const response = await fetch(service.info.url + '/api/export-pdf-label?version=' + encodeURIComponent(request.version_id) + '&workspace_id=' + encodeURIComponent(request.workspace_id) + '&market_convention=' + encodeURIComponent(request.market_convention || ''), {
+        method: 'POST', headers: {'Content-Type': 'application/pdf', 'X-BriefLoop-Token': service.token}, body: data, signal: AbortSignal.timeout(120000),
+      });
+      if (!response.ok) throw Error((await response.json()).error || 'PDF 元数据标识未能写入。');
+      data = Buffer.from(await response.arrayBuffer());
+    }
     const {canceled, filePath} = await dialog.showSaveDialog(window, {title: '导出 PDF',
       defaultPath: path.join(app.getPath('downloads'), exportFileName(request.title) + '.pdf'),
       filters: [{name: 'PDF', extensions: ['pdf']}], properties: ['showOverwriteConfirmation', 'createDirectory']});

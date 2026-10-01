@@ -64,10 +64,16 @@ export function citationBoundaryPlugin(){return new Plugin({
  // generic links and edits inside the citation retain their normal marks.
  return state.tr.setStoredMarks(marks.filter(mark=>!mark.eq(citation))).setMeta('addToHistory',false);
 }})}
-export const Citation=Node.create({name:'citation',group:'inline',inline:true,atom:true,
+export const Citation=Node.create({name:'citation',group:'inline',inline:true,atom:true,priority:1100,
  addAttributes(){return {sourceId:{default:null},label:{default:null}}},
  parseHTML(){return [{tag:'a[data-citation]',getAttrs:el=>({sourceId:el.getAttribute('data-citation')})}]},
- renderHTML({node}){return ['a',{'data-citation':node.attrs.sourceId,href:'#source-'+node.attrs.sourceId,class:'citation'},'['+(node.attrs.label||1)+']']},
+ renderHTML({node}){return ['a',{'data-citation':node.attrs.sourceId,href:'#source-'+node.attrs.sourceId,class:'citation','aria-label':'来源 '+(node.attrs.label||1)+':'+node.attrs.sourceId},String(node.attrs.label||1)]},
+ markdownTokenName:'link',
+ parseMarkdown(token,helpers){
+  const match=/^#source-(src_[A-Za-z0-9_-]+)$/.exec(token.href||'');if(!match)return helpers.applyMark('link',helpers.parseInline(token.tokens||[]),{href:token.href,title:token.title||null});
+  const citation=helpers.createNode('citation',{sourceId:match[1],label:/^\d+$/.test(token.text||'')?Number(token.text):null});
+  return /^(?:\d+|\?)$/.test(token.text||'')?citation:[...helpers.parseInline(token.tokens||[]),citation];
+ },
  renderMarkdown(node){return '[@'+node.attrs.sourceId+']'},
  addProseMirrorPlugins(){return [new Plugin({appendTransaction(transactions,oldState,state){
   if(!transactions.some(t=>t.docChanged)||transactions.some(t=>t.getMeta('citationNumbering')))return null;
@@ -84,6 +90,14 @@ function mapImages(document,convert){
 }
 export function editorDocument(document,version){
  const output=mapImages(document,src=>src.startsWith('briefloop-figure:')?'/api/figure?id='+encodeURIComponent(src.split(':')[1])+'&version='+encodeURIComponent(version):src);
+ function normalize(node){
+  if(node.content)node.content=node.content.flatMap(child=>{
+   const mark=(child.marks||[]).find(mark=>mark.type==='link'&&/^#source-src_[A-Za-z0-9_-]+$/.test(mark.attrs?.href||''));
+   if(child.type==='text'&&mark){const citation={type:'citation',attrs:{sourceId:mark.attrs.href.slice(8)}};return /^(?:\d+|\?)$/.test(child.text||'')?[citation]:[{...child,marks:child.marks.filter(item=>item!==mark)},citation]}
+   normalize(child);return [child];
+  });
+ }
+ normalize(output);
  const ids=[];function number(node){if(node.type==='citation'){const sid=node.attrs.sourceId;if(!ids.includes(sid))ids.push(sid);node.attrs.label=ids.indexOf(sid)+1}for(const child of node.content||[])number(child)}number(output);return output;
 }
 export function savedDocument(document){

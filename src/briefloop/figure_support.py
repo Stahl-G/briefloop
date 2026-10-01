@@ -90,5 +90,6 @@ def markdown_bundle(store,brief):
                 return m[1]+path+m[2]+extra+notes
             text=marker.sub(replace,text)
             archive.writestr(path,figure['image_bytes'])
-        archive.writestr('report.md',text)
+        from .export_labeling import brief_label, markdown_label
+        archive.writestr('report.md',markdown_label(text,brief_label(store,brief)))
     return output.getvalue()
