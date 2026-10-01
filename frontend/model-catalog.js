@@ -31,7 +31,7 @@ export function catalogDescription(catalog,name=''){
 // One live source for every model selector. Settled results are only a display
 // snapshot: every open/refresh queries the backend, while concurrent opens share
 // the same request. A response never writes a selected model or selected backend.
-export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=id=>id,runtimeIcon=()=>'',onCatalogChange=()=>{},document:doc=globalThis.document,Option:OptionClass=globalThis.Option,MutationObserver:Observer=globalThis.MutationObserver}){
+export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=id=>id,runtimeIcon=()=>'',onCatalogChange=()=>{},openExecutionPicker=null,document:doc=globalThis.document,Option:OptionClass=globalThis.Option,MutationObserver:Observer=globalThis.MutationObserver}){
  const catalogs=new Map(),pending=new Map(),generations=new Map();
  let pickerTarget=null,pickerRevision=0;
  const targetBackend=target=>{
@@ -72,6 +72,7 @@ export function createModelCatalog({api,$,getBackend,getChatBackend,runtimeName=
   await Promise.all([...new Set([getBackend(),getChatBackend()])].filter(Boolean).map(backend=>fetchModelCatalog(true,backend)));
  }
  async function openModelPicker(target){
+  if(openExecutionPicker&&['chat-model','model-select'].includes(target))return openExecutionPicker(target);
   pickerTarget=target;pickerRevision++;
   $('model-picker-search').value='';
   if($('model-picker-custom-form')){
