@@ -273,7 +273,7 @@ dialog .section-title h2{font-size:var(--text-xl)}
 #settings-dialog .runtime-card.runtime-card-compact{background:var(--color-surface);border-color:var(--color-border)}
 #settings-dialog .runtime-card.runtime-card-compact.selected{background:var(--color-surface);border-color:var(--color-primary)}
 #settings-dialog .runtime-card-compact #settings-model-block{border-top:1px solid var(--color-border);padding-top:var(--space-3);margin-top:var(--space-3);background:var(--color-surface)}
-.composer-params-panel.composer-research-panel{width:min(calc(var(--rail-width) + var(--space-4)),calc(100vw - var(--space-6)));min-width:0;max-height:min(75dvh,600px);padding:var(--space-4);gap:0}
+.composer-params-panel.composer-research-panel{position:fixed;right:auto;bottom:auto;box-sizing:border-box;overscroll-behavior:contain;overflow:auto;width:min(calc(var(--rail-width) + var(--space-4)),calc(100vw - var(--space-6)));min-width:0;max-height:calc(100dvh - var(--space-4));padding:var(--space-4);gap:0}
 .composer-report-settings{min-width:0;width:100%}
 .composer-report-settings>h3{font-size:var(--text-sm);font-weight:var(--fw-semibold);margin:0 0 var(--space-4)}
 .composer-report-field{display:grid!important;grid-template-columns:80px minmax(0,1fr);align-items:center;gap:var(--space-3);margin:var(--space-3) 0!important;font-size:var(--text-sm)}
@@ -470,3 +470,28 @@ body{font-variant-numeric:tabular-nums}
 @media(max-width:560px){.process-step{grid-template-columns:var(--space-2) minmax(0,1fr)}.process-step-time{grid-column:2}.research-process>summary{flex-wrap:wrap}.research-process-attention{margin-left:var(--space-5)}}
 
 .rail-tabs [data-report-tab="assistant"]{display:inline-flex;align-items:center;gap:var(--space-1)}
+
+/* Shared execution chooser, staged until Apply. */
+#runtime-model-picker{width:min(calc(var(--rail-width) + var(--space-6)),calc(100% - var(--space-6)));max-height:calc(100% - var(--space-6));padding:var(--space-4);overflow:auto}
+#runtime-model-picker .section-title{gap:var(--space-3);margin-bottom:var(--space-3)}
+#runtime-model-picker h2{font-size:var(--text-lg);margin:0}
+#runtime-model-picker .workspace-input-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-2)}
+#runtime-model-picker input,#runtime-model-picker select{min-width:0;width:100%;min-height:var(--control-h-md)}
+#runtime-picker-list{max-height:calc(var(--control-h-lg)*4);overflow:auto;display:grid;gap:var(--space-1)}
+#runtime-model-picker .workspace-choice{padding:var(--space-2) var(--space-3);min-height:var(--control-h-lg);display:flex;align-items:center;justify-content:space-between;text-align:left;gap:var(--space-2);border:0;box-shadow:none}
+#runtime-model-picker .workspace-choice.selected{background:var(--color-primary-soft)}
+#runtime-model-picker .workspace-choice small{display:block;font-size:var(--text-xs);color:var(--color-text-muted);overflow-wrap:anywhere}
+.runtime-picker-field{display:grid;gap:var(--space-2);margin-block:var(--space-3);font-size:var(--text-sm)}
+.runtime-picker-actions{display:flex;justify-content:flex-end;gap:var(--space-2);margin-top:var(--space-3)}
+
+.composer-research-panel button{white-space:normal;overflow-wrap:anywhere}
+.composer-research-panel .composer-choice-group{flex-wrap:wrap}
+.composer-research-panel .composer-report-fact{flex-wrap:wrap}
+.composer-research-panel .composer-params-row{margin-top:var(--space-3)}
+#chat-permissions-open{font-size:var(--text-xs);min-height:var(--control-h-sm);padding:var(--space-1) var(--space-2);border:0;background:transparent}
+
+@media(max-width:780px){
+ #chat-form .composer-tools,#chat-form .composer-options{flex-wrap:wrap}
+ #chat-form .composer-options{flex-basis:100%}
+ #chat-form .model-picker{max-width:100%}
+}

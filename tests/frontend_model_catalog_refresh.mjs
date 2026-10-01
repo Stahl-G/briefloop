@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {section} from './source_section.mjs';
 import {createModelCatalog,createProviderCatalog,catalogDescription} from '../frontend/model-catalog.js';
 
-function harness(api){
+function harness(api,openExecutionPicker=null){
  const elements=new Map(),selects=[],inputs=[],triggers=[];
  class Node {
   constructor(){this.value='';this.innerHTML='';this.dataset={};this.children=[];this.options=[];this.disabled=false}
@@ -20,7 +20,7 @@ function harness(api){
  const document={querySelectorAll:query=>query.startsWith('input[')?inputs:query==='[data-model-trigger]'?triggers:selects,createElement:()=>new Node()};
  class Option{constructor(text,value){this.text=text;this.value=value}}
  let backend='codex',chatBackend='claude';
- const directory=createModelCatalog({api,$,getBackend:()=>backend,getChatBackend:()=>chatBackend,document,Option,MutationObserver:null});
+ const directory=createModelCatalog({api,$,getBackend:()=>backend,getChatBackend:()=>chatBackend,document,Option,MutationObserver:null,openExecutionPicker});
  return {directory,$,selects,triggers,addInput(id){const input=$(id);inputs.push(input);return input},setBackend(value){backend=value},setChatBackend(value){chatBackend=value}};
 }
 const payload=(id,extra={})=>({models:[{id,name:id,provider:'provider'}],source:'host_catalog',status:'ok',checked_at:'2026-09-29T10:00:00Z',...extra});
@@ -151,4 +151,13 @@ test('an obsolete model request resolving after its replacement cannot overwrite
  const current=h.directory.fetchModelCatalog(true,'codex');await tick();requests[1](payload('new'));await current;
  requests[0](payload('old'));await old;
  assert.deepEqual(h.directory.catalogs.get('codex').models.map(m=>m.id),['new']);
+});
+
+
+test('composer and report/settings triggers route to execution chooser while roles keep their backend',async()=>{
+ const opened=[];const h=harness(async()=>payload('role-choice'),target=>opened.push(target));
+ h.addInput('chat-model');h.addInput('model-select');h.addInput('role-evaluator-model').dataset.roleModel='evaluator';h.directory.setupModelPickers();
+ h.triggers[0].onclick();h.triggers[1].onclick();await tick();
+ assert.deepEqual(opened,['chat-model','model-select']);assert.notEqual(h.$('model-picker').open,true);
+ h.triggers[2].onclick();await tick();assert.equal(h.$('model-picker').open,true);assert.match(h.$('model-picker-list').innerHTML,/role-choice/);
 });
