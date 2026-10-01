@@ -14,3 +14,9 @@ Validation on macOS:
 - Corrected Finder-window visual confirmation is pending: the Mac locked before this observation. Packaged App startup remains a separate verification step.
 
 The existing 0.28.1 draft remains tied to its original frozen source and hashes. This change does not publish a release or change its version.
+
+## Independent CI timing regression
+
+The original Windows job exceeded its 15-minute limit after a raw-upload test read empty text. That test waited five seconds for only the second of two uploads sharing one native extraction slot. Re-running the exact source passed all four CI jobs.
+
+The upload test now waits for both durable ready states, fails immediately on terminal extraction errors, reports queued/extracting records at its bounded deadline, and additionally asserts the text source is ready. All original upload rejection, PDF admission and exact `abc` content assertions remain. A test-only six-second text extraction delay reproduces the original empty-content failure; the revised test passes the same real extraction delay. No production extraction code is changed.
