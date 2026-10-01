@@ -1,6 +1,6 @@
 // Report choices belong to this conversation's next request. Workspace learning
 // and runtime permissions keep their own existing settings and handlers.
-export function createComposerOptions({$,getChat,getState,availability,rememberDraft,openSettings,openReview}){
+export function createComposerOptions({$,getChat,getState,availability,rememberDraft,openSettings,openReview,document:doc=globalThis.document}){
  let panel=null,root=null;
  function read(){
   const saved=getChat().reportOptions||{},state=getState();
@@ -25,15 +25,20 @@ export function createComposerOptions({$,getChat,getState,availability,rememberD
  function mount(target){
   panel=target;panel.classList.add('composer-research-panel');$('composer-params').textContent='研究选项';
   const runtimeGrid=panel.querySelector('.composer-params-grid'),actions=panel.querySelector('.composer-params-row');
-  root=document.createElement('section');root.className='composer-report-settings';
-  root.innerHTML='<h3>本次报告</h3><div class="composer-report-field"><span>来源范围</span><div class="composer-choice-group"><button type="button" data-report-source="existing">已有来源</button><button type="button" data-report-source="web">允许补搜</button></div></div><label class="composer-report-field"><span>生成方式</span><select data-completion aria-label="本次报告生成方式"><option value="fast">快速</option><option value="standard">标准</option></select></label><p class="help" data-report-mode-note></p><details class="composer-report-advanced"><summary>高级选项</summary><label class="composer-report-field"><span>研究深度</span><select data-research-tier aria-label="本次报告研究深度"><option value="quick">快速</option><option value="standard">标准</option><option value="deep">深入</option></select></label><div class="composer-report-fact"><label><input type="checkbox" data-report-fact>事实核查</label><button type="button" class="subtle-button" data-fact-link></button></div><div class="composer-execution-group"><h4>模型与执行</h4><p class="help">用于当前聊天下一回合；执行权限与来源范围分别控制。</p></div><button type="button" class="subtle-button" data-learning-settings>自动学习 · 到工作区设置</button></details><p class="composer-report-scope">仅用于本次报告，不改动工作区默认设置。</p>';
-  const execution=root.querySelector('.composer-execution-group');if(runtimeGrid)execution.append(runtimeGrid);if(actions)execution.append(actions);panel.append(root);
+  // Legacy controls remain script carriers; model choices now live in their own dialog.
+  // Keep speed and permission actions accessible outside research settings.
+  const carriers=doc.createElement('div');carriers.id='chat-runtime-carriers';carriers.hidden=true;
+  const speed=$('chat-service-tier');if(speed){const label=doc.createElement('label');label.dataset.fastControl='';label.textContent='当前对话速度';label.hidden=speed.hidden;label.append(speed);$('settings-model-block').append(label)}
+  if(runtimeGrid)carriers.append(runtimeGrid);$('chat-form').append(carriers);
+  const permission=$('chat-permissions-open');if(permission)$('composer-params').parentElement.before(permission);
+  root=doc.createElement('section');root.className='composer-report-settings';
+  root.innerHTML='<h3>本次报告</h3><div class="composer-report-field"><span>来源范围</span><div class="composer-choice-group"><button type="button" data-report-source="existing">已有来源</button><button type="button" data-report-source="web">允许补搜</button></div></div><label class="composer-report-field"><span>生成方式</span><select data-completion aria-label="本次报告生成方式"><option value="fast">快速</option><option value="standard">标准</option></select></label><p class="help" data-report-mode-note></p><details class="composer-report-advanced"><summary>高级选项</summary><label class="composer-report-field"><span>研究深度</span><select data-research-tier aria-label="本次报告研究深度"><option value="quick">快速</option><option value="standard">标准</option><option value="deep">深入</option></select></label><div class="composer-report-fact"><label><input type="checkbox" data-report-fact>事实核查</label><button type="button" class="subtle-button" data-fact-link></button></div></details><p class="composer-report-scope">仅用于本次报告，不改动工作区默认设置。</p>';
+  panel.append(root);if(actions)root.append(actions);
   root.querySelectorAll('[data-report-source]').forEach(button=>{button.onclick=()=>{webChange(button.dataset.reportSource==='web');sync()}});
   root.querySelector('[data-completion]').onchange=event=>change('completion_mode',event.target.value);
   root.querySelector('[data-research-tier]').onchange=event=>change('research_tier',event.target.value);
   root.querySelector('[data-report-fact]').onchange=event=>change('fact_check',event.target.checked);
   root.querySelector('[data-fact-link]').onclick=()=>{if(read().completion_mode==='fast'){change('completion_mode','standard');return}close();if(availability().target==='review')openReview();else openSettings('execution')};
-  root.querySelector('[data-learning-settings]').onclick=()=>{close();openSettings('learning')};
   sync();
  }
  function webChange(value){$('chat-allow-web').checked=value;$('chat-allow-web').dispatchEvent(new Event('change',{bubbles:true}))}

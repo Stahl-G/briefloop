@@ -176,8 +176,17 @@ def test_raw_source_upload_allows_larger_pdfs_and_rejects_before_creating_source
         assert status==202 and source['name']=='年报.pdf' and source['status']=='queued'
         text=post('ok.txt',b'abc')[1]
         assert text['status']=='queued'
-        deadline=time.monotonic()+5
-        while time.monotonic()<deadline and server.store.one('sources',text['id'])['status'] not in ('ready','failed'):time.sleep(.05)
+        # Two admitted uploads share one extraction slot and each launches an
+        # owned native process. Wait for both durable terminal states, rather
+        # than treating a five-second startup budget as completed extraction.
+        deadline=time.monotonic()+30
+        while True:
+            extracted=[server.store.one('sources',item['id']) for item in (source,text)]
+            assert not any(item['status'] in ('failed','cancelled','interrupted') for item in extracted), extracted
+            if all(item['status']=='ready' for item in extracted):break
+            assert time.monotonic()<deadline, extracted
+            time.sleep(.05)
         assert server.store.one('sources',source['id'])['status']=='ready'
+        assert server.store.one('sources',text['id'])['status']=='ready'
         assert server.store.source_text(text['id'])=='abc'
     finally:server.shutdown();thread.join();module._close_service(server)
