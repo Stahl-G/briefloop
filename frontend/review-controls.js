@@ -26,7 +26,10 @@ export function createReviewControls({api,action,$,getState,backendValue,friendl
  const reviewerBackend=()=>runtime()?.backend||backendValue();
  const label=backend=>choices().find(item=>item.id===backend)?.label||runtimeName(backend);
  const unsavedMode=()=>!!modeSelect()&&modeSelect().value!==savedMode();
- const effort=current=>current?.backend==='codex'?current.reasoning_effort:current?.model_variant;
+ const usesVariant=backend=>['opencode','briefloop-native'].includes(backend);
+ const effort=current=>usesVariant(current?.backend)?current?.model_variant:current?.reasoning_effort;
+ const executionScope=(mode,backend)=>mode==='standard'&&choices().find(item=>item.id===backend)?.isolation==='observed'
+  ?'独立会话，沿用宿主原生权限，未强制只读；记录宿主报告的工具活动。':SCOPE[mode]||'审阅模式未确认。';
  const unsavedRuntime=()=>{
   const current=runtime(),backend=$('review-backend').value;
   return backend!==(current?.backend||'')||!!backend&&($('review-model').value.trim()!==(current?.model||'')||$('review-variant').value.trim()!==(effort(current)||''));
@@ -35,10 +38,10 @@ export function createReviewControls({api,action,$,getState,backendValue,friendl
  let saving=false;
 
  function updateInputs(){
-  const backend=$('review-backend').value,codex=backend==='codex';
+  const backend=$('review-backend').value,variant=usesVariant(backend);
   const effortLabel=find('[data-testid="review-effort-label"]');
-  if(effortLabel)effortLabel.textContent=codex?'推理强度':'推理档位（Variant）';
-  $('review-model').placeholder=codex?'输入模型 ID':'输入 provider/model';
+  if(effortLabel)effortLabel.textContent=variant?'推理档位（Variant）':'推理强度';
+  $('review-model').placeholder=variant?'输入 provider/model':'输入模型 ID';
   $('review-variant').placeholder='例如 high，留空使用模型默认';
   $('review-model').disabled=$('review-variant').disabled=saving||!backend;
   $('review-backend').disabled=saving;if(modeSelect())modeSelect().disabled=saving;
@@ -55,10 +58,11 @@ export function createReviewControls({api,action,$,getState,backendValue,friendl
   const current=runtime(),mode=savedMode();
   $('review-runtime-summary').textContent=`${REVIEW_MODES[mode]||'未知审阅模式'} · `+(current?`${label(current.backend)} · ${friendlyModel(current.model)}${effort(current)?' / '+effort(current):''}`:'跟随执行后端');
   const help=modeNote();
-  if(help)help.textContent=(SCOPE[mode]||'审阅模式未确认。')+' 事实与证据标准相同。'+
+  const scope=executionScope(mode,reviewerBackend());
+  if(help)help.textContent=scope+' 事实与证据标准相同。'+
    (supported(mode,reviewerBackend())===false?' '+unavailable(mode,reviewerBackend()):'');
   const button=$('review-start');
-  if(button){button.textContent=REVIEW_MODES[mode]||'独立审阅';button.disabled=saving||unsaved()||supported(mode,reviewerBackend())===false;button.title=button.disabled?(saving||unsaved()?'审阅设置尚未保存':unavailable(mode,reviewerBackend())):SCOPE[mode]||''}
+  if(button){button.textContent=REVIEW_MODES[mode]||'独立审阅';button.disabled=saving||unsaved()||supported(mode,reviewerBackend())===false;button.title=button.disabled?(saving||unsaved()?'审阅设置尚未保存':unavailable(mode,reviewerBackend())):scope}
  }
 
  function syncFactCheckControl(){
@@ -113,10 +117,10 @@ export function createReviewControls({api,action,$,getState,backendValue,friendl
  async function saveRuntime(){
   const backend=$('review-backend').value,model=$('review-model').value.trim(),status=$('review-runtime-status');
   updateInputs();syncFactCheckControl();
-  if(backend&&!model){status.textContent='输入审阅模型'+(backend==='codex'?' ID':'（provider/model）')+'后保存。';return}
+  if(backend&&!model){status.textContent='输入审阅模型'+(usesVariant(backend)?'（provider/model）':' ID')+'后保存。';return}
   const current=runtime(),preserved={};
   if(current?.backend===backend&&backend==='codex')for(const key of ['model_provider','service_tier'])if(Object.hasOwn(current,key))preserved[key]=current[key];
-  const review_runtime=backend?{...preserved,backend,model,[backend==='codex'?'reasoning_effort':'model_variant']:$('review-variant').value.trim()||null}:null;
+  const review_runtime=backend?{...preserved,backend,model,[usesVariant(backend)?'model_variant':'reasoning_effort']:$('review-variant').value.trim()||null}:null;
   saving=true;updateInputs();status.textContent='保存中…';syncFactCheckControl();
   try{const saved=await api('settings',{review_runtime});getState().settings.review_runtime=saved.review_runtime??null;status.textContent='已保存，之后的新请求使用此审阅设置；已排队任务不变。'}
   catch(error){status.textContent='未保存：'+error.message}

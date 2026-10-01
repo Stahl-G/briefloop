@@ -82,6 +82,7 @@ def working_directory(backend, folder):
 
 def tool_uses(folder):
     """Tool calls the host reported during the turn, from its projected event log."""
+    from .execution_records import public_tool_name
     path = Path(folder) / 'events.jsonl'
     if not path.exists():
         return []
@@ -93,7 +94,7 @@ def tool_uses(folder):
             continue
         item = (event.get('data') or {}).get('item') if isinstance(event.get('data'), dict) else None
         if isinstance(item, dict) and item.get('type') not in (None, 'agentMessage', 'reasoning', 'userMessage'):
-            names[item.get('id') or len(names)] = str(item.get('tool') or item.get('type'))
+            names[item.get('id') or len(names)] = public_tool_name(item.get('tool') or item.get('type'))
     return sorted(set(names.values()))
 
 
@@ -105,7 +106,22 @@ def record(backend, folder):
     return value
 
 
+def public_record(value):
+    """Normalize old compact metadata without rewriting a version-bound record."""
+    from .backends import BACKENDS
+    from .execution_records import public_tool_names
+    backend = value.get('backend')
+    return {'backend': backend if backend in BACKENDS else '未知宿主',
+            'level': level(backend), 'tools': public_tool_names(value.get('tools', []))}
+
+
+def public_notes(notes):
+    return [{'kind': 'fast_isolation', **public_record(note), 'summary': summary(note)}
+            if note.get('kind') == 'fast_isolation' else note for note in notes]
+
+
 def summary(value):
+    value = public_record(value)
     observed = '、'.join(value.get('tools') or []) or '无'
     if value['level'] == 'enforced':
         return '本轮配置要求关闭工具；引擎报告的工具活动：' + observed + '。该配置不保证正文所有结论均有材料支持。'

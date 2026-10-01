@@ -19,7 +19,11 @@ QUOTA = '模型服务额度已用完或被限流{reset}；可稍后恢复任务�
 AUTH = '模型服务未登录或凭据无效；请在对应 CLI 或设置中重新登录后恢复任务。已有来源与稿件保留。'
 MODEL = '所选模型在当前执行引擎上不可用，或缺少该模型要求的推理强度；请在设置中重新选择后恢复任务。'
 HOST_PERMISSION = '执行引擎在后台请求了命令授权，BriefLoop 无法代为确认，本轮已终止；请在该 CLI 的权限设置中允许相应操作，或换用内置引擎。'
-PUBLIC_PREFIXES = ('模型连接失败', '模型服务额度已用完', '模型服务未登录', '所选模型在当前执行引擎上不可用', '执行引擎在后台请求了命令授权')
+PUBLIC_FAILURES = {'模型连接失败': CONNECTION, '模型服务未登录': AUTH,
+                   '所选模型在当前执行引擎上不可用': MODEL,
+                   '执行引擎在后台请求了命令授权': HOST_PERMISSION}
+_PUBLIC_QUOTA = re.compile(re.escape(QUOTA).replace(re.escape('{reset}'),
+    r'(?:，约 (?:\d{1,3} 小时(?: \d{1,2} 分钟)?|\d{1,2} 分钟)后恢复)?'))
 
 
 def _reset_delay(text):
@@ -34,8 +38,11 @@ def _reset_delay(text):
 def public_failure(message):
     """Classify provider and host failures into fixed text; never publish provider text or request URLs."""
     text = str(message or '').strip()
-    if text.startswith(PUBLIC_PREFIXES):
+    if text in PUBLIC_FAILURES.values() or _PUBLIC_QUOTA.fullmatch(text):
         return text
+    for prefix, fixed in PUBLIC_FAILURES.items():
+        if text.startswith(prefix):
+            return fixed
     if re.match(r'^(?:connection error|api connection error|connect(?:ion)? timeout)', text, re.I):
         return CONNECTION
     if re.search(r'quota|rate.?limit|too many requests|\b429\b|usage limit|额度|配额|限流', text, re.I):

@@ -222,7 +222,9 @@ class Store:
         backend=result.get('agent_backend','codex')
         shaped={}
         for role,config in result['role_models'].items():
-            tag={'backend':config['backend']} if config.get('backend') else {}
+            # Legacy overrides belong to the workspace engine they were saved on.
+            # Bind them before a settings patch or a chat job chooses another host.
+            tag={'backend':config.get('backend') or backend}
             try:
                 shaped[role]={**runtime_fields(config,config.get('backend') or backend),**tag}
             except ValueError:
@@ -908,6 +910,11 @@ class Store:
         brief['context']=context(self,version_id)
         brief['latest_version_id']=brief['context']['latest']['id']
         brief['position']=self.rows('SELECT rowid AS position FROM briefs WHERE id=?',(version_id,))[0]['position']
+        from .plain_isolation import public_notes
+        detail=json.loads(brief['detail'])
+        if 'research_notes' in detail:
+            detail['research_notes']=public_notes(detail['research_notes'])
+            brief['detail']=dump(detail)
         return brief
 
     def search_briefs(self, text):
