@@ -39,5 +39,17 @@ for(const name of execFileSync('git',['ls-files','--cached','--others','--exclud
  if(/\.css$/.test(name)&&/var\(--[\w-]+\)[0-9a-f]{2,8}(?=[;}\s])/i.test(bytes.toString('utf8'))){failed=true;console.error(`${name}: invalid alpha suffix after a CSS variable`);}
  if(containsRetiredBrandColor(bytes.toString('utf8'))){failed=true;console.error(`${name}: retired brand color; use current semantic tokens/defaults`);}
 }
+// Finder uses points for icon coordinates; a 96-DPI background is shrunk to
+// 75% and overlaps the installer instructions despite correct pixel dimensions.
+const dmg=fs.readFileSync(path.join(root,'desktop/electron/assets/dmg-background.png'));
+let density;
+for(let offset=8;offset+12<=dmg.length;){
+ const length=dmg.readUInt32BE(offset),type=dmg.toString('ascii',offset+4,offset+8);
+ if(type==='pHYs'&&length===9&&offset+length+12<=dmg.length)density={x:dmg.readUInt32BE(offset+8),y:dmg.readUInt32BE(offset+12),unit:dmg[offset+16]};
+ offset+=length+12;
+}
+if(!density||density.unit!==1||Math.abs(density.x-2835)>1||Math.abs(density.y-2835)>1){
+ failed=true;console.error('dmg-background.png: require 72-DPI density for Finder point coordinates');
+}
 if(failed)process.exitCode=1;
 else console.log('Shared UI styles: tokens, typography, radii, stacking and CSS syntax verified. Legacy styles and rendered behavior require separate checks.');
