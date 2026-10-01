@@ -9,6 +9,8 @@ description: Use an existing local BriefLoop workspace from WorkBuddy or another
 
 ## 连接与提交
 
+支持 stdio MCP 的宿主可使用 `briefloop mcp --workspace "/absolute/workspace"`（随下一版发布）。先调用 `briefloop_discover` 确认 `ready=true`；其余工具为 `briefloop_inspect/source/submit/query/read/revise/export/download`，字段与下表和 CLI 下载参数一致，不传 `action`、工作区、URL 或 Token。`briefloop_download` 使用 `job_id` 和明确本机文件路径 `output`。连接固定启动时选定的绝对路径及工作区身份，不创建或启动后台。停止 MCP 连接不取消已接收任务，重连后查询原任务并用原 request_id、原内容重试未知写结果。
+
 使用已安装的 `briefloop`，或同一 Python 环境中的 `python -m briefloop`。先执行：
 
 ```sh

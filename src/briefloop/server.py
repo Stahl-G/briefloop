@@ -256,7 +256,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     else:self.send(200,selected.snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
                 elif u.path=='/api/external/capabilities':
                     from .external_requests import capabilities
-                    self.send(200,capabilities())
+                    self.send(200,capabilities(store))
                 elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES,'max_pdf_bytes':MAX_PDF_UPLOAD_BYTES}})
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
