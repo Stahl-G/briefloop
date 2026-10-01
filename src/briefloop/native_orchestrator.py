@@ -66,10 +66,9 @@ def action(store, config, args):
     if name == 'revise_document':
         if not isinstance(request.get('editor_document'), dict):
             raise ToolError('revise_document 需要 base_version 和完整 editor_document 对象')
-        saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent')
-        from .version_execution import record_chat
-        if saved['id'] != request['base_version']:
-            record_chat(store, saved, config.get('session_id'), config.get('attempt_id'))
+        from .version_execution import chat_publication
+        writer=chat_publication(store,config.get('session_id'),config.get('attempt_id'))
+        saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent', writer=writer)
         return _json_result(store.brief_view(saved['id']))
     if name == 'generate':
         if config.get('discuss_only'):
@@ -345,9 +344,9 @@ def write_report(store, config, args):
         value = json.loads((path / 'draft.json').read_text(encoding='utf-8'))
         if support:
             value['reconciliation_id'] = support['reconciliation.json']['id']
-        _save(folder / 'draft.json', value)
         from .version_execution import record_copy
         record_copy(store, job, value, path)
+        _save(folder / 'draft.json', value)
     return _json_result(result)
 
 

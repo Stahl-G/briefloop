@@ -437,10 +437,9 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
     if not publish:
         (folder / 'draft-diagnostics.json').write_text(dump(diagnostics), encoding='utf-8')
         return {'draft_saved': True, 'packet_fingerprint': frozen['fingerprint'], 'diagnostics': diagnostics}
-    version = store.publish(run_id, value, version_id='brief_' + job['id'].removeprefix('job_') + '_analyst',
+    from .version_execution import publication
+    version = store.publish(run_id, value, writer=publication(store,staged,role='analyst'), version_id='brief_' + job['id'].removeprefix('job_') + '_analyst',
                             parent_id=base_version)
-    from .version_execution import record
-    record(store, version, staged, folder=folder)
     (folder / 'draft-diagnostics.json').write_text(dump(diagnostics), encoding='utf-8')
     return {'version_id': version['id'], 'brief_hash': version['hash'], 'packet_fingerprint': frozen['fingerprint'],
             'review_status': 'not_reviewed', 'diagnostics': diagnostics}

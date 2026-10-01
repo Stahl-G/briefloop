@@ -69,11 +69,13 @@ def _isolation(folder):
     return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
 
 
-def _response(folder):
-    path = folder / 'response.txt'
-    if not path.exists() or not path.read_text(encoding='utf-8').strip():
-        raise ValueError('模型未返回完整正文；材料与会话已保留，可恢复任务。')
-    text = path.read_text(encoding='utf-8').strip()
+def _response(folder, *, raw=None):
+    if raw is None:
+        path=folder/'response.txt'
+        try:raw=path.read_text(encoding='utf-8')
+        except OSError:raise ValueError('模型未返回完整正文；材料与会话已保留，可恢复任务。') from None
+    text=raw.strip()
+    if not text:raise ValueError('模型未返回完整正文；材料与会话已保留，可恢复任务。')
     lines = text.splitlines()
     if len(lines) >= 3 and lines[0].strip() in ('```', '```markdown', '```md', '```json') and lines[-1].strip() == '```':
         text = '\n'.join(lines[1:-1])
@@ -126,7 +128,8 @@ def generate(worker, job):
                   + '\n下面是全部来源原文：\n' + _sources_text(materials))
         store.event(job['id'], 'fast_writing', {'message': '直接阅读已有材料写作，完成后立即保存初稿。'})
         result = _plain_turn(worker, job, folder / 'fast-writing', prompt)
-        text = _response(folder / 'fast-writing')
+        output=(folder/'fast-writing'/'response.txt').read_text(encoding='utf-8')
+        text = _response(folder / 'fast-writing',raw=output)
         aliases = {row['alias']: row for row in materials}
         unknown = set(re.findall(r'\[(S\d+)\]', text)) - aliases.keys()
         if unknown:
@@ -147,7 +150,8 @@ def generate(worker, job):
             raise InterruptedError('快速写作已停止，返回正文保留在任务目录。')
         if selected_packet(store,run['id'],source_ids) != materials:
             raise Conflict('写作期间材料已变化，模型输出已保留；请使用当前材料新建任务。')
-        brief = store.publish(run['id'], data, version_id=version)
+        from .version_execution import publication
+        brief = store.publish(run['id'], data, version_id=version, writer=publication(store,job,plain_output=output))
         worker._remember_generated_sources(folder, brief)
         from .task_notify import notify
         notify(store, job, 'draft_ready', text='快速初稿已保存，可以编辑和下载；后台继续补充依据和评价。')
@@ -244,10 +248,11 @@ def enrich(worker, job, brief, folder):
         raise InterruptedError('依据补全已停止，初稿和结果保留。')
     from .draft_completion import verify_input
     verify_input(store, job)
+    from .version_execution import evidence_publication
     try:
         enriched = store.publish(brief['run_id'], {**details, 'markdown': brief['markdown'],
                                   'editor_document': json.loads(brief['editor_document']) if brief.get('editor_document') else None},
-                                 version_id=version, parent_id=brief['id'])
+                                 version_id=version, parent_id=brief['id'], writer=evidence_publication(store,brief))
     except Conflict:
         # The original version is still assessable; evidence remains an inspectable
         # sidecar. Never attach old bindings to the user's new text or move its head.

@@ -67,3 +67,19 @@ test('a background catalog change refreshes the loaded window without dropping o
  f.$('reports-search').value='no-match';const filtered=f.browsing.fetchReports();f.reads[4].resolve({items:[],next_cursor:null});await filtered;
  assert.match(f.$('reports-list').innerHTML,/没有符合筛选条件/);assert.doesNotMatch(f.$('reports-list').innerHTML,/还没有报告/);
 });
+
+test('a same-body provenance revision refreshes metadata without replacing unsaved content',async()=>{
+ const f=fixture(),summary={...brief('A'),execution_revision:1};
+ const full={...summary,markdown:'saved body',editor_document:'saved document',context:{...context('A'),execution_revision:1},execution_provenance:{configuration:null}};
+ f.setCurrent(full);f.browsing.adopt(full);
+ // Simulate in-memory editing: context refresh must not replace the body/editor.
+ full.markdown='unsaved local edit';
+ const next={briefs:[{...summary,execution_revision:2,assessment_id:'a-A'}],runs:[{id:'A',source_count:1}],assessments:[]};
+ f.browsing.acceptState(next,full);assert.equal(f.reads.length,1);
+ const provenance={configuration:{model:'frozen-writer'}};
+ f.reads[0].resolve({...context('A'),execution_revision:2,execution_provenance:provenance});await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(full.markdown,'unsaved local edit');assert.deepEqual(full.execution_provenance,provenance);assert.equal(full.execution_revision,2);assert.deepEqual(f.changes,['A']);
+ const cached=await f.browsing.loadBrief({...summary,execution_revision:2});assert.equal(cached,full);assert.equal(f.reads.length,1);
+ const reload=f.browsing.loadBrief({...summary,execution_revision:3});assert.equal(f.reads.length,2);
+ f.reads[1].resolve({...full,execution_revision:3});await reload;
+});

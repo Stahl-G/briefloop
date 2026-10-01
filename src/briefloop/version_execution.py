@@ -1,6 +1,5 @@
 """Version-bound writer attribution and explicitly sourced execution settings."""
 import json
-import re
 
 
 def _object(value):
@@ -40,91 +39,101 @@ def _message_configuration(store, session_id, message_id, *, active=False):
     return value
 
 
+def _draft_fingerprint(draft):
+    from hashlib import sha256
+    from .models import BriefDraft
+    from .store import dump
+    return sha256(dump(BriefDraft.model_validate(draft).model_dump(mode='json')).encode()).hexdigest()
+
+
 def record_copy(store, job, draft, folder):
     """Only called at native write_report's admitted Analyst copy boundary."""
+    binding={};accepted={};config=None
     try:
         binding=_object((folder/'conversation.json').read_text(encoding='utf-8'))
         accepted=_object((folder/'draft-accepted.json').read_text(encoding='utf-8'))
-    except (OSError, ValueError):return
-    if binding.get('job_id')!=job['id'] or not accepted.get('revision') or accepted.get('attempt_id')!=binding.get('message_id'):return
-    config=_message_configuration(store,binding.get('session_id'),binding.get('message_id'))
-    if config is None:return
-    config['attribution']='admitted_analyst'
+        from .analyst_drafts import submitted
+        admitted=submitted(store,{'run_id':_object(job['payload']).get('run_id'),
+            'packet_root':str(folder/'packet'),'result_file':str(folder/'draft.json')})
+        if (binding.get('job_id')==job['id'] and accepted.get('revision')
+                and accepted.get('attempt_id')==binding.get('message_id') and admitted==draft):
+            config=_message_configuration(store,binding.get('session_id'),binding.get('message_id'))
+    except (OSError,ValueError,KeyError):pass
+    if config is not None:config['attribution']='admitted_analyst'
     from .document_model import document_hash
+    # An unbound copy must also be recorded. Otherwise an older same-text copy
+    # could be mistaken for this one after a failed or changed admission.
     store.event(job['id'],'writer_copy',{'run_id':_object(job['payload']).get('run_id'),
-                'brief_hash':document_hash(draft['editor_document']), 'session_id':binding['session_id'],
-                'message_id':binding['message_id'],'accepted_revision':accepted['revision'],'configuration':config})
+                'brief_hash':document_hash(draft['editor_document']),'draft_fingerprint':_draft_fingerprint(draft), 'session_id':binding.get('session_id'),
+                'message_id':binding.get('message_id'),'accepted_revision':accepted.get('revision'),'configuration':config})
 
 
-def _published_configuration(store, brief, job, role=None):
+def publication(store, job, *, draft=None, role=None, revision=False, plain_output=None):
+    """Internal runner input for atomic publication, never accepted from tool JSON."""
     payload=_object(job['payload'])
-    if role:return configuration(payload,role)
-    req=_object(store.one('runs',brief['run_id'])['requirements'])
-    if payload.get('agent_backend')=='briefloop-native' and job['kind']=='generate' and not brief['id'].endswith('_r1') and req.get('completion_mode') not in ('fast','fast_web'):
-        # A content hash alone cannot identify an Analyst. Require the native
-        # copy operation's explicit job/session/message/admission relationship.
-        rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='writer_copy' AND json_extract(data,'$.run_id')=? AND json_extract(data,'$.brief_hash')=?",(job['id'],brief['run_id'],brief['hash']))
-        identities={(_object(r['data']).get('session_id'),_object(r['data']).get('message_id'),_object(r['data']).get('accepted_revision')) for r in rows}
-        values={json.dumps(_object(r['data']).get('configuration'),sort_keys=True) for r in rows}
-        return json.loads(next(iter(values))) if len(identities)==len(values)==1 else None
-    return configuration(payload)
+    receipt={'job_id':job['id'], 'configuration':configuration(payload,role)}
+    if plain_output is not None:
+        from .store import content_hash
+        rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='writer_output' AND json_extract(data,'$.stage')='fast-writing' AND json_extract(data,'$.output_hash')=?",(job['id'],content_hash(plain_output)))
+        values={json.dumps(_object(r['data']),sort_keys=True) for r in rows}
+        value=_object(next(iter(values))) if len(values)==1 else {}
+        return {**receipt, **{k:value[k] for k in ('session_id','message_id') if k in value}, 'configuration':value.get('configuration')}
+    if payload.get('agent_backend')=='briefloop-native' and job['kind']=='generate' and not role and not revision:
+        # Only the admitted copy operation links a native coordinator's output
+        # to an Analyst. File equality or a later conversation is not authorship.
+        from .document_model import document_hash
+        digest=document_hash(draft['editor_document']) if draft and draft.get('editor_document') else None
+        rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='writer_copy' AND json_extract(data,'$.run_id')=? AND json_extract(data,'$.brief_hash')=? AND json_extract(data,'$.draft_fingerprint')=?",(job['id'],payload.get('run_id'),digest,_draft_fingerprint(draft) if draft else None))
+        values={json.dumps(_object(r['data']),sort_keys=True) for r in rows}
+        value=_object(next(iter(values))) if len(values)==1 else {}
+        receipt.update({k:value[k] for k in ('session_id','message_id') if k in value})
+        receipt['configuration']=value.get('configuration')
+    return receipt
 
 
-def record(store, brief, job, *, role=None, folder=None):
-    """Runner invokes this only for a newly admitted version, never a no-op."""
-    if brief['author']!='agent' or brief['id'].endswith('_evidence'):return
-    if store.rows("SELECT seq FROM events WHERE kind='writer_version' AND json_extract(data,'$.version_id')=? LIMIT 1",(brief['id'],)):return
-    value=_published_configuration(store,brief,job,role)
-    if folder is not None and value is not None and value.get('attribution')!='admitted_analyst':
-        try:binding=_object((folder/'conversation.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):binding={}
-        if binding.get('job_id')==job['id']:
-            selected=_message_configuration(store,binding.get('session_id'),binding.get('message_id'))
-            if selected is not None:value=selected
-    if value is not None:store.event(job['id'],'writer_version',{'version_id':brief['id'],'brief_hash':brief['hash'],'configuration':value})
+def chat_publication(store, session_id, message_id):
+    return {'session_id':session_id,'message_id':message_id,
+            'configuration':_message_configuration(store,session_id,message_id,active=True)}
 
 
-def record_chat(store, brief, session_id, message_id):
-    # Native tool caller supplies its actual active message, never request JSON.
-    if brief['author']!='agent':return
-    value=_message_configuration(store,session_id,message_id,active=True)
-    if value is not None:store.event(None,'writer_version',{'version_id':brief['id'],'brief_hash':brief['hash'],
-                   'session_id':session_id,'message_id':message_id,'configuration':value})
+def record_plain_output(store, job, stage, text, session_id, message_id):
+    """Called by the trusted transport when copying this message's final text."""
+    from .store import content_hash
+    value=_message_configuration(store,session_id,message_id)
+    store.event(job['id'],'writer_output',{'stage':stage,'output_hash':content_hash(text),
+        'session_id':session_id,'message_id':message_id,'configuration':value})
+
+
+def evidence_publication(store, parent):
+    return {'configuration':_writer(store,parent)}
+
+
+def insert_receipt(connection, version_id, brief_hash, writer=None):
+    """Called only in the transaction branch inserting the new version itself.
+
+    Unknown is explicit and immutable too: retries cannot retroactively claim
+    somebody else's version or attach the current message to restored output.
+    """
+    from .store import dump,now
+    writer=writer or {}
+    data={'version_id':version_id,'brief_hash':brief_hash,'configuration':writer.get('configuration'),'binding':'atomic_publication_v1'}
+    data.update({key:writer[key] for key in ('session_id','message_id') if writer.get(key)})
+    connection.execute("INSERT INTO events(job_id,kind,data,created) VALUES(?,'writer_version',?,?)",(writer.get('job_id'),dump(data),now()))
 
 
 def _writer(store, brief):
     receipts=store.rows("SELECT job_id,data FROM events WHERE kind='writer_version' AND json_extract(data,'$.version_id')=?",(brief['id'],))
-    valid=[_object(r['data']) for r in receipts if _object(r['data']).get('brief_hash')==brief['hash']]
-    if valid:
-        identities={(r['job_id'],_object(r['data']).get('session_id'),_object(r['data']).get('message_id')) for r in receipts if _object(r['data']).get('brief_hash')==brief['hash']}
-        if len(identities)!=1:return None
-        values={json.dumps(r.get('configuration'),sort_keys=True) for r in valid}
-        return json.loads(next(iter(values))) if len(values)==1 else None
-    if brief['id'].endswith('_evidence'):return None
-    candidates={}
-    match=re.fullmatch(r'brief_([a-zA-Z0-9]+)(_r1|_analyst)?',brief['id'])
-    jobs=store.rows("SELECT * FROM jobs WHERE kind IN ('generate','assess') AND json_extract(payload,'$.run_id')=? ORDER BY rowid",(brief['run_id'],))
-    for job in jobs:
-        payload=_object(job['payload']);suffix=match[2] if match else None
-        exact=bool(match and job['id']=='job_'+match[1] and (job['kind']=='generate' or (suffix=='_r1' and payload.get('continuation_of'))))
-        if job['kind']!='generate' and not payload.get('continuation_of'):continue
-        if not re.fullmatch(r'job_[a-zA-Z0-9]+',job['id']):continue
-        snapshot={}
-        try:snapshot=_object((store.root/'jobs'/job['id']/'generated-source-snapshots.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):pass
-        if exact or _object(snapshot.get(brief['id'])).get('brief_hash')==brief['hash']:
-            candidates[job['id']]=_published_configuration(store,brief,job,'analyst' if exact and suffix=='_analyst' else None)
-    # Random refinement IDs share the derived-ID syntax. A missing derived job
-    # does not stop snapshot fallback; multiple identities never pick a winner.
-    return next(iter(candidates.values())) if len(candidates)==1 else None
+    valid=[(r['job_id'],_object(r['data'])) for r in receipts if _object(r['data']).get('brief_hash')==brief['hash'] and _object(r['data']).get('binding')=='atomic_publication_v1']
+    identities={(job,data.get('session_id'),data.get('message_id')) for job,data in valid}
+    values={json.dumps(data.get('configuration'),sort_keys=True) for _,data in valid}
+    # Historical filenames and source snapshots do not prove which execution
+    # won publication. No immutable receipt means unknown, never today's default.
+    return json.loads(next(iter(values))) if len(identities)==len(values)==1 else None
 
 
 def describe(store, brief):
     mode={'user':'manual','agent':'ai','import':'imported','example':'example'}.get(brief['author'],'unknown')
     current=_writer(store,brief) if mode=='ai' else None
-    if mode=='ai' and current is None and brief['id'].endswith('_evidence') and brief.get('parent_id'):
-        parent=store.one('briefs',brief['parent_id'])
-        if parent['author']=='agent' and parent['run_id']==brief['run_id'] and parent['markdown']==brief['markdown']:current=_writer(store,parent)
     first=store.rows('SELECT * FROM briefs WHERE run_id=? ORDER BY rowid LIMIT 1',(brief['run_id'],))[0]
     original=_writer(store,first) if first['author']=='agent' else None
     return {'mode':mode,'action':'revision' if brief.get('parent_id') else 'generation','configuration':current,

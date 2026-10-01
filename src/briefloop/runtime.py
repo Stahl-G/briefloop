@@ -1052,9 +1052,6 @@ class Worker:
     def _remember_generated_sources(self,folder,brief):
         """Called only for a version newly admitted by this execution."""
         from .review_learning import source_snapshot
-        from .version_execution import record
-        writers=self.store.rows('SELECT * FROM jobs WHERE id=?',(folder.name,))
-        if writers:record(self.store,brief,writers[0],folder=None if brief['id'].endswith('_r1') else folder)
         path=folder/'generated-source-snapshots.json'
         saved=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
         if brief['id'] in saved:return
@@ -1226,7 +1223,6 @@ class Worker:
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
         latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None];publication_hold=[None]
-        newly_admitted=set()
         def publish():
             from .store import Conflict
             from .document_model import markdown_document,document_hash
@@ -1275,7 +1271,9 @@ class Worker:
                                  +'）；原稿保留在 draft-invalid.json') from None
             sha=document_hash(normalized.editor_document)
             known={row['id'] for row in self.store.rows('SELECT id FROM briefs WHERE run_id=?',(run['id'],))}
-            try:record=self.store.publish(run['id'],data,version_id=vid)
+            from .version_execution import publication
+            writer=publication(self.store,job,draft=data)
+            try:record=self.store.publish(run['id'],data,version_id=vid,writer=writer)
             except Conflict:
                 for row in self.store.rows("SELECT id,hash FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid DESC",(run['id'],)):
                     if row['hash']!=sha or not self.store.generated_by(row['id'],job['id']):continue
@@ -1285,12 +1283,11 @@ class Worker:
                 newest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]['id']
                 if newest!=latest[0]:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
-                try:record=self.store.publish(run['id'],data,parent_id=latest[0])
+                try:record=self.store.publish(run['id'],data,parent_id=latest[0],writer=writer)
                 except Conflict:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
             latest[0]=record['id']
             if record['id'] not in known:
-                newly_admitted.add(record['id'])
                 self._remember_generated_sources(folder,record)
             from .review_capability import review_available
             if (not draft_first and self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
@@ -1327,9 +1324,6 @@ class Worker:
         if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
             raise RuntimeError('模型回合已结束，但未保存可用草稿（draft.json）；已保留研究材料和会话，可恢复继续。')
         brief=self.store.one('briefs',current)
-        if brief['id'] in newly_admitted:
-            from .version_execution import record
-            record(self.store,brief,job)
         from .task_notify import notify as _notify_task
         _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
         if draft_first:
@@ -1502,9 +1496,8 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
                 from .document_model import markdown_document
                 value['editor_document']=markdown_document(value['markdown'])
             try:
-                revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'])
-                from .version_execution import record
-                record(self.store,revised,job,folder=stage)
+                from .version_execution import publication
+                revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'],writer=publication(self.store,job,revision=True))
                 self._remember_generated_sources(folder,revised)
             except Conflict as exc:
                 latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']

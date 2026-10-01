@@ -8,24 +8,34 @@ that human edit. The old `i` was conversational help, and is now labelled
 available beside the version card.
 
 The backend never consults current workspace/session defaults for this view.
-New writer publication receipts bind configuration to the newly admitted version
-ID and content hash. Native Analyst attribution requires the actual accepted-copy
-operation and its job/session/message/revision identity; a matching hash alone
-is never author proof. No-op revisions never create a writer receipt. Analyst publication uses the actual staged Analyst configuration; automatic
-revision uses its writing job, not `role_models.evaluator`. Chat revision uses the
-active message's frozen runtime. CLI revisions lack trusted runner context and stay unknown; adjacent conversation
-files do not establish authorship. Missing bindings stay unknown.
+New writer publication receipts are inserted in the same SQLite transaction as
+the version itself. Only the insertion winner can own that version; identical
+retries and no-op revisions cannot claim or change it. An explicit unknown
+receipt is final too. Earlier non-atomic receipts are not treated as proof.
+
+Native Analyst attribution requires the validated accepted-copy operation and
+its exact job/session/message/revision identity, recorded before the outer draft
+becomes visible. Plain quick-writer output is bound where the trusted transport
+copies the exact assistant message into response.txt, before deterministic fence
+and source-alias conversion. The copied-output hash checks integrity within that
+explicit relationship; it never discovers an author among unrelated jobs.
+
+A restored general-host draft retains only the writing job's frozen request.
+The mutable current conversation marker cannot add a later message's host-confirmed
+model or effort. Native chat revisions bind their active message at publication.
+CLI revisions without trusted runner context stay unknown.
 Only backend/model/effort are projected; credentials, commands and logs are excluded.
 
-Legacy versions gather the runners' publication-ID and admitted-source snapshot
-relationships. Only a unique job identity is accepted, including real random
-brief IDs; multiple candidate jobs remain unknown. Assessment result references
-are not writing evidence. Evidence-only children with unchanged prose retain the
-parent writer; arbitrary unbound AI children do not inherit one. Missing model or
-reasoning settings remain “未记录”. Requested settings are explicitly labelled
-“请求”. Host-confirmed fields require a message-bound response with a known source
-and are labelled “宿主确认”; the frozen request stays intact. Default/none requests
-mean host defaults, not proof that reasoning was disabled.
+Legacy versions without atomic publication receipts remain unknown. Neither a
+derived filename nor a matching generated-source snapshot establishes who won
+publication. Evidence-only children explicitly copy their unchanged parent's
+writer configuration at insertion; they do not acquire the evidence worker's
+configuration. Requested and host-confirmed fields remain distinct.
+
+Browsing summaries carry a bounded execution-metadata revision. A changed
+revision refreshes the selected version's metadata separately from its body;
+unsaved editor contents are preserved. Both body caches compare this revision,
+so a same-hash cached draft cannot indefinitely show an older attribution.
 
 Validation on MBP: frontend suite 227 passed / 3 skipped; related Python tests
 61 passed; build, build:check, design:check and diff checks passed.
@@ -37,3 +47,11 @@ The subsequent fix covers admitted-copy identity, no-op preservation, rejecting 
 marker inference, native turn-ID binding, ambiguous legacy jobs, real random-ID
 fallback, and requested versus confirmed fields. A fresh review and exact-head CI
 are tracked separately; the first review is not a clean verdict for the fix.
+
+Cloud correction after the 4f2466eb re-review replaces post-publication attribution
+with atomic ownership, rejects later-message restoration and snapshot inference,
+binds quick-writer transport output, and refreshes same-body metadata caches.
+Native copy integrity includes the full normalized draft fingerprint, so a
+same-body/different-metadata file cannot acquire the newer copy's author.
+Focused race, rollback, no-op, restore, quick-writer and cache regressions pass;
+release CI and Windows/native GUI acceptance remain separate gates.
