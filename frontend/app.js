@@ -518,7 +518,7 @@ document.addEventListener('click',event=>{if(event.target.closest('button')?.id!
 })});
 
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
-const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc,syncSourceHints:renderWorkflowChoices});
+const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc,syncSourceHints:renderWorkflowChoices,getBackend:()=>state.settings?.agent_backend||'codex'});
 quickReport.init();
 const assessmentPanel=createAssessmentPanel({
  api,action,notice,$,esc,parse,savedVersion,

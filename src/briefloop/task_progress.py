@@ -87,7 +87,16 @@ def summary(store, job_id):
             stage = label
             revision_phase = True
         history_label = {'writing': '按审阅意见修订已开始', 'checking': '修订稿已保存，进入复核', 'repairing_metadata': '依据关联与处理说明进入修复'}.get(data.get('stage'), label) if e['kind'] == 'revision_progress' else label
-        if label: timeline.append({'label': history_label, 'detail': '', 'status': 'recorded', 'time': e['created']})
+        detail = ''
+        if e['kind'] == 'plain_isolation':
+            # Fast plain turns state how they were held to their materials.
+            label = history_label = {'research': '检索规划', 'evidence': '补充依据'}.get(data.get('phase'), '快速写作') + (
+                '：引擎已关闭工具和联网' if data.get('level') == 'enforced' else '：引擎工具未关闭，已记录使用情况')
+            detail = public_text(data.get('message'))
+        if e['kind'] == 'fast_unsupported':
+            label = history_label = '找不到原文依据的结论已单独列出'
+            detail = public_text(data.get('message'))
+        if label: timeline.append({'label': history_label, 'detail': detail, 'status': 'recorded', 'time': e['created']})
     if run:
         from .reconciliation import _stored
         records = _stored(store, run_id)
