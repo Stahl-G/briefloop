@@ -5,8 +5,19 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {promisify} = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
-async function prepare(file, version) {
+function installationDirectory(app) {
+  // Follow the running installed copy, including ~/Applications. Apps launched
+  // from a DMG or Downloads still get the conventional installation destination.
+  if (app?.isInApplicationsFolder?.()) {
+    const executable = app.getPath('exe');
+    const match = typeof executable === 'string' && executable.match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/);
+    if (match && path.isAbsolute(match[1])) return path.dirname(match[1]);
+  }
+  return '/Applications';
+}
+async function prepare(file, version, destination = '/Applications') {
   if (process.platform !== 'darwin') throw Error('macOS required');
+  if (!path.isAbsolute(destination) || !(await fs.stat(destination)).isDirectory()) throw Error('Invalid installation destination');
   const parent = await fs.lstat(path.dirname(file));
   if (!parent.isDirectory() || parent.isSymbolicLink()) throw Error('Unsafe update directory');
   const directory = path.join(path.dirname(file), 'prepared');
@@ -27,8 +38,8 @@ async function prepare(file, version) {
       const {stdout} = await run('/usr/libexec/PlistBuddy', ['-c', `Print ${key}`, plist]);
       if (stdout.trim() !== expected) throw Error('Application identity mismatch');
     }
-    await fs.symlink('/Applications', path.join(directory, 'Applications'));
+    await fs.symlink(destination, path.join(directory, '安装位置'));
     return directory;
   } catch (error) {await fs.rm(directory, {recursive: true, force: true}); throw error;}
 }
-module.exports = {prepare};
+module.exports = {prepare, installationDirectory};

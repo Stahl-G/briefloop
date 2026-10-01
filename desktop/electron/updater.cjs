@@ -412,7 +412,10 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       if (hash.digest('hex') !== ready.sha256) throw new UpdateError('hash_mismatch', '已下载文件发生变化，请重新下载。');
       let target = ready.file;
       if (installMode === 'zip') {
-        try {target = await require('./mac-update-handoff.cjs').prepare(ready.file, data.releaseVersion);}
+        try {
+          const handoff = require('./mac-update-handoff.cjs');
+          target = await handoff.prepare(ready.file, data.releaseVersion, handoff.installationDirectory(app));
+        }
         catch {throw new UpdateError('open_failed', '更新包解压或应用校验失败，请重试；当前应用未被替换。');}
       }
       const error = await shell.openPath(target);

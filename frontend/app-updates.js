@@ -13,7 +13,7 @@ export function appUpdatesUI({api,notice}){
   $('app-update-command').textContent=softwareInfo?.update_command||'';
   $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':desktop?'官方稳定来源：Stahl-G/briefloop · GitHub Releases':'Python 包稳定来源：PyPI · briefloop';
   const reinstall=value?.source==='local-test'&&value?.reinstall===true;
-  $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='zip'?'优先增量下载 ZIP 更新包并校验完整文件。保存并退出后打开 Finder；将 BriefLoop 拖到 Applications 替换，再重新启动。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
+  $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='zip'?'下载完成后，点击下方按钮保存并退出。Finder 会打开新版 App 和“安装位置”：将 App 拖入并替换，再打开 BriefLoop。报告与工作区会保留。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
   const errorOperation=value?.error?.operation||(value?.error?.code==='open_failed'?'install':appUpdateLastAction);
   const errorLabel={check:'更新检查失败（当前安装不受影响）',download:'更新包下载未完成',install:'更新安装未完成'}[errorOperation]||'更新检查失败（当前安装不受影响）';
   const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:errorLabel};
@@ -24,7 +24,7 @@ export function appUpdatesUI({api,notice}){
   $('app-update-check').disabled=busy;
   $('app-update-download').hidden=!desktop||value?.state!=='available';$('app-update-download').disabled=busy;
   $('app-update-install').hidden=!desktop||value?.state!=='downloaded';$('app-update-install').disabled=busy;
-  $('app-update-install').textContent=value?.installMode==='zip'?'保存并打开更新文件夹':value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
+  $('app-update-install').textContent=value?.installMode==='zip'?'保存并退出，打开安装文件夹':value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
   $('app-update-retry').hidden=value?.state!=='error'||!value?.retryable;$('app-update-retry').disabled=busy;
   $('app-update-error').hidden=!value?.error;$('app-update-error').textContent=value?.error?.message||'';
   const progress=value?.progress;

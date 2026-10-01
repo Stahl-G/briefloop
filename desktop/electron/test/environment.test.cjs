@@ -9,16 +9,16 @@ const {spawn} = require('node:child_process');
 const vm = require('node:vm');
 const {createEnvironment, runOwnedProcess, pythonCandidates} = require('../environment.cjs');
 
-async function fixture(t) {
+async function fixture(t, platform='darwin') {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'briefloop-environment-test-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const payloadPath=path.join(root,'payload'),host=path.join(root,'host-python');
   await fs.mkdir(payloadPath);await fs.writeFile(host,'Synthetic host marker',{mode:0o700});
-  let version='0.19.0',failInstall=false,waitInstall=false,enteredInstall;
+  let version='0.19.0',failInstall=false,waitInstall=false,enteredInstall,lockedPackagesMatch=true;
   const versions=new Map(),calls=[],changes=[];
-  async function payload(next) {
+  async function payload(next, dependencyVersion='1.0') {
     version=next;const wheel=`briefloop-${version}-py3-none-any.whl`,bytes=Buffer.from('Synthetic wheel fixture '+version);
-    const lock=Buffer.from('synthetic-dependency==1.0 --hash=sha256:'+'0'.repeat(64)+'\n');
+    const lock=Buffer.from('synthetic-dependency=='+dependencyVersion+' --hash=sha256:'+'0'.repeat(64)+'\n');
     await fs.writeFile(path.join(payloadPath,wheel),bytes);await fs.writeFile(path.join(payloadPath,'requirements.txt'),lock);
     await fs.writeFile(path.join(payloadPath,'manifest.json'),JSON.stringify({version,wheel,sha256:createHash('sha256').update(bytes).digest('hex'),
       requirements:'requirements.txt',requirements_sha256:createHash('sha256').update(lock).digest('hex')}));
@@ -27,12 +27,14 @@ async function fixture(t) {
   const runProcess=async(executable,args,options)=>{
     calls.push({executable,args,options});
     if(args.includes('-c')&&args.some(value=>value.includes('list(sys.version_info')))return {stdout:JSON.stringify({version:[3,12,5],executable:host})};
+    if(args.includes('-c')&&args.some(value=>value.includes('checked = 0')))return {stdout:JSON.stringify({matches:lockedPackagesMatch})};
+    if(args.includes('-c')&&args.some(value=>value.includes('def copy_dependencies')))return {stdout:JSON.stringify({reused:['synthetic-dependency'],skipped:[]})};
     if(executable==='/bin/cp'){
       const [source,target]=args.slice(-2);await fs.cp(source,target,{recursive:true});versions.set(target,versions.get(source));return {stdout:''};
     }
     if(args[2]==='venv'){
-      const target=args.at(-1);versions.set(target,version);await fs.mkdir(path.join(target,'bin'));
-      await fs.writeFile(path.join(target,'bin','python3'),'Synthetic venv marker',{mode:0o700});return {stdout:''};
+      const target=args.at(-1);versions.set(target,version);await fs.mkdir(path.join(target,platform==='win32'?'Scripts':'bin'));
+      await fs.writeFile(path.join(target,platform==='win32'?'Scripts':'bin',platform==='win32'?'python.exe':'python3'),'Synthetic venv marker',{mode:0o700});return {stdout:''};
     }
     if(args.includes('install')){
       enteredInstall?.();
@@ -45,8 +47,9 @@ async function fixture(t) {
     if(args.includes('-c')){await fs.access(executable);return {stdout:JSON.stringify({version:versions.get(args.at(-1))})};}
     assert.equal(args.at(-1),'check');return {stdout:'No broken requirements found.'};
   };
-  const config={app:{getPath:()=>root},payloadPath,platform:'darwin',arch:'arm64',candidates:[host],runProcess,changed:value=>changes.push(value)};
+  const config={app:{getPath:()=>root},payloadPath,platform,arch:platform==='win32'?'x64':'arm64',candidates:[host],runProcess,changed:value=>changes.push(value)};
   return {root,host,payloadPath,payload,config,calls,changes,environment:createEnvironment(config),
+    invalidateDependencies:()=>{lockedPackagesMatch=false},
     failInstall:()=>{failInstall=true},recover:()=>{failInstall=false},
     waitInstall:()=>{waitInstall=true;return new Promise(resolve=>{enteredInstall=resolve})}};
 }
@@ -288,4 +291,44 @@ test('welcome hides unavailable retries and preserves the cleanup guard after ca
   assert.equal(getElementById('prepare').hidden,true);assert.equal(getElementById('inspect').hidden,true);
   changed({state:'error',retryable:true,error:{code:'process_failed',message:'普通安装失败，可以重试。'}});
   assert.equal(getElementById('prepare').hidden,false);assert.equal(getElementById('inspect').hidden,false);
+});
+
+
+test('unchanged locked dependencies are reused without running pip install requirements',async t=>{
+  const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+  await f.payload('0.20.0');
+  const updated=createEnvironment(f.config);assert.equal((await updated.startup()).state,'ready');
+  const installs=f.calls.filter(c=>c.args.includes('install'));
+  assert.equal(installs.length,1);assert.ok(installs[0].args.at(-1).endsWith('.whl'));
+  assert.ok(f.changes.some(x=>x.phase==='reuse-dependencies'));
+  assert.ok(f.calls.some(c=>c.args.at(-1)==='check'));
+});
+
+test('changed lock and mismatched installed dependencies still use locked installer',async t=>{
+  for(const changed of [true,false]){
+    const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+    await f.payload('0.20.0',changed?'2.0':'1.0');if(!changed)f.invalidateDependencies();
+    assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+    assert.ok(f.calls.some(c=>c.args.includes('--require-hashes')));
+    assert.ok(f.changes.some(x=>x.phase==='update-dependencies'));
+  }
+});
+
+test('a changed lock cannot take the warm-start shortcut even for identical wheel',async t=>{
+  const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+  await f.payload('0.19.0','2.0');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  assert.ok(f.calls.some(c=>c.args.includes('--require-hashes')));
+});
+
+
+test('Windows creates fresh interpreter launchers and reuses verified dependencies before the app wheel',async t=>{
+  const f=await fixture(t,'win32');await f.environment.prepare();f.calls.length=0;
+  await f.payload('0.20.0');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  assert.equal(f.calls.filter(c=>c.args[2]==='venv').length,1);
+  assert.equal(f.calls.filter(c=>c.executable==='/bin/cp').length,0);
+  const installs=f.calls.filter(c=>c.args.includes('install'));
+  assert.equal(installs.length,1);assert.ok(installs[0].args.at(-1).endsWith('.whl'));
+  assert.ok(f.changes.some(v=>v.reusedDependencyCount===1));
 });
