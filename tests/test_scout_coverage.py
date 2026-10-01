@@ -195,6 +195,9 @@ def test_capacity_is_not_commitment_and_old_runs_remain_compatible(tmp_path):
     assert len(plan['rounds'][plan['current_round_id']]['tasks']) == plan['structure']['breadth']
     assert plan['structure']['breadth'] > 1
     assert not scout_coverage.required(store, run['id'])
+    old_plan = store.root / 'jobs' / job['id'] / 'plan.json'
+    old_plan.parent.mkdir(parents=True)
+    old_plan.write_text(json.dumps({'scout_tasks': [{'slot_id': 'old-scout', 'assignment': 'Legacy narrative shape'}]}))
     research_plan.finish_round(store, run['id'])
     assert research_plan.require_writing_closeout(store, run['id'])
 
@@ -203,7 +206,7 @@ def test_manifest_replay_capacity_skips_and_late_results(tmp_path):
     from briefloop.scout_tools import join_scouts
     store, source, run, job = setup(tmp_path, research_tier='deep')
     plan = research_plan.freeze(store, run['id'], structure={'breadth': 4, 'depth': 3})
-    tasks = [{**task, 'result_file': str(store.root / task['slot_id'] / 'result.json')} for task in TASKS[:2]]
+    tasks = [{**task, 'result_file': str(store.root / 'jobs' / job['id'] / task['slot_id'] / 'result.json')} for task in TASKS[:2]]
     # Two commitments, four allocated slots and three possible rounds.
     first = scout_coverage.declare(store, run['id'], tasks)
     assert scout_coverage.declare(store, run['id'], tasks) == first
@@ -219,12 +222,74 @@ def test_manifest_replay_capacity_skips_and_late_results(tmp_path):
     assert research_plan.require_writing_closeout(store, run['id'])['round_index'] == 1
     from pathlib import Path
     path = Path(tasks[0]['result_file'])
-    path.parent.mkdir()
+    path.parent.mkdir(parents=True)
     path.write_text(json.dumps({'sources': [], 'gaps': ['No matching evidence']}))
     join_scouts(store, [path], run_id=run['id'])
     assert all(task['status'] == 'skipped' for task in scout_coverage.view(store, run['id'])['scout_execution'])
     replay = research_plan.finish_round(store, run['id'])
     assert replay['idempotent']
     research_plan.begin_round(store, run['id'])
-    with pytest.raises(ValueError, match='同一 Scout 结果路径'):
+    with pytest.raises(ValueError, match='本任务、本轮|同一 Scout 结果路径'):
         scout_coverage.declare(store, run['id'], tasks)
+
+
+def test_foreign_run_and_preexisting_results_do_not_complete_new_tasks(tmp_path):
+    from pathlib import Path
+    from briefloop.scout_tools import join_scouts
+    store, source, old_run, old_job = setup(tmp_path)
+    research_plan.freeze(store, old_run['id'])
+    old_path = store.root / 'jobs' / old_job['id'] / 'scout-1' / 'result.json'
+    old_task = {'slot_id': 'scout-1', 'assignment': 'Read old subject', 'result_file': str(old_path)}
+    scout_coverage.declare(store, old_run['id'], [old_task])
+    old_path.parent.mkdir(parents=True)
+    result = {'sources': [], 'gaps': ['No relevant evidence in this task']}
+    old_path.write_text(json.dumps(result))
+    join_scouts(store, [old_path], run_id=old_run['id'])
+    research_plan.finish_round(store, old_run['id'])
+    run = store.create_run({'title': 'New scope', 'objective': 'Read a different subject', 'allow_web': False, 'fact_check': False},
+                           [source['id']], research_protocol='quality_v1')
+    job = store.enqueue('generate', {'run_id': run['id']})
+    research_plan.freeze(store, run['id'])
+    task = {**old_task, 'assignment': 'Read new subject'}
+    with pytest.raises(ValueError, match='本任务、本轮'):
+        scout_coverage.declare(store, run['id'], [task])
+    # Reusing allowed source material is fine, but an old artifact cannot count
+    # as newly executed work even after copying it to the new canonical path.
+    current_path = store.root / 'jobs' / job['id'] / 'scout-1' / 'result.json'
+    task['result_file'] = str(current_path)
+    current_path.parent.mkdir(parents=True)
+    current_path.write_text(json.dumps(result))
+    with pytest.raises(ValueError, match='已有结果'):
+        scout_coverage.declare(store, run['id'], [task])
+    current_path.unlink()
+    scout_coverage.declare(store, run['id'], [task])
+    join_scouts(store, [old_path], run_id=run['id'])  # Evidence reuse, never execution credit.
+    assert scout_coverage.view(store, run['id'])['scout_execution'][0]['status'] == 'planned'
+    current_path.write_text(json.dumps(result))
+    join_scouts(store, [current_path], run_id=run['id'])
+    research_plan.finish_round(store, run['id'])
+    assert scout_coverage.view(store, run['id'])['execution_gaps'] == []
+
+
+def test_closed_round_join_cannot_credit_active_round_with_slots_override(tmp_path):
+    from pathlib import Path
+    from briefloop.scout_tools import join_scouts
+    store, source, run, job = setup(tmp_path)
+    first = research_plan.freeze(store, run['id'])['current_round_id']
+    scout_coverage.declare(store, run['id'], [])
+    research_plan.finish_round(store, run['id'])
+    second = research_plan.begin_round(store, run['id'])['round_id']
+    path = store.root / 'jobs' / job['id'] / 'round-2' / 'scout-1' / 'result.json'
+    task = {'slot_id': 'scout-1', 'assignment': 'Second round direction', 'result_file': str(path)}
+    scout_coverage.declare(store, run['id'], [task])
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'sources': [], 'gaps': ['No matching evidence']}))
+    with pytest.raises(ValueError, match='槽位'):
+        join_scouts(store, [path], run_id=run['id'], round_id=first, slots=[path])
+    assert scout_coverage.view(store, run['id'])['scout_execution'][0]['status'] == 'planned'
+    # The lower-level completion boundary is independently round-bound too.
+    scout_coverage.complete(store, run['id'], [path], round_id=first)
+    assert scout_coverage.view(store, run['id'])['scout_execution'][0]['status'] == 'planned'
+    join_scouts(store, [path], run_id=run['id'], round_id=second)
+    research_plan.finish_round(store, run['id'])
+    assert scout_coverage.view(store, run['id'])['execution_gaps'] == []

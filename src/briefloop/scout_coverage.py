@@ -77,6 +77,20 @@ def declare(store, run_id, tasks, *, round_id=None, directory=None):
         if not set(old) <= set(normalized):
             raise ValueError('已承诺的 Scout 分工不能省略；请在收轮时明确说明 skipped 原因')
         for slot, task in normalized.items():
+            if required(store, run_id):
+                from .research_plan import _owner_job
+                owner = _owner_job(store, run_id)
+                job_root = store.root / 'jobs' / owner['id']
+                scoped = [job_root / ('round-' + str(info['index'])) / slot / 'result.json',
+                          store.root / 'research' / run_id / 'rounds' / str(info['index']) / slot / 'result.json']
+                if info['index'] == 1:
+                    scoped.append(job_root / slot / 'result.json')
+                # Compare against canonical lexical paths: a symlink must not
+                # turn a foreign run's artifact into this task's result.
+                if task['result_file'] not in {str(path) for path in scoped}:
+                    raise ValueError('Scout 结果路径必须绑定本任务、本轮与 slot_id；本轮可用：' + str(scoped[0]))
+                if slot not in old and Path(task['result_file']).exists():
+                    raise ValueError('新 Scout 分工不能绑定已有结果；先登记分工，再执行或明确说明跳过')
             if slot in old and any(old[slot][key] != value for key, value in task.items()):
                 raise ValueError('已登记 Scout 分工不可改写；需要变更时使用新轮次')
             for previous_id, previous in state['rounds'].items():
@@ -124,14 +138,17 @@ def _updates(record, updates):
         _transition(task, status, reason.strip())
 
 
-def complete(store, run_id, paths):
+def complete(store, run_id, paths, *, round_id=None):
     """Called only after all supplied Scout files pass the real join validator."""
     paths = {str(Path(path).resolve()) for path in paths}
     with store.tx() as connection:
         state = _read(connection, run_id)
         from .research_plan import _read_plan
         plan = _read_plan(connection, run_id) or {}
+        admitted = round_id or plan.get('current_round_id') or ('legacy' if not plan else None)
         for identity, record in state['rounds'].items():
+            if identity != admitted:
+                continue
             if identity != 'legacy' and plan.get('rounds', {}).get(identity, {}).get('status') != 'active':
                 continue  # Frozen closeout records are not rewritten by late files.
             for task in record['tasks'].values():
@@ -146,7 +163,8 @@ def closeout(store, run_id, connection, round_id, *, outcomes=None, enforce=Fals
     record = state['rounds'].get(round_id, {})
     if enforce and not record.get('declared'):
         raise AdmissionError('收轮前须用 set_scout_tasks 登记完整研究分工；确无 Scout 工作时明确提交 scout_tasks=[]', code='scout_plan_missing')
-    _check_saved_plan(store, run_id, record)
+    if enforce:
+        _check_saved_plan(store, run_id, record)
     if outcomes is not None:
         _updates(record, outcomes)
     pending = [task for task in record.get('tasks', {}).values() if task['status'] in ('planned', 'dispatched')]

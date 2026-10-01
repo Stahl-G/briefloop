@@ -40,8 +40,10 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
         if not info:
             raise ValueError('Scout 轮次不属于本任务')
         committed = (store.meta('scout_coverage:' + run_id) or {}).get('rounds', {}).get(round_id, {})
-        if slots is None and committed.get('declared'):
-            slots = [task['result_file'] for task in committed['tasks'].values()]
+        if committed.get('declared'):
+            bound = {task['result_file'] for task in committed['tasks'].values()}
+            # Explicit --slots may narrow the named round, never redirect it.
+            slots = list(bound) if slots is None else [slot for slot in slots if str(Path(slot).resolve()) in bound]
         elif slots is None and info.get('tasks'):
             slots = [str(Path(task['directory']) / 'result.json') for task in info['tasks']]
     allowed_slots={str(Path(slot).resolve()) for slot in slots} if slots is not None else None
@@ -73,7 +75,7 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
                        search_summary='\n'.join(summaries),retrieval_notes=notes)
     if run_id:
         from .scout_coverage import complete
-        complete(store, run_id, paths)
+        complete(store, run_id, paths, round_id=round_id)
         from .research_handoff import current_research
         return current_research(store, run_id, merged.model_dump(), register=True)
     return merged.model_dump()
