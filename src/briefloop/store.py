@@ -826,7 +826,10 @@ class Store:
             if kind!='review':payload['review_runtime']=review_runtime
             if kind=='generate':
                 payload.setdefault('auto_revision',self.settings()['auto_revision'])
-                payload.setdefault('max_parallel',self.settings()['max_parallel'])
+                # The report's own Scout ceiling, chosen at creation, wins over the workspace default.
+                limit=(json.loads(self.one('runs',payload['run_id'])['requirements']).get('scout_limit')
+                       if payload.get('run_id') else None)
+                payload.setdefault('max_parallel',int(limit) if limit else self.settings()['max_parallel'])
             if kind=='generate' and payload.get('run_id'):
                 runs=self.rows('SELECT requirements FROM runs WHERE id=?',(payload['run_id'],))
                 if runs and json.loads(runs[0]['requirements']).get('writing_mode')=='internal_report':payload.setdefault('reader_contract_required',True)

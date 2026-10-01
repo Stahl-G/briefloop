@@ -458,8 +458,42 @@ def _validate_gap(store, run_id, gap):
             raise ValueError('缺口关联的主张属于另一报告：' + str(claim_id))
 
 
-def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None):
+# Research that closes after its first round while most of the managed search
+# budget is unused needs a stated reason. A host model left a monthly report at
+# 23 sources after one reconnaissance round with 8 of 30 searches used.
+EARLY_STOP_USED_FRACTION = 0.5
+# Small hand-set budgets are spent at the user's discretion; weekly and monthly presets are 30 and 80.
+EARLY_STOP_MIN_BUDGET = 10
+
+
+def _early_stop(store, run_id, info, plan, continue_research, early_stop_reason):
+    """Return the refusal for an unexplained early stop, or None."""
+    if continue_research or (early_stop_reason or '').strip():
+        return None
+    depth = int((plan.get('structure') or {}).get('depth') or 1)
+    if int(info.get('index') or 1) > 1 or depth < 2:
+        return None
+    from .research_budget import snapshot
+    budget = snapshot(store, run_id)
+    limit = int((budget.get('limits') or {}).get('search_requests') or 0)
+    used = int((budget.get('used') or {}).get('search_requests') or 0)
+    # No search yet means material-only work or an explicit no-web run: nothing to judge.
+    if limit < EARLY_STOP_MIN_BUDGET or used == 0 or used >= limit * EARLY_STOP_USED_FRACTION:
+        return None
+    return (f'这是第 1 轮，受控搜索额度只用了 {used}/{limit}，计划最多 {depth} 轮。'
+            '要继续检索：带 continue_research=true 收轮，然后 begin_research_round 按本轮缺口和未派发的方向聚焦补查；'
+            '确实已覆盖本期重要事件：带 early_stop_reason 说明依据（会写进研究记录并向用户显示）。')
+
+
+def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None,
+                 continue_research=False, early_stop_reason=''):
     """Close a round, assign real gap ids and freeze its outcome. Idempotent per round."""
+    current = frozen(store, run_id) or {}
+    candidate = (current.get('rounds') or {}).get(round_id or current.get('current_round_id') or '')
+    if candidate and candidate.get('status') == 'active':
+        refusal = _early_stop(store, run_id, candidate, current, continue_research, early_stop_reason)
+        if refusal:
+            raise AdmissionError(refusal, code='research_stopped_early')
     # Admission and mutation share the same write transaction as network reservations.
     with store.tx() as connection:
         plan = _read_plan(connection, run_id)
@@ -506,14 +540,18 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         info['gaps'] = records
         info['status'] = 'closed'
         info['closed'] = now()
-        info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now()}
+        info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now(),
+                           **({'continue_research': True} if continue_research else {}),
+                           **({'early_stop_reason': early_stop_reason.strip()[:1000]} if (early_stop_reason or '').strip() else {})}
         plan['current_round_id'] = None
         _save_plan(connection, run_id, plan)
     _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json',
                 {'round_id': round_id, 'index': info['index'], 'summary': summary, 'closeout': closeout, 'gaps': records, 'gap_updates': accepted_updates, 'closed_at': info['closed']})
     if job_id:
         store.event(job_id, 'research_round', {'action': 'finish', 'round_id': round_id,
-                                               'index': info['index'], 'gap_ids': [record['id'] for record in records]})
+                                               'index': info['index'], 'gap_ids': [record['id'] for record in records],
+                                               **({'early_stop_reason': info['outcome']['early_stop_reason']}
+                                                  if info['outcome'].get('early_stop_reason') else {})})
     return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'gap_updates': accepted_updates, 'idempotent': False}
 
 

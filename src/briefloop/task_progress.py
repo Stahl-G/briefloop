@@ -63,7 +63,8 @@ def summary(store, job_id):
     for r in opened:
         done = r['status'] == 'closed'
         timeline.append({'label': f"第 {r['index']} 轮研究" + ('已收束' if done else '进行中' if running else '未收束'),
-                         'detail': public_text((r.get('outcome') or {}).get('summary')),
+                         'detail': public_text(((r.get('outcome') or {}).get('summary') or '')
+                                               + (('；提前收束理由：' + r['outcome']['early_stop_reason']) if (r.get('outcome') or {}).get('early_stop_reason') else '')),
                          'status': 'done' if done else 'active' if running else 'recorded', 'time': r.get('closed') or r.get('created')})
     event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}

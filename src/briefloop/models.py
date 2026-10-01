@@ -20,6 +20,11 @@ LENGTH_PRESETS = {'quick':(350,500),'compact':(800,1000),'balanced':(1500,2000),
 LENGTH_PRESETS_EN = {'quick':(250,350),'compact':(500,650),'balanced':(1000,1300),'detailed':(1300,1600)}
 DEEP_LENGTH = {'zh':(10000,12000),'en':(6500,8000)}
 INDUSTRY_LENGTH = {'zh':(5000,5500),'en':(3200,3600)}
+# A periodic industry report covering about a month carries several times a
+# weekly's events; 5,000 characters left most of them out (2026-10 AI monthly).
+INDUSTRY_MONTHLY_LENGTH = {'zh':(9000,10000),'en':(5800,6500)}
+MONTHLY_MIN_DAYS = 25
+MONTHLY_SCOUTS = 8
 
 
 def report_language(value):
@@ -128,6 +133,9 @@ class Requirements(Model):
     # Explicit lifecycle choice; the historical quick research preset is unchanged.
     completion_mode: Literal["standard", "draft_first", "fast", "fast_web"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
+    scout_limit: int | None = Field(default=None, ge=1, le=16, description=(
+        '本报告最多可同时派发的 Scout 数（1–16）。按期间与覆盖面在开始前决定：一周左右的报告约 4；'
+        '一个月左右的月报约 8；跨多个行业、市场或语言的大型报告可到 12–16。用户没提时不写，系统按期间自动设定（月报为 8）。'))
     # Independent fact-check switch chosen at task creation; None follows the
     # workspace default, which create_run resolves to a concrete bool on the run
     # so pause/resume and later phases read one stored choice.
@@ -166,6 +174,15 @@ class Requirements(Model):
             raise ValueError('报告日期应为 YYYY-MM-DD')
         return value
 
+    def covers_month(self):
+        """A report whose stated period spans about a month, or that names itself a monthly."""
+        try:
+            if self.period_start and self.period_end:
+                return (date.fromisoformat(self.period_end[:10])-date.fromisoformat(self.period_start[:10])).days+1>=MONTHLY_MIN_DAYS
+        except ValueError:
+            pass
+        return any(word in (self.title or '') for word in ('月报','月度','monthly','Monthly'))
+
     @model_validator(mode='after')
     def fill_length_preferences(self):
         if self.length_mode == 'strict':
@@ -175,8 +192,15 @@ class Requirements(Model):
                 originals = [self.objective, self.raw_input, *self.writing_preferences]
                 if not any(self.length_requirement.text in original for original in originals):
                     raise ValueError('严格篇幅的 user_quote 必须逐字出现在 objective、raw_input 或 writing_preferences 中')
-        target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else INDUSTRY_LENGTH[self.language]
+        monthly = self.covers_month()
+        target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else
+                        (INDUSTRY_MONTHLY_LENGTH if monthly else INDUSTRY_LENGTH)[self.language]
                         if self.report_profile=="industry_periodic" else length_presets(self.language)[self.extent])
+        if monthly and self.scout_limit is None:
+            self.scout_limit=MONTHLY_SCOUTS
+        if monthly and 'research_budget' not in self.model_fields_set:
+            # Only the unset default follows the period; an explicit budget is kept.
+            self.research_budget=ResearchBudget(**RESEARCH_BUDGET_PRESETS['monthly'])
         if self.length_mode == 'strict':target=min(target,self.max_words)
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)

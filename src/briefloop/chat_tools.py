@@ -13,6 +13,15 @@ def _notify_owner(request):
     """Conversation that owns a task started from chat; never guessed."""
     return request.get('session_id') or os.environ.get('BRIEFLOOP_CHAT_SESSION') or None
 
+def _session_backend(store, session_id):
+    if not session_id:
+        return None
+    rows = store.rows('SELECT runtime FROM chat_sessions WHERE id=?', (session_id,))
+    try:
+        return json.loads(rows[0]['runtime']).get('backend') if rows else None
+    except (TypeError, ValueError):
+        return None
+
 WORKSPACE_ACTIONS = (
     'capabilities','source_snapshot','source_change','source_impacts','refresh_source',
     'set_reader_contract','conflict_create','conflict_response','review_response','review_status',
@@ -151,7 +160,8 @@ def workspace_action(store, request):
         return begin_round(store,request['run_id'],target_gap_ids=request.get('target_gap_ids'),tasks=request.get('tasks'),job_id=request.get('job_id'))
     if action=='finish_research_round':
         from .research_plan import finish_round
-        return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),gap_updates=request.get('gap_updates'),job_id=request.get('job_id'))
+        return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),gap_updates=request.get('gap_updates'),job_id=request.get('job_id'),
+                            continue_research=request.get('continue_research') is True,early_stop_reason=str(request.get('early_stop_reason') or ''))
     if action=='reconciliation_candidates':
         from .reconciliation import candidates
         return candidates(store,request['run_id'])
@@ -186,7 +196,12 @@ def workspace_action(store, request):
         runtime_payload={}
         if request.get('runtime'):
             from .backends import validate_backend
-            backend=validate_backend(request['runtime'].get('agent_backend',store.settings().get('agent_backend','codex')))
+            # A model name only means something on its own engine. Without an explicit
+            # engine, use the engine of the conversation that sent this model, never the
+            # workspace default (a Claude chat once produced "Antigravity · opus").
+            backend=request['runtime'].get('agent_backend') or _session_backend(store,_notify_owner(request)) \
+                or store.settings().get('agent_backend','codex')
+            backend=validate_backend(backend)
             settings=Settings.model_validate({**store.settings(),**request['runtime'],'agent_backend':backend})
             runtime_payload={'runtime':runtime_fields(settings.model_dump(),backend),'agent_backend':backend}
         run=store.create_run(requirements.model_dump(),source_ids,research_protocol="quality_v1",
@@ -261,7 +276,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
                 subagent_note=(OPENCODE_V2_SUBAGENT+'优先不传 model override，继承当前已冻结模型和推理档位；不要启动嵌套模型 CLI。'
                     '宿主 question 工具不可用；需要澄清时直接在聊天回复中提问，用户下一条消息会继续本任务。')
     else:
-        request_runtime={'model':runtime['model'],'reasoning_effort':runtime.get('effort'),
+        request_runtime={'agent_backend':backend,'model':runtime['model'],'reasoning_effort':runtime.get('effort'),
                          'model_provider':runtime.get('model_provider')}
         runtime_json=json.dumps(request_runtime,ensure_ascii=False)
         runtime_label=runtime.get('effort') if runtime.get('effort') is not None else '不指定（provider 默认）'
@@ -303,7 +318,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
 - {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。
-- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；可选 gap_updates 明确变更已登记缺口状态，每项 gap_id/status(open|partial|resolved)/reason/evidence（source_id/locator/excerpt，partial/resolved 至少一条，open 可为空），partial 另填 remaining_question；covered 不会关闭缺口。之后才能 begin 下一轮。
+- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；可选 gap_updates 明确变更已登记缺口状态，每项 gap_id/status(open|partial|resolved)/reason/evidence（source_id/locator/excerpt，partial/resolved 至少一条，open 可为空），partial 另填 remaining_question；covered 不会关闭缺口。还要继续检索时带 "continue_research":true；只完成第 1 轮且受控搜索额度用了不到一半就结束研究时，必须带 "early_stop_reason" 说明为何已覆盖本期重要事件，否则会被拒绝。之后才能 begin 下一轮。
 - {{"action":"reconciliation_candidates","run_id":"真实run ID"}}：读取本任务冻结的候选清单（来源与来源陈述），用于写作前对照。
 - {{"action":"reconciliation_save","run_id":"真实run ID","reconciliation":{{"status":"complete|partial|not_applicable|failed","examined_claim_ids":[],"unexamined_claim_ids":[],"relations":[{{"member_claim_ids":["真实claim ID","真实claim ID"],"relation":"compatible|different_scope|temporal_sequence|correction|supersession|republication|attributed_difference|contradiction|unknown","scope":"","basis_span_ids":[],"reason":"","proposed_treatment":"","affected_requirement_ids":[]}}],"open_questions":[],"coverage_notes":""}}}}：保存写作前对照快照。必须用 examined ∪ unexamined 明确覆盖候选清单全部来源陈述；关系必须引用真实来源陈述；不判定真假，只登记依据与建议写法。重复相同内容幂等。
 - {{"action":"reconciliation_read","run_id":"真实run ID","reconciliation_id":"真实对照ID"}}：读取对照快照；输入变化时返回 stale 标记。
@@ -311,7 +326,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON、引用和已存正文的 length_stats；revise_document 回执也给出保存后的确定性计数。按 count/rule 核对原始要求、读者约定及当前反馈，不估算字数；over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。可选 citations 完整替换引用列表（source_id/locator/excerpt，schema 见 capabilities），省略则保留；只修改引用也保存新版本，定位描述不表示已独立核验。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
-- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"zh|en","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。language 是报告正文语言（默认 zh）；用户要英文报告时写 en，不传 target_words 时篇幅按英文词数默认。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
+- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"zh|en","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。language 是报告正文语言（默认 zh）；用户要英文报告时写 en，不传 target_words 时篇幅按英文词数默认。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。scout_limit 是本报告最多可同时派发的 Scout 数（1–16），在提交前按信息量决定：一周左右约 4，月报约 8，跨多个行业或市场的大型报告可到 12–16；不写时系统按期间自动设定（月报 8，其余沿用工作区设置）。
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
