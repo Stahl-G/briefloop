@@ -496,11 +496,11 @@ def _write_round_outcome(store, run_id, round_id, info):
         'round_id': round_id, 'index': info['index'], 'summary': outcome.get('summary', ''),
         'closeout': outcome.get('closeout'), 'gaps': info.get('gaps', []),
         'gap_updates': outcome.get('gap_updates', []), 'closed_at': info.get('closed'),
-        **{key: outcome[key] for key in ('continue_research', 'early_stop_reason') if key in outcome}})
+        **{key: outcome[key] for key in ('continue_research', 'early_stop_reason', 'scout_tasks') if key in outcome}})
 
 
 def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None,
-                 continue_research=False, early_stop_reason=''):
+                 continue_research=False, early_stop_reason='', scout_outcomes=None):
     """Close a round, assign real gap ids and freeze its outcome. Idempotent per round."""
     # Admission and mutation share the same write transaction as network reservations.
     with store.tx() as connection:
@@ -541,6 +541,8 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                             'gap_updates': previous, 'idempotent': False}
             return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
                     'gap_updates': previous, 'idempotent': True}
+        from .scout_coverage import closeout as scout_closeout, required as scout_required
+        scout_record = scout_closeout(store, run_id, connection, round_id, outcomes=scout_outcomes, enforce=scout_required(store, run_id))
         refusal = _early_stop(store, run_id, info, plan, continue_research, early_stop_reason)
         if refusal:
             raise AdmissionError(refusal, code='research_stopped_early')
@@ -568,6 +570,8 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now(),
                            **({'continue_research': True} if continue_research else {}),
                            **({'early_stop_reason': early_stop_reason.strip()[:1000]} if (early_stop_reason or '').strip() else {})}
+        if scout_record.get('declared'):
+            info['outcome']['scout_tasks'] = list(scout_record['tasks'].values())
         plan['current_round_id'] = None
         _save_plan(connection, run_id, plan)
         # Serialize the file with a later reason-only amendment as well, so the
@@ -578,7 +582,9 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                                                'index': info['index'], 'gap_ids': [record['id'] for record in records],
                                                **({'early_stop_reason': info['outcome']['early_stop_reason']}
                                                   if info['outcome'].get('early_stop_reason') else {})})
-    return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'gap_updates': accepted_updates, 'idempotent': False}
+    from .scout_coverage import view as scout_view
+    return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'gap_updates': accepted_updates, 'idempotent': False,
+            'execution_gaps': scout_view(store, run_id)['execution_gaps']}
 
 
 def round_usage(store, run_id, round_id):
@@ -828,4 +834,5 @@ def search_slots_left(store, connection, run_id, round_id):
 
 def status(store, run_id):
     from .research_handoff import gap_view
-    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id), **gap_view(store, run_id)}
+    from .scout_coverage import view as scout_view
+    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id), **gap_view(store, run_id), **scout_view(store, run_id)}

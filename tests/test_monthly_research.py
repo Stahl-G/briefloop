@@ -185,6 +185,10 @@ def test_host_draft_publication_enforces_research_continuation(tmp_path, monkeyp
         calls = 0
         def execute(self, job, prompt, folder, on_tick, **kwargs):
             self.calls += 1
+            if scenario != 'legacy' and self.calls == 1:
+                from briefloop.scout_coverage import declare
+                declare(store, run['id'], [])
+                if scenario == 'material_only':research_plan.finish_round(store, run['id'])
             if controlled and self.calls == 1:
                 store.set_meta('research_budget:' + run['id'], {'search_requests': 8, 'candidate_urls': [], 'source_pages': []})
                 research_plan.finish_round(store, run['id'], continue_research=True)

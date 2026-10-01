@@ -448,6 +448,8 @@ class Store:
             c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(stored), dump(source_ids), options["skill_id"] if "skill_id" in options else reader_skill(self,req.reader_id), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
                 c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(stored),))
+            if options.get("research_protocol") == 'quality_v1' and req.completion_mode not in ('fast', 'fast_web'):
+                c.execute("INSERT INTO meta VALUES(?,?)", ('scout_coverage_version:'+rid, dump(1)))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
         return self.one("runs", rid)
@@ -849,6 +851,10 @@ class Store:
                        if payload.get('run_id') else None)
                 payload.setdefault('max_parallel',int(limit) if limit else self.settings()['max_parallel'])
             if kind=='generate' and payload.get('run_id'):
+                # New runs bind this contract at application admission; old persisted runs remain compatible.
+                version=self.meta('scout_coverage_version:'+payload['run_id'])
+                payload.pop('scout_coverage_version',None)
+                if version == 1:payload['scout_coverage_version']=1
                 runs=self.rows('SELECT requirements FROM runs WHERE id=?',(payload['run_id'],))
                 if runs and json.loads(runs[0]['requirements']).get('writing_mode')=='internal_report':payload.setdefault('reader_contract_required',True)
         jid = uid("job")

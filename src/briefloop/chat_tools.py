@@ -29,7 +29,7 @@ WORKSPACE_ACTIONS = (
     'revise_document','templates','workflows','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
     'profile_read','profile_update',
-    'freeze_research_plan','research_status','begin_research_round','finish_research_round',
+    'freeze_research_plan','research_status','begin_research_round','finish_research_round','set_scout_tasks',
     'reconciliation_candidates','reconciliation_save','reconciliation_read',
     'export_word','inspect','generate','assess','comment','learn',
 )
@@ -152,6 +152,15 @@ def workspace_action(store, request):
     if action=='research_status':
         from .research_plan import status
         return status(store,request['run_id'])
+    if action=='set_scout_tasks':
+        from .scout_coverage import declare, update
+        if 'scout_tasks' in request:
+            result=declare(store,request['run_id'],request['scout_tasks'],round_id=request.get('round_id'))
+        if 'scout_outcomes' in request:
+            result=update(store,request['run_id'],request['scout_outcomes'],round_id=request.get('round_id'))
+        if 'scout_tasks' not in request and 'scout_outcomes' not in request:
+            raise ValueError('需要 scout_tasks 或 scout_outcomes')
+        return result
     if action=='freeze_research_plan':
         from .research_plan import freeze
         return freeze(store,request['run_id'],preset=request.get('preset'),structure=request.get('structure'))
@@ -161,7 +170,7 @@ def workspace_action(store, request):
     if action=='finish_research_round':
         from .research_plan import finish_round
         return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),gap_updates=request.get('gap_updates'),job_id=request.get('job_id'),
-                            continue_research=request.get('continue_research') is True,early_stop_reason=str(request.get('early_stop_reason') or ''))
+                            continue_research=request.get('continue_research') is True,early_stop_reason=str(request.get('early_stop_reason') or ''),scout_outcomes=request.get('scout_outcomes'))
     if action=='reconciliation_candidates':
         from .reconciliation import candidates
         return candidates(store,request['run_id'])
@@ -317,9 +326,10 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"profile_read"}}：读取本工作区基础设定（称呼、公司/组织、岗位等）。
 - {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：按上文约定保存用户主动提供或任务确有必要的基础信息；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
+- {{"action":"set_scout_tasks","run_id":"真实run ID","scout_tasks":[{{"slot_id":"scout-1","assignment":"明确研究方向","result_file":"本轮结果绝对路径"}}]}}：派发前登记完整承诺分工，与 plan.json.scout_tasks 相同；空计划明确写 []。预分配槽位不是承诺。分工不可静默删除；可追加新分工。实际派发后可用同 action 的 scout_outcomes=[{{"slot_id":"scout-1","status":"dispatched","reason":"真实子任务句柄"}}] 记录派发。join-scouts 自动接纳有效结果。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
 - {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。
-- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；可选 gap_updates 明确变更已登记缺口状态，每项 gap_id/status(open|partial|resolved)/reason/evidence（source_id/locator/excerpt，partial/resolved 至少一条，open 可为空），partial 另填 remaining_question；covered 不会关闭缺口。还要继续检索时带 "continue_research":true；只完成第 1 轮且受控搜索额度用了不到一半就结束研究时，必须带 "early_stop_reason" 说明为何已覆盖本期重要事件，否则会被拒绝。之后才能 begin 下一轮。
+- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；每个已承诺 Scout 分工须已 join，或在 scout_outcomes 中明确 slot_id、status=failed|skipped、reason，保留未检范围；不必用满槽位、预算或后续轮次。可选 gap_updates 明确变更已登记缺口状态，每项 gap_id/status(open|partial|resolved)/reason/evidence（source_id/locator/excerpt，partial/resolved 至少一条，open 可为空），partial 另填 remaining_question；covered 不会关闭缺口。还要继续检索时带 "continue_research":true；只完成第 1 轮且受控搜索额度用了不到一半就结束研究时，必须带 "early_stop_reason" 说明为何已覆盖本期重要事件，否则会被拒绝。之后才能 begin 下一轮。
 - {{"action":"reconciliation_candidates","run_id":"真实run ID"}}：读取本任务冻结的候选清单（来源与来源陈述），用于写作前对照。
 - {{"action":"reconciliation_save","run_id":"真实run ID","reconciliation":{{"status":"complete|partial|not_applicable|failed","examined_claim_ids":[],"unexamined_claim_ids":[],"relations":[{{"member_claim_ids":["真实claim ID","真实claim ID"],"relation":"compatible|different_scope|temporal_sequence|correction|supersession|republication|attributed_difference|contradiction|unknown","scope":"","basis_span_ids":[],"reason":"","proposed_treatment":"","affected_requirement_ids":[]}}],"open_questions":[],"coverage_notes":""}}}}：保存写作前对照快照。必须用 examined ∪ unexamined 明确覆盖候选清单全部来源陈述；关系必须引用真实来源陈述；不判定真假，只登记依据与建议写法。重复相同内容幂等。
 - {{"action":"reconciliation_read","run_id":"真实run ID","reconciliation_id":"真实对照ID"}}：读取对照快照；输入变化时返回 stale 标记。

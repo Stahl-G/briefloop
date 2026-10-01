@@ -235,7 +235,8 @@ def generation_prompt(store, run, folder, backend='codex', scout_budget=None):
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
-    payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    from .scout_coverage import required as scout_coverage_required
+    payload={'scout_coverage_required':scout_coverage_required(store,run['id']),'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     if research_handoff is not None:payload['research_handoff']=research_handoff
     tool=tool_command(store.root,backend=backend)
     # Inject one Scout retrieval skill for the frozen set of managed channels.
@@ -355,7 +356,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
 1. 读取需求与初始来源目录，写 plan.json（包含reader_contract，遵守 {folder/'reader_contract.schema.json'}，把内容目标、研究方法、写作偏好和人工分工分开解释并绑定逐字来源及requirement_id）。写作交接前调用 `{tool} workspace-action --request REQUEST_JSON`，action=set_reader_contract、run_id={run['id']}、reader_contract为同一对象；工具校验通过后才进入写作。计划还包含原始用户要求、目标时间窗口、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。公开市场或行业周报按主题、主体、时间窗口安排 discovery Scout；计划应列需要查找的官方发布者、公开披露或统计来源，不能只按已有文件数分工。计划还应说明来源政策（何时优先一手、是否允许二手）；重点主体只是检索线索，不是必须写入的报道名单。
-2. 按报告期间与覆盖面决定 Scout 数量，上限 {max_parallel}：一周左右的报告通常 3–4 个；一个月左右的月报每个主要板块至少 1 个，通常 6–8 个；跨多个行业或市场时可接近上限。不要无条件开满，但计划里列出的每个检索方向都要实际派发 Scout，不能只派一部分就收轮。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。
+2. 按报告期间与覆盖面决定 Scout 数量，上限 {max_parallel}：一周左右的报告通常 3–4 个；一个月左右的月报每个主要板块至少 1 个，通常 6–8 个；跨多个行业或市场时可接近上限。不要无条件开满，但计划里列出的每个检索方向都要实际派发 Scout，不能只派一部分就收轮。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。派发前在 plan.json.scout_tasks 写完整数组（每项 slot_id、assignment、result_file 绝对路径），并用 workspace-action action=set_scout_tasks、run_id、scout_tasks 登记同一数组；本地材料无需 Scout 时明确登记 []。每轮单独登记；后续轮用新结果路径，不覆盖前轮。没有结果的承诺分工必须继续完成，或收轮时在 scout_outcomes 中明确 slot_id、status=failed|skipped、reason，保留未检范围。
    {retrieval_strategy}
    同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
    为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。
@@ -1233,7 +1234,8 @@ class Worker:
             from .research_plan import AdmissionError,require_writing_closeout
             from .research_budget import spent
             plan=frozen_plan(self.store,run['id'])
-            if plan and (spent(self.store,run['id'])['search_requests'] or any(
+            from .scout_coverage import required as scout_coverage_required
+            if plan and (scout_coverage_required(self.store,run['id']) or spent(self.store,run['id'])['search_requests'] or any(
                     (info.get('outcome') or {}).get('continue_research') for info in (plan.get('rounds') or {}).values())):
                 try:require_writing_closeout(self.store,run['id'])
                 except AdmissionError as exc:

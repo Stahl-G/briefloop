@@ -655,11 +655,21 @@ class ResearchGap(Model):
     validation_error: str | None = None
 
 
+class ScoutExecutionGap(Model):
+    round_id: str
+    round_index: int
+    slot_id: str
+    assignment: str
+    status: Literal['planned', 'dispatched', 'failed', 'skipped']
+    reason: str = ''
+
+
 class ScoutResult(Model):
     sources: list[ScoutEvidence]
     gaps: list[str] = Field(default_factory=list)
     gap_records: list[ResearchGap] = Field(default_factory=list)
     gap_history: list[ResearchGap] = Field(default_factory=list)
+    execution_gaps: list[ScoutExecutionGap] = Field(default_factory=list)
     search_summary: str = ""
     retrieval_notes: list[dict] = Field(default_factory=list)
 

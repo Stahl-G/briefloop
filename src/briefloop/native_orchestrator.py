@@ -17,7 +17,7 @@ READ_ACTIONS = {'inspect', 'capabilities', 'templates', 'workflows', 'profile_re
                 'company_read', 'read_report', 'read_run_report', 'review_status',
                 'research_status', 'reconciliation_candidates', 'reconciliation_read', 'evidence_read'}
 RUN_ACTIONS = {'set_reader_contract', 'freeze_research_plan', 'begin_research_round',
-               'finish_research_round', 'reconciliation_save', 'evidence_span',
+               'finish_research_round', 'set_scout_tasks', 'reconciliation_save', 'evidence_span',
                'claim_create', 'claim_bind', 'company_update', 'company_review_complete'}
 CHAT_ACTIONS = READ_ACTIONS | {'generate', 'assess', 'comment', 'export_word', 'profile_update', 'company_config', 'company_resolve', 'revise_document', 'learn', 'template_import', 'template_rebuild', 'import_word_revision'}
 
@@ -146,7 +146,15 @@ def save_plan(store, config, args):
     plan = args.get('plan')
     if not isinstance(plan, dict) or not str(plan.get('summary') or '').strip():
         raise ToolError('计划须包含 summary 和 reader_contract')
+    from .scout_coverage import declare, required
+    from .research_plan import frozen
+    if required(store, config['run_id']) and 'scout_tasks' not in plan:
+        raise ToolError('计划须含完整 scout_tasks（slot_id、assignment）；确无 Scout 工作时明确写 []')
     contract = save_reader_contract(store, config['run_id'], plan.get('reader_contract'))
+    if 'scout_tasks' in plan:
+        frozen_plan = frozen(store, config['run_id']) or {}
+        info = frozen_plan.get('rounds', {}).get(frozen_plan.get('current_round_id')) or {'index': 1}
+        declare(store, config['run_id'], plan['scout_tasks'], directory=_folder(config) / ('round-' + str(info['index'])))
     plan = {**plan, 'reader_contract': contract}
     _save(_folder(config) / 'plan.json', plan)
     _save(Path(config['packet_root']) / 'plan.json', plan)
@@ -205,6 +213,20 @@ def run_scouts(store, config, args):
     ids = [t.get('slot_id') for t in tasks if isinstance(t, dict)]
     if len(ids) != len(tasks) or len(set(ids)) != len(ids) or any(i not in {f'scout-{n}' for n in range(1, breadth+1)} for i in ids):
         raise ToolError('slot_id 须使用本任务 scout-1…scout-N，且不重复')
+    from .scout_coverage import declare, required, update, view
+    identity = (frozen_plan or {}).get('current_round_id') or 'legacy'
+    committed = {task['slot_id']: task for task in view(store, config['run_id'])['scout_execution'] if task['round_id'] == identity}
+    if not required(store, config['run_id']) and 'scout_tasks' not in json.loads(plan_path.read_text(encoding='utf-8')):
+        previous = [{key: value[key] for key in ('slot_id', 'assignment', 'result_file')}
+                    for slot, value in committed.items() if slot not in ids]
+        declare(store, config['run_id'], previous + tasks, directory=folder / ('round-' + round_id))
+        committed = {task['slot_id']: task for task in view(store, config['run_id'])['scout_execution'] if task['round_id'] == identity}
+    for task in tasks:
+        expected = committed.get(task['slot_id'])
+        result_file = str((folder / ('round-' + round_id) / task['slot_id'] / 'result.json').resolve())
+        if not expected or expected['assignment'] != str(task.get('assignment') or '').strip() or expected['result_file'] != result_file:
+            raise ToolError('实际 Scout 任务必须匹配已保存 scout_tasks 的分工与结果路径；先补全本轮计划')
+    update(store, config['run_id'], [{'slot_id': task['slot_id'], 'status': 'dispatched'} for task in tasks])
     results = []
     def execute(task):
         path = folder / ('round-' + round_id) / task['slot_id']
@@ -220,6 +242,7 @@ def run_scouts(store, config, args):
                 research_handoff=_research_handoff(store, config['run_id'], frozen_plan)))
             return {'slot_id': task['slot_id'], 'status': 'complete', 'file': str(path / 'result.json')}
         except Exception as exc:
+            update(store, config['run_id'], [{'slot_id': task['slot_id'], 'status': 'failed', 'reason': str(exc)}])
             return {'slot_id': task['slot_id'], 'status': 'failed', 'error': str(exc)}
         finally:
             store.event(job['id'], 'native_child', {'role': 'scout', 'slot_id': task['slot_id'], 'status': 'settled'})
@@ -229,12 +252,11 @@ def run_scouts(store, config, args):
     paths = sorted(folder.glob('round-*/scout-*/result.json'))
     # All rounds remain available; replayed slots are not duplicated.
     joined = join_scouts(store, paths, run_id=config['run_id']) if paths else {'sources': [], 'gaps': []}
-    joined['gaps'] += [r['slot_id'] + ' 未完成：' + r['error'] for r in results if r['status'] != 'complete']
     from .research_handoff import current_research
     joined = current_research(store, config['run_id'], joined, register=True)
     _save(folder / 'research.json', joined)
     _save(Path(config['packet_root']) / 'research.json', joined)
-    return _json_result({'tasks': results, 'research_file': 'research.json', 'sources': len(joined['sources']), 'gaps': joined['gaps'], 'gap_records': joined.get('gap_records', []), 'gap_history': joined.get('gap_history', [])})
+    return _json_result({'tasks': results, 'research_file': 'research.json', 'sources': len(joined['sources']), 'gaps': joined['gaps'], 'gap_records': joined.get('gap_records', []), 'gap_history': joined.get('gap_history', []), 'execution_gaps': joined.get('execution_gaps', [])})
 
 
 def _refresh_research(store, config):
@@ -448,7 +470,7 @@ def tools(role, config):
         common += _scout_web_tools(config.get('search_channels') or []) if config.get('allow_web') else []
     else:
         common += [
-            spec('save_plan', save_plan, '保存研究计划 summary 和 reader_contract；先读取 reader_contract.schema.json。', {'plan': OBJ}, ('plan',), sequential=True),
+            spec('save_plan', save_plan, '保存研究计划 summary、reader_contract 和完整 scout_tasks（slot_id、assignment）；无 Scout 时明确写 []；先读取 reader_contract.schema.json。', {'plan': OBJ}, ('plan',), sequential=True),
             spec('run_scouts', run_scouts, '按当前研究轮次并行执行 Scout；tasks 各含 slot_id 和具体 assignment，冻结模型、搜索策略及共享预算。等待实际结果，可停止；相同槽位恢复原任务。',
                  {'tasks': {'type': 'array', 'items': OBJ}}, ('tasks',), sequential=True, long_running=True),
             spec('save_research_handoff', save_handoff, '保存轮间交接：handoff 含 learnings（summary、可选 source_id/locator）、follow_ups、covered、open_questions 数组；可选 gap_updates 明确更新已有缺口（gap_id/status/reason/evidence，partial 另给 remaining_question），详见研究交接说明；缺少引用保留待证，预算由运行器记录。', {'handoff': OBJ}, ('handoff',), sequential=True),
@@ -504,7 +526,7 @@ def prepare(store, job, folder, prompt):
         from .research_handoff import PLANNING_GUIDE, GAP_UPDATE_GUIDE
         prompt = ('你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
                   '来源索引里的 source_id 用 source_read 读取；packet_read 只读取本包实际文件，不存在 packet/sources 目录，不猜原文路径。'
-                  '开始时保存 reader_contract 与计划（save_plan），按任务需要决定 Scout 分工，用 run_scouts 执行。'
+                  '开始时用 save_plan 保存 reader_contract 与完整 scout_tasks 分工（slot_id、assignment），确无 Scout 时明确写 []；用 run_scouts 执行，可分批派发但不能静默丢掉已承诺方向。新轮先登记本轮 scout_tasks；不能继续的分工在 finish_research_round 的 scout_outcomes 中以 failed/skipped 和 reason 说明，保留未检范围。'
                   'workspace_action 提供 research_status/finish_research_round/begin_research_round 及写前 reconciliation_candidates/reconciliation_save；'
                   '其请求结构见 action-guide.md。后续轮次必须针对上一轮真实 gap_id，不重复搜索。'
                   'quality_v1 任务写稿前必须结束当前已开启轮次：用 save_research_handoff 保留有引用的结论和待证问题，再 finish_research_round 明确收尾；单轮或仅本地材料也遵循此顺序。可保留未决缺口，不要求花完预算或完成尚未开启的轮次；确需下一轮时按真实 gap_id 继续。研究完成后写前对照来源陈述，保留真实关系和未查问题；write_report 调用 Analyst，finish_task 只确认保存。'
