@@ -7,6 +7,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import threading
 
@@ -83,6 +84,37 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
 
     async def check():
         submission = {'request_id': 'mcp-submit-1', 'requirements': requirements, 'source_ids': [source['id']]}
+        # A true copy preserves both DB UUID and server.json. The original
+        # server must not be mistaken for a service opened at the clone path.
+        clone = tmp_path / 'copied-workspace'
+        shutil.copytree(root, clone)
+        cloned_store = Store(clone)
+        assert cloned_store.meta('workspace_id') == wid
+        original_only = store.add_source('Original-only source', 'Only saved in the original workspace.')
+        original_briefs = store.rows('SELECT id FROM briefs')
+        clone_briefs = cloned_store.rows('SELECT id FROM briefs')
+        async with MCPClient(parameters(clone), cache=None) as client:
+            discovery = await call(client, 'discover')
+            assert not discovery['ready'] and discovery['status'] == 'identity_changed'
+            assert '路径或身份不匹配' in discovery['message']
+            for action, arguments in (
+                ('inspect', {}), ('source', {'source_id': original_only['id']}),
+                ('read', {'version_id': brief['id']}), ('submit', submission),
+                ('revise', {'request_id': 'clone-revise', 'base_version': brief['id'], 'editor_document': document}),
+                ('export', {'request_id': 'clone-export', 'version_id': brief['id']}),
+                ('query', {'job_id': 'not-admitted'}),
+                ('download', {'job_id': 'not-admitted', 'output': str(tmp_path / 'clone.docx')}),
+            ):
+                assert (await call(client, action, arguments, error=True))['code'] == 'workspace_unavailable'
+        assert store.rows('SELECT id FROM briefs') == original_briefs
+        assert cloned_store.rows('SELECT id FROM briefs') == clone_briefs
+        assert not store.rows("SELECT id FROM jobs WHERE kind='generate'")
+        # A real-directory alias is allowed after resolving both paths.
+        alias = tmp_path / 'same-directory-alias'
+        alias.symlink_to(root, target_is_directory=True)
+        async with MCPClient(parameters(alias), cache=None) as client:
+            assert (await call(client, 'discover'))['ready']
+            assert (await call(client, 'source', {'source_id': original_only['id']}))['text'].startswith('Only saved')
         async with MCPClient(parameters(root), cache=None, read_timeout_seconds=15) as client:
             catalog = {tool.name: tool for tool in (await client.list_tools()).tools}
             assert len(catalog) == 9
@@ -95,6 +127,9 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
                 assert tool.input_schema['additionalProperties'] is False
                 assert 'workspace_id' not in tool.input_schema['properties']
             assert (await call(client, 'discover'))['ready']
+            from briefloop.external_client import discover
+            caps = discover(root)['capabilities']
+            assert caps['workspace_path'] == str(root.resolve()) and caps['workspace_id'] == wid
             assert (await call(client, 'inspect'))['reports'][0]['version_id'] == brief['id']
             assert (await call(client, 'source', {'source_id': source['id']}))['text'].startswith('Order count 17')
             # The report task is admitted, but no model session is available.
@@ -103,7 +138,8 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
             state = await call(client, 'query', {'job_id': accepted['job_id']})
             assert state['status'] == 'queued' and state['run_id'] == accepted['run_id']
             assert (await call(client, 'submit', submission))['job_id'] == accepted['job_id']
-            await call(client, 'submit', {**submission, 'source_ids': []}, error=True)
+            conflict = await call(client, 'submit', {**submission, 'source_ids': []}, error=True)
+            assert conflict['code'] == 'conflict' and 'request_id' in conflict['message']
             before = await call(client, 'read', {'version_id': brief['id']})
             edited = copy.deepcopy(before['editor_document'])
             edited['content'][0]['content'][0]['text'] = 'Revised synthetic report.'
@@ -111,7 +147,8 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
             saved = await call(client, 'revise', revision)
             assert saved['version_id'] != brief['id']
             assert (await call(client, 'revise', revision))['version_id'] == saved['version_id']
-            await call(client, 'revise', {**revision, 'request_id': 'mcp-stale-base'}, error=True)
+            conflict = await call(client, 'revise', {**revision, 'request_id': 'mcp-stale-base'}, error=True)
+            assert conflict['code'] == 'conflict' and '稿件已有更新' in conflict['message']
             after = await call(client, 'read', {'version_id': saved['version_id']})
             assert after['parent_id'] == brief['id'] and after['editor_document']['content'][1:] == before['editor_document']['content'][1:]
             assert (await call(client, 'read', {'version_id': brief['id']})) == before
@@ -139,6 +176,22 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
             # Validation does not echo credential-shaped invalid inputs.
             invalid = await call(client, 'query', {'job_id': {'api_key': 'synthetic-secret'}}, error=True)
             assert 'synthetic-secret' not in json.dumps(invalid)
+            # Inputs inside allowed object fields can reach Pydantic/server
+            # errors. Never forward input_value or raw exception strings.
+            for field, secret in (('api_key', 'synthetic-secret-api'),
+                                  ('password', 'synthetic-secret-password'),
+                                  ('authorization', 'Basic synthetic-secret-basic')):
+                rejected = await call(client, 'submit', {
+                    **submission, 'request_id': 'invalid-' + field,
+                    'requirements': {**requirements, field: secret}}, error=True)
+                assert rejected['code'] == 'invalid_request'
+                assert secret not in json.dumps(rejected) and 'input_value' not in json.dumps(rejected)
+                malformed = {'type': 'doc', 'content': [{'type': secret, 'attrs': {field: secret}}]}
+                rejected = await call(client, 'revise', {
+                    'request_id': 'invalid-editor-' + field, 'base_version': saved['version_id'],
+                    'editor_document': malformed}, error=True)
+                assert rejected['code'] == 'invalid_request'
+                assert secret not in json.dumps(rejected) and 'input_value' not in json.dumps(rejected)
             server.draining = True
             assert not (await call(client, 'discover'))['ready']
             assert '尚未就绪' in (await call(client, 'inspect', error=True))['message']

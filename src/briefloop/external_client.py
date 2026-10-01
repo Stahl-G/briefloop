@@ -10,6 +10,13 @@ from urllib.parse import urlsplit, urlencode
 from .workspaces import _workspace_id, _validated_info, _alive, _read_api
 
 
+class RequestError(ValueError):
+    """HTTP status without reflecting the server's possibly input-bearing error."""
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f'外部请求失败 (HTTP {status})')
+
+
 def discover(workspace):
     root = Path(workspace).expanduser().resolve()
     wid = _workspace_id(root) if root.is_dir() else None
@@ -29,6 +36,10 @@ def discover(workspace):
             return {**result, 'status': 'identity_changed', 'message': '服务与工作区身份不匹配，未连接'}
         if caps.get('protocol') != 1:
             return {**result, 'status': 'unsupported', 'message': '此版本未提供外部任务接口'}
+        service_path = caps.get('workspace_path')
+        if (not isinstance(service_path, str) or not Path(service_path).is_absolute()
+                or Path(service_path).resolve() != root or caps.get('workspace_id') != wid):
+            return {**result, 'status': 'identity_changed', 'message': '服务与选定工作区的路径或身份不匹配，未连接'}
         ready = bool(runtime.get('worker_alive')) and not status.get('draining')
         return {**result, 'url': info['url'], 'pid': info['pid'], 'ready': ready,
                 'status': 'ready' if ready else 'not_ready', 'capabilities': caps}
@@ -60,7 +71,7 @@ class Client:
                 raise ValueError('响应过大；请通过 BriefLoop 页面读取报告')
             value = json.loads(data)
             if response.status != 200:
-                raise ValueError(value.get('error', '外部请求失败') + f' (HTTP {response.status})')
+                raise RequestError(response.status)
             return value
         finally:
             connection.close()

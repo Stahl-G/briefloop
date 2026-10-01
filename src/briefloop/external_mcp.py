@@ -15,8 +15,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
 
 from . import __version__
-from .execution_records import sanitize
-from .external_client import Client, discover
+from .external_client import Client, RequestError, discover
 from .external_requests import FIELDS, MUTATIONS
 from .workspaces import _workspace_id
 
@@ -39,6 +38,26 @@ DESCRIPTIONS = {
     'export': '排队生成明确 version_id 的 Word 工作稿，立即返回 job_id；query 至 artifact_available=true 后 download。不代表正式交付审核通过。用稳定 request_id 重试原内容。',
     'download': '将已完成导出 job_id 的 Word 保存到明确 output 文件路径；父目录须已存在。校验 SHA256、复用相同文件，不覆盖不同内容，不重新排队。',
 }
+
+
+class WorkspaceUnavailable(ValueError):
+    pass
+
+
+def failure(code, message):
+    return {'status': 'error', 'code': code, 'message': message}
+
+
+def request_failure(status):
+    if status == 409:
+        return failure('conflict', '稿件已有更新或 request_id 已用于不同内容；请核对原请求，并重新读取最新版本后合并修订')
+    if status == 400:
+        return failure('invalid_request', '请求参数或报告配置不符合要求；请检查需求、来源 ID、完整富文档及工作区设置')
+    if status == 403:
+        return failure('access_denied', '本地服务拒绝鉴权；请重新连接用户选定的工作区')
+    if status == 503:
+        return failure('service_unavailable', '本地服务尚未就绪或正在停止接收任务；请查询原任务，不自动重建')
+    return failure('request_failed', '本地服务请求失败；写操作结果可能未知，请保留原 request_id 和原内容重试')
 
 
 def tools():
@@ -89,10 +108,13 @@ class WorkspaceAdapter:
         if action == 'discover':
             return self.discovery()
         if not self.workspace_id:
-            raise ValueError('启动时未选择已存在的 BriefLoop 工作区；请在 BriefLoop 打开工作区后重新连接 MCP')
-        client = Client(self.root)
+            raise WorkspaceUnavailable()
+        try:
+            client = Client(self.root)
+        except ValueError:
+            raise WorkspaceUnavailable() from None
         if client.info['workspace_id'] != self.workspace_id:
-            raise ValueError('工作区身份已变化；请重新启动 MCP 连接到用户选择的工作区')
+            raise WorkspaceUnavailable()
         if action == 'download':
             return client.download(arguments['job_id'], arguments['output'])
         return client.request({'action': action, 'workspace_id': self.workspace_id, **arguments})
@@ -113,21 +135,30 @@ def create_server(workspace):
         # Never echo invalid arguments (which may contain credential-shaped
         # values), validation traces or internal exception details to clients.
         if validator is None:
-            value = {'status': 'error', 'message': '未知 BriefLoop 工具'}
+            value = failure('unknown_tool', '未知 BriefLoop 工具')
             failed = True
         elif not validator.is_valid(arguments):
-            value = {'status': 'error', 'message': '工具参数不符合公布的 schema；不得传入其他工作区或服务地址'}
+            value = failure('invalid_arguments', '工具参数不符合公布的 schema；不得传入其他工作区或服务地址')
             failed = True
         else:
             try:
                 action = params.name.removeprefix('briefloop_')
                 value = await anyio.to_thread.run_sync(adapter.invoke, action, arguments, limiter=limiter)
                 failed = False
-            except (OSError, ValueError, KeyError, http.client.HTTPException) as exc:
-                value = {'status': 'error', 'message': sanitize(str(exc))}
+            except WorkspaceUnavailable:
+                value = failure('workspace_unavailable', '选定工作区服务尚未就绪，或服务路径/身份不匹配；请在 BriefLoop 打开用户选定的工作区后重新连接')
+                failed = True
+            except RequestError as exc:
+                value = request_failure(exc.status)
+                failed = True
+            except (OSError, http.client.HTTPException):
+                value = failure('local_io_failed', '本地服务通信或文件操作失败；写操作结果可能未知，请使用原 request_id 和原内容重试')
+                failed = True
+            except (ValueError, KeyError):
+                value = failure('invalid_request', '请求、完整富文档或下载目标不符合要求；请检查指定 ID、父目录及目标文件，不覆盖不同内容')
                 failed = True
             except Exception:
-                value = {'status': 'error', 'message': '本地外部请求失败；写操作结果可能未知，请用原 request_id 和原内容重试，勿新建任务'}
+                value = failure('request_failed', '本地外部请求失败；写操作结果可能未知，请用原 request_id 和原内容重试，勿新建任务')
                 failed = True
         return CallToolResult(content=[TextContent(type='text', text=json.dumps(value, ensure_ascii=False))],
                               structured_content=value, is_error=failed)

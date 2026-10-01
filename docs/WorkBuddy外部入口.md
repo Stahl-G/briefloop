@@ -38,7 +38,7 @@
 
 若宿主找不到 `briefloop`，将 command 改为已安装 BriefLoop 的 Python 可执行文件绝对路径，args 改为 `["-m", "briefloop", "mcp", "--workspace", "/absolute/workspace"]`。无需配置 API Key、Token、服务 URL 或额外依赖。该进程的 stdout 只用于 MCP 协议，诊断走 stderr。
 
-启动时固定规范化绝对路径和工作区 ID，工具不接受工作区、URL 或 Token 参数。目录不存在、后台未启动或工作区身份变化时，工具返回实际不可用状态；不会转连别的工作区。工作区身份替换后须由用户重新连接。停止 MCP 子进程不关闭 BriefLoop 后台，取消调用也不回滚已接收任务；重连后查询原 job_id，未知写结果使用原 request_id 和原内容重试。
+启动时固定规范化绝对路径和工作区 ID，工具不接受工作区、URL 或 Token 参数。现有 external capabilities 返回仅当前服务的 `workspace_path`（规范化绝对路径）和 `workspace_id`；客户端同时核对路径、身份及服务 PID，字段缺失也拒绝连接。复制目录即使保留原 UUID 和 server.json，也不能借此操作原工作区；指向同一真实目录的别名仍可使用。目录不存在、后台未启动或工作区身份变化时，工具返回实际不可用状态；不会转连别的工作区。工作区身份替换后须由用户重新连接。停止 MCP 子进程不关闭 BriefLoop 后台，取消调用也不回滚已接收任务；重连后查询原 job_id，未知写结果使用原 request_id 和原内容重试。
 
 | 工具 | 参数 | 操作 |
 |---|---|---|
@@ -52,7 +52,7 @@
 | `briefloop_export` | `request_id`、`version_id` | 写入：立即返回 Word 导出 `job_id` |
 | `briefloop_download` | `job_id`、`output` | 写入：保存已完成 Word 到明确本机文件路径 |
 
-所有工具拒绝额外字段；`request_id` 和需求字段沿用 external 协议。工具目录准确标注读写、幂等和外部交互：submit 可按工作区配置调用模型与联网；其余工具只操作本机保存数据。成功结果同时提供 JSON `structuredContent` 与同内容的文本块；失败返回 `isError=true` 和安全的 `status/message`。discovery 的 `ready=false` 是正常发现结果；报告失败是 query 返回的任务状态，不是 MCP 传输失败。
+所有工具拒绝额外字段；`request_id` 和需求字段沿用 external 协议。工具目录准确标注读写、幂等和外部交互：submit 可按工作区配置调用模型与联网；其余工具只操作本机保存数据。成功结果同时提供 JSON `structuredContent` 与同内容的文本块；失败返回 `isError=true` 和安全的 `status/code/message`，不回传原异常字符串或嵌套验证的 input_value。409 冲突明确提示重新核对 request_id 或读取最新版本。discovery 的 `ready=false` 是正常发现结果；报告失败是 query 返回的任务状态，不是 MCP 传输失败。
 
 调用顺序：discover → inspect/source → submit → query；修订使用 read → revise → read；Word 使用 export → query 至 `artifact_available=true` → download。`output` 指明确文件路径且父目录已存在；不覆盖不同内容。MCP 只在请求期间执行短的本地操作，不保持一个调用等待报告生成，也不自动重试写请求。
 

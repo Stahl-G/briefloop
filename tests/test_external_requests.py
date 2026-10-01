@@ -34,7 +34,7 @@ def test_discovery_of_missing_or_plain_directory_has_no_writes(tmp_path):
             dispatch(store, {**body, 'workspace_id': store.meta('workspace_id')})
 
 
-def test_local_client_auth_identity_and_saved_report_http_roundtrip(tmp_path):
+def test_local_client_auth_identity_and_saved_report_http_roundtrip(tmp_path, monkeypatch):
     import http.client
     import os
     from briefloop.external_client import Client, discover
@@ -50,6 +50,20 @@ def test_local_client_auth_identity_and_saved_report_http_roundtrip(tmp_path):
     (tmp_path / 'server.json').write_text(json.dumps({'pid': os.getpid(), 'url': url, 'workspace_id': request['workspace_id']}))
     try:
         assert discover(tmp_path)['ready']
+        from briefloop import external_client, external_requests
+        read_api = external_client._read_api
+        def narrow_read(url, path):
+            assert path != '/api/workspaces'  # Do not scan unrelated workspace lists.
+            return read_api(url, path)
+        monkeypatch.setattr(external_client, '_read_api', narrow_read)
+        original_capabilities = external_requests.capabilities
+        for absent in ('workspace_path', 'workspace_id'):
+            with monkeypatch.context() as patch:
+                patch.setattr(external_requests, 'capabilities', lambda selected:
+                              {key: value for key, value in original_capabilities(selected).items() if key != absent})
+                assert discover(tmp_path)['status'] == 'identity_changed'
+                with pytest.raises(ValueError, match='路径或身份不匹配'):
+                    Client(tmp_path)
         client = Client(tmp_path)
         index = client.request({'action': 'inspect'})
         assert index['reports'][0]['version_id'] == brief['id']
