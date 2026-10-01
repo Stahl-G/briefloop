@@ -4,10 +4,12 @@ Synthetic materials and a seeded saved draft; generation slots are reserved. No 
 user reports, model credentials, remote servers or cloud access are needed.
 """
 import copy
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 import threading
 from urllib.parse import urlsplit
@@ -92,10 +94,15 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
 
     async def check():
         submission = {'request_id': 'mcp-submit-1', 'requirements': requirements, 'source_ids': [source['id']]}
-        # A true copy preserves both DB UUID and server.json. The original
-        # server must not be mistaken for a service opened at the clone path.
+        # Snapshot the live database through SQLite's consistent backup API;
+        # filesystem copying can race with WAL/SHM cleanup by worker threads.
+        # Preserve UUID and the exact service metadata to reproduce misbinding.
         clone = tmp_path / 'copied-workspace'
-        shutil.copytree(root, clone)
+        clone.mkdir()
+        with closing(sqlite3.connect(store.db.as_uri() + '?mode=ro', uri=True)) as live:
+            with closing(sqlite3.connect(clone / 'briefloop.db')) as snapshot:
+                live.backup(snapshot)
+        shutil.copy2(root / 'server.json', clone / 'server.json')
         cloned_store = Store(clone)
         assert cloned_store.meta('workspace_id') == wid
         original_only = store.add_source('Original-only source', 'Only saved in the original workspace.')
