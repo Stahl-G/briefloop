@@ -1,10 +1,14 @@
-/* BriefLoop · conversation workspace · paper/green utility · DESIGN.md.
+/* BriefLoop · conversation workspace · cool-gray/blue utility · DESIGN.md.
    Shared UI components. Report content and vendor artwork retain their own styles.
    Build appends this layer after the retained legacy layout, with drift checking. */
 :root{
  --paper:var(--color-bg);--ink:var(--color-text);--muted:var(--color-text-muted);
- --line:var(--color-border);--green:var(--color-primary);--green-hover:var(--color-primary-hover);
- --surface:var(--color-surface);--font:var(--font-ui);--shadow:var(--shadow-lg);
+ --line:var(--color-border);--brand:var(--color-primary);--brand-hover:var(--color-primary-hover);
+ /* Deprecated until the next design version; old layouts remain compatible. */
+ --green:var(--brand);--green-hover:var(--brand-hover);
+ --surface:var(--color-surface);--soft:var(--color-surface-soft);--font:var(--font-ui);--shadow:var(--shadow-lg);
+ --warn:var(--color-warn);--danger:var(--color-danger);
+ --chat-surface:var(--color-surface);--chat-soft:var(--color-surface-soft);--chat-error:var(--color-danger);--chat-radius:var(--radius-lg);
  --settings-surface:var(--color-surface);--settings-soft:var(--color-surface-soft);--settings-radius:var(--radius);
 }
 body{font-family:var(--font);font-size:var(--text-base);line-height:var(--leading-normal);color:var(--color-text);background:var(--color-bg)}
@@ -24,6 +28,7 @@ button:hover{background:var(--color-surface-soft)}
 button:disabled{cursor:not-allowed}
 .primary{background:var(--color-primary);color:var(--color-on-primary);font-weight:var(--fw-medium);padding:var(--space-1) var(--space-4)}
 .primary:hover:not(:disabled){background:var(--color-primary-hover)}
+.primary:active:not(:disabled){background:var(--color-primary-active)}
 .outline{background:var(--color-surface);border:1px solid var(--color-border-strong)}
 input:not([type=checkbox]):not([type=radio]):not([type=color]),select,textarea{
  min-height:var(--control-h-md);border-color:var(--color-border-strong);border-radius:var(--radius-sm);
@@ -47,7 +52,7 @@ h2{font-size:var(--text-xl);line-height:var(--leading-tight);font-weight:var(--f
 h3{font-size:var(--text-lg);line-height:var(--leading-tight);font-weight:var(--fw-semibold)}
 .section-title h2,.panel h2,.rail h2,.home-block h2{font-size:var(--text-lg)}
 /* Navigation and captions have a readable Chinese baseline, including metadata. */
-.session-sidebar{background:var(--color-surface-soft);border-color:var(--color-border)}
+.session-sidebar{background:var(--color-surface);border-color:var(--color-border)}
 .session-sidebar :is(.workspace-switch-label,.session-meta,.session-meta time,.sidebar-empty,.sidebar-connection small,.session-list-actions button){font-size:var(--text-xs);color:var(--color-text-muted);line-height:var(--leading-normal)}
 .session-sidebar #archive-completed,.session-sidebar #connection{font-size:var(--text-xs);line-height:var(--leading-normal)}
 .session-list-controls select,.session-list-controls button:not(:disabled){font-size:var(--text-xs);color:var(--color-text-muted)}
@@ -420,3 +425,48 @@ details.assistant-feedback>summary .help{font-size:var(--text-xs)}
 .feedback-items{list-style:none;margin:0;padding:0;max-height:420px;overflow:auto}
 .feedback-items li{padding:var(--space-2) 0;border-bottom:1px solid var(--color-border)}
 .feedback-items li p{margin:var(--space-1) 0 0;overflow-wrap:anywhere}
+
+/* Data stays distinct from success/error states. */
+body{font-variant-numeric:tabular-nums}
+.chip.success{background:var(--color-surface);color:var(--color-success);border-color:var(--color-success)}
+.status-dot.success{color:var(--color-success)}
+.chip.delivered{background:var(--color-accent-soft);color:var(--color-accent)}
+.data-up{color:var(--data-up)}
+.data-down{color:var(--data-down)}
+.data-flat{color:var(--data-flat)}
+.ai-mark{display:inline-block;flex:none;width:var(--control-check);height:var(--control-check);background:var(--ai-gradient);border-radius:var(--radius-sm)}
+/* DESIGN §4.5: one action-only disclosure, with truthful recorded timings. */
+.research-process{background:var(--color-surface-soft);border:1px solid var(--color-border);border-radius:var(--radius);margin-block:var(--space-3);padding:var(--space-2) var(--space-3)}
+.research-process>summary{display:flex;align-items:center;gap:var(--space-2);min-height:var(--control-h-md);cursor:pointer;list-style:none;font-size:var(--text-sm);font-weight:var(--fw-medium);color:var(--color-text)}
+.research-process>summary::-webkit-details-marker{display:none}
+.research-process>summary::after{content:"▸";margin-left:auto;color:var(--color-text-muted)}
+.research-process[open]>summary::after{content:"▾"}
+.research-process-title{min-width:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.research-process-attention{color:var(--color-warn);font-size:var(--text-xs);flex:none}
+.research-process-steps{list-style:none;margin:var(--space-2) 0 0;padding:0;border-top:1px solid var(--color-border)}
+.process-step{display:grid;grid-template-columns:var(--space-2) minmax(0,1fr) auto;gap:var(--space-2);align-items:baseline;padding-block:var(--space-2);font-size:var(--text-sm)}
+.process-step-dot{display:block;width:var(--space-2);height:var(--space-2);border-radius:var(--radius-pill);background:var(--color-text-muted)}
+.process-step.is-done .process-step-dot{background:var(--color-success)}
+.process-step:is(.is-active,.is-warn) .process-step-dot{background:var(--color-warn)}
+.process-step.is-error .process-step-dot{background:var(--color-danger)}
+.process-step-description{overflow-wrap:anywhere;color:var(--color-text)}
+.process-step-detail{display:block;font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-1)}
+.process-step-time{font-size:var(--text-xs);font-variant-numeric:tabular-nums;color:var(--color-text-muted);white-space:nowrap}
+.process-step-empty{font-size:var(--text-sm);color:var(--color-text-muted);padding-block:var(--space-2)}
+.process-step .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.research-process>summary:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}
+/* DESIGN §4.6: numeric superscripts retain a full compact control hit target. */
+.tiptap a.citation{display:inline-flex;align-items:center;justify-content:center;min-width:var(--control-h-sm);min-height:var(--control-h-sm);padding-inline:var(--space-1);margin-inline:var(--space-1);vertical-align:super;font-size:var(--text-2xs);font-weight:var(--fw-medium);line-height:var(--leading-tight);font-variant-numeric:tabular-nums;color:var(--color-primary);background:var(--color-primary-soft);border-radius:var(--radius-sm);text-decoration:none;cursor:pointer}
+.tiptap a.citation:hover{color:var(--color-primary-hover);box-shadow:inset 0 0 0 1px var(--color-primary)}
+.tiptap a.citation:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}
+.citation-source-card{position:fixed;z-index:var(--z-dropdown);width:min(var(--rail-width),calc(100vw - var(--space-4)));max-height:calc(100vh - var(--space-4));overflow:auto;padding:var(--space-4);background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius);box-shadow:var(--shadow-md);color:var(--color-text)}
+.citation-card-meta,.citation-card-locator{font-size:var(--text-xs);color:var(--color-text-muted);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;margin:0 0 var(--space-2)}
+.citation-card-title{font-size:var(--text-base);font-weight:var(--fw-semibold);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0 0 var(--space-3)}
+.citation-card-actions{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.citation-card-actions :is(a,button){display:inline-flex;align-items:center;min-height:var(--control-h-sm);font-size:var(--text-xs);color:var(--color-link)}
+.citation-card-actions :is(a,button):focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}
+.source-number{display:inline-flex;align-items:center;justify-content:center;min-width:var(--space-5);min-height:var(--space-5);flex:none;font-size:var(--text-2xs);font-variant-numeric:tabular-nums;color:var(--color-primary);background:var(--color-primary-soft);border-radius:var(--radius-sm)}
+.report-source-row.is-citation-target{box-shadow:inset 2px 0 var(--color-primary);background:var(--color-primary-soft)}
+@media(max-width:560px){.process-step{grid-template-columns:var(--space-2) minmax(0,1fr)}.process-step-time{grid-column:2}.research-process>summary{flex-wrap:wrap}.research-process-attention{margin-left:var(--space-5)}}
+
+.rail-tabs [data-report-tab="assistant"]{display:inline-flex;align-items:center;gap:var(--space-1)}

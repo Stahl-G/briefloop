@@ -11,7 +11,7 @@ const source=fs.readFileSync(new URL('../frontend/report-export.js',import.meta.
 test('report exports never depend on opening a new window',()=>{
  assert.ok(!allFrontendSources().includes('window.open('),'the desktop shell denies new windows');
  assert.match(source,/a\.download=exportFileName\(title\)\+'\.html'/);
- assert.match(source,/if\(kind==='pdf'\)await exportPdf\(html,title\);/);
+ assert.match(source,/if\(kind==='pdf'\)await exportPdf\(html,title,\{version,workspace:state.workspace_id,label:exportInfo.label,market:exportInfo.market_convention\}\);/);
 });
 
 test('export file names follow the server Word naming rules',()=>{

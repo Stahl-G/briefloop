@@ -116,6 +116,8 @@ class Requirements(Model):
     # Report body language. The interface, internal records and review notes
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"
+    # Frozen per report; older reports resolve from their own language.
+    market_convention: Literal["cn", "intl"] | None = None
     extent: Literal["quick", "compact", "balanced", "detailed"] = "balanced"
     allow_web: bool = True
     search_policy: SearchPolicy | None = None
@@ -190,6 +192,8 @@ class Requirements(Model):
 
     @model_validator(mode='after')
     def fill_length_preferences(self):
+        if self.market_convention is None:
+            self.market_convention = "intl" if self.language == "en" else "cn"
         if self.length_mode == 'strict':
             if self.max_words is None or not self.length_requirement or not self.length_requirement.text.strip():
                 raise ValueError('严格篇幅需要明确上限和用户要求来源；仅有旧 max_words 不构成严格限制')

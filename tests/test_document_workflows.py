@@ -56,7 +56,7 @@ def test_meeting_template_selects_method_but_requires_actual_material(tmp_path):
     from briefloop.templates import template, import_builtin
     store = Store(tmp_path)
     import_builtin(store)
-    templates = store.rows("SELECT id FROM templates WHERE name='会议纪要·品牌绿'")
+    templates = store.rows("SELECT id FROM templates WHERE name='会议纪要·品牌黛蓝'")
     selected = template(store, templates[0]['id'])
     assert template_workflow_hint(selected) == 'meeting_minutes'
     # The built-in minutes cover is just its styled title. Meeting details are

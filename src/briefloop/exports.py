@@ -30,10 +30,21 @@ def reader_markdown(store,brief):
     return text
 
 
-def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None, document=None, source_records=None, citations=None, language=None):
+def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None, document=None, source_records=None, citations=None, language=None, label=None, requirements=None):
     from docx import Document
     from .default_fonts import native_default_fonts
     from .industry_export import append_inline, configure_document, style_heading, style_table, append_data_chart, insert_table_of_contents, enable_update_fields
+    from .export_labeling import add_docx_notice, office_properties, export_properties
+    from .market_convention import apply_docx_market_colors
+    requirements = requirements or {'language': language}
+    protected_runs = set()
+    def finish(doc):
+        if document is None:
+            protected_runs.update(doc.element.xpath('.//w:r[w:rPr/w:color]'))
+        apply_docx_market_colors(doc, requirements, protected_runs=protected_runs)
+        add_docx_notice(doc, label)
+        output = BytesIO(); doc.save(output)
+        return office_properties(native_default_fonts(output.getvalue(), language=language), export_properties(label, requirements))
     industry_report = report_profile == 'industry_periodic'
     if document is not None:
         from .document_export import render_document, without_duplicate_cover_heading
@@ -43,8 +54,8 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
             configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry,language=language)
             insert_table_of_contents(doc,language=language)
             enable_update_fields(doc)
-        render_document(doc,document,figures=figures,sources=source_records,citations=citations,language=language)
-        output=BytesIO();doc.save(output);return native_default_fonts(output.getvalue(),language=language)
+        render_document(doc,document,figures=figures,sources=source_records,citations=citations,language=language,protected_runs=protected_runs)
+        return finish(doc)
     tokens=MarkdownIt('commonmark').enable('table').parse(markdown)
     levels=[int(t.tag[1]) for t in tokens if t.type=='heading_open']
     if industry_report and len(tokens)>=3 and tokens[0].type=='heading_open' and tokens[0].tag=='h1' and levels.count(1)==1 and 2 in levels:
@@ -92,8 +103,10 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
             if row is not None and cell is not None and cell>=0:
                 cell_width=row.cells[cell].width
                 if cell_width:available_width=min(available_width,max(Mm(5),cell_width-Mm(4)))
-            paragraph=append_inline(paragraph,t.children,figures=figures,max_figure_width=available_width,max_figure_height=figure_height,language=language)
-        elif t.type in ('fence','code_block'):doc.add_paragraph(t.content)
+            paragraph=append_inline(paragraph,t.children,figures=figures,max_figure_width=available_width,max_figure_height=figure_height,language=language,protected_runs=protected_runs)
+        elif t.type in ('fence','code_block'):
+            code_paragraph = doc.add_paragraph(t.content)
+            protected_runs.update(run._r for run in code_paragraph.runs)
     # Old callers retain the legacy chart; new callers pass a mapping, even {}.
     if industry_report and report_data and figures is None and not explicit_figures: append_data_chart(doc, report_data, language=language)
-    buf=BytesIO();doc.save(buf);return native_default_fonts(buf.getvalue(),language=language)
+    return finish(doc)

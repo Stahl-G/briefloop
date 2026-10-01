@@ -331,7 +331,7 @@ def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path, 
             from briefloop.store import Store
             from briefloop.templates import export_template, rebuild_template_version
             store=Store(root)
-            selected=next(row for row in templates if row['name']=='通用报告·品牌绿')
+            selected=next(row for row in templates if row['name']=='通用报告·品牌黛蓝')
             original=root/'templates'/selected['id']/'original.docx'
             original_bytes=filesystem_path(original).read_bytes()
             assert len(str(original))>260

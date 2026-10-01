@@ -19,7 +19,7 @@ function fixture(){
  const configurable={configure:()=>({})};
  const context=vm.createContext({$,state:{briefs:[a,b,c],jobs:[],runs:[]},current:a,dirty:false,saving:false,savePromise:null,saveTimer:null,lastSaveError:null,pendingRun:null,editor:null,highlightQuotes:[],
   parse:JSON.parse,esc,notice:message=>notices.push(message),page:name=>pages.push(name),clearTimeout(){},
-  Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},ReportTrailingParagraph:{},
+  Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,TableKit:{},TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},Markdown:{},MustFixHighlight:{},MarketDataColors:{},ReportTrailingParagraph:{},
   editorDocument:value=>value,toEditor:value=>value,changed(){},updateFormattingTools(){},assessment(){},citations(){},renderBriefLength(){},setReportView(){},renderReportStatus(){},renderAssistantSummary(){},syncPendingReport(){},renderWordExports(){},updateDownloads(){},
   box:{querySelectorAll:()=>buttons},
   api:async route=>{calls.push(route);if(route.startsWith('brief?id='))return new Promise((resolve,reject)=>pending.set(route.slice(9),{resolve,reject}));if(route.startsWith('release-state?'))return {eligibility:{eligible:true},releases:[]};throw Error('Unexpected request: '+route)},

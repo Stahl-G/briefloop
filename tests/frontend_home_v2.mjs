@@ -59,9 +59,9 @@ test('the category palette lives in the tokens and avoids the status hues',()=>{
   // The palette used to be written three times: here as hex in GENRE_META, as
   // per-element CSS rules with the hex repeated as a fallback, and in the
   // tokens. Only the tokens carry a value now.
-  assert.match(tokens,/--c-cat-teal-fg:\s*#00695C/);
-  assert.match(tokens,/--c-cat-magenta-fg:\s*#AD1457/);
-  assert.doesNotMatch(tokens,/--c-cat-[a-z]+-fg:\s*#006838/);   // the primary green
+  assert.match(tokens,/--c-cat-violet-fg:\s*#6741D9/);
+  assert.match(tokens,/--c-cat-magenta-fg:\s*#A3195B/);
+  assert.doesNotMatch(tokens,/--c-cat-[a-z]+-fg:\s*#2448B8/);   // the primary blue
   assert.doesNotMatch(tokens,/--c-cat-[a-z]+-fg:\s*#C62828/);   // the danger red
   assert.match(genre,/'学术论文'[^}]*cat:'cat-academic'/);
   assert.match(genre,/'券商研报'[^}]*cat:'cat-markets'/);

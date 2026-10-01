@@ -1,321 +1,48 @@
 {
-  "source_archive": "BriefLoop-app-icons.zip",
-  "source_sha256": "bb65e5671e9c535c972b6b39693d81c1aa2147edb55c4cc07bb0ce28588f2174",
-  "selection": "green background #006838, paper-white loop #FAF9F6",
-  "source_readme_present": false,
-  "source_build_instructions_present": false,
+  "design": "3.1",
+  "source_mark": "src/briefloop/static/runtime-briefloop.svg",
+  "source_mark_sha256": "9a513e3788a1b5d647a8cb07c36b3b0b993e086876b1b6f7132396065c167afe",
+  "derivation": "Supplied mark geometry; retained platform silhouettes and padding; token-based brand and paper colors. Rasterized with Inkscape; packaged with Pillow.",
   "files": [
     {
-      "path": "Mac.icns",
-      "archive_path": "BriefLoop-app-icons/BriefLoop.icns",
-      "bytes": 150862,
-      "sha256": "bd18e9ec0b232ab2c90f7880ca2cd344142bbde5503dbfd5031d0a17e57028c3",
-      "byte_identical_to_source": true,
-      "format": "ICNS",
-      "representations": [
-        [
-          512,
-          512,
-          2
-        ],
-        [
-          512,
-          512,
-          1
-        ],
-        [
-          256,
-          256,
-          2
-        ],
-        [
-          256,
-          256,
-          1
-        ],
-        [
-          128,
-          128,
-          2
-        ],
-        [
-          128,
-          128,
-          1
-        ],
-        [
-          32,
-          32,
-          2
-        ],
-        [
-          16,
-          16,
-          2
-        ]
-      ],
-      "largest_representation_matches_supplied_png": true
-    },
-    {
-      "path": "Win.ico",
-      "archive_path": "BriefLoop-app-icons/BriefLoop.ico",
-      "bytes": 31369,
-      "sha256": "9cbc1581723e51f7c5b646a826eb54c0f68b158b8cbf747ed1d9711ea35d38d1",
-      "byte_identical_to_source": true,
-      "format": "ICO",
-      "representations": [
-        [
-          16,
-          16
-        ],
-        [
-          24,
-          24
-        ],
-        [
-          32,
-          32
-        ],
-        [
-          48,
-          48
-        ],
-        [
-          64,
-          64
-        ],
-        [
-          128,
-          128
-        ],
-        [
-          256,
-          256
-        ]
-      ],
-      "pixel_equal_to_separate_png_by_size": {
-        "16": false,
-        "24": false,
-        "32": false,
-        "48": false,
-        "64": false,
-        "128": false,
-        "256": true
-      },
-      "inspection_note": "Smaller ICO frames differ from the separately supplied PNGs; the user-supplied ICO is retained byte for byte without conversion."
-    },
-    {
       "path": "icon-macos.svg",
-      "archive_path": "BriefLoop-app-icons/icon-macos.svg",
-      "bytes": 5518,
-      "sha256": "5d859b19a77476bfc0eec0a830e488d78485b4179e3b3438e083ae874887dd1d",
-      "byte_identical_to_source": true,
-      "format": "SVG",
-      "width": "1024",
-      "height": "1024",
-      "viewBox": "0 0 1024 1024"
+      "bytes": 5505,
+      "sha256": "c90e1c23e67e7e878edb250ec0dd17fb3fa9713fe83753638110adabc85762d4"
     },
     {
       "path": "icon-windows.svg",
-      "archive_path": "BriefLoop-app-icons/icon-windows.svg",
-      "bytes": 5432,
-      "sha256": "2676049bf4a1eb051b3e6bb121e3a793c9e560f7cd6dff4dd82196ed73d1a55d",
-      "byte_identical_to_source": true,
-      "format": "SVG",
-      "width": "1024",
-      "height": "1024",
-      "viewBox": "0 0 1024 1024"
+      "bytes": 5419,
+      "sha256": "ad319f3a367b4898ab20e86ae4278b25946abd792c6f3c076fb0c27ee998e26f"
     },
     {
       "path": "icon-macos-1024.png",
-      "archive_path": "BriefLoop-app-icons/icon-1024.png",
-      "bytes": 40437,
-      "sha256": "fda30690669a9742cfd58057cac0c99bd0f0c8b1ef6e97c8df61bd459ce5370b",
-      "byte_identical_to_source": true,
-      "format": "PNG",
-      "size": [
-        1024,
-        1024
-      ],
-      "opaque_brand_color_pixels": {
-        "#006838": 449360,
-        "#FAF9F6": 186881
-      }
+      "bytes": 45024,
+      "sha256": "49fde2864d98dab61302a70a8618ec07aa2d627da52c9f9ebab8f5f9b7dc7a29"
     },
     {
       "path": "icon-windows-1024.png",
-      "archive_path": "BriefLoop-app-icons/png/windows-1024.png",
-      "bytes": 41268,
-      "sha256": "7c1112a24cd4c9f981d67dfbf7170c4622e90f9882bde71b8a2e803216922649",
-      "byte_identical_to_source": true,
-      "format": "PNG",
-      "size": [
-        1024,
-        1024
-      ],
-      "opaque_brand_color_pixels": {
-        "#006838": 554467,
-        "#FAF9F6": 199196
-      }
+      "bytes": 46434,
+      "sha256": "9d0085a4c233ce2da78783619a0e85ed4129c50c9fc15734efc5a2f4e679406a"
+    },
+    {
+      "path": "Mac.icns",
+      "bytes": 149790,
+      "sha256": "a67c0a82feef97e38e1c047a8d86910cb8d7c27eeb2847b3299f0e2e3aa3b96e"
+    },
+    {
+      "path": "Win.ico",
+      "bytes": 42279,
+      "sha256": "7fb5f2b99180621fec53ac4d8bce73150737d137c9dc8aa711c1d3f3879397f1"
+    },
+    {
+      "path": "dmg-background.svg",
+      "bytes": 2749,
+      "sha256": "be8840c91b2dee35916139b4c6d2f53d4d595899adfa653684124109f0e1b070"
+    },
+    {
+      "path": "dmg-background.png",
+      "bytes": 10858,
+      "sha256": "11ce574ed536c5bd4fa52fd15bfab41db96f85142da98624c29415e2f4ef05e2"
     }
-  ],
-  "source_entries": [
-    {
-      "path": "BriefLoop-app-icons/icon-macos.svg",
-      "bytes": 5518
-    },
-    {
-      "path": "BriefLoop-app-icons/icon-windows.svg",
-      "bytes": 5432
-    },
-    {
-      "path": "BriefLoop-app-icons/icon-macos-paper.svg",
-      "bytes": 5552
-    },
-    {
-      "path": "BriefLoop-app-icons/BriefLoop.icns",
-      "bytes": 150862
-    },
-    {
-      "path": "BriefLoop-app-icons/BriefLoop.ico",
-      "bytes": 31369
-    },
-    {
-      "path": "BriefLoop-app-icons/icon-1024.png",
-      "bytes": 40437
-    },
-    {
-      "path": "BriefLoop-app-icons/apple-touch-icon-180.png",
-      "bytes": 5130
-    },
-    {
-      "path": "BriefLoop-app-icons/favicon-32.png",
-      "bytes": 992
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-1024.png",
-      "bytes": 40437
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-128.png",
-      "bytes": 3562
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-16.png",
-      "bytes": 502
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-180.png",
-      "bytes": 5130
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-24.png",
-      "bytes": 756
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-256.png",
-      "bytes": 7584
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-32.png",
-      "bytes": 992
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-48.png",
-      "bytes": 1418
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-512.png",
-      "bytes": 17404
-    },
-    {
-      "path": "BriefLoop-app-icons/png/macos-64.png",
-      "bytes": 1763
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-1024.png",
-      "bytes": 49256
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-128.png",
-      "bytes": 4107
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-16.png",
-      "bytes": 529
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-180.png",
-      "bytes": 6237
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-24.png",
-      "bytes": 777
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-256.png",
-      "bytes": 9250
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-32.png",
-      "bytes": 1020
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-48.png",
-      "bytes": 1452
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-512.png",
-      "bytes": 21150
-    },
-    {
-      "path": "BriefLoop-app-icons/png/paper-64.png",
-      "bytes": 1827
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-1024.png",
-      "bytes": 41268
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-128.png",
-      "bytes": 3706
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-16.png",
-      "bytes": 511
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-180.png",
-      "bytes": 5338
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-24.png",
-      "bytes": 798
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-256.png",
-      "bytes": 7901
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-32.png",
-      "bytes": 1021
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-48.png",
-      "bytes": 1438
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-512.png",
-      "bytes": 17702
-    },
-    {
-      "path": "BriefLoop-app-icons/png/windows-64.png",
-      "bytes": 1858
-    }
-  ],
-  "inspection_tools": {
-    "raster": "Pillow 12.3.0",
-    "svg": "xml.etree.ElementTree",
-    "source_extraction": "zipfile; no raster conversion or icon rebuilding"
-  }
+  ]
 }

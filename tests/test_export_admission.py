@@ -49,7 +49,7 @@ def test_legacy_english_word_cache_is_rebuilt_with_english_labels(tmp_path, monk
         import_builtin(store)
         # An existing Chinese layout was also usable for English text before
         # dedicated English layouts shipped; its identity must stay unchanged.
-        layout = next(row['id'] for row in store.snapshot()['templates'] if row['name'] == '通用报告·品牌绿')
+        layout = next(row['id'] for row in store.snapshot()['templates'] if row['name'] == '通用报告·品牌黛蓝')
     source = store.add_source('Annual report', 'Revenue grew.', url='https://example.org/report')
     run = store.create_run({'title': 'English update', 'objective': 'Explain results'}, [source['id']])
     requirements = {**json.loads(run['requirements']), 'language': 'English'}

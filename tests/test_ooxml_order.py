@@ -19,7 +19,7 @@ def violations(data):
 
 def test_insert_follows_schema_order_and_replaces_duplicates():
     ppr = parse_xml('<w:pPr %s><w:spacing/><w:jc w:val="center"/></w:pPr>' % nsdecls('w'))
-    add_ordered(ppr, 'shd', val='clear', fill='006838')
+    add_ordered(ppr, 'shd', val='clear', fill='2448B8')
     add_ordered(ppr, 'pStyle', val='Title')
     add_ordered(ppr, 'shd', val='clear', fill='FFFFFF')
     assert [c.tag.split('}')[1] for c in ppr] == ['pStyle', 'shd', 'spacing', 'jc']
