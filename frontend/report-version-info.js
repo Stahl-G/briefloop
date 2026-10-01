@@ -2,7 +2,7 @@ const engines={'codex':'Codex','briefloop-native':'BriefLoop 内置','claude':'C
 const efforts={low:'低',medium:'中',high:'高',xhigh:'极高',max:'最高',ultra:'最高',minimal:'最小',none:'关闭'};
 export function versionInformationHTML(brief,{esc}){
  const info=brief.execution_provenance||{},mode=info.mode||({user:'manual',agent:'ai'}[brief.author]||'imported');
- const label=mode==='manual'?'人工编辑':mode==='imported'?'导入稿件':info.action==='revision'?'AI 修订':'AI 生成';
+ const label=mode==='manual'?'人工编辑':mode==='imported'?'导入稿件':mode==='example'?'示例稿件':mode==='unknown'?'作者方式未记录':info.action==='revision'?'AI 修订':'AI 生成';
  const config=info.configuration||{};
  const rows=mode==='ai'?[['执行引擎',engines[config.backend]||config.backend||'未记录'],['模型',config.model||'未记录（宿主默认或旧稿）'],['推理强度',efforts[config.effort]||config.effort||'未记录']]:[];
  const origin=info.original_configuration;

@@ -25,6 +25,24 @@ def configuration(payload, role=None):
             for key, value in fields.items()}
 
 
+def _published_configuration(store, brief, job, role=None):
+    if role:
+        return configuration(job['payload'], role)
+    # Native orchestration copies an independent Analyst's admitted draft to
+    # the root publication. Prefer that actual conversation when hashes match.
+    if not brief['id'].endswith('_r1') and re.fullmatch(r'job_[a-zA-Z0-9]+', job['id']):
+        folder = store.root / 'jobs' / job['id'] / 'analyst'
+        try:
+            binding = _object((folder / 'conversation.json').read_text(encoding='utf-8'))
+            draft = _object((folder / 'draft.json').read_text(encoding='utf-8'))
+            from .document_model import document_hash
+            if binding.get('job_id') == job['id'] and draft.get('editor_document') and document_hash(draft['editor_document']) == brief['hash']:
+                return configuration({'runtime': binding.get('runtime'), 'agent_backend': binding.get('backend')})
+        except (OSError, ValueError, TypeError):
+            pass
+    return configuration(job['payload'])
+
+
 def record(store, brief, job, *, role=None):
     """Runner-owned receipt, bound to the admitted version and content hash."""
     if brief['id'].endswith('_evidence'):
@@ -32,7 +50,7 @@ def record(store, brief, job, *, role=None):
     if store.rows("SELECT seq FROM events WHERE kind='writer_version' AND json_extract(data,'$.version_id')=? LIMIT 1", (brief['id'],)):
         return
     value = {'version_id': brief['id'], 'brief_hash': brief['hash'],
-             'configuration': configuration(job['payload'], role)}
+             'configuration': _published_configuration(store, brief, job, role)}
     store.event(job['id'], 'writer_version', value)
 
 
@@ -75,7 +93,7 @@ def _writer(store, brief):
             except (OSError, ValueError):
                 continue
             if _object(saved.get(brief['id'])).get('brief_hash') == brief['hash']:
-                return configuration(payload)
+                return _published_configuration(store, brief, job)
         return None
     rows = store.rows('SELECT * FROM jobs WHERE id=?', ('job_' + match[1],))
     if not rows:
@@ -86,12 +104,12 @@ def _writer(store, brief):
     suffix = match[2]
     if job['kind'] != 'generate' and not (suffix == '_r1' and job['kind'] == 'assess' and payload.get('continuation_of')):
         return None
-    return configuration(payload, 'analyst' if suffix == '_analyst' else None)
+    return _published_configuration(store, brief, job, 'analyst' if suffix == '_analyst' else None)
 
 
 def describe(store, brief):
     author = brief['author']
-    mode = 'manual' if author == 'user' else 'ai' if author == 'agent' else 'imported'
+    mode = {'user': 'manual', 'agent': 'ai', 'import': 'imported', 'example': 'example'}.get(author, 'unknown')
     current = _writer(store, brief) if mode == 'ai' else None
     # An unchanged evidence-only version preserves its prose writer, not its
     # evaluator/evidence model. Other unknown AI children stay unknown.

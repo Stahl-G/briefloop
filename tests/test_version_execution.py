@@ -73,3 +73,17 @@ def test_legacy_refinement_uses_hash_receipt_and_evidence_preserves_prose_writer
     assert describe(store,evidence)['configuration']['model']=='writer-before'
     revision=seed(store,'brief_checks_r1',parent=evidence['id'],body='Revised')
     assert describe(store,revision)['configuration']['model']=='main-checks'  # main frozen runtime writes _r1, not role_models.evaluator
+
+
+def test_native_root_uses_exact_independent_writer_conversation(tmp_path):
+    from briefloop.document_model import document_hash, markdown_document
+    store=Store(tmp_path);brief=seed(store);writer=job(store)
+    document=markdown_document('Original');brief['hash']=document_hash(document)
+    with store.tx() as c:c.execute('UPDATE briefs SET hash=? WHERE id=?',(brief['hash'],brief['id']))
+    folder=store.root/'jobs'/writer['id']/'analyst';folder.mkdir(parents=True)
+    (folder/'draft.json').write_text(dump({'editor_document':document}))
+    (folder/'conversation.json').write_text(dump({'job_id':writer['id'],'backend':'briefloop-native','runtime':{'model':'actual-analyst','effort':'max'}}))
+    info=describe(store,brief)['configuration']
+    assert info=={'backend':'briefloop-native','model':'actual-analyst','effort':'max'}
+    record(store,brief,writer)
+    assert describe(store,brief)['configuration']==info
