@@ -15,6 +15,23 @@ _SECRET_HEADER=re.compile(r'''(?im)(?<![\w-])((?:proxy[-_])?authorization|(?:set
 _SECRET_ENV=re.compile(r'''(?ix)(["']?\b(?:[a-z0-9]+_)*(?:authorization|cookie)["']?\s*=\s*)(?:\[credential[ ]omitted\]|"[^"\n]*"|'[^'\n]*'|[^\s,;&}\]]+)''')
 _PRIVATE_KEY=re.compile(r'-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----',re.S)
 
+# ACP "names" can be entire commands, paths or arbitrary host descriptions.
+# Only exact known identifiers belong in compact public tool summaries.
+_PUBLIC_TOOLS = frozenset('''Read Write Edit MultiEdit Bash Glob Grep LS NotebookEdit TodoWrite Task Agent WebFetch WebSearch
+read write edit bash glob grep find ls task subagent shell search_web web_search webfetch websearch
+read_file write_file edit_file list_directory read_many_files execute_command run_command
+commandExecution command_execution fileChange mcpToolCall dynamicToolCall collabAgentToolCall
+collab_tool_call imageView webSearch runtime_tool opencode_tool subagent_activity'''.split())
+_OTHER_TOOL = '其他宿主工具'
+
+
+def public_tool_name(value):
+    return value if isinstance(value, str) and value in _PUBLIC_TOOLS else _OTHER_TOOL
+
+
+def public_tool_names(values):
+    return sorted({public_tool_name(value) for value in values}) if isinstance(values, list) else []
+
 
 def _secret_field(key, value):
     name = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', str(key)).lower()

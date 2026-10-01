@@ -212,8 +212,10 @@ def instructions(spec, role='analyst', *, include_spec=True):
 
 def research_record(store, brief):
     detail = json.loads(brief['detail']); refs = detail.get('citations', [])
+    from .plain_isolation import public_notes
+    notes = public_notes(detail.get('research_notes', []))
     return {'version_id': brief['id'], 'brief_hash': brief['hash'],
-            'notes': detail.get('research_notes', []), 'gaps': detail.get('gaps', []),
+            'notes': notes, 'gaps': detail.get('gaps', []),
             'citations': [{**ref, 'source_name': store.one('sources', ref['source_id'])['name']} for ref in refs],
             'assessments': [json.loads(x['data']) for x in store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC', (brief['id'],))]}
 

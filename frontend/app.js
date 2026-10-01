@@ -43,6 +43,7 @@ import {connectorSettings} from './connectors.js';
 import {mcpSelection} from './mcp-selection.js';
 import {appUpdatesUI} from './app-updates.js';
 import {revisionQuestionsUI} from './revision-questions.js';
+import {createFeedbackList} from './feedback-list.js';
 import {readersUI} from './readers.js';
 import {verificationBadge} from './skill-verification.js';
 import {previousReportUI} from './previous-report.js';
@@ -52,8 +53,9 @@ import {createTemplateOutput} from './template-output.js';
 import {deliveryUI,changeTypeLabel,displayDate} from './delivery.js';
 import {reportExportUI} from './report-export.js';
 import {excelExportUI} from './excel-export.js';
-import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,DEEP_LENGTH,INDUSTRY_LENGTH,lengthUnit,runLanguage} from './report-language.js';
+import {reportLanguageUI,reportLanguage,LENGTH_PRESETS as LANGUAGE_LENGTHS,lengthUnit,runLanguage} from './report-language.js';
 import {createLengthControls} from './length-controls.js';
+import {createReportFormDefaults} from './report-form-defaults.js';
 import {sessionBudgetUI} from './session-budget.js';
 import {createReportSources} from './report-sources.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
@@ -90,6 +92,7 @@ const reportSources=createReportSources({$,esc,getState:()=>state,getCurrent:()=
 const sessionBudget=sessionBudgetUI({$,api,action,notice,getState:()=>state});
 const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta,svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:closeSourceDrawer,onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
+const feedbackList=createFeedbackList({$,esc,getState:()=>state,openLearning:()=>page('learning')});
 const retryLearning=learningRetry({api,getPlan:()=>state?.learning_authorization?.plan,confirm:text=>confirm(text),describePlan:learningPlanText});
 const readerProfiles=readersUI({api,action:(...args)=>action(...args)});
 readerProfiles.bind();
@@ -417,7 +420,7 @@ function render(first){
  $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${esc(taskLabel(j.kind)||j.kind)}<small>${esc(jobExecutionLabel(j,jobModelLabel))} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||moment(j.created))}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">${esc(jobResumeLabel(j))}</button>${['review','learn'].includes(j.kind)?`<button data-retry-current="${j.id}">${j.kind==='learn'?'确认预算后重试':'按当前模型重试'}</button>`:''}`:''}</div>`).join('');
  document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));document.querySelectorAll('[data-retry-current]').forEach(b=>b.onclick=()=>action(()=>retryLearning(state.jobs.find(j=>j.id===b.dataset.retryCurrent))));renderTasks();renderTaskGraph();renderTaskBanner();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();templatesPage.render();if($('welcome')&&!$('welcome').hidden)renderWelcome();
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
- revisionQuestions.render(state.revision_edits);
+ revisionQuestions.render(state.revision_edits);feedbackList.render();
  readerProfiles.render(state.readers,{readerId:state.requirements?.reader_id});
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong>${verificationBadge(state.skill_verifications?.[s.id])}<p>${esc(s.reason)}</p>${s.reader_scope_ids?.length?'<span class="tag">历史读者专属版本 · 暂不启用</span>':s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
@@ -518,7 +521,7 @@ document.addEventListener('click',event=>{if(event.target.closest('button')?.id!
 })});
 
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
-const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc,syncSourceHints:renderWorkflowChoices});
+const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc,syncSourceHints:renderWorkflowChoices,getBackend:()=>state.settings?.agent_backend||'codex'});
 quickReport.init();
 const assessmentPanel=createAssessmentPanel({
  api,action,notice,$,esc,parse,savedVersion,
@@ -550,14 +553,14 @@ let reportTimePreviewTicket=0;
 async function previewReportTime(){
  const ticket=++reportTimePreviewTicket;
  const form=$('requirements'),box=$('report-system-clock');
- try{const requirements={title:form.elements.title.value||'预览',objective:form.elements.objective.value||'预览'};for(const key of ['period','period_start','period_end','report_timezone'])requirements[key]=form.elements[key].value;const t=await api('report-time-preview',{requirements});if(ticket!==reportTimePreviewTicket)return;box.textContent=`系统日期：${t.today} · ${t.timezone}；报告范围：${t.start} 至 ${t.end_exclusive}（不含结束时刻）。提交时冻结。`;}catch(e){if(ticket===reportTimePreviewTicket)box.textContent=e.message}
+ try{const requirements={title:form.elements.title.value||'预览',objective:form.elements.objective.value||'预览'};for(const key of ['period','period_start','period_end','report_timezone'])requirements[key]=form.elements[key].value;const t=await api('report-time-preview',{requirements});if(ticket!==reportTimePreviewTicket)return;reportFormDefaults.setWindow(t,requirements);box.textContent=`系统日期：${t.today} · ${t.timezone}；报告范围：${t.start} 至 ${t.end_exclusive}（不含结束时刻）。提交时冻结。`;}catch(e){if(ticket===reportTimePreviewTicket)box.textContent=e.message}
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(!['fast','fast_web'].includes(req.completion_mode)&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(!['fast','fast_web'].includes(req.completion_mode)&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();reportFormDefaults.prepare(req);req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){const s=await uploadSource(f);if(s.status==='ready')selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});if(s.status==='ready')selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
-$('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,required=$('comment-required').checked;const version=await savedVersion();await api('comment',{version_id:version,text,learning_intent:required?'explicit_requirement':'feedback'});if($('comment').value===text&&$('comment-required').checked===required){$('comment').value='';$('comment-required').checked=true;}scheduleLearning()},'反馈已保存');
+$('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,required=$('comment-required').checked;const version=await savedVersion();await api('comment',{version_id:version,text,learning_intent:required?'explicit_requirement':'feedback'});if($('comment').value===text&&$('comment-required').checked===required){$('comment').value='';$('comment-required').checked=false;}scheduleLearning()},'反馈已保存');
 // Saving feedback is free; starting a learning validation calls models (#727).
 function learningPlanText(plan){
  return `每轮最多用 ${plan.cases} 份历史报告，每份基线和候选各试写一次（最多 ${plan.trial_generations_per_round} 次，可复用的基线不重写），每批还会最多启动 ${plan.triage_turns_per_batch} 个独立改动分类会话，每轮另有整理经验、提出候选和一次成对比较；`+
@@ -1593,19 +1596,16 @@ for(const id of ['model-select','model-provider'])$(id).addEventListener('input'
 $('chat-model-provider').oninput=()=>{rememberDraft();updateComposer()};
 for(const id of ['chat-model','chat-model-provider','model-select','model-provider'])$(id).addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();event.stopPropagation();$(id).blur()}});
 
-let lengthEdited=false;
 const lengthControls=createLengthControls({$,notice,language:()=>reportLanguage($('report-language').value)||'zh'});
 lengthControls.init();
-// Length presets follow the report language; untouched numbers follow a language change.
-const reportLanguageForm=reportLanguageUI({notice,onChange:language=>{
- if(lengthEdited)return;
- briefLengthChoice=null;industryLengthChoice=[...INDUSTRY_LENGTH[language]];
- [$('target-words').value,$('max-words').value]=industryProfileActive()?industryLengthChoice:$('research-tier').value==='deep'?DEEP_LENGTH[language]:presetLengths($('length-preset').value);
- validateLengthInputs();
-}});
+const reportFormDefaults=createReportFormDefaults({$,onChange:()=>{validateLengthInputs();reflectBudgetPreset()}});
+reportFormDefaults.init();
+// Automatic lengths follow language, purpose, research depth and report period.
+const reportLanguageForm=reportLanguageUI({notice,onChange:()=>reportFormDefaults.sync()});
 reportLanguageForm.init();
 function presetLengths(extent){const presets=LANGUAGE_LENGTHS[reportLanguageForm.current()];return presets[extent]||presets.balanced}
 function initializeLengthInputs(requirements){
+ reportFormDefaults.restore(requirements);
  const preset=presetLengths($('length-preset').value);
  $('target-words').value=requirements.target_words??preset[0];$('max-words').value=requirements.max_words??preset[1];lengthControls.restore(requirements);validateLengthInputs();
 }
@@ -1613,8 +1613,8 @@ function validateLengthInputs(){
  const target=Number($('target-words').value),maximum=Number($('max-words').value);
  $('max-words').setCustomValidity(Number.isInteger(target)&&target>0&&Number.isInteger(maximum)&&maximum>0&&maximum<target?'篇幅上沿不能小于建议目标，请调整其中一个数字。':'');
 }
-$('length-preset').onchange=()=>{lengthEdited=true;const [target,maximum]=presetLengths($('length-preset').value);$('target-words').value=target;$('max-words').value=maximum;validateLengthInputs()};
-for(const id of ['target-words','max-words'])$(id).oninput=()=>{lengthEdited=true;validateLengthInputs()};
+$('length-preset').onchange=()=>{const [target,maximum]=presetLengths($('length-preset').value);$('target-words').value=target;$('max-words').value=maximum;validateLengthInputs()};
+for(const id of ['target-words','max-words'])$(id).oninput=validateLengthInputs;
 function renderBriefLength(){
  renderReportDataButton();
  const element=$('brief-length');if(!current){element.hidden=true;return}element.hidden=false;
@@ -1660,7 +1660,7 @@ function initializeResearchBudget(requirements){const budget=requirements.resear
 function renderBudgetProviderScope(){const p=readSearchPolicy(),native=p.primary_provider==='native'||(p.coverage_mode!=='primary_only'&&p.native_search_enabled);$('budget-provider-scope').textContent='受控 API 渠道共享搜索与候选预算；正文按唯一 URL 计量。'+(native?'宿主原生搜索次数未知，单独显示，不计入受控 API 硬上限。':'')}
 $('budget-preset').onchange=()=>{const budget=RESEARCH_BUDGET_PRESETS[$('budget-preset').value];if(budget)for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key]};
 for(const id of Object.values(BUDGET_FIELDS))$(id).oninput=reflectBudgetPreset;
-$('research-tier').onchange=()=>{if($('research-tier').value==='deep'&&!lengthEdited){[$('target-words').value,$('max-words').value]=DEEP_LENGTH[reportLanguageForm.current()];validateLengthInputs()}const budget=RESEARCH_TIERS[$('research-tier').value];if(!budget)return;for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key];reflectBudgetPreset();renderBudgetProviderScope()};
+$('research-tier').onchange=()=>{const budget=RESEARCH_TIERS[$('research-tier').value];if(!budget)return;reportFormDefaults.selectTierBudget(budget);renderBudgetProviderScope()};
 
 let budgetPolling=false;
 function researchBudgetTarget(){
@@ -1720,13 +1720,12 @@ function syncWorkflowProfile(changeLength=true){
  const previous=$('report-profile').value;$('report-profile').value=next;
  if(changeLength&&previous!==next)$('report-profile').dispatchEvent(new Event('change'));
  else $('industry-profile-options').hidden=next!=='industry_periodic';
- renderWorkflowChoices();
+ reportFormDefaults.sync();renderWorkflowChoices();
 }
 $('workflow-choice').onchange=()=>syncWorkflowProfile();
 
 // Reference reports are explicitly separated from this period's evidence.
 const INDUSTRY_TASK_OUTLINE='撰写行业定期报告，围绕核心摘要、行业指标、供需竞争、重点专题与组织启示展开。可根据行业与读者需要调整章节。数据标明日期、单位、口径及比较期，实际与预测分开。分析从事实出发，解释传导机制、适用条件与下一步观察项。正文围绕本期变化、对组织的影响及有依据的行动展开；核查与待补信息单独保存。';
-let briefLengthChoice=null,industryLengthChoice=[5000,5500];
 function industryProfileActive(){return $('report-profile').value==='industry_periodic'}
 function renderReferenceSources(){
  const el=$('reference-source-list');if(!el||!state)return;
@@ -1737,24 +1736,13 @@ function initializeReportProfile(requirements){
  referenceSelected=new Set(requirements.reference_source_ids||[]);
  for(const id of referenceSelected)selected.delete(id);
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();
- if(industryProfileActive()){
-  const [target,maximum]=INDUSTRY_LENGTH[reportLanguageForm.current()];
-  $('target-words').value=requirements.target_words??target;$('max-words').value=requirements.max_words??maximum;
-  industryLengthChoice=[$('target-words').value,$('max-words').value];
- }
  validateLengthInputs();renderReferenceSources();
 }
 $('report-profile').onchange=()=>{
  if(industryProfileActive()){
-  briefLengthChoice=[$('target-words').value,$('max-words').value];
-  [$('target-words').value,$('max-words').value]=industryLengthChoice;
   for(const id of referenceSelected){selected.delete(id);const evidence=$('source-list').querySelector(`[data-check="${CSS.escape(id)}"]`);if(evidence)evidence.checked=false}
- }else{
-  industryLengthChoice=[$('target-words').value,$('max-words').value];
-  [$('target-words').value,$('max-words').value]=briefLengthChoice||presetLengths($('length-preset').value);
-
  }
- $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();validateLengthInputs();
+ $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();reportFormDefaults.sync();
 };
 $('industry-task-outline').onclick=()=>{const field=$('requirements').elements.objective;if(!field.value.includes(INDUSTRY_TASK_OUTLINE))field.value=(field.value.trim()?field.value.trim()+'\n\n':'')+INDUSTRY_TASK_OUTLINE;field.focus()};
 

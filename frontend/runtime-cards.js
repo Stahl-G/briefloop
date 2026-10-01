@@ -16,7 +16,7 @@ const descriptions = {
  'aider': '终端中的 AI 编程助手',
  'amp': '命令行编程 Agent',
  'amr': 'Open Design 的命令行运行时',
- 'antigravity': '命令行开发 Agent',
+ 'antigravity': 'Google 的命令行 Agent · 有限支持：深度研究的检索编排未验证，月报建议用内置引擎、Claude 或 Codex',
  'atomcode': '命令行编程 Agent',
  'copilot': 'GitHub 的命令行编程助手',
  'cursor-agent': 'Cursor 的命令行 Agent',

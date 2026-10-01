@@ -51,7 +51,8 @@ class FlowEngine:
                     ('workspace_action', {'request':{'action':'finish_research_round','gaps':[],'summary':'Synthetic round complete'}})
                 ] if data.get('research_plan') else []
                 self.queues[sid] = [
-                    ('save_plan', {'plan':{'summary':'Explain revenue', 'reader_contract':contract(self.store,self.run['id'])}}),
+                    ('save_plan', {'plan':{'summary':'Explain revenue', 'reader_contract':contract(self.store,self.run['id']),
+                        'scout_tasks':[{'slot_id':'scout-1','assignment':'Read revenue'}, {'slot_id':'scout-2','assignment':'Read scope'}]}}),
                     ('run_scouts', {'tasks':[{'slot_id':'scout-1','assignment':'Read revenue'}, {'slot_id':'scout-2','assignment':'Read scope'}]}),
                     *round_tools,
                     ('workspace_action', {'request':{'action':'reconciliation_save','reconciliation':{'status':'not_applicable','examined_claim_ids':[],'unexamined_claim_ids':[],'relations':[],'open_questions':[],'coverage_notes':'Synthetic fixture has no source claims'}}}),

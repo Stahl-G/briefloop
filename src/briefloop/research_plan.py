@@ -76,6 +76,11 @@ def require_writing_closeout(store, run_id):
             '调用 research_status 核对轮次，恢复该轮执行并用 finish_research_round 明确收尾；'
             '不能用较早轮次的记录代替本轮，也不要求消除全部缺口或执行尚未开启的 pending 轮次。',
             code='research_closeout_missing')
+    outcome = latest[1]['outcome']
+    if outcome.get('continue_research') and not str(outcome.get('early_stop_reason') or '').strip():
+        raise AdmissionError('最新研究轮次已记录继续检索，尚未完成后续收尾。确有缺口时用 begin_research_round '
+            '开启下一轮；若现有材料已经充分、预算耗尽或无法继续，用 finish_research_round 对该轮补充 '
+            'early_stop_reason 说明停止依据。不要求为收尾增加搜索。', code='research_continuation_pending')
     return {'round_id': latest[0], 'round_index': latest[1].get('index'), 'outcome': latest[1]['outcome']}
 
 
@@ -458,7 +463,44 @@ def _validate_gap(store, run_id, gap):
             raise ValueError('缺口关联的主张属于另一报告：' + str(claim_id))
 
 
-def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None):
+# Research that closes after its first round while most of the managed search
+# budget is unused needs a stated reason. A host model left a monthly report at
+# 23 sources after one reconnaissance round with 8 of 30 searches used.
+EARLY_STOP_USED_FRACTION = 0.5
+# Small hand-set budgets are spent at the user's discretion; weekly and monthly presets are 30 and 80.
+EARLY_STOP_MIN_BUDGET = 10
+
+
+def _early_stop(store, run_id, info, plan, continue_research, early_stop_reason):
+    """Return the refusal for an unexplained early stop, or None."""
+    if continue_research or (early_stop_reason or '').strip():
+        return None
+    depth = int((plan.get('structure') or {}).get('depth') or 1)
+    if int(info.get('index') or 1) > 1 or depth < 2:
+        return None
+    from .research_budget import snapshot
+    budget = snapshot(store, run_id)
+    limit = int((budget.get('limits') or {}).get('search_requests') or 0)
+    used = int((budget.get('used') or {}).get('search_requests') or 0)
+    # No search yet means material-only work or an explicit no-web run: nothing to judge.
+    if limit < EARLY_STOP_MIN_BUDGET or used == 0 or used >= limit * EARLY_STOP_USED_FRACTION:
+        return None
+    return (f'这是第 1 轮，受控搜索额度只用了 {used}/{limit}，计划最多 {depth} 轮。'
+            '要继续检索：带 continue_research=true 收轮，然后 begin_research_round 按本轮缺口和未派发的方向聚焦补查；'
+            '确实已覆盖本期重要事件：带 early_stop_reason 说明依据（会写进研究记录并向用户显示）。')
+
+
+def _write_round_outcome(store, run_id, round_id, info):
+    outcome = info['outcome']
+    _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json', {
+        'round_id': round_id, 'index': info['index'], 'summary': outcome.get('summary', ''),
+        'closeout': outcome.get('closeout'), 'gaps': info.get('gaps', []),
+        'gap_updates': outcome.get('gap_updates', []), 'closed_at': info.get('closed'),
+        **{key: outcome[key] for key in ('continue_research', 'early_stop_reason', 'scout_tasks') if key in outcome}})
+
+
+def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None,
+                 continue_research=False, early_stop_reason='', scout_outcomes=None):
     """Close a round, assign real gap ids and freeze its outcome. Idempotent per round."""
     # Admission and mutation share the same write transaction as network reservations.
     with store.tx() as connection:
@@ -483,8 +525,27 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                 checked = validate_updates(store, run_id, gap_updates)
                 if any(item not in previous for item in checked):
                     raise ValueError('已关闭轮次不可改写缺口状态；请在新轮次更新')
+            outcome = info.get('outcome') or {}
+            reason = (early_stop_reason or '').strip()[:1000]
+            if info.get('status') == 'closed' and outcome.get('continue_research') and reason:
+                # A continuation may legitimately become unnecessary or impossible.
+                # Record that decision without reopening research, spending quota,
+                # or rewriting the closed round's summary, evidence or gaps.
+                if outcome.get('early_stop_reason') and outcome['early_stop_reason'] != reason:
+                    raise ValueError('已记录的提前收束理由不可改写')
+                if not outcome.get('early_stop_reason'):
+                    outcome['early_stop_reason'] = reason
+                    _save_plan(connection, run_id, plan)
+                    _write_round_outcome(store, run_id, round_id, info)
+                    return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
+                            'gap_updates': previous, 'idempotent': False}
             return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
                     'gap_updates': previous, 'idempotent': True}
+        from .scout_coverage import closeout as scout_closeout, required as scout_required
+        scout_record = scout_closeout(store, run_id, connection, round_id, outcomes=scout_outcomes, enforce=scout_required(store, run_id))
+        refusal = _early_stop(store, run_id, info, plan, continue_research, early_stop_reason)
+        if refusal:
+            raise AdmissionError(refusal, code='research_stopped_early')
         from .research_handoff import read_state, observe, apply_updates, save_state, closeout_snapshot
         state = read_state(store, run_id, connection=connection, plan=plan)
         records = []
@@ -506,15 +567,24 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         info['gaps'] = records
         info['status'] = 'closed'
         info['closed'] = now()
-        info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now()}
+        info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now(),
+                           **({'continue_research': True} if continue_research else {}),
+                           **({'early_stop_reason': early_stop_reason.strip()[:1000]} if (early_stop_reason or '').strip() else {})}
+        if scout_record.get('declared'):
+            info['outcome']['scout_tasks'] = list(scout_record['tasks'].values())
         plan['current_round_id'] = None
         _save_plan(connection, run_id, plan)
-    _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json',
-                {'round_id': round_id, 'index': info['index'], 'summary': summary, 'closeout': closeout, 'gaps': records, 'gap_updates': accepted_updates, 'closed_at': info['closed']})
+        # Serialize the file with a later reason-only amendment as well, so the
+        # initial close cannot overwrite the amended outcome after committing.
+        _write_round_outcome(store, run_id, round_id, info)
     if job_id:
         store.event(job_id, 'research_round', {'action': 'finish', 'round_id': round_id,
-                                               'index': info['index'], 'gap_ids': [record['id'] for record in records]})
-    return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'gap_updates': accepted_updates, 'idempotent': False}
+                                               'index': info['index'], 'gap_ids': [record['id'] for record in records],
+                                               **({'early_stop_reason': info['outcome']['early_stop_reason']}
+                                                  if info['outcome'].get('early_stop_reason') else {})})
+    from .scout_coverage import view as scout_view
+    return {'round_id': round_id, 'index': info['index'], 'gaps': records, 'gap_updates': accepted_updates, 'idempotent': False,
+            'execution_gaps': scout_view(store, run_id)['execution_gaps']}
 
 
 def round_usage(store, run_id, round_id):
@@ -764,4 +834,5 @@ def search_slots_left(store, connection, run_id, round_id):
 
 def status(store, run_id):
     from .research_handoff import gap_view
-    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id), **gap_view(store, run_id)}
+    from .scout_coverage import view as scout_view
+    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id), **gap_view(store, run_id), **scout_view(store, run_id)}

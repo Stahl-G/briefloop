@@ -222,12 +222,15 @@ class Store:
         backend=result.get('agent_backend','codex')
         shaped={}
         for role,config in result['role_models'].items():
+            # Legacy overrides belong to the workspace engine they were saved on.
+            # Bind them before a settings patch or a chat job chooses another host.
+            tag={'backend':config.get('backend') or backend}
             try:
-                shaped[role]=runtime_fields(config,backend)
+                shaped[role]={**runtime_fields(config,config.get('backend') or backend),**tag}
             except ValueError:
                 # A backend switch can strand old model ids; keep them visible
                 # so the UI can show them, and fail loudly only when enqueued.
-                shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
+                shaped[role]={**{key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config},**tag}
         result['role_models']=shaped
         return result
 
@@ -244,6 +247,11 @@ class Store:
             current=self.settings(connection=c)
             body=changes(current) if callable(changes) else changes
             merged=apply_settings_change(current,body)
+            if isinstance(body.get('role_models'),dict):
+                # Record which engine a newly chosen role model belongs to.
+                engine=merged.get('agent_backend','codex')
+                merged['role_models']={role:({**config,'backend':config.get('backend') or engine} if isinstance(config,dict) and config.get('model') else config)
+                                       for role,config in (merged.get('role_models') or {}).items()}
             # Saving a model is the explicit choice the pending flag waits for.
             if 'model_selection_required' not in body and str(body.get('model') or '').strip():
                 merged['model_selection_required']=False
@@ -442,6 +450,8 @@ class Store:
             c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(stored), dump(source_ids), options["skill_id"] if "skill_id" in options else reader_skill(self,req.reader_id), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
                 c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(stored),))
+            if options.get("research_protocol") == 'quality_v1' and req.completion_mode not in ('fast', 'fast_web'):
+                c.execute("INSERT INTO meta VALUES(?,?)", ('scout_coverage_version:'+rid, dump(1)))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
         return self.one("runs", rid)
@@ -754,7 +764,18 @@ class Store:
         def change(settings):
             if not settings.get('model_selection_required'):return {}
             chosen=backend or settings.get('agent_backend','codex')
-            fields=runtime_fields(runtime or {},chosen)
+            selected=dict(runtime or {})
+            # Chat transports use effort/variant; workspace settings use the
+            # longer names. Preserve explicit model-default choices as well.
+            if chosen=='codex' and 'reasoning_effort' not in selected and 'effort' in selected:
+                selected['reasoning_effort']=selected['effort']
+            if chosen in ('opencode','briefloop-native') and 'model_variant' not in selected and 'variant' in selected:
+                selected['model_variant']=selected['variant']
+            fields=runtime_fields(selected,chosen)
+            if chosen in ('opencode','briefloop-native') and 'model_variant' in selected:
+                fields['model_variant']=selected['model_variant']
+            if chosen=='codex' and 'service_tier' in selected:
+                fields['service_tier']=selected['service_tier']
             if not str(fields.get('model') or '').strip():return {}
             if chosen not in ('codex','opencode','briefloop-native'):
                 fields['runtime_efforts']={**settings.get('runtime_efforts',{}),chosen:fields.pop('reasoning_effort',None)}
@@ -769,7 +790,8 @@ class Store:
         roles={}
         for role in ROLE_NAMES:
             candidate=overrides.get(role)
-            if not candidate:
+            if not candidate or (candidate.get('backend') and candidate['backend']!=backend):
+                # No override, or one chosen on another engine: follow the main chain.
                 roles[role]=dict(base)
                 continue
             try:
@@ -826,8 +848,15 @@ class Store:
             if kind!='review':payload['review_runtime']=review_runtime
             if kind=='generate':
                 payload.setdefault('auto_revision',self.settings()['auto_revision'])
-                payload.setdefault('max_parallel',self.settings()['max_parallel'])
+                # The report's own Scout ceiling, chosen at creation, wins over the workspace default.
+                limit=(json.loads(self.one('runs',payload['run_id'])['requirements']).get('scout_limit')
+                       if payload.get('run_id') else None)
+                payload.setdefault('max_parallel',int(limit) if limit else self.settings()['max_parallel'])
             if kind=='generate' and payload.get('run_id'):
+                # New runs bind this contract at application admission; old persisted runs remain compatible.
+                version=self.meta('scout_coverage_version:'+payload['run_id'])
+                payload.pop('scout_coverage_version',None)
+                if version == 1:payload['scout_coverage_version']=1
                 runs=self.rows('SELECT requirements FROM runs WHERE id=?',(payload['run_id'],))
                 if runs and json.loads(runs[0]['requirements']).get('writing_mode')=='internal_report':payload.setdefault('reader_contract_required',True)
         jid = uid("job")
@@ -881,6 +910,11 @@ class Store:
         brief['context']=context(self,version_id)
         brief['latest_version_id']=brief['context']['latest']['id']
         brief['position']=self.rows('SELECT rowid AS position FROM briefs WHERE id=?',(version_id,))[0]['position']
+        from .plain_isolation import public_notes
+        detail=json.loads(brief['detail'])
+        if 'research_notes' in detail:
+            detail['research_notes']=public_notes(detail['research_notes'])
+            brief['detail']=dump(detail)
         return brief
 
     def search_briefs(self, text):
@@ -933,6 +967,7 @@ class Store:
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
         from .revision_edits import snapshot as revision_snapshot
+        from .feedback_view import snapshot as feedback_snapshot
         from .readers import listing as reader_listing, reader_scope_ids, skill_for
         from .skill_verification import refresh as skill_refresh
         from .task_labels import reported_labels
@@ -947,7 +982,7 @@ class Store:
                 "sources": annotate_source_usage(self,annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created"))),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 **browsing,
-                "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
+                **feedback_snapshot(self),
                 "revision_edits": revision_snapshot(self),
                 "readers": reader_listing(self),
                 "skill_verifications": skill_refresh(self),

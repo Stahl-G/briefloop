@@ -63,8 +63,16 @@ def summary(store, job_id):
     for r in opened:
         done = r['status'] == 'closed'
         timeline.append({'label': f"第 {r['index']} 轮研究" + ('已收束' if done else '进行中' if running else '未收束'),
-                         'detail': public_text((r.get('outcome') or {}).get('summary')),
+                         'detail': public_text(((r.get('outcome') or {}).get('summary') or '')
+                                               + (('；提前收束理由：' + r['outcome']['early_stop_reason']) if (r.get('outcome') or {}).get('early_stop_reason') else '')),
                          'status': 'done' if done else 'active' if running else 'recorded', 'time': r.get('closed') or r.get('created')})
+    if run:
+        from .scout_coverage import view as scout_view
+        labels = {'planned': '未派发', 'dispatched': '尚未交接', 'failed': '执行未完成', 'skipped': '已说明跳过'}
+        for task in scout_view(store, run_id)['execution_gaps']:
+            timeline.append({'label': f"第 {task['round_index']} 轮 {task['slot_id']}：" + labels[task['status']],
+                             'detail': public_text(task['assignment'] + ('；' + task['reason'] if task['reason'] else '')),
+                             'status': 'recorded', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
     event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',
@@ -86,7 +94,18 @@ def summary(store, job_id):
             stage = label
             revision_phase = True
         history_label = {'writing': '按审阅意见修订已开始', 'checking': '修订稿已保存，进入复核', 'repairing_metadata': '依据关联与处理说明进入修复'}.get(data.get('stage'), label) if e['kind'] == 'revision_progress' else label
-        if label: timeline.append({'label': history_label, 'detail': '', 'status': 'recorded', 'time': e['created']})
+        detail = ''
+        if e['kind'] == 'plain_isolation':
+            # Fast plain turns state how they were held to their materials.
+            from .plain_isolation import public_record, summary as isolation_summary
+            isolation = public_record(data)
+            label = history_label = {'research': '检索规划', 'evidence': '补充依据'}.get(data.get('phase'), '快速写作') + (
+                '：配置要求关闭工具，已记录引擎报告的活动' if isolation['level'] == 'enforced' else '：只读权限不等于材料隔离' if isolation['level'] == 'restricted' else '：引擎工具未关闭，已记录使用情况')
+            detail = public_text(isolation_summary(isolation))
+        if e['kind'] == 'fast_unsupported':
+            label = history_label = '找不到原文依据的结论已单独列出'
+            detail = public_text(data.get('message'))
+        if label: timeline.append({'label': history_label, 'detail': detail, 'status': 'recorded', 'time': e['created']})
     if run:
         from .reconciliation import _stored
         records = _stored(store, run_id)

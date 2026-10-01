@@ -235,7 +235,8 @@ def generation_prompt(store, run, folder, backend='codex', scout_budget=None):
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
-    payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    from .scout_coverage import required as scout_coverage_required
+    payload={'scout_coverage_required':scout_coverage_required(store,run['id']),'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     if research_handoff is not None:payload['research_handoff']=research_handoff
     tool=tool_command(store.root,backend=backend)
     # Inject one Scout retrieval skill for the frozen set of managed channels.
@@ -294,7 +295,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     if not req['allow_web']:
         retrieval_strategy='本轮未开启联网：只读取上传材料与已有来源，不安排公开检索，也不承诺开放搜索或分轮搜索；按已有材料识别证据缺口并如实交接。'
     else:
-        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if managed else '。'))
+        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，不要求花完搜索次数；但第一轮侦察只用来找线索，不能代替第二轮聚焦。只有核对过计划里每个检索方向都已有本期重要事件的可用正文，才可以在第一轮后结束研究，并须在 finish_research_round 带 early_stop_reason 说明依据；否则带 continue_research=true 收轮后开始下一轮；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if managed else '。'))
     if backend == 'briefloop-native':
         payload.update(retrieval_strategy=retrieval_strategy, orchestrator_instructions=instructions(deliverable,role='orchestrator')+'\n'+temporal_note)
         (folder/'input.json').write_text(dump(payload),encoding='utf-8')
@@ -355,7 +356,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
 1. 读取需求与初始来源目录，写 plan.json（包含reader_contract，遵守 {folder/'reader_contract.schema.json'}，把内容目标、研究方法、写作偏好和人工分工分开解释并绑定逐字来源及requirement_id）。写作交接前调用 `{tool} workspace-action --request REQUEST_JSON`，action=set_reader_contract、run_id={run['id']}、reader_contract为同一对象；工具校验通过后才进入写作。计划还包含原始用户要求、目标时间窗口、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。公开市场或行业周报按主题、主体、时间窗口安排 discovery Scout；计划应列需要查找的官方发布者、公开披露或统计来源，不能只按已有文件数分工。计划还应说明来源政策（何时优先一手、是否允许二手）；重点主体只是检索线索，不是必须写入的报道名单。
-2. 根据数量、大小、主题和可用并发能力决定 Scout 数量，上限 {max_parallel}；不要无条件开满。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。
+2. 按报告期间与覆盖面决定 Scout 数量，上限 {max_parallel}：一周左右的报告通常 3–4 个；一个月左右的月报每个主要板块至少 1 个，通常 6–8 个；跨多个行业或市场时可接近上限。不要无条件开满，但计划里列出的每个检索方向都要实际派发 Scout，不能只派一部分就收轮。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。派发前在 plan.json.scout_tasks 写完整数组（每项 slot_id、assignment、result_file 绝对路径），并用 workspace-action action=set_scout_tasks、run_id、scout_tasks 登记同一数组；本地材料无需 Scout 时明确登记 []。每轮单独登记；后续轮用新结果路径，不覆盖前轮。没有结果的承诺分工必须继续完成，或收轮时在 scout_outcomes 中明确 slot_id、status=failed|skipped、reason，保留未检范围。
    {retrieval_strategy}
    同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
    为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。
@@ -722,7 +723,12 @@ class Worker:
                 payload['authorization']=authorization(settings,'manual',confirmed=confirmed_plan)
                 payload['budget']=plan(settings)
                 payload['k']=settings['k']
-            if job['kind']=='review':self.store.one('briefs',payload['version_id'])
+            if job['kind']=='review':
+                self.store.one('briefs',payload['version_id'])
+                from .review import review_job_payload
+                # This is a new attempt: use the current independent Reviewer
+                # route, not the main chain's backend/model.
+                payload=review_job_payload(self.store,payload)
             payload['retry_of_job_id']=jid
             # Store.enqueue freezes the current settings (including role models and
             # backend). Do not copy old attempts, parent cancellation links or packets.
@@ -1213,7 +1219,7 @@ class Worker:
         from .company_context import prepare_review
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
-        latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None]
+        latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None];publication_hold=[None]
         def publish():
             from .store import Conflict
             from .document_model import markdown_document,document_hash
@@ -1221,6 +1227,23 @@ class Worker:
             if not p.exists():return
             try:data=json.loads(p.read_text(encoding='utf-8-sig'))
             except (json.JSONDecodeError,UnicodeDecodeError):return
+            # Hosts can write draft.json directly, without the native write_report
+            # tool. Hold that draft at the same research closeout boundary after
+            # managed searches or an explicit promise to continue. Material-only
+            # and legacy/no-plan flows do not acquire a new research requirement.
+            from .research_plan import AdmissionError,require_writing_closeout
+            from .research_budget import spent
+            plan=frozen_plan(self.store,run['id'])
+            from .scout_coverage import required as scout_coverage_required
+            if plan and (scout_coverage_required(self.store,run['id']) or spent(self.store,run['id'])['search_requests'] or any(
+                    (info.get('outcome') or {}).get('continue_research') for info in (plan.get('rounds') or {}).values())):
+                try:require_writing_closeout(self.store,run['id'])
+                except AdmissionError as exc:
+                    if publication_hold[0] is None or str(publication_hold[0])!=str(exc):
+                        self.store.event(job['id'],'research_round',{'action':'publication_held','code':exc.code,'error':str(exc)})
+                    publication_hold[0]=exc
+                    return
+            publication_hold[0]=None
             from .models import prune_unknown,describe_invalid
             data,dropped=prune_unknown(data,BriefDraft)
             if dropped and dropped!=reported[0]:
@@ -1282,9 +1305,15 @@ class Worker:
                     raise InterruptedError('任务已停止，已生成内容保留')
                 # A successful transport turn can contain only a progress message.
                 # Continue the same durable session once, without resampling research.
-                self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
-                result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：上轮只返回了研究进度，没有保存 draft.json。读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
+                if publication_hold[0] is not None:
+                    self.store.event(job['id'],'research_round',{'action':'closeout_resume','message':'草稿文件已保留；继续完成研究收尾。'})
+                else:
+                    self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
+                continuation=('\n草稿文件已保留，但研究收尾尚未接纳：'+str(publication_hold[0])
+                              if publication_hold[0] is not None else '\n上轮只返回了研究进度，没有保存 draft.json。')
+                result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：'+continuation+'读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成研究收尾、正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
         publish()
+        if publication_hold[0] is not None:raise publication_hold[0]
         current=latest[0]
         if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
             raise RuntimeError('模型回合已结束，但未保存可用草稿（draft.json）；已保留研究材料和会话，可恢复继续。')

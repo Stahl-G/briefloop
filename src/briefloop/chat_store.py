@@ -138,6 +138,11 @@ class ChatStore:
                         event['data']['tokenUsage']=project_usage(event['seq'],event['data'])
         if not private:
             for message in messages:message.pop('prompt',None)
+            from .execution_records import public_tool_name
+            for event in events:
+                item = event['data'].get('item') if isinstance(event['data'], dict) else None
+                if isinstance(item, dict) and item.get('type') == 'runtime_tool':
+                    item['tool'] = public_tool_name(item.get('tool'))
         if not reasoning:
             for message in messages:message.pop('reasoning',None)
         return {'session':session,'messages':messages,'events':events,'requests':requests,'token_usage':token_usage}

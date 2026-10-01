@@ -12,10 +12,47 @@ from .platform_support import filesystem_path
 ENDED = {'completed', 'done', 'closed', 'failed', 'errored', 'interrupted', 'cancelled', 'canceled', 'shutdown'}
 
 
+# Fixed public texts. Provider messages may carry URLs, credentials or tool output,
+# so only these classifications (and a parsed reset delay) are ever shown.
+CONNECTION = '模型连接失败；请检查网络和模型服务后重试，已有来源与稿件保留。'
+QUOTA = '模型服务额度已用完或被限流{reset}；可稍后恢复任务，或在设置中换用其他执行引擎。已有来源与稿件保留。'
+AUTH = '模型服务未登录或凭据无效；请在对应 CLI 或设置中重新登录后恢复任务。已有来源与稿件保留。'
+MODEL = '所选模型在当前执行引擎上不可用，或缺少该模型要求的推理强度；请在设置中重新选择后恢复任务。'
+HOST_PERMISSION = '执行引擎在后台请求了命令授权，BriefLoop 无法代为确认，本轮已终止；请在该 CLI 的权限设置中允许相应操作，或换用内置引擎。'
+PUBLIC_FAILURES = {'模型连接失败': CONNECTION, '模型服务未登录': AUTH,
+                   '所选模型在当前执行引擎上不可用': MODEL,
+                   '执行引擎在后台请求了命令授权': HOST_PERMISSION}
+_PUBLIC_QUOTA = re.compile(re.escape(QUOTA).replace(re.escape('{reset}'),
+    r'(?:，约 (?:\d{1,3} 小时(?: \d{1,2} 分钟)?|\d{1,2} 分钟)后恢复)?'))
+
+
+def _reset_delay(text):
+    match = re.search(r'resets? in\s+((?:\d{1,3}h)?\s*(?:\d{1,2}m)?\s*(?:\d{1,2}s)?)', text, re.I)
+    if not match:
+        return ''
+    hours = re.search(r'(\d+)h', match.group(1)); minutes = re.search(r'(\d+)m', match.group(1))
+    parts = ([hours.group(1) + ' 小时'] if hours else []) + ([minutes.group(1) + ' 分钟'] if minutes else [])
+    return '，约 ' + ' '.join(parts) + '后恢复' if parts else ''
+
+
 def public_failure(message):
-    """Classify transport failures; never publish provider text or request URLs."""
-    if re.match(r'^(?:connection error|api connection error|connect(?:ion)? timeout|模型连接失败)', str(message or '').strip(), re.I):
-        return '模型连接失败；请检查网络和模型服务后重试，已有来源与稿件保留。'
+    """Classify provider and host failures into fixed text; never publish provider text or request URLs."""
+    text = str(message or '').strip()
+    if text in PUBLIC_FAILURES.values() or _PUBLIC_QUOTA.fullmatch(text):
+        return text
+    for prefix, fixed in PUBLIC_FAILURES.items():
+        if text.startswith(prefix):
+            return fixed
+    if re.match(r'^(?:connection error|api connection error|connect(?:ion)? timeout)', text, re.I):
+        return CONNECTION
+    if re.search(r'quota|rate.?limit|too many requests|\b429\b|usage limit|额度|配额|限流', text, re.I):
+        return QUOTA.format(reset=_reset_delay(text))
+    if re.search(r'unauthori[sz]ed|\b401\b|not (?:logged|signed) in|log ?in required|please (?:log|sign) ?in|invalid api key|authentication failed|未登录', text, re.I):
+        return AUTH
+    if re.search(r'invalid model|model not found|unknown model|unsupported model|requires --effort|模型不存在', text, re.I):
+        return MODEL
+    if text.startswith(('后台任务没有用户可回答宿主授权请求', '后台调用未绑定可处理授权的任务')):
+        return HOST_PERMISSION
     return None
 
 
@@ -187,7 +224,7 @@ class ProgressTracker:
                     reconnect=bool(re.search(r'reconnect|waiting for network|retrying|重连',str(message),re.I))
                     self.runtime_issue=(
                         ('模型连接中断，正在重试','正在等待模型连接恢复；已有来源和产物保留。') if reconnect else
-                        ('模型连接失败',self.failure_message) if self.failure_message else
+                        (self.failure_message.split('；',1)[0],self.failure_message) if self.failure_message else
                         ('模型执行遇到错误','模型返回错误，正在等待运行状态更新；已有来源和产物保留。'))
                 elif kind in ('item.started','item.completed') and item.get('type') in (
                         'agent_message','agentMessage','command_execution','commandExecution','collab_tool_call',
