@@ -181,10 +181,15 @@ class InteractiveRuntime:
             from . import plain_isolation
             runtime.update(plain_isolation.runtime(backend))
         if job.get('readonly_output'):
-            from .review_capability import require_for_review
+            from .review_capability import require_for_review, review_isolation
             review_mode=payload.get('review_mode','standard')
             require_for_review(backend,review_mode)
-            runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()),review_mode=review_mode)
+            if job['readonly_output']=='review.json' and review_isolation(backend,review_mode)=='observed':
+                # The host cannot be made read-only; it reviews on its own permissions
+                # and the review record carries that label and its reported tool use.
+                runtime.update(review_mode=review_mode)
+            else:
+                runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()),review_mode=review_mode)
             if job.get('review_id'):runtime['review_id']=job['review_id']
         if backend == 'briefloop-native' and not job.get('native_packet') and not job.get('readonly_output'):
             from .native_orchestrator import prepare
