@@ -6,11 +6,20 @@ import { collectFrontendLicenses, renderFrontendLicenses } from './build_fronten
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const check = process.argv.includes('--check');
+// Ship the exact running version's changelog so settings remains useful offline.
+const version = fs.readFileSync(path.join(root, 'pyproject.toml'), 'utf8').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+if (!version) throw Error('Missing product version in pyproject.toml');
+const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replaceAll('\r\n', '\n');
+const sections = [...changelog.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+const section = sections.find(match => match[1].split(/\s/)[0] === version);
+if (!section) throw Error(`Missing changelog for running version ${version}`);
 const result = await build({ absWorkingDir: root, entryPoints: ['frontend/app.js'],
   bundle: true, format: 'esm', minify: true, outfile: 'src/briefloop/static/app.js',
   metafile: true, write: false });
 const rows = collectFrontendLicenses(result.metafile, root);
 const artifacts = [...result.outputFiles.map(file => ({ path: file.path, contents: file.contents })),
+  { path: path.join(root, 'src/briefloop/static/release-notes.json'),
+    contents: Buffer.from(JSON.stringify({version, notes: section[2].trim()}, null, 2) + '\n') },
   { path: path.join(root, 'src/briefloop/static/frontend-licenses.txt'),
     contents: Buffer.from(renderFrontendLicenses(rows)) }];
 // Retain the legacy layout during migration; the shared component layer is

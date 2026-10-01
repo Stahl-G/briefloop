@@ -6,20 +6,21 @@ const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.m
 const version=JSON.parse(fs.readFileSync(new URL('../desktop/electron/package.json',import.meta.url))).version;
 assert.ok(html.includes(`data-web-version="${version}"`));
 assert.match(html,/data-settings-view="updates"/);
-function fixture(desktop){
+function fixture(desktop,notesAPI=async version=>({version,state:'loaded',notes:`Official changes for ${version}`})){
  const elements=new Map(),notices=[];
  const el=id=>{if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,textContent:'',dataset:{webVersion:version}});return elements.get(id)};
- const info={version,installation:'source',build:'abc123',guidance:'当前运行开发源码',update_command:null};
+ const info={version,installation:'source',build:'abc123',guidance:'当前运行开发源码',update_command:null,release_notes:{version,state:'loaded',notes:'Bundled current changes'}};
  // dom.js resolves $ through the document global; the desktop bridge through window.
  globalThis.document={getElementById:el};
  globalThis.window={briefloopDesktop:desktop};
- const ui=appUpdatesUI({api:async(name)=>name==='software-version'?info:{...info,state:'ahead',releaseVersion:'0.18.0'},notice:(...args)=>notices.push(args)});
+ const ui=appUpdatesUI({api:async(name,body)=>name==='software-version'?info:name==='software-release-notes'?notesAPI(body.version):{...info,state:'ahead',releaseVersion:'0.18.0'},notice:(...args)=>notices.push(args)});
  ui.init();
  return {el,ui,notices};
 }
 const browser=fixture();await browser.ui.refreshAppUpdates();
 assert.equal(browser.el('app-update-controls').hidden,false);
-assert.match(browser.el('app-update-version').textContent,new RegExp(`BriefLoop v${version}`));
+assert.equal(browser.el('app-update-version').textContent,`当前版本 v${version}`);
+assert.equal(browser.el('app-update-current-notes').textContent,'Bundled current changes');
 assert.match(browser.el('app-update-guidance').textContent,/开发源码/);
 await browser.el('app-update-check').onclick();
 assert.match(browser.el('app-update-status').textContent,/高于 PyPI/);
@@ -30,8 +31,10 @@ const desktop=fixture({updateStatus:async()=>dto,onUpdateStatus:fn=>{changed=fn}
  checkForUpdates:async()=>{calls.push('check');return dto},downloadUpdate:async()=>{calls.push('download');return dto},
  installUpdate:async()=>{calls.push('install');return {cancelled:true}}});
 await desktop.ui.refreshAppUpdates();
-assert.equal(desktop.el('app-update-version').textContent,`BriefLoop v${version} · 构建 abc123 · 桌面 App v0.17.0`);
+assert.equal(desktop.el('app-update-version').textContent,'当前 App v0.17.0');
+assert.match(desktop.el('app-update-installation').textContent,/构建 abc123/);
 assert.match(desktop.el('app-update-source').textContent,/本地测试/);
+assert.equal(desktop.el('app-update-test-source').hidden,false);
 assert.equal(desktop.el('app-update-notes').textContent,dto.notes);
 assert.equal(desktop.el('app-update-download').hidden,false);
 changed({...dto,state:'downloading',progress:{percent:42,transferred:42,total:100}});
@@ -68,3 +71,30 @@ for(const [operation,label] of [['check','更新检查失败（当前安装不�
  assert.equal(calls.length,before+1);assert.equal(calls.at(-1),operation==='install'?'download':operation);
 }
 console.log('PASS: checking errors do not imply installation failure or repeat an old release target');
+
+// Version-keyed asynchronous notes must never replace the current changelog or a later target.
+let emit,resolveOlder;
+const notesPage=fixture({updateStatus:async()=>({currentAppVersion:version,state:'current',releaseVersion:version}),onUpdateStatus:fn=>{emit=fn}},
+ async selected=>selected==='0.30.0'?new Promise(resolve=>{resolveOlder=resolve}):({version:selected,state:'loaded',notes:'<script>new release</script>'}));
+await notesPage.ui.refreshAppUpdates();
+assert.equal(notesPage.el('app-update-notes-box').hidden,true);
+emit({currentAppVersion:version,state:'available',releaseVersion:'0.30.0',source:'github'});
+emit({currentAppVersion:version,state:'available',releaseVersion:'0.31.0',source:'github'});
+await new Promise(resolve=>setImmediate(resolve));
+resolveOlder({version:'0.30.0',state:'loaded',notes:'Older release'});
+await new Promise(resolve=>setImmediate(resolve));
+assert.match(notesPage.el('app-update-notes-title').textContent,/0.31.0/);
+assert.equal(notesPage.el('app-update-notes').textContent,'<script>new release</script>');
+assert.equal(notesPage.el('app-update-current-notes').textContent,'Bundled current changes');
+emit({currentAppVersion:version,state:'error',releaseVersion:'0.31.0',source:'github',error:{operation:'check',message:'Offline'},retryable:true});
+assert.equal(notesPage.el('app-update-notes-box').hidden,true);
+assert.equal(notesPage.el('app-update-latest-version').textContent,'可用版本检查未完成');
+assert.equal(notesPage.el('app-update-current-notes').textContent,'Bundled current changes');
+assert.equal(notesPage.el('app-update-error').textContent,'Offline');
+console.log('PASS: bundled current changelog, exact target text, delayed target race and offline check distinction');
+
+const failedNotes=fixture({updateStatus:async()=>({currentAppVersion:version,state:'available',releaseVersion:'0.32.0',source:'github'})},async()=>{throw Error('Offline')});
+await failedNotes.ui.refreshAppUpdates();await new Promise(resolve=>setImmediate(resolve));
+assert.match(failedNotes.el('app-update-notes').textContent,/无法获取/);
+assert.equal(failedNotes.el('app-update-download').hidden,false);
+assert.equal(failedNotes.el('app-update-check').disabled,false);
