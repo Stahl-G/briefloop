@@ -414,3 +414,9 @@ details.assistant-feedback>summary .help{font-size:var(--text-xs)}
 /* Start from a previous report (#858) */
 .previous-report-start{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)}
 .previous-report-start .help{font-size:var(--text-xs);color:var(--color-text-muted)}
+
+/* Saved feedback on the learning page */
+.feedback-list{margin-bottom:var(--space-4)}
+.feedback-items{list-style:none;margin:0;padding:0;max-height:420px;overflow:auto}
+.feedback-items li{padding:var(--space-2) 0;border-bottom:1px solid var(--color-border)}
+.feedback-items li p{margin:var(--space-1) 0 0;overflow-wrap:anywhere}
