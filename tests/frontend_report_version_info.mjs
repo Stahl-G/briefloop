@@ -9,3 +9,5 @@ assert.match(html,/人工编辑/);assert.match(html,/原始生成配置/);assert
 html=versionInformationHTML({id:'missing',author:'agent'},{esc});assert.match(html,/未记录/);
 html=versionInformationHTML({id:'import',author:'import'},{esc});assert.match(html,/导入稿/);
 html=versionInformationHTML({id:'new',author:'agent',execution_provenance:{mode:'ai',action:'revision',configuration:{model:'<script>'}}},{esc});assert.match(html,/AI 修订/);assert.doesNotMatch(html,/<script>/);
+html=versionInformationHTML({id:'new',author:'agent',execution_provenance:{mode:'ai',configuration:{model:'default',effort:'none',reported:{model:'host-actual'}}}},{esc});
+assert.match(html,/host-actual/);assert.match(html,/模型 · 宿主确认/);assert.match(html,/推理强度 · 请求/);assert.match(html,/宿主默认/);assert.doesNotMatch(html,/关闭/);

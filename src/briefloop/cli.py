@@ -187,12 +187,7 @@ def main():
                 p.exit(2, json.dumps({'status': 'invalid', 'error': 'request_file_invalid',
                     'message': '--request 需要工作区内 UTF-8 JSON 文件的路径，不是 JSON 正文。'}, ensure_ascii=False) + '\n')
             try:
-                marker = Path(a.request).resolve().parent / 'conversation.json'
-                conversation = None
-                if request.get('action') == 'revise_document' and marker.is_file() and marker.stat().st_size < 65536:
-                    try:conversation = json.loads(marker.read_text(encoding='utf-8'))
-                    except (OSError, ValueError):pass
-                result = workspace_action(store, request, conversation=conversation)
+                result = workspace_action(store, request)
             except ValidationError as exc:
                 errors = [{'field': '.'.join(map(str, error['loc'])),
                            'type': error['type'], 'message': error['msg']}

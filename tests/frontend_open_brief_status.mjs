@@ -77,9 +77,10 @@ test('polled version summaries load their body once and a later choice wins',asy
  assert.equal(requests.length,1,'an unchanged hash reuses the loaded body');
  // A newer choice made while a body is loading must not be replaced by it.
  vm.runInContext("state.briefs[1]={...state.briefs[1],hash:'h3'};openBrief(state.briefs[1]);openBrief(state.briefs[0])",context);
- resolveBody({...summary,hash:'h3',markdown:'Late old'});
+ resolveBody({...summary,hash:'h3',markdown:'Late old',execution_provenance:{mode:'ai',configuration:{model:'STALE-WRITER'}}});
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(vm.runInContext('current.id',context),'new');
+ assert.doesNotMatch(versionInformationHTML(context.current,{esc:String}),/STALE-WRITER/);
 });
 
 test('a loading body never overrides a later pending report or the report being waited for',async()=>{

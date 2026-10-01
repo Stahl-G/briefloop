@@ -68,7 +68,8 @@ def action(store, config, args):
             raise ToolError('revise_document 需要 base_version 和完整 editor_document 对象')
         saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent')
         from .version_execution import record_chat
-        record_chat(store, saved, config['session_id'], config['attempt_id'])
+        if saved['id'] != request['base_version']:
+            record_chat(store, saved, config.get('session_id'), config.get('attempt_id'))
         return _json_result(store.brief_view(saved['id']))
     if name == 'generate':
         if config.get('discuss_only'):
@@ -345,6 +346,8 @@ def write_report(store, config, args):
         if support:
             value['reconciliation_id'] = support['reconciliation.json']['id']
         _save(folder / 'draft.json', value)
+        from .version_execution import record_copy
+        record_copy(store, job, value, path)
     return _json_result(result)
 
 

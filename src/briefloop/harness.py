@@ -256,6 +256,7 @@ class HarnessManager:
                 result=client.request('thread/start',thread_params)
                 thread_id=result['thread']['id']
             actual_model=result.get('model') if config['model']=='default' else config['model']
+            reported_model=result.get('model')
             self.chat.event(sid,'thread/bound',{'threadId':thread_id,'model_provider':config.get('model_provider'),'actual_model':actual_model})
             with self._lock:
                 if coordinator:
@@ -275,6 +276,8 @@ class HarnessManager:
             # beat the response are buffered until the frozen turn is bound.
             result=client.request('turn/start',turn_params)
             turn_id=result['turn']['id']
+            confirmed_model=result.get('model') or (reported_model if config['model']=='default' or reported_model==config['model'] else None)
+            self.chat.event(sid,'runtime/reported',{'message_id':mid,'backend':'codex','model':confirmed_model,'effort':result.get('reasoningEffort'),'source':'codex.turn_response'})
             with self._lock:
                 if self._closed.is_set() or client is not self.client:
                     raise RuntimeError('会话连接已关闭，未自动重发')
