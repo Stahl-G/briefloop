@@ -246,6 +246,8 @@ briefloop external --workspace "/absolute/workspace" request --file request.json
 
 详见 [外部 Agent 调用文档](docs/WorkBuddy外部入口.md)、[随包 Skill 与请求示例](src/briefloop/skill_assets/briefloop-external/SKILL.md)；官网提供 [调用指南](https://briefloop.ai/docs/external-agent.html)。
 
+下一版增加本机 stdio MCP 服务：客户端执行 `briefloop mcp --workspace "/absolute/workspace"`，即可发现与 external 相同的报告工具。启动时固定工作区路径和身份；不启动后台服务、不新增网络监听。配置示例、工具参数及异步查询方式见 [MCP 调用说明](docs/WorkBuddy外部入口.md#本机-stdio-mcp)。
+
 会议纪要内容方法：选择内置纪要模板即可建议相应用途，输入本次会议转写或笔记，整理决议、待办和未定事项。见 [会议纪要说明与合成材料](docs/会议纪要.md)。
 
 证券研究方法提供事件点评、公司研究和行业跟踪，按来源区分实际、预测与估值假设，使用有依据的数据生成图表。见 [证券研究说明与合成材料](docs/证券研究.md)。

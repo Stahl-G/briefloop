@@ -51,6 +51,8 @@ def main():
     er.add_argument('--file',required=True,help='UTF-8 JSON 请求文件')
     ed=es.add_parser('download',help='下载指定已完成导出任务的Word，不覆盖不同内容的文件')
     ed.add_argument('--job',required=True);ed.add_argument('--output',required=True)
+    mcp=sub.add_parser('mcp',help='stdio MCP 服务；只连接用户选定的现有本机工作区')
+    mcp.add_argument('--workspace',required=True,help='已选择工作区的绝对路径；不自动创建或启动服务')
     tool=sub.add_parser('tool',help='agent 使用的来源工具')
     tool.add_argument('--workspace',required=True)
     ts=tool.add_subparsers(dest='tool',required=True)
@@ -136,6 +138,12 @@ def main():
             print(json.dumps(result,ensure_ascii=False))
         except (OSError,ValueError,KeyError,http.client.HTTPException) as exc:
             p.exit(2,json.dumps({'status':'error','message':sanitize(str(exc))},ensure_ascii=False)+'\n')
+    elif a.command=='mcp':
+        from .external_mcp import serve as serve_mcp
+        try:serve_mcp(a.workspace)
+        except ValueError as exc:
+            from .execution_records import sanitize
+            p.exit(2,sanitize(str(exc))+'\n')
     elif a.command=='serve':
         from .server import serve
         serve(a.workspace,a.port,paused=a.paused,backend=a.backend)
