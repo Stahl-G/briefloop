@@ -222,12 +222,13 @@ class Store:
         backend=result.get('agent_backend','codex')
         shaped={}
         for role,config in result['role_models'].items():
+            tag={'backend':config['backend']} if config.get('backend') else {}
             try:
-                shaped[role]=runtime_fields(config,backend)
+                shaped[role]={**runtime_fields(config,config.get('backend') or backend),**tag}
             except ValueError:
                 # A backend switch can strand old model ids; keep them visible
                 # so the UI can show them, and fail loudly only when enqueued.
-                shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
+                shaped[role]={**{key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config},**tag}
         result['role_models']=shaped
         return result
 
@@ -244,6 +245,11 @@ class Store:
             current=self.settings(connection=c)
             body=changes(current) if callable(changes) else changes
             merged=apply_settings_change(current,body)
+            if isinstance(body.get('role_models'),dict):
+                # Record which engine a newly chosen role model belongs to.
+                engine=merged.get('agent_backend','codex')
+                merged['role_models']={role:({**config,'backend':config.get('backend') or engine} if isinstance(config,dict) and config.get('model') else config)
+                                       for role,config in (merged.get('role_models') or {}).items()}
             # Saving a model is the explicit choice the pending flag waits for.
             if 'model_selection_required' not in body and str(body.get('model') or '').strip():
                 merged['model_selection_required']=False
@@ -769,7 +775,8 @@ class Store:
         roles={}
         for role in ROLE_NAMES:
             candidate=overrides.get(role)
-            if not candidate:
+            if not candidate or (candidate.get('backend') and candidate['backend']!=backend):
+                # No override, or one chosen on another engine: follow the main chain.
                 roles[role]=dict(base)
                 continue
             try:

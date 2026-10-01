@@ -283,6 +283,13 @@ def runtime_fields(value, backend='codex'):
     return selected
 
 
+class RoleOverride(RoleModel):
+    """A per-role model override and the engine it was chosen on. A model id means
+    nothing on another engine, so an override tagged for a different engine is not
+    applied there."""
+    backend: str | None = Field(default=None, max_length=40)
+
+
 class ReviewRuntime(RoleModel):
     """The backend and model the independent Reviewer runs on, chosen apart
     from the main chain. Mode-specific capability admission decides whether
@@ -318,7 +325,7 @@ class Settings(RoleModel):
         return {validate_backend(backend): RoleModel(model='default', reasoning_effort=effort).reasoning_effort
                 for backend, effort in values.items()}
     model_selection_required: bool = True
-    role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    role_models: dict[Literal['evaluator','maintainer','proposer'], RoleOverride] = Field(default_factory=dict)
     # None: the Reviewer follows agent_backend and the Evaluator model.
     review_runtime: ReviewRuntime | None = None
     review_mode: Literal['standard', 'strict'] = 'standard'

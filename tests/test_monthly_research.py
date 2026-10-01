@@ -65,3 +65,25 @@ def test_chat_model_runs_on_the_chat_engine_not_the_workspace_default(tmp_path):
                                       'source_ids': [source['id']], 'runtime': {'model': 'opus', 'reasoning_effort': 'medium'}})
     payload = json.loads(store.one('jobs', result['job_id'])['payload'])
     assert payload['agent_backend'] == 'claude' and payload['runtime']['model'] == 'opus'
+
+
+def test_provider_failures_get_actionable_fixed_text():
+    from briefloop.progress import public_failure
+    quota = public_failure('Antigravity: Individual quota reached. Please upgrade your subscription. Resets in 3h29m49s.')
+    assert quota.startswith('模型服务额度已用完') and '约 3 小时 29 分钟后恢复' in quota and 'upgrade' not in quota
+    assert public_failure('HTTP 401 Unauthorized https://api.example.com/v1?key=secret').startswith('模型服务未登录')
+    assert public_failure('invalid model selection (--model "x"): --model x requires --effort').startswith('所选模型')
+    assert public_failure('后台调用未绑定可处理授权的任务，已拒绝并终止本轮：Bash').startswith('执行引擎在后台请求了命令授权')
+    assert public_failure(quota) == quota  # a stored job error stays readable on the task card
+    assert public_failure('Traceback: something internal') is None
+
+
+def test_role_model_chosen_on_another_engine_follows_the_main_model(tmp_path):
+    store = Store(tmp_path)
+    store.update_settings({'agent_backend': 'codex', 'model': 'gpt-6-sol', 'role_models': {'evaluator': {'model': 'gpt-6-luna'}}})
+    assert store.settings()['role_models']['evaluator']['backend'] == 'codex'
+    assert store.role_model_config()['evaluator']['model'] == 'gpt-6-luna'
+    store.update_settings({'agent_backend': 'antigravity', 'model': 'gemini-3.8-flash'})
+    assert store.role_model_config()['evaluator']['model'] == 'gemini-3.8-flash'
+    store.update_settings({'agent_backend': 'codex', 'model': 'gpt-6-sol'})
+    assert store.role_model_config()['evaluator']['model'] == 'gpt-6-luna'
