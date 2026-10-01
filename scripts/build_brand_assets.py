@@ -37,6 +37,11 @@ def main():
     dmg = ASSETS / 'dmg-background.svg'
     dmg.write_text(f'''<svg xmlns="http://www.w3.org/2000/svg" width="540" height="380" viewBox="0 0 540 380"><rect width="540" height="380" fill="{paper}"/><g transform="translate(36 28) scale(.32)"><path d="{mark.attrib['d']}" fill="{brand}" fill-rule="evenodd"/></g><text x="82" y="52" fill="#1A1F2B" font-family="sans-serif" font-size="22" font-weight="600">BriefLoop</text><path d="M242 210h56m-10-10 10 10-10 10" fill="none" stroke="{brand}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><text x="270" y="320" text-anchor="middle" fill="#5F6675" font-family="sans-serif" font-size="14">Drag BriefLoop to Applications</text></svg>''')
     subprocess.run(['inkscape', str(dmg), '-o', str(ASSETS/'dmg-background.png'), '-w','540','-h','380'],check=True,capture_output=True)
+    # Finder lays out icon positions in points. Inkscape exports 96-DPI PNGs,
+    # which Finder shrinks to 75% of the 540x380 coordinate system.
+    dmg_png = ASSETS / 'dmg-background.png'
+    with Image.open(dmg_png) as image:
+        image.save(dmg_png, dpi=(72, 72))
     files = ['icon-macos.svg','icon-windows.svg','icon-macos-1024.png','icon-windows-1024.png','Mac.icns','Win.ico','dmg-background.svg','dmg-background.png']
     info = {'design':'3.1','source_mark':'src/briefloop/static/runtime-briefloop.svg','source_mark_sha256':hashlib.sha256(mark_path.read_bytes()).hexdigest(),'derivation':'Supplied mark geometry; retained platform silhouettes and padding; token-based brand and paper colors. Rasterized with Inkscape; packaged with Pillow.','files':[{'path':name,'bytes':(ASSETS/name).stat().st_size,'sha256':hashlib.sha256((ASSETS/name).read_bytes()).hexdigest()} for name in files]}
     (ASSETS/'source-info.json').write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n')
