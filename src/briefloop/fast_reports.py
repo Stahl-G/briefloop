@@ -55,8 +55,18 @@ def _plain_turn(worker, job, folder, prompt, *, phase=None):
     (folder / 'packet').mkdir(exist_ok=True)
     task = {**job, 'allow_web': False, 'plain_output': 'response.txt', 'plain_phase':phase, 'input_source_ids': [],
             'native_packet': {'role': 'quick_writer', 'run_id': json.loads(job['payload'])['run_id']}}
-    return worker.runtime.execute(task, prompt, folder,
-                                  resume_on_complete=int(json.loads(job['payload']).get('attempt',1))>1)
+    result = worker.runtime.execute(task, prompt, folder,
+                                    resume_on_complete=int(json.loads(job['payload']).get('attempt',1))>1)
+    from . import plain_isolation
+    isolation = plain_isolation.record(json.loads(job['payload']).get('agent_backend', 'codex'), folder)
+    worker.store.event(job['id'], 'plain_isolation', {'phase': phase or folder.name, **isolation,
+                                                       'message': plain_isolation.summary(isolation)})
+    return result
+
+
+def _isolation(folder):
+    path = folder / 'isolation.json'
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
 
 
 def _response(folder):
@@ -126,6 +136,10 @@ def generate(worker, job):
         data = {'title': req['title'], 'editor_document': markdown_document(text),
                 'citations': [{'source_id': aliases[a]['source_id']} for a in sorted(cited)],
                 'research_notes': [{'kind': 'fast_draft', 'summary': '一轮聚焦检索后根据已读取原文写作；未做完整事实核查，依据定位与评价在后台继续。' if research else '直接依据已有材料写作；未联网补搜，依据定位与评价在后台继续。'}]}
+        isolation = _isolation(folder / 'fast-writing')
+        if isolation:
+            from .plain_isolation import summary
+            data['research_notes'].append({'kind': 'fast_isolation', 'summary': summary(isolation), **isolation})
         if research:
             data['research_notes'].append({'kind':'fast_web_gaps','summary':'本次搜索与读取记录','gaps':research['gaps'],'reading_notices':research.get('notices',[]),
                                            'questions_before_reading':research.get('questions_before_reading',[])})
@@ -159,7 +173,8 @@ def enrich(worker, job, brief, folder):
         raise Conflict('材料与快速写作时的原文不同，请使用当前材料新建任务。')
     phase = folder / 'evidence'
     prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'
-              '只返回一个 JSON 对象，包含 citations 数组及 number_bindings 数组；没有可定位依据时留空，不猜测。'
+              '只返回一个 JSON 对象，包含 citations、number_bindings 和 unsupported 三个数组；没有可定位依据时留空，不猜测。'
+              'unsupported 列出正文中在全部来源里找不到依据的重要结论，每条给 report_quote（正文连续原句）和 reason；不要因措辞概括而列入。'
               '每条 citation 使用 source_id（下方来源别名，如 S1）、report_quote（正文连续原句）、excerpt（连续逐字原文）。'
               'report_quote 必须能在报告正文中逐字找到；摘录应包含对应的主体、期间、单位及限定条件，不能用同来源的无关段落充数。'
               '无需猜行号；同一摘录在来源中重复时提供更长的唯一摘录。来源标题及相邻上下文由程序从冻结原文补入。'
@@ -212,8 +227,19 @@ def enrich(worker, job, brief, folder):
     details = {key:value for key,value in json.loads(brief['detail']).items() if key in BriefDraft.model_fields}
     details['citations'] = citations + [c for c in details.get('citations', []) if c['source_id'] not in {r['source_id'] for r in citations}]
     details['number_bindings'] = numbers
+    # Claims the materials do not cover. Mostly a slip in an enforced turn; in an
+    # observed turn it is where outside information the CLI brought in shows up.
+    unsupported = [{'report_quote': item['report_quote'], 'reason': str(item.get('reason', ''))[:500]}
+                   for item in (data.get('unsupported') if isinstance(data.get('unsupported'), list) else [])[:30]
+                   if isinstance(item, dict) and isinstance(item.get('report_quote'), str)
+                   and item['report_quote'].strip() and item['report_quote'] in brief['markdown']]
     details.setdefault('research_notes', []).append({'kind': 'fast_evidence', 'summary': '逐字定位已检查；支持关系仍需评价。', 'rejected': rejected})
-    (phase / 'admission.json').write_text(dump({'citations': citations, 'number_bindings': numbers, 'rejected': rejected}), encoding='utf-8')
+    if unsupported:
+        details['research_notes'].append({'kind': 'fast_unsupported', 'summary': '以下结论在所选材料中找不到原文依据，需核实或删除。', 'items': unsupported})
+        store.event(job['id'], 'fast_unsupported', {'version_id': brief['id'], 'count': len(unsupported),
+                                                    'message': f'{len(unsupported)} 条结论在所选材料中找不到原文依据，已单独列出。'})
+    (phase / 'admission.json').write_text(dump({'citations': citations, 'number_bindings': numbers, 'rejected': rejected,
+                                                'unsupported': unsupported}), encoding='utf-8')
     if worker.runtime.cancelled.is_set() or worker.stopping.is_set():
         raise InterruptedError('依据补全已停止，初稿和结果保留。')
     from .draft_completion import verify_input

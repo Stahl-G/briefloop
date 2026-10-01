@@ -84,6 +84,13 @@ class InteractiveRuntime:
         self.session_id = None
         self.session_backend = None
 
+    @staticmethod
+    def _cwd(job, backend, folder):
+        if not job.get('plain_output'):
+            return folder
+        from .plain_isolation import working_directory
+        return working_directory(backend, folder)
+
     def _harness_for(self, backend):
         from .backends import validate_backend
         try:
@@ -171,7 +178,8 @@ class InteractiveRuntime:
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
         if job.get('plain_output'):
-            runtime.update(permission='read-only')
+            from . import plain_isolation
+            runtime.update(plain_isolation.runtime(backend))
         if job.get('readonly_output'):
             from .review_capability import require_for_review
             review_mode=payload.get('review_mode','standard')
@@ -240,7 +248,7 @@ class InteractiveRuntime:
             evaluation_title={'pairwise':'Evaluator · 比较','triage':'Evaluator · 改动分类'}.get(job.get('evaluation_mode'),'Evaluator · 评分')
             title = {'evaluator': evaluation_title, 'scorer': 'Evaluator · 评分', 'assessor': 'Evaluator · 比较', 'maintainer': '整理反馈经验', 'proposer': '提出技能改进'}.get(job.get('runtime_role'))
             title = title or task_label(job['kind'], '简报任务')
-            session = harness.create_session(title, runtime, folder)
+            session = harness.create_session(title, runtime, self._cwd(job, backend, folder))
             binding = {'job_id': job['id'], 'session_id': session['id'], 'runtime': runtime,
                        'backend': backend, 'message_id': None, 'history': []}
             _write(marker, binding)
@@ -254,7 +262,7 @@ class InteractiveRuntime:
             # An explicit job resume may need another turn, but must not undo a
             # user's archive/delete choice. Completed cached turns bypass this.
             old_sid=binding['session_id']
-            session=harness.create_session('恢复简报任务',runtime,folder)
+            session=harness.create_session('恢复简报任务',runtime,self._cwd(job,backend,folder))
             binding.setdefault('previous_session_ids',[]).append(old_sid)
             binding['session_id']=session['id']
             if binding.get('message_id'):binding.setdefault('history',[]).append(binding['message_id'])
