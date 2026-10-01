@@ -51,7 +51,7 @@ test('home does not render empty schedule/report placeholders',()=>{
   const renderHome=section(app,'function renderHome()','function autoOpenActivity','frontend/app.js');
   assert.doesNotMatch(renderHome,/还没有报告/);
   assert.match(renderHome,/home-block-recent/);
-  assert.match(app,/wireComposerParams/);
+  assert.match(app,/anchoredPopover\(\{trigger:\$\('composer-params'\)/);
   assert.match(app,/composer-params-panel/);
 });
 

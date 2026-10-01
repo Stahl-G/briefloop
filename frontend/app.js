@@ -31,6 +31,7 @@ import {createNativeRequests,requestKind} from './native-requests.js';
 import {createPermissionDirectory,permissionSelection} from './runtime-permission-modes.js';
 import {createRuntimePermissionPanel} from './runtime-permission-panel.js';
 import {createComposerOptions} from './composer-options.js';
+import {anchoredPopover} from './anchored-popover.js';
 import {createOfficeTools} from './office-tools.js';
 import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
 import {activityCenter} from './notifications.js';
@@ -2412,12 +2413,5 @@ function mountCompactReportControls(){
  syncCompactReportControls();
 }
 mountCompactReportControls();
-// Params popover: progressive disclosure (DESIGN §6.5 §7.2).
-(function wireComposerParams(){
- const trigger=$('composer-params'),panel=$('composer-params-panel');
- if(!trigger||!panel)return;
- const close=()=>{panel.hidden=true;trigger.setAttribute('aria-expanded','false')};
- trigger.onclick=e=>{e.stopPropagation();const open=panel.hidden;document.querySelectorAll('.popover').forEach(p=>{p.hidden=true});panel.hidden=!open;trigger.setAttribute('aria-expanded',String(open))};
- document.addEventListener('click',e=>{if(!panel.hidden&&!e.target.closest('.composer-params'))close()});
- document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
-})();
+// Research options follow the visible viewport, including zoom and short windows.
+anchoredPopover({trigger:$('composer-params'),panel:$('composer-params-panel')});
