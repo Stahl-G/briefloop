@@ -39,8 +39,11 @@ so a same-hash cached draft cannot indefinitely show an older attribution.
 
 Validation on MBP: frontend suite 227 passed / 3 skipped; related Python tests
 61 passed; build, build:check, design:check and diff checks passed.
-Real browser/native GUI acceptance and the corrected DMG Finder view remain pending
-manual desktop unlock. No model calls or release freeze were performed for this change.
+The integrated frontend suite passed 246 tests (3 skipped), and all four exact-head
+CI jobs passed at 991b7f31de241d2a3abbe2fdc9db9aca6fd42eaa. Native GUI acceptance
+and the corrected DMG Finder view remain unverified because the computer-control
+tool is unavailable. This is not evidence of a locked desktop. No model calls were
+performed for this change. Release freeze and packaged checks are recorded separately.
 
 Independent read-only review of ed59ac41 found seven attribution/display issues.
 The subsequent fix covers admitted-copy identity, no-op preservation, rejecting CLI
