@@ -23,8 +23,8 @@ def test_levels_runtime_and_working_directory(tmp_path):
 
 def test_frontend_lists_the_same_enforced_engines():
     source = (Path(__file__).resolve().parents[1] / 'frontend' / 'quick-report.js').read_text(encoding='utf-8')
-    listed = re.search(r'ENFORCED_FAST_BACKENDS=\[([^\]]*)\]', source).group(1)
-    assert tuple(re.findall(r"'([^']+)'", listed)) == plain_isolation.ENFORCED
+    listed = re.search(r'GUARDED_FAST_BACKENDS=\[([^\]]*)\]', source).group(1)
+    assert tuple(re.findall(r"'([^']+)'", listed)) == plain_isolation.GUARDED
 
 
 class ObservedWriter(Writer):
@@ -67,3 +67,48 @@ def test_bridge_engine_drafts_with_recorded_tool_use_and_lists_unsupported_claim
     enriched = store.one('briefs', 'brief_' + result['checks_job_id'][4:] + '_evidence')
     notes = {note['kind']: note for note in json.loads(enriched['detail'])['research_notes']}
     assert [item['report_quote'] for item in notes['fast_unsupported']['items']] == ['增长原因仍需进一步材料说明。']
+
+
+def test_readonly_hosts_keep_permissions_and_actual_tool_evidence(tmp_path):
+    (tmp_path / 'events.jsonl').write_text(json.dumps({'data': {'item': {'id': 'one', 'type': 'tool', 'tool': 'read'}}}) + '\n')
+    for backend in ('codex', 'opencode'):
+        value = plain_isolation.record(backend, tmp_path)
+        assert value['level'] == 'restricted' and value['tools'] == ['read']
+        assert plain_isolation.runtime(backend) == {'permission': 'read-only'}
+        assert 'read' in plain_isolation.summary(value)
+        assert '仅依据所选材料' not in plain_isolation.summary(value)
+
+
+def test_observed_cwd_rejects_symlink_and_is_private(tmp_path):
+    import os, stat
+    folder = tmp_path / 'job'; folder.mkdir()
+    actual = plain_isolation.working_directory('antigravity', folder)
+    assert not actual.is_symlink()
+    if os.name != 'nt': assert stat.S_IMODE(actual.stat().st_mode) == 0o700
+    actual.rmdir()
+    try:
+        actual.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        import pytest; pytest.skip('symlink unavailable on this platform')
+    try:
+        import pytest
+        with pytest.raises(ValueError): plain_isolation.working_directory('antigravity', folder)
+    finally:
+        actual.unlink()
+
+
+def test_cwd_failed_marker_write_can_retry(tmp_path, monkeypatch):
+    import pytest
+    folder = tmp_path / 'job'
+    original = json.dump
+    def interrupted(*args, **kwargs):
+        raise OSError('interrupted write')
+    monkeypatch.setattr(json, 'dump', interrupted)
+    with pytest.raises(OSError, match='interrupted write'):
+        plain_isolation.working_directory('antigravity', folder)
+    assert not (folder / 'plain-working-directory.json').exists()
+    assert not list(folder.glob('.plain-cwd-*'))
+    monkeypatch.setattr(json, 'dump', original)
+    cwd = plain_isolation.working_directory('antigravity', folder)
+    assert cwd == plain_isolation.working_directory('antigravity', folder)
+    cwd.rmdir()

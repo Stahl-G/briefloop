@@ -1213,7 +1213,7 @@ class Worker:
         from .company_context import prepare_review
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
-        latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None]
+        latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None];publication_hold=[None]
         def publish():
             from .store import Conflict
             from .document_model import markdown_document,document_hash
@@ -1221,6 +1221,22 @@ class Worker:
             if not p.exists():return
             try:data=json.loads(p.read_text(encoding='utf-8-sig'))
             except (json.JSONDecodeError,UnicodeDecodeError):return
+            # Hosts can write draft.json directly, without the native write_report
+            # tool. Hold that draft at the same research closeout boundary after
+            # managed searches or an explicit promise to continue. Material-only
+            # and legacy/no-plan flows do not acquire a new research requirement.
+            from .research_plan import AdmissionError,require_writing_closeout
+            from .research_budget import spent
+            plan=frozen_plan(self.store,run['id'])
+            if plan and (spent(self.store,run['id'])['search_requests'] or any(
+                    (info.get('outcome') or {}).get('continue_research') for info in (plan.get('rounds') or {}).values())):
+                try:require_writing_closeout(self.store,run['id'])
+                except AdmissionError as exc:
+                    if publication_hold[0] is None or str(publication_hold[0])!=str(exc):
+                        self.store.event(job['id'],'research_round',{'action':'publication_held','code':exc.code,'error':str(exc)})
+                    publication_hold[0]=exc
+                    return
+            publication_hold[0]=None
             from .models import prune_unknown,describe_invalid
             data,dropped=prune_unknown(data,BriefDraft)
             if dropped and dropped!=reported[0]:
@@ -1282,9 +1298,15 @@ class Worker:
                     raise InterruptedError('任务已停止，已生成内容保留')
                 # A successful transport turn can contain only a progress message.
                 # Continue the same durable session once, without resampling research.
-                self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
-                result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：上轮只返回了研究进度，没有保存 draft.json。读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
+                if publication_hold[0] is not None:
+                    self.store.event(job['id'],'research_round',{'action':'closeout_resume','message':'草稿文件已保留；继续完成研究收尾。'})
+                else:
+                    self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
+                continuation=('\n草稿文件已保留，但研究收尾尚未接纳：'+str(publication_hold[0])
+                              if publication_hold[0] is not None else '\n上轮只返回了研究进度，没有保存 draft.json。')
+                result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：'+continuation+'读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成研究收尾、正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
         publish()
+        if publication_hold[0] is not None:raise publication_hold[0]
         current=latest[0]
         if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
             raise RuntimeError('模型回合已结束，但未保存可用草稿（draft.json）；已保留研究材料和会话，可恢复继续。')

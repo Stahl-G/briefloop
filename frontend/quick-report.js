@@ -1,8 +1,8 @@
 // Draft-first is a completion policy, separate from research depth and length.
 // Reuse the shared panel/help/buttons; no independent design tokens.
-// Engines that close tools and network for plain fast turns; keep in step with
-// src/briefloop/plain_isolation.py ENFORCED. Others still run, with their tool use recorded.
-export const ENFORCED_FAST_BACKENDS=['codex','opencode','briefloop-native','pi'];
+// Engines with configured tool-free or read-only restrictions; keep in step with
+// src/briefloop/plain_isolation.py GUARDED. Others still run, with their tool use recorded.
+export const GUARDED_FAST_BACKENDS=['codex','opencode','briefloop-native','pi'];
 export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,esc,syncSourceHints=()=>{},getBackend=()=>'codex'}){
  let ticket=0,busy=false;
  function sync(){
@@ -31,7 +31,7 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
    :mode==='fast'
    ?'已有文本材料直接出稿，保存后自动在后台补充依据和评价；可立即编辑、下载。此模式不联网补搜、不维护企业背景、不自动改写正文。材料较多时可能需要更久，不保证固定时限。'
    :'完整流程按所选研究深度检索、写作和检查。先交研究初稿的旧任务仍可手动继续完整检查。';
-  if(fast&&$('completion-mode-help')&&!ENFORCED_FAST_BACKENDS.includes(getBackend()))$('completion-mode-help').textContent+=' 当前执行引擎的自带工具无法由 BriefLoop 关闭：仍可出稿，任务记录会写明写作期间的工具使用，找不到原文依据的结论会单独列出。';
+  if(fast&&$('completion-mode-help')&&!GUARDED_FAST_BACKENDS.includes(getBackend()))$('completion-mode-help').textContent+=' 当前执行引擎的自带工具无法由 BriefLoop 关闭：仍可出稿，任务记录会写明写作期间的工具使用，找不到原文依据的结论会单独列出。';
   if(fast&&$('review-capability-note'))$('review-capability-note').hidden=true;
  }
  function init(){

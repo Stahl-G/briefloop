@@ -76,6 +76,11 @@ def require_writing_closeout(store, run_id):
             '调用 research_status 核对轮次，恢复该轮执行并用 finish_research_round 明确收尾；'
             '不能用较早轮次的记录代替本轮，也不要求消除全部缺口或执行尚未开启的 pending 轮次。',
             code='research_closeout_missing')
+    outcome = latest[1]['outcome']
+    if outcome.get('continue_research') and not str(outcome.get('early_stop_reason') or '').strip():
+        raise AdmissionError('最新研究轮次已记录继续检索，尚未完成后续收尾。确有缺口时用 begin_research_round '
+            '开启下一轮；若现有材料已经充分、预算耗尽或无法继续，用 finish_research_round 对该轮补充 '
+            'early_stop_reason 说明停止依据。不要求为收尾增加搜索。', code='research_continuation_pending')
     return {'round_id': latest[0], 'round_index': latest[1].get('index'), 'outcome': latest[1]['outcome']}
 
 
@@ -485,15 +490,18 @@ def _early_stop(store, run_id, info, plan, continue_research, early_stop_reason)
             '确实已覆盖本期重要事件：带 early_stop_reason 说明依据（会写进研究记录并向用户显示）。')
 
 
+def _write_round_outcome(store, run_id, round_id, info):
+    outcome = info['outcome']
+    _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json', {
+        'round_id': round_id, 'index': info['index'], 'summary': outcome.get('summary', ''),
+        'closeout': outcome.get('closeout'), 'gaps': info.get('gaps', []),
+        'gap_updates': outcome.get('gap_updates', []), 'closed_at': info.get('closed'),
+        **{key: outcome[key] for key in ('continue_research', 'early_stop_reason') if key in outcome}})
+
+
 def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_updates=None, job_id=None,
                  continue_research=False, early_stop_reason=''):
     """Close a round, assign real gap ids and freeze its outcome. Idempotent per round."""
-    current = frozen(store, run_id) or {}
-    candidate = (current.get('rounds') or {}).get(round_id or current.get('current_round_id') or '')
-    if candidate and candidate.get('status') == 'active':
-        refusal = _early_stop(store, run_id, candidate, current, continue_research, early_stop_reason)
-        if refusal:
-            raise AdmissionError(refusal, code='research_stopped_early')
     # Admission and mutation share the same write transaction as network reservations.
     with store.tx() as connection:
         plan = _read_plan(connection, run_id)
@@ -517,8 +525,25 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                 checked = validate_updates(store, run_id, gap_updates)
                 if any(item not in previous for item in checked):
                     raise ValueError('已关闭轮次不可改写缺口状态；请在新轮次更新')
+            outcome = info.get('outcome') or {}
+            reason = (early_stop_reason or '').strip()[:1000]
+            if info.get('status') == 'closed' and outcome.get('continue_research') and reason:
+                # A continuation may legitimately become unnecessary or impossible.
+                # Record that decision without reopening research, spending quota,
+                # or rewriting the closed round's summary, evidence or gaps.
+                if outcome.get('early_stop_reason') and outcome['early_stop_reason'] != reason:
+                    raise ValueError('已记录的提前收束理由不可改写')
+                if not outcome.get('early_stop_reason'):
+                    outcome['early_stop_reason'] = reason
+                    _save_plan(connection, run_id, plan)
+                    _write_round_outcome(store, run_id, round_id, info)
+                    return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
+                            'gap_updates': previous, 'idempotent': False}
             return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []),
                     'gap_updates': previous, 'idempotent': True}
+        refusal = _early_stop(store, run_id, info, plan, continue_research, early_stop_reason)
+        if refusal:
+            raise AdmissionError(refusal, code='research_stopped_early')
         from .research_handoff import read_state, observe, apply_updates, save_state, closeout_snapshot
         state = read_state(store, run_id, connection=connection, plan=plan)
         records = []
@@ -545,8 +570,9 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                            **({'early_stop_reason': early_stop_reason.strip()[:1000]} if (early_stop_reason or '').strip() else {})}
         plan['current_round_id'] = None
         _save_plan(connection, run_id, plan)
-    _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json',
-                {'round_id': round_id, 'index': info['index'], 'summary': summary, 'closeout': closeout, 'gaps': records, 'gap_updates': accepted_updates, 'closed_at': info['closed']})
+        # Serialize the file with a later reason-only amendment as well, so the
+        # initial close cannot overwrite the amended outcome after committing.
+        _write_round_outcome(store, run_id, round_id, info)
     if job_id:
         store.event(job_id, 'research_round', {'action': 'finish', 'round_id': round_id,
                                                'index': info['index'], 'gap_ids': [record['id'] for record in records],

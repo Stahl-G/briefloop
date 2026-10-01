@@ -91,7 +91,7 @@ def summary(store, job_id):
         if e['kind'] == 'plain_isolation':
             # Fast plain turns state how they were held to their materials.
             label = history_label = {'research': '检索规划', 'evidence': '补充依据'}.get(data.get('phase'), '快速写作') + (
-                '：引擎已关闭工具和联网' if data.get('level') == 'enforced' else '：引擎工具未关闭，已记录使用情况')
+                '：配置要求关闭工具，已记录引擎报告的活动' if data.get('level') == 'enforced' else '：只读权限不等于材料隔离' if data.get('level') == 'restricted' else '：引擎工具未关闭，已记录使用情况')
             detail = public_text(data.get('message'))
         if e['kind'] == 'fast_unsupported':
             label = history_label = '找不到原文依据的结论已单独列出'

@@ -47,7 +47,7 @@ console.log('PASS: template choice survives refreshes and an unready template bl
 const evidenceB={checked:false};
 el('source-list').querySelector=selector=>selector.includes('"b"')?evidenceB:null;
 const profileCode=section(source,'const INDUSTRY_TASK_OUTLINE=',"$('industry-task-outline').onclick",'frontend/app.js');
-const c=vm.createContext({$:el,console,JSON,CSS:{escape:s=>s},validateLengthInputs:()=>{},
+const c=vm.createContext({$:el,console,JSON,CSS:{escape:s=>s},validateLengthInputs:()=>{},reportFormDefaults:{sync(){}},
  LENGTH_PRESETS:{compact:[800,1000],balanced:[1500,2000],detailed:[2000,2500]},
  selected:new Set(['a','b']),referenceSelected:new Set(['b']),
  state:{sources:[{id:'a',status:'ready'},{id:'b',status:'ready'}]}});

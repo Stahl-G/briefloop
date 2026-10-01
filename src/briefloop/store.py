@@ -936,6 +936,7 @@ class Store:
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
         from .revision_edits import snapshot as revision_snapshot
+        from .feedback_view import snapshot as feedback_snapshot
         from .readers import listing as reader_listing, reader_scope_ids, skill_for
         from .skill_verification import refresh as skill_refresh
         from .task_labels import reported_labels
@@ -950,7 +951,7 @@ class Store:
                 "sources": annotate_source_usage(self,annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created"))),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 **browsing,
-                "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
+                **feedback_snapshot(self),
                 "revision_edits": revision_snapshot(self),
                 "readers": reader_listing(self),
                 "skill_verifications": skill_refresh(self),

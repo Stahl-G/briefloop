@@ -1,6 +1,6 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
 from typing import Literal, get_args
-from datetime import date
+from datetime import date, datetime
 from .industry_data import IndustryData
 from .writing_guidance import NUMBER_UNIT_GUIDE
 from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, field_validator, model_serializer
@@ -177,11 +177,16 @@ class Requirements(Model):
     def covers_month(self):
         """A report whose stated period spans about a month, or that names itself a monthly."""
         try:
-            if self.period_start and self.period_end:
-                return (date.fromisoformat(self.period_end[:10])-date.fromisoformat(self.period_start[:10])).days+1>=MONTHLY_MIN_DAYS
+            # Use the same period parser as admission: chat and the report form
+            # may submit "2026-09" or a date range in period, without date fields.
+            from .report_time import freeze
+            window = freeze({'period': self.period, 'period_start': self.period_start,
+                             'period_end': self.period_end, 'report_timezone': self.report_timezone})
+            if (datetime.fromisoformat(window['end_exclusive']).date() - datetime.fromisoformat(window['start']).date()).days >= MONTHLY_MIN_DAYS:
+                return True
         except ValueError:
             pass
-        return any(word in (self.title or '') for word in ('月报','月度','monthly','Monthly'))
+        return any(word in (self.title or '').casefold() for word in ('月报','月度','monthly'))
 
     @model_validator(mode='after')
     def fill_length_preferences(self):
@@ -201,7 +206,9 @@ class Requirements(Model):
         if monthly and 'research_budget' not in self.model_fields_set:
             # Only the unset default follows the period; an explicit budget is kept.
             self.research_budget=ResearchBudget(**RESEARCH_BUDGET_PRESETS['monthly'])
-        if self.length_mode == 'strict':target=min(target,self.max_words)
+        # An auto-selected target must fit an explicit maximum, including a soft
+        # length preference. Explicitly contradictory target/max values still fail.
+        if self.max_words is not None:target=min(target,self.max_words)
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:
