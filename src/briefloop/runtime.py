@@ -1052,6 +1052,9 @@ class Worker:
     def _remember_generated_sources(self,folder,brief):
         """Called only for a version newly admitted by this execution."""
         from .review_learning import source_snapshot
+        from .version_execution import record
+        writers=self.store.rows('SELECT * FROM jobs WHERE id=?',(folder.name,))
+        if writers:record(self.store,brief,writers[0])
         path=folder/'generated-source-snapshots.json'
         saved=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
         if brief['id'] in saved:return

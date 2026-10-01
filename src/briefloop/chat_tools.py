@@ -35,7 +35,7 @@ WORKSPACE_ACTIONS = (
 )
 
 
-def workspace_action(store, request):
+def workspace_action(store, request, *, conversation=None):
     if not isinstance(request,dict):raise ValueError('请求必须是 JSON 对象')
     action=request.get('action')
     if action=='capabilities':
@@ -107,6 +107,9 @@ def workspace_action(store, request):
         path=Path(request['document_file']).resolve()
         if not path.is_relative_to(store.root):raise ValueError('修订内容文件必须位于当前工作区')
         saved=store.revise(request['base_version'],editor_document=json.loads(path.read_text(encoding='utf-8')),citations=request.get('citations'),author='agent')
+        if conversation:
+            from .version_execution import record_chat
+            record_chat(store, saved, conversation.get('session_id'), conversation.get('message_id'))
         return store.brief_view(saved['id'])
     if action=='workflows':
         from .document_workflows import list_workflows

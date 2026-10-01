@@ -1,3 +1,4 @@
+import {versionInformationHTML} from '../frontend/report-version-info.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +22,7 @@ test('opening another version immediately refreshes scored and unscored headers 
  const configurable={configure:()=>({})};
  let renders=0;
  const context=vm.createContext({state,current:briefs[0],dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],
-  $,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
+  $,versionInformationHTML,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
   api:async()=>state,syncPendingReport:()=>{},renderWordExports:()=>{},render:()=>renders++,renderTasks:()=>{},renderTaskBanner:()=>{},refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},delivery:{refreshReleaseState:async()=>{}}});

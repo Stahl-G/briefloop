@@ -908,6 +908,8 @@ class Store:
             length_mode=req.get('length_mode','soft'),length_requirement=req.get('length_requirement'))
         from .report_browsing import context
         brief['context']=context(self,version_id)
+        from .version_execution import describe
+        brief['execution_provenance']=describe(self,brief)
         brief['latest_version_id']=brief['context']['latest']['id']
         brief['position']=self.rows('SELECT rowid AS position FROM briefs WHERE id=?',(version_id,))[0]['position']
         from .plain_isolation import public_notes

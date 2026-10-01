@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {versionInformationHTML} from '../frontend/report-version-info.js';
+const esc=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+const original={backend:'codex',model:'writer-old',effort:'high'};
+let html=versionInformationHTML({id:'old',author:'agent',execution_provenance:{mode:'ai',configuration:original,original_version_id:'old'}},{esc});
+assert.match(html,/writer-old/);assert.match(html,/推理强度/);assert.match(html,/高/);
+html=versionInformationHTML({id:'manual',author:'user',execution_provenance:{mode:'manual',configuration:null,original_configuration:original,original_version_id:'old'}},{esc});
+assert.match(html,/人工编辑/);assert.match(html,/原始生成配置/);assert.doesNotMatch(html,/AI 修订/);
+html=versionInformationHTML({id:'missing',author:'agent'},{esc});assert.match(html,/未记录/);
+html=versionInformationHTML({id:'import',author:'import'},{esc});assert.match(html,/导入稿/);
+html=versionInformationHTML({id:'new',author:'agent',execution_provenance:{mode:'ai',action:'revision',configuration:{model:'<script>'}}},{esc});assert.match(html,/AI 修订/);assert.doesNotMatch(html,/<script>/);

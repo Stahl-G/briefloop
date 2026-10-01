@@ -67,6 +67,8 @@ def action(store, config, args):
         if not isinstance(request.get('editor_document'), dict):
             raise ToolError('revise_document 需要 base_version 和完整 editor_document 对象')
         saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent')
+        from .version_execution import record_chat
+        record_chat(store, saved, config['session_id'], config['attempt_id'])
         return _json_result(store.brief_view(saved['id']))
     if name == 'generate':
         if config.get('discuss_only'):
