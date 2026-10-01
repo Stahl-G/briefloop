@@ -939,14 +939,22 @@ def review_job_payload(store,payload):
     A separately chosen Reviewer replaces the inherited main-chain backend, model
     and role models; following the main chain leaves them untouched."""
     values=dict(payload)
-    review_runtime=values.pop('review_runtime') if 'review_runtime' in values else store.settings().get('review_runtime')
+    frozen='runtime' in values
+    settings={} if frozen else store.settings()
+    review_runtime=values.pop('review_runtime') if 'review_runtime' in values else settings.get('review_runtime')
     from .review_capability import review_route,require_for_review,normalize_mode
     from .models import ROLE_NAMES
     # Existing frozen jobs without a mode keep the legacy/default execution
     # semantics; changing settings cannot turn their child into a strict review.
-    default_mode='standard' if 'runtime' in values else store.settings().get('review_mode','standard')
+    default_mode=settings.get('review_mode','standard')
     values['review_mode']=normalize_mode(values.get('review_mode',default_mode))
-    backend=values.get('agent_backend',store.settings().get('agent_backend','codex'))
+    backend=values.get('agent_backend',settings.get('agent_backend','codex'))
+    if frozen:
+        # Legacy jobs predate separate Reviewer settings/backend stamps. Their
+        # missing fields mean the original Codex/main-model defaults, not today's
+        # workspace choices; enqueue must not refill current role overrides.
+        values['agent_backend']=backend
+        values.setdefault('role_models',{role:dict(values['runtime']) for role in ROLE_NAMES})
     require_for_review((review_runtime or {}).get('backend',backend),values['review_mode'])
     route=review_route(backend,review_runtime,values['review_mode'])
     if route and route[1] is not None:

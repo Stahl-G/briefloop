@@ -722,7 +722,12 @@ class Worker:
                 payload['authorization']=authorization(settings,'manual',confirmed=confirmed_plan)
                 payload['budget']=plan(settings)
                 payload['k']=settings['k']
-            if job['kind']=='review':self.store.one('briefs',payload['version_id'])
+            if job['kind']=='review':
+                self.store.one('briefs',payload['version_id'])
+                from .review import review_job_payload
+                # This is a new attempt: use the current independent Reviewer
+                # route, not the main chain's backend/model.
+                payload=review_job_payload(self.store,payload)
             payload['retry_of_job_id']=jid
             # Store.enqueue freezes the current settings (including role models and
             # backend). Do not copy old attempts, parent cancellation links or packets.

@@ -760,7 +760,18 @@ class Store:
         def change(settings):
             if not settings.get('model_selection_required'):return {}
             chosen=backend or settings.get('agent_backend','codex')
-            fields=runtime_fields(runtime or {},chosen)
+            selected=dict(runtime or {})
+            # Chat transports use effort/variant; workspace settings use the
+            # longer names. Preserve explicit model-default choices as well.
+            if chosen=='codex' and 'reasoning_effort' not in selected and 'effort' in selected:
+                selected['reasoning_effort']=selected['effort']
+            if chosen in ('opencode','briefloop-native') and 'model_variant' not in selected and 'variant' in selected:
+                selected['model_variant']=selected['variant']
+            fields=runtime_fields(selected,chosen)
+            if chosen in ('opencode','briefloop-native') and 'model_variant' in selected:
+                fields['model_variant']=selected['model_variant']
+            if chosen=='codex' and 'service_tier' in selected:
+                fields['service_tier']=selected['service_tier']
             if not str(fields.get('model') or '').strip():return {}
             if chosen not in ('codex','opencode','briefloop-native'):
                 fields['runtime_efforts']={**settings.get('runtime_efforts',{}),chosen:fields.pop('reasoning_effort',None)}

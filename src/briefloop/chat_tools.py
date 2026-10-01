@@ -278,6 +278,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
     else:
         request_runtime={'agent_backend':backend,'model':runtime['model'],'reasoning_effort':runtime.get('effort'),
                          'model_provider':runtime.get('model_provider')}
+        if backend=='codex':request_runtime['service_tier']=runtime.get('service_tier')
         runtime_json=json.dumps(request_runtime,ensure_ascii=False)
         runtime_label=runtime.get('effort') if runtime.get('effort') is not None else '不指定（provider 默认）'
         provider_label=runtime.get('model_provider') or f'沿用本机 {BACKEND_LABELS[backend]} 配置'
