@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import sys
 import threading
+from urllib.parse import urlsplit
 
 import anyio
 from docx import Document
@@ -53,7 +54,7 @@ def test_unavailable_workspace_stdio_discovery_does_not_create_or_start(tmp_path
     assert not (store.root / 'server.json').exists()
 
 
-def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_path):
+def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_path, monkeypatch):
     from briefloop.document_model import markdown_document
     from briefloop.server import make_server
 
@@ -81,6 +82,13 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
     wid = store.meta('workspace_id')
     (root / 'server.json').write_text(json.dumps({'pid': os.getpid(),
         'url': f'http://127.0.0.1:{server.server_port}', 'workspace_id': wid}))
+    received = []
+    for verb in ('GET', 'POST'):
+        original_handler = getattr(server.RequestHandlerClass, 'do_' + verb)
+        def record_request(handler, operation=verb, original=original_handler):
+            received.append((operation, urlsplit(handler.path).path))
+            return original(handler)
+        monkeypatch.setattr(server.RequestHandlerClass, 'do_' + verb, record_request)
 
     async def check():
         submission = {'request_id': 'mcp-submit-1', 'requirements': requirements, 'source_ids': [source['id']]}
@@ -109,6 +117,7 @@ def test_real_stdio_saved_draft_revision_word_and_idempotent_reconnection(tmp_pa
         assert store.rows('SELECT id FROM briefs') == original_briefs
         assert cloned_store.rows('SELECT id FROM briefs') == clone_briefs
         assert not store.rows("SELECT id FROM jobs WHERE kind='generate'")
+        assert received and set(received) == {('GET', '/api/external/capabilities')}
         # A real-directory alias is allowed after resolving both paths.
         alias = tmp_path / 'same-directory-alias'
         alias.symlink_to(root, target_is_directory=True)
