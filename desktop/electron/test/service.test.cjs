@@ -87,6 +87,47 @@ test('failed startup closes the owner pipe and waits for EOF cleanup, without ki
   assert.equal(child.exitCode, 0); assert.equal(service.child, null); assert.equal(killCalls, 0);
 });
 
+test('busy shutdown keeps its owner pipe; accepted shutdown sends EOF and exits cleanly', {timeout: 15000}, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-normal-stop-'));
+  let child;
+  t.after(async () => {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.stdin.destroy();
+      await new Promise(resolve => child.once('close', resolve));
+    }
+    await fs.rm(root, {recursive: true, force: true});
+  });
+  const protocol = `
+    const fs=require('node:fs'), http=require('node:http');
+    let stops=0, accepted=false;
+    const server=http.createServer((req,res)=>{
+      res.setHeader('Content-Type','application/json');
+      if(req.url==='/api/runtime')res.end(JSON.stringify({server_pid:process.pid}));
+      else if(req.url==='/api/session')res.end(JSON.stringify({token:'synthetic'}));
+      else if(++stops===1){res.statusCode=409;res.end(JSON.stringify({error:'synthetic busy'}));}
+      else {accepted=true;res.end(JSON.stringify({stopping:true}));}
+    });
+    server.listen(0,'127.0.0.1',()=>fs.writeFileSync('server.json',JSON.stringify({
+      pid:process.pid,launch_id:process.env.BRIEFLOOP_LAUNCH_ID,workspace_id:'synthetic',
+      url:'http://127.0.0.1:'+server.address().port
+    })));
+    process.stdin.resume();process.stdin.once('end',()=>{
+      server.close(()=>process.exit(accepted?0:1));server.closeAllConnections();
+    });`;
+  const source = await fs.readFile(require.resolve('../service.cjs'), 'utf8');
+  const module = {exports: {}};
+  vm.runInNewContext(source, {module, process, URL, fetch, AbortSignal, setTimeout, clearTimeout,
+    require: name => name === 'node:child_process' ? {spawn: (_executable, _args, options) => {
+      child = spawn(process.execPath, ['-e', protocol], options); return child;
+    }} : require(name)});
+  const service = new module.exports.WorkspaceService(runtime);
+  await service.start(root, {create: true});
+  await assert.rejects(service.stop(), /synthetic busy/);
+  assert.equal(child.stdin.writableEnded, false); assert.equal(child.exitCode, null);
+  await service.stop();
+  assert.equal(child.exitCode, 0); assert.equal(service.child, null);
+});
+
 test('Windows owner hard termination lets the owned service receive EOF and finish cleanup',
   {skip: process.platform !== 'win32', timeout: 30000}, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-owner-killed-'));

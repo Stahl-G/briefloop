@@ -37,6 +37,9 @@ async function main() {
     assert.equal(actual.release_notes.state, 'loaded');
     assert.equal((await service.status()).busy, false);
   } finally {if (service) await service.stop();}
+  const exited = await service.exited;
+  assert.equal(exited.code, 0, JSON.stringify(exited));
+  assert.equal(exited.signal, null);
   await fs.writeFile(output, JSON.stringify({version: pkg.version, source_commit: manifest.source_commit,
     release_wheel_sha256: manifest.sha256, platform: process.platform, electron: process.versions.electron,
     packaged_asar_modules: 'passed', environment_preparation: 'ready', owned_service_startup: 'passed',
