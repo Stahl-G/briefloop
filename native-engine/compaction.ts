@@ -28,14 +28,18 @@ export function continuityExtension(getSession: () => AgentSession, role: string
         if (!session.model) throw new Error('No model for context compaction');
         const focus = `${COMPACTION_FOCUS}\n当前角色：${role}。` +
           (event.customInstructions ? `\n本次额外压缩重点（不改变权限或冻结要求）：\n${event.customInstructions}` : '');
-        // The SDK's split-turn summary omits customInstructions in 0.85.1. Add
+        // The SDK's split-turn summary still omits customInstructions in 1.0.0. Add
         // focus at its summarization stream boundary so BOTH summaries receive it.
         // Delegate the original SDK stream; keep authentication, model and retry.
         const stream = session.agent.streamFunction;
         const result = await compact(event.preparation, session.model, undefined, undefined,
           undefined, event.signal, session.thinkingLevel,
+          // Pi 1.0 carries instructions in transcript system messages rather
+          // than Context.systemPrompt. Retain the SDK prompt and put our focus
+          // before its user message without changing the saved transcript.
           (model, context, options) => stream(model, {...context,
-            systemPrompt: `${context.systemPrompt || ''}\n\n${focus}`}, options),
+            messages: [context.messages[0], {role: 'system', content: focus, timestamp: 0},
+              ...context.messages.slice(1)]}, options),
           undefined, session.settingsManager.getRetrySettings());
         return {compaction: {...result, details: {...(result.details as object || {}),
           briefloop_policy: COMPACTION_POLICY_VERSION}}};
