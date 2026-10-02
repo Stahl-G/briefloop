@@ -179,7 +179,7 @@ console.log('PASS: custom provider preserves undeclared, image-enabled and image
 const templateReader=section(source,'function readTemplateSections()','function templateSections()','frontend/app.js');
 const chapterFields={'[data-title]':{value:'Current section'},select:{value:'required'}};
 el('template-sections').querySelectorAll=()=>[{dataset:{sectionId:'shared'},querySelector:selector=>chapterFields[selector]||null}];
-const templateContext=vm.createContext({$:el,parse:JSON.parse,state:{templates:[{id:'template-a',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template A original purpose'}]})},{id:'template-b',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template B purpose'}]})}],requirements:{template_id:'template-a',sections:[{section_id:'shared',purpose:'Saved task-specific purpose'}]}}});
+const templateContext=vm.createContext({nextReport:{requirementsForTemplate:()=>null},$:el,parse:JSON.parse,state:{templates:[{id:'template-a',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template A original purpose'}]})},{id:'template-b',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template B purpose'}]})}],requirements:{template_id:'template-a',sections:[{section_id:'shared',purpose:'Saved task-specific purpose'}]}}});
 vm.runInContext(templateReader,templateContext);
 el('template-select').value='template-a';
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Saved task-specific purpose');
@@ -187,6 +187,11 @@ el('template-select').value='template-b';
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Template B purpose');
 el('template-select').value='template-a';chapterFields['[data-purpose]']={value:'Explicit form edit'};
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Explicit form edit');
+delete chapterFields['[data-purpose]'];
+templateContext.nextReport.requirementsForTemplate=id=>id==='template-a'?{sections:[{section_id:'shared',purpose:'Confirmed previous-period purpose'}]}:null;
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Confirmed previous-period purpose');
+el('template-select').value='template-b';
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Template B purpose');
 console.log('PASS: intake preserves same-template saved purpose and isolates purpose after a template switch');
 
 // A malformed pasted image must not strand the entire application in saving.

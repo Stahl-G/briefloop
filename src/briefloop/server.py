@@ -243,6 +243,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/report-context':
                     from .report_browsing import context
                     self.send(200,context(store,q['version_id'][0]))
+                elif u.path=='/api/next-report':
+                    from .next_report import prepare
+                    self.send(200,prepare(store,q['version_id'][0]))
                 elif u.path=='/api/report-search':
                     self.send(200,{'run_ids':store.search_briefs(q.get('q',[''])[0])})
                 elif u.path=='/api/source-search':

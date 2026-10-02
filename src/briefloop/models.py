@@ -113,6 +113,8 @@ class Requirements(Model):
     # A saved reader profile (#858); create_run freezes it into reader_profile.
     reader_id: str | None = Field(default=None, max_length=80)
     reader_profile: dict | None = None
+    previous_report_version_id: str | None = Field(default=None, max_length=100)
+    previous_report_hash: str | None = Field(default=None, max_length=64)
     # Report body language. The interface, internal records and review notes
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"

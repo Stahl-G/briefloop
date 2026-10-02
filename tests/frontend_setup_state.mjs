@@ -17,7 +17,7 @@ const chapterTitle={value:''},chapterMode={value:''};
 const renderRow=(title,mode)=>{chapterTitle.value=title;chapterMode.value=mode};
 el('template-sections').querySelectorAll=selector=>selector==='[data-section-id]'?rows:[];
 Object.defineProperty(el('template-sections'),'innerHTML',{get:()=>'',set:html=>{sectionWrites++;renderRow((/value="([^"]*)"/.exec(html)||[,''])[1],'required')}});
-const templates=vm.createContext({$:el,console,JSON,state:null,CSS:{escape:s=>s},esc:value=>String(value),
+const templates=vm.createContext({nextReport:{requirementsForTemplate:()=>null},$:el,console,JSON,state:null,CSS:{escape:s=>s},esc:value=>String(value),
  parse:value=>{try{return JSON.parse(value||'{}')}catch{return {}}}});
 vm.runInContext(templateCode,templates);
 templates.state={templates:[{id:'t1',name:'我的模板',status:'ready',revision:1,spec:JSON.stringify({sections:[{section_id:'summary',title:'核心摘要',purpose:'模板用途'}]})}],
