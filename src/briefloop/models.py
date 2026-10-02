@@ -362,7 +362,7 @@ class Settings(RoleModel):
     default_template_id: str | None = None
     company_context_enabled: bool | None = None
     # Workspace-wide default for the per-task fact_check switch; tasks may override.
-    fact_checker: bool = False
+    fact_checker: bool = True
     # Workspace-wide optional local file quality checks via officecli; the
     # switch has no effect while the binary is not installed.
     officecli_enabled: bool = False

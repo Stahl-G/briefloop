@@ -56,6 +56,12 @@ class Client:
             raise ValueError(self.info.get('message', '工作区服务尚未就绪'))
 
     def request(self, body):
+        return self._post('/api/external/action', body)
+
+    def stop_job(self, job_id):
+        return self._post('/api/stop', {'job_id': job_id})
+
+    def _post(self, path, body):
         if not isinstance(body, dict):
             raise ValueError('请求必须是 JSON 对象')
         wid = body.get('workspace_id', self.info['workspace_id'])
@@ -65,7 +71,7 @@ class Client:
         endpoint = urlsplit(self.info['url'])
         connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=15)
         try:
-            connection.request('POST', '/api/external/action', body=json.dumps({**body, 'workspace_id': wid}, ensure_ascii=False).encode(),
+            connection.request('POST', path, body=json.dumps({**body, 'workspace_id': wid}, ensure_ascii=False).encode(),
                                headers={'Content-Type': 'application/json', 'X-BriefLoop-Token': token})
             response = connection.getresponse()
             data = response.read(32 * 1024 * 1024 + 1)

@@ -19,7 +19,7 @@ READ_ACTIONS = {'inspect', 'capabilities', 'templates', 'workflows', 'profile_re
 RUN_ACTIONS = {'set_reader_contract', 'freeze_research_plan', 'begin_research_round',
                'finish_research_round', 'set_scout_tasks', 'reconciliation_save', 'evidence_span',
                'claim_create', 'claim_bind', 'company_update', 'company_review_complete'}
-CHAT_ACTIONS = READ_ACTIONS | {'generate', 'assess', 'comment', 'export_word', 'profile_update', 'company_config', 'company_resolve', 'revise_document', 'learn', 'template_import', 'template_rebuild', 'import_word_revision'}
+CHAT_ACTIONS = READ_ACTIONS | {'stop_job', 'generate', 'assess', 'comment', 'export_word', 'profile_update', 'company_config', 'company_resolve', 'revise_document', 'learn', 'template_import', 'template_rebuild', 'import_word_revision'}
 
 
 def _save(path, value):
@@ -102,7 +102,8 @@ def action(store, config, args):
                 frozen_req = json.loads(view.one('runs', result['run_id'])['requirements'])
                 result['accepted_requirements'] = {**result.get('accepted_requirements', {}),
                     'length_mode': frozen_req.get('length_mode', 'soft'),
-                    'length_requirement': frozen_req.get('length_requirement')}
+                    'length_requirement': frozen_req.get('length_requirement'),
+                    'fact_check': frozen_req.get('fact_check')}
             else:
                 from .models import Settings, Requirements, runtime_fields
                 settings = Settings.model_validate({**view.settings(), **request['runtime']})
@@ -118,7 +119,7 @@ def action(store, config, args):
                 result = {'job_id': job['id'], 'run_id': run['id'], 'status': 'queued',
                           'accepted_requirements': {key: value for key, value in json.loads(run['requirements']).items()
                               if key in ('title', 'target_minutes', 'hard_timeout_minutes', 'research_budget', 'key_questions',
-                                         'writing_preferences', 'target_words', 'max_words', 'length_mode', 'length_requirement', 'period', 'search_policy')}}
+                                         'writing_preferences', 'target_words', 'max_words', 'length_mode', 'length_requirement', 'period', 'search_policy', 'fact_check')}}
                 view.set_meta(key, {'fingerprint': fingerprint, 'result': result})
         store.wake_jobs()
         from .task_notify import notify

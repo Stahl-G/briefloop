@@ -31,7 +31,7 @@ WORKSPACE_ACTIONS = (
     'profile_read','profile_update',
     'freeze_research_plan','research_status','begin_research_round','finish_research_round','set_scout_tasks',
     'reconciliation_candidates','reconciliation_save','reconciliation_read',
-    'export_word','inspect','generate','assess','comment','learn',
+    'export_word','inspect','stop_job','generate','assess','comment','learn',
 )
 
 
@@ -198,6 +198,13 @@ def workspace_action(store, request):
             'runtime':store.runtime_config(),
             'note':'简要工作区索引；需要原文时使用 read-source --id SOURCE_ID。任务状态和 error 是已记录事实，不代表根因诊断；没有对应日志证据不得声称服务重启、网络故障或权限拒绝。来源已保存不代表已核验其真实性或时效性，研究进度不代表报告已完成。',
         }
+    if action=='stop_job':
+        job_id=request.get('job_id')
+        if not isinstance(job_id,str) or not job_id.strip():raise ValueError('请提供要停止的明确 job_id')
+        # Use the live worker, including transport cancellation and child jobs.
+        # A CLI Store is a separate process and must never just flip DB status.
+        from .external_client import Client
+        return Client(store.root).stop_job(job_id)
     if action=='generate':
         requirements=Requirements.model_validate(request['requirements'])
         source_ids=request.get('source_ids',[])
@@ -338,7 +345,9 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON、引用和已存正文的 length_stats；revise_document 回执也给出保存后的确定性计数。按 count/rule 核对原始要求、读者约定及当前反馈，不估算字数；over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。可选 citations 完整替换引用列表（source_id/locator/excerpt，schema 见 capabilities），省略则保留；只修改引用也保存新版本，定位描述不表示已独立核验。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"zh|en","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。language 是报告正文语言（默认 zh）；用户要英文报告时写 en，不传 target_words 时篇幅按英文词数默认。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。scout_limit 是本报告最多可同时派发的 Scout 数（1–16），在提交前按信息量决定：一周左右约 4，月报约 8，跨多个行业或市场的大型报告可到 12–16；不写时系统按期间自动设定（月报 8，其余沿用工作区设置）。
+联网完整报告的 fact_check 沿用工作区默认（新工作区开启）；用户选择关闭时显式传 false，选择开启时传 true。离线或快速模式不自动开启，也不为核查偷偷开启联网。
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
+- {{"action":"stop_job","job_id":"真实任务ID"}}：用户要求停止任务时，先通过 inspect 确认具体任务，再停止该任务及其子任务，已保存稿件保留。用户要求“停掉旧任务再重新生成”时先取得停止回执，再提交新任务；停止失败时如实说明，不启动重复任务。目标不明确时先问，不猜 ID，不停止整个服务。以回执的实际 status 为准，已经完成的任务不会变成 cancelled。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。调用前先告诉用户上限（每轮最多 3 个案例、每案例基线与候选各试写一次，另有整理、提案与比较回合；轮数按学习设置），得到明确同意后再调用；保存反馈本身不需要调用它。

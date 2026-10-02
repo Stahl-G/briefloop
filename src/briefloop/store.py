@@ -384,7 +384,7 @@ class Store:
         # The task choice overrides the workspace default; the resolved bool is what
         # the run stores, so resume and later phases never re-read settings for it.
         if req.fact_check is None:
-            req.fact_check = self.settings().get('fact_checker') is True
+            req.fact_check = req.allow_web and self.settings().get('fact_checker') is True
         if req.fact_check and not req.allow_web:
             raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
         from .backends import require_main_chain

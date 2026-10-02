@@ -20,7 +20,7 @@ def verified_opencode_v1(monkeypatch):
 
 def strict_store(path):
     store=Store(path)
-    store.update_settings({'review_mode':'strict'})
+    store.update_settings({'review_mode':'strict','fact_checker':False})
     return store
 
 
@@ -68,7 +68,7 @@ def test_fact_check_is_refused_before_the_run_exists_and_ordinary_work_continues
 def test_web_generate_returns_the_structured_code_and_creates_nothing(tmp_path):
     from briefloop.server import make_server, _close_service
     server = make_server(tmp_path / 'workspace', port=0, paused=True)
-    server.store.update_settings({'review_mode':'strict'})
+    server.store.update_settings({'review_mode':'strict','fact_checker':False})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     authority = f'127.0.0.1:{server.server_port}'

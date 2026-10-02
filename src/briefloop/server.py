@@ -868,7 +868,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     # The confirmation names the plan the user saw, so a settings
                     # change in another window cannot enlarge this batch (#727).
                     result=enqueue_feedback(store,confirmed_plan=body.get('confirm_plan'))
-                elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
+                elif path=='/api/stop':
+                    if body.get('workspace_id',store.meta('workspace_id'))!=store.meta('workspace_id'):
+                        raise ValueError('停止请求不属于当前工作区')
+                    worker.stop_job(body['job_id'])
+                    stopped=store.one('jobs',body['job_id'])
+                    result={'ok':True,'job_id':stopped['id'],'status':stopped['status']}
                 elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id'],confirmed_plan=body.get('confirm_plan')) if body.get('use_current_model') is True else worker.resume(body['job_id'])
                 elif path=='/api/task-dismiss':
                     job=store.one('jobs',body['job_id'])
