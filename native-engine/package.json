@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.34.6",
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "5.0.12"
+    },
+    "onlyBuiltDependencies": ["esbuild"]
+  },
   "engines": {
     "node": ">=22.19.0"
   },

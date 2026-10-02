@@ -16,12 +16,15 @@ const outfile = "../src/briefloop/static/native-engine.mjs";
 const require = createRequire(import.meta.url);
 const piDist = dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
 const photonSource = require.resolve("@silvia-odwyer/photon-node", { paths: [piDist] });
-function relocateAsset(path, source, target) {
-  const contents = readFileSync(path, "utf8");
-  if (contents.split(source).length !== 2) {
-    throw new Error(`SDK asset layout changed: ${path}`);
+function patchSdkSource(path, replacements) {
+  let contents = readFileSync(path, "utf8");
+  for (const [source, target] of replacements) {
+    if (contents.split(source).length !== 2) {
+      throw new Error(`SDK source layout changed: ${path}`);
+    }
+    contents = contents.replace(source, target);
   }
-  return { contents: contents.replace(source, target), loader: "js" };
+  return { contents, loader: "js" };
 }
 // esbuild does not relocate worker URLs or Photon's CJS __dirname-based WASM
 // read. Keep these SDK assets beside the installed bundle, including wheels
@@ -30,10 +33,19 @@ const relocateImages = {
   name: "briefloop-image-assets",
   setup(build) {
     build.onLoad({ filter: /[/\\]image-resize\.js$/ }, ({ path }) =>
-      relocateAsset(path, '"./image-resize-worker.js"', '"./native-engine-image-worker.mjs"'));
+      patchSdkSource(path, [['"./image-resize-worker.js"', '"./native-engine-image-worker.mjs"']]));
     build.onLoad({ filter: /[/\\]photon_rs\.js$/ }, ({ path }) =>
-      relocateAsset(path, "require('path').join(__dirname, 'photon_rs_bg.wasm')",
-        '__blAssetUrl("./native-engine-photon.wasm")'));
+      patchSdkSource(path, [["require('path').join(__dirname, 'photon_rs_bg.wasm')",
+        '__blAssetUrl("./native-engine-photon.wasm")']]));
+    // Pi 1.0 rounds a thin image's short side to zero before Photon resize.
+    // Keep both dimensions positive; installed SDK sources remain untouched.
+    build.onLoad({ filter: /[/\\]image-resize-core\.js$/ }, ({ path }) =>
+      patchSdkSource(path, [
+        ['targetHeight = Math.round((targetHeight * opts.maxWidth) / targetWidth);',
+          'targetHeight = Math.max(1, Math.round((targetHeight * opts.maxWidth) / targetWidth));'],
+        ['targetWidth = Math.round((targetWidth * opts.maxHeight) / targetHeight);',
+          'targetWidth = Math.max(1, Math.round((targetWidth * opts.maxHeight) / targetHeight));'],
+      ]));
   },
 };
 
@@ -49,8 +61,7 @@ const buildOptions = {
   metafile: true,
   write: false,
   plugins: [relocateImages],
-  // Pi's published shrinkwrap retains brace-expansion 5.0.9 and npm ignores
-  // root overrides for it. Bundle our pinned patched version instead.
+  // Keep the bundle on the same patched version as the pnpm lock/override.
   alias: { "brace-expansion": fileURLToPath(import.meta.resolve("brace-expansion")) },
   banner: {
     js: [

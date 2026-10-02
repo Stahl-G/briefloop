@@ -46,12 +46,12 @@ const reply = {
     chunk(res, {}, "stop", usage);
     res.end("data: [DONE]\n\n");
   },
-  tool: (name, args = {}) => (res) => {
+  tool: (name, args = {}, tokenUsage = usage) => (res) => {
     if (typeof args === "function") args = args();
     res.writeHead(200, { "content-type": "text/event-stream" });
     const id = "call_" + Math.random().toString(36).slice(2, 10);
     chunk(res, { role: "assistant", tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } }] });
-    chunk(res, {}, "tool_calls", usage);
+    chunk(res, {}, "tool_calls", tokenUsage);
     res.end("data: [DONE]\n\n");
   },
   // Several calls in one assistant message.
@@ -207,6 +207,11 @@ before(async () => {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 },
       { id: "m2", name: "M2", api: "openai-completions", provider: "fake", reasoning: false, input: ["text", "image"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 },
+      // A short TTL makes hidden SDK cache warming observable in a bounded
+      // local-only test; synthetic usage/cost make warming economically eligible.
+      { id: "cached", name: "Cached fixture", api: "openai-completions", provider: "fake", reasoning: false, input: ["text"],
+        cost: { input: 3, output: 1, cacheRead: 0.3, cacheWrite: 3.75 }, promptCache: { short: 11 },
+        contextWindow: 200000, maxTokens: 1000 },
     ] } } }));
 
   const nativeDir = join(home, ".config", "briefloop", "native-engine");
@@ -611,6 +616,19 @@ test("report figures are attached only when the model accepts images", async () 
   const attached = provider.requests[0].messages.at(-1).content.find(c => c.type === "image_url");
   assert.ok(attached && !attached.image_url.url.endsWith(wide.toString("base64")));
 
+  for (const [name, base64, dimensions] of [
+    ['thin-wide', 'iVBORw0KGgoAAAANSUhEUgAAE4gAAAABCAIAAAC9c9PfAAAAJ0lEQVR4nO3CAQ0AAAzDoPo3/UuYAQhdqaqqqqqqqqqqqqqqqqrq/P4XdZYbT/K3AAAAAElFTkSuQmCC', 'original 5000x1, displayed at 2000x1'],
+    ['thin-tall', 'iVBORw0KGgoAAAANSUhEUgAAAAEAABOICAIAAAD//pCdAAAALUlEQVR4nO3DQQ0AAAwDofNvepPRDyR0laqqqqqqqqqqqqqqqqqqqqqqqqrzD90zdZZdotoAAAAAAElFTkSuQmCC', 'original 1x5000, displayed at 1x2000'],
+  ]) {
+    writeFileSync(join(packet, 'figures', `${name}.png`), Buffer.from(base64, 'base64'));
+    script(reply.text('{"ok":true}'));
+    await turn(vision.session_id, `e-img-${name}`, { images: [{ file: `figures/${name}.png` }] });
+    const request = JSON.stringify(provider.requests[0].messages);
+    assert.ok(request.includes(dimensions), request);
+    assert.doesNotMatch(request, /Image omitted/);
+    assert.ok(provider.requests[0].messages.at(-1).content.some(c => c.type === 'image_url'));
+  }
+
   const tampered = [{ ...images[0], sha256: "0".repeat(64) }];
   const bad = await reviewer({ model: VISION_MODEL });
   assert.match(await callError("turn_start", { session_id: bad.session_id, execution_id: "e-img-bad", prompt: "x", images: tampered }), /changed before sending/);
@@ -887,12 +905,12 @@ test('interactive chat returns normal text without a JSON or submit repair', asy
   assert.deepEqual(s.tools, ['workspace_action']);
 });
 
-test('main-agent child tools may outlive the model idle interval and remain cancellable', async () => {
-  const s = await reviewer({ role:'orchestrator', runner_tools:[
+test('main-agent child tools outlive the idle interval without hidden cache-warming calls', async () => {
+  const s = await reviewer({ role:'orchestrator', model:'fake/cached', runner_tools:[
     {name:'run_scouts',description:'Run children',parameters:{type:'object',properties:{}},long_running:true,sequential:true},
     {name:'finish_task',description:'Finish',parameters:{type:'object',properties:{}},settles:true},
   ] });
-  provider.script = [reply.tool('run_scouts'), reply.tool('finish_task')];
+  script(reply.tool('run_scouts', {}, {prompt_tokens:100000,completion_tokens:2,total_tokens:100002}), reply.tool('finish_task'));
   runnerTool = async (tool) => {
     if (tool === 'run_scouts') await new Promise(r=>setTimeout(r, 1400));
     return tool === 'finish_task' ? {ok:true,settle:'{"saved":true}'} : {ok:true,content:[{type:'text',text:'Scouts completed'}]};
@@ -902,6 +920,9 @@ test('main-agent child tools may outlive the model idle interval and remain canc
   assert.equal(ends(result)[0].status,'completed');
   assert.ok(!result.some(e=>e.kind==='status' && /idle for/.test(e.message||'')));
   assert.ok(!s.tools.includes('bash') && !s.tools.includes('submit_review'));
+  assert.equal(provider.requests.length, 2, 'only the two real tool turns reach the provider');
+  assert.equal(result.filter(e=>e.kind==='usage').length, 2);
+  assert.doesNotMatch(readFileSync(s.session_file, 'utf8'), /"kind":"cache_warm"/);
 });
 
 test('locally saved provider credentials and custom models are usable without a host CLI', async () => {

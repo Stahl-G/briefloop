@@ -555,6 +555,9 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   // Authors use Pi auto-compaction; restricted review/learning roles retain
   // their existing policy. Both auto and explicit compaction use our focus hook.
   const settingsManager = SettingsManager.inMemory({
+    // Pi 1.0 defaults to paid cache refreshes while long child tools run.
+    // Preserve BriefLoop's prior request/accounting boundary: no hidden calls.
+    cacheWarming: "off",
     retry: {
       enabled: true,
       // 2+4+…+64 s: rides out a provider or network outage of about two

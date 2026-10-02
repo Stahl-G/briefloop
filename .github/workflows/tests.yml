@@ -41,14 +41,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: native-engine/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: native-engine/package-lock.json
-      - run: npm ci --prefix native-engine
-      - run: npx tsc -p .
-        working-directory: native-engine
+          cache: pnpm
+          cache-dependency-path: native-engine/pnpm-lock.yaml
+      - run: pnpm --dir native-engine install --frozen-lockfile
+      - run: pnpm --dir native-engine audit --audit-level low
+      - run: pnpm --dir native-engine exec tsc -p .
       - name: Verify the committed engine bundle matches its source
         run: node native-engine/build.mjs --check
       - run: node --test native-engine/engine.test.mjs
@@ -78,12 +81,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: native-engine/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: native-engine/package-lock.json
-      - run: npm ci --prefix native-engine
+          cache: pnpm
+          cache-dependency-path: native-engine/pnpm-lock.yaml
+      - run: pnpm --dir native-engine install --frozen-lockfile
       - run: node native-engine/build.mjs --check
       - run: node --test native-engine/engine.test.mjs
   windows-native:
