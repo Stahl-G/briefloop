@@ -7,6 +7,7 @@ import threading
 
 from docx import Document
 from openpyxl import load_workbook
+import briefloop
 from briefloop import __version__
 from briefloop.document_model import markdown_document
 from briefloop.export_jobs import enqueue_export, generate_word, output_path
@@ -17,6 +18,7 @@ from briefloop.xlsx_export import xlsx_bytes
 
 
 def main():
+    assert Path(briefloop.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=True)
     results = []

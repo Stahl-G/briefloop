@@ -22,7 +22,9 @@ async function main() {
   assert.equal(prepared.state, 'ready', JSON.stringify(prepared.error));
   const runtime = environment.runtime(), launch = runtimeLaunch(runtime);
   const officeScript = path.resolve(__dirname, '../../../tests/check_office_exports.py');
-  const office = await runOwnedProcess(launch.executable,
+  // The process supervisor clears __PYVENV_LAUNCHER__; use the actual venv
+  // executable so Windows does not accidentally exercise globally installed packages.
+  const office = await runOwnedProcess(runtime.python,
     [...launch.args, officeScript, path.join(data, 'office-evidence')], {env: launch.env, timeoutMs: 120000});
   const exported = JSON.parse(office.stdout.trim());
   assert.equal(exported.version, pkg.version);
