@@ -75,6 +75,12 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $wheel = @(Get-ChildItem desktop/electron/backend/*.whl)[0].FullName
           python scripts/check_versions.py --cli (Get-Command briefloop).Source --windows-app desktop/electron/dist/win-unpacked/BriefLoop.exe --wheel $wheel > desktop/electron/dist/windows-versions.json
+      - name: Start actual packaged backend and verify Office exports
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & desktop/electron/dist/win-unpacked/BriefLoop.exe desktop/electron/scripts/verify-packaged-backend.cjs desktop/electron/dist/win-unpacked/resources "$env:RUNNER_TEMP/briefloop-release-acceptance" desktop/electron/dist/windows-validation.json
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
@@ -85,3 +91,4 @@ jobs:
             desktop/electron/dist/latest.yml
             desktop/electron/dist/windows-artifact.json
             desktop/electron/dist/windows-versions.json
+            desktop/electron/dist/windows-validation.json
