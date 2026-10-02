@@ -253,6 +253,8 @@ class ProgressTracker:
                     if row.get('status') not in ENDED:
                         row['status']=agent.get('status','running')
                     row['task']=str(agent.get('responsibility',''))[:240]
+                    for field in ('started','ended'):
+                        if agent.get(field):row[field]=agent[field]
             except (ValueError,OSError):pass
         workers=list(self.workers.values())
         active=[w for w in workers if w.get('status') not in ENDED | {'unknown'}]
