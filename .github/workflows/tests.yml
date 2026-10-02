@@ -66,6 +66,26 @@ jobs:
       - run: python -m pip install . pytest
       - run: python scripts/check_versions.py --cli briefloop
       - run: python -m pytest -q tests/test_posix_process_tree.py
+  native-engine-platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: native-engine/package-lock.json
+      - run: npm ci --prefix native-engine
+      - run: node native-engine/build.mjs --check
+      - run: node --test native-engine/engine.test.mjs
   windows-native:
     runs-on: windows-latest
     timeout-minutes: 15

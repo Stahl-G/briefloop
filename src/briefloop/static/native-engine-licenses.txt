@@ -2,10 +2,10 @@
 # 由 npm run build / scripts/build_frontend_licenses.mjs 生成，请勿手工编辑。
 # 范围：esbuild metafile 中实际贡献产物字节的 node_modules 包。
 # 各包许可标识来自其 package.json；以下保留许可和声明文件原文。
-# 共 67 个包版本及声明组合。
+# 共 68 个包版本及声明组合。
 
 ========================================================================
-=== @anthropic-ai/sdk 0.123.0 (MIT)
+=== @anthropic-ai/sdk 0.124.0 (MIT)
 ========================================================================
 --- LICENSE ---
 Copyright 2023 Anthropic, PBC.
@@ -17,7 +17,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-=== @earendil-works/chord 0.85.1 (MIT)
+=== @earendil-works/pi-agent-core 1.0.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -43,7 +43,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-agent-core 0.85.1 (MIT)
+=== @earendil-works/pi-ai 1.0.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -69,7 +69,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-ai 0.85.1 (MIT)
+=== @earendil-works/pi-codemode 1.0.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -95,7 +95,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-coding-agent 0.85.1 (MIT)
+=== @earendil-works/pi-coding-agent 1.0.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -121,7 +121,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-telemetry 0.85.1 (MIT)
+=== @earendil-works/pi-mcp 1.0.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -147,7 +147,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-tui 0.85.1 (MIT)
+=== @earendil-works/pi-tui 1.0.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -173,7 +173,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @google/genai 1.52.0 (Apache-2.0)
+=== @google/genai 2.21.0 (Apache-2.0)
 ========================================================================
 --- LICENSE ---
 
@@ -723,7 +723,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-=== brace-expansion 5.0.9 (MIT)
+=== brace-expansion 5.0.12 (MIT)
 ========================================================================
 --- LICENSE ---
 MIT License
@@ -768,7 +768,7 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ========================================================================
-=== chalk 5.6.2 (MIT)
+=== chalk 6.0.0 (MIT)
 ========================================================================
 --- license ---
 MIT License
@@ -2067,7 +2067,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ========================================================================
-=== grok-mermaid 0.2.2 (Apache-2.0)
+=== grok-mermaid 0.2.3 (Apache-2.0)
 ========================================================================
 --- LICENSE ---
 Copyright 2023-2026 SpaceXAI
@@ -2356,7 +2356,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-=== ignore 7.0.5 (MIT)
+=== ignore 7.0.8 (MIT)
 ========================================================================
 --- LICENSE-MIT ---
 Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors
@@ -2557,7 +2557,7 @@ will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim.***
 
 ========================================================================
-=== marked 18.0.5 (MIT)
+=== marked 18.0.11 (MIT)
 ========================================================================
 --- LICENSE ---
 # License information
@@ -2606,7 +2606,7 @@ Redistribution and use in source and binary forms, with or without modification,
 This software is provided by the copyright holders and contributors “as is” and any express or implied warranties, including, but not limited to, the implied warranties of merchantability and fitness for a particular purpose are disclaimed. In no event shall the copyright owner or contributors be liable for any direct, indirect, incidental, special, exemplary, or consequential damages (including, but not limited to, procurement of substitute goods or services; loss of use, data, or profits; or business interruption) however caused and on any theory of liability, whether in contract, strict liability, or tort (including negligence or otherwise) arising in any way out of the use of this software, even if advised of the possibility of such damage.
 
 ========================================================================
-=== minimatch 10.2.5 (BlueOak-1.0.0)
+=== minimatch 10.2.6 (BlueOak-1.0.0)
 ========================================================================
 --- LICENSE.md ---
 # Blue Oak Model License
@@ -2744,7 +2744,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== openai 6.40.0 (Apache-2.0)
+=== openai 7.19.0 (Apache-2.0)
 ========================================================================
 --- LICENSE ---
                                  Apache License
@@ -3108,7 +3108,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ========================================================================
-=== semver 7.8.0 (ISC)
+=== semver 7.8.5 (ISC)
 ========================================================================
 --- LICENSE ---
 The ISC License
@@ -3202,6 +3202,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
+=== typebox 1.3.27 (MIT)
+========================================================================
+--- license ---
+TypeBox
+
+The MIT License (MIT)
+
+Copyright (c) 2017-2026 Haydn Paterson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+========================================================================
 === typebox 1.3.7 (MIT)
 ========================================================================
 --- license ---
@@ -3230,7 +3258,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ========================================================================
-=== undici 8.9.0 (MIT)
+=== undici 8.10.2 (MIT)
 ========================================================================
 --- LICENSE ---
 MIT License

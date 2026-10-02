@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUNDLE = process.env.BRIEFLOOP_NATIVE_TEST_BUNDLE || fileURLToPath(new URL("../src/briefloop/static/native-engine.mjs", import.meta.url));
@@ -195,6 +195,9 @@ before(async () => {
   // A personal pi setting that would break retries if the engine honoured it.
   writeFileSync(join(home, ".pi", "agent", "settings.json"), JSON.stringify({ retry: { enabled: false } }));
   copyFileSync(BUNDLE, join(engineDir, "native-engine.mjs"));
+  for (const asset of ["native-engine-image-worker.mjs", "native-engine-photon.wasm"]) {
+    copyFileSync(join(dirname(BUNDLE), asset), join(engineDir, asset));
+  }
   writeFileSync(join(engineDir, "native-engine-models.json"), JSON.stringify({ providers: { fake: {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: "openai-completions", apiKey: "FAKE_PROVIDER_KEY",
     models: [
@@ -281,6 +284,7 @@ after(async () => {
 test("ping reports configured entries, separately from live API availability", async () => {
   const ping = await call("ping");
   assert.equal(ping.engine, "briefloop-native/2");
+  assert.equal(ping.pi, "1.0.0");
   assert.equal(ping.models_configured, 2);
   const catalog = await describeConfiguredModels();
   const model = catalog.models.find(m => m.id === MODEL);
@@ -466,6 +470,24 @@ test("a closed session resumes from its session file with the prior conversation
   assert.match(sent, /\{\\"first\\":true\}/, "the earlier reply is part of the resumed context");
 });
 
+test("a Pi 0.85.1 transcript resumes with saved work and the current restricted contract", async () => {
+  // Produced by the released 0.85.1 bundle with a local scripted provider;
+  // synthetic content only, with the old cwd normalized for portability.
+  const legacy = join(root, "legacy-0.85.1.jsonl");
+  copyFileSync(fileURLToPath(new URL("./fixtures/pi-0.85.1-session.jsonl", import.meta.url)), legacy);
+  const session = await reviewer({ session_file: legacy });
+  assert.equal(session.resumed, true);
+  assert.deepEqual(session.tools, ["calc", "claim_trace", "packet_grep", "packet_list", "packet_read", "submit_review"]);
+  script(reply.text('{"continued":true}'));
+  assert.equal(ends(await turn(session.session_id, "legacy-upgrade"))[0].status, "completed");
+  const request = provider.requests[0];
+  const transcript = JSON.stringify(request.messages);
+  assert.match(transcript, /UPGRADE_REVISION_r7/);
+  assert.match(transcript, /grant-42 remains unresolved/);
+  assert.match(transcript, /测试系统提示：BriefLoop Reviewer/);
+  assert.equal(provider.violations.length, 0);
+});
+
 // ---- review tools ---------------------------------------------------------------
 test("the system prompt is BriefLoop's layers plus the real tool guide", async () => {
   script(reply.text('{"ok":true}'));
@@ -576,6 +598,18 @@ test("report figures are attached only when the model accepts images", async () 
   const sent = JSON.stringify(provider.requests[0].messages);
   assert.match(sent, /image_url/);
   assert.match(sent, /"delivery\\":\\"attached\\"/);
+
+  // Decode and actually resize through the shipped worker/WASM, from the
+  // isolated bundle directory with no SDK installation beside it.
+  const wide = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAC7gAAAACCAIAAABHIQbHAAAANUlEQVR4nO3OAQ0AIAgAMCQXwQhmQFrg5v4EP9U3AAAAAAAAAADgd/k6AAAAAAAAAAAAsWAAuMsBbKpOs7gAAAAASUVORK5CYII=", "base64");
+  writeFileSync(join(packet, "figures", "wide.png"), wide);
+  script(reply.text('{"ok":true}'));
+  await turn(vision.session_id, "e-img-wide", { images: [{file: "figures/wide.png"}] });
+  const wideRequest = JSON.stringify(provider.requests[0].messages);
+  assert.match(wideRequest, /original 3000x2, displayed at 2000x1/);
+  assert.doesNotMatch(wideRequest, /Image omitted/);
+  const attached = provider.requests[0].messages.at(-1).content.find(c => c.type === "image_url");
+  assert.ok(attached && !attached.image_url.url.endsWith(wide.toString("base64")));
 
   const tampered = [{ ...images[0], sha256: "0".repeat(64) }];
   const bad = await reviewer({ model: VISION_MODEL });
