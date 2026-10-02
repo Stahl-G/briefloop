@@ -642,6 +642,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     if result.get('state')=='available':
                         from .notifications import version_available
                         version_available(store,software_identity['version'],result['releaseVersion'])
+                elif path=='/api/software-release-notes':
+                    from .software_release_notes import release_notes
+                    result=release_notes(body.get('version'))
                 elif path=='/api/notifications/read':
                     from .notifications import mark_read
                     result=mark_read(store,body.get('through'),body.get('category'),body.get('seq'))
