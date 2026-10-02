@@ -68,6 +68,55 @@ def test_native_committed_four_tasks_cannot_silently_publish_two(tmp_path, dispo
         harness.close()
 
 
+class TwoRoundEngine(FlowEngine):
+    opened_second = False
+
+    def next(self, sid):
+        name, args = self.queues[sid][0]
+        if (name == 'workspace_action' and args['request']['action'] == 'finish_research_round'
+                and not self.opened_second):
+            self.opened_second = True
+            args['request']['continue_research'] = True
+            job = self.store.rows("SELECT id FROM jobs WHERE kind='generate'")[0]
+            self.second_tasks = [
+                {'slot_id': f'scout-{n}', 'assignment': assignment,
+                 'result_file': str(self.store.root / 'jobs' / job['id'] / 'round-2' / f'scout-{n}' / 'result.json')}
+                for n, assignment in enumerate(('Verify revenue', 'Verify scope'), 1)]
+            self.queues[sid][1:1] = [
+                ('workspace_action', {'request': {'action': 'begin_research_round'}}),
+                ('workspace_action', {'request': {'action': 'set_scout_tasks', 'scout_tasks': self.second_tasks}}),
+                ('run_scouts', {'tasks': self.second_tasks}),
+                ('save_research_handoff', {'handoff': {'learnings': [], 'follow_ups': [],
+                    'covered': ['Revenue and scope verified'], 'open_questions': []}}),
+                ('workspace_action', {'request': {'action': 'finish_research_round', 'gaps': [],
+                    'summary': 'Second round complete'}})]
+        super().next(sid)
+
+
+def test_native_next_round_updates_saved_plan_and_publishes_without_resaving(tmp_path):
+    store, source, run, job = setup(tmp_path)
+    engine = TwoRoundEngine(store, run, source)
+    harness = NativeHarness(store, engine)
+    worker = Worker(store)
+    worker.runtime = InteractiveRuntime(store, backends={'briefloop-native': harness})
+    try:
+        result = worker.generate(job, score=False)
+        assert store.one('briefs', result['version_id'])['run_id'] == run['id']
+        folder = worker.folder(job)
+        saved = json.loads((folder / 'plan.json').read_text())
+        assert saved['scout_tasks'] == engine.second_tasks
+        assert saved['summary'] == 'Explain revenue' and saved['reader_contract']
+        assert json.loads((folder / 'packet' / 'plan.json').read_text()) == saved
+        coverage = scout_coverage.view(store, run['id'])['scout_execution']
+        assert len(coverage) == 4 and all(task['status'] == 'complete' for task in coverage)
+        assert [task['assignment'] for task in coverage if task['round_index'] == 1] == ['Read revenue', 'Read scope']
+        assert all(info['status'] == 'closed' for info in research_plan.frozen(store, run['id'])['rounds'].values()
+                   if info['status'] != 'pending')
+        assert len([s for s in engine.sessions.values() if s['role'] == 'scout']) == 4
+    finally:
+        harness.close()
+
+
 class RecoverEngine(FlowEngine):
     failed = False
 

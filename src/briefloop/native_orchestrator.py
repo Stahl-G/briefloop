@@ -125,6 +125,21 @@ def action(store, config, args):
         notify(store, store.one('jobs', result['job_id']), 'queued')
         return _json_result(result)
     result = workspace_action(store, request)
+    if name == 'set_scout_tasks' and 'scout_tasks' in request and config.get('packet_root'):
+        # A successful declaration is the binding plan for this round. Keep the
+        # saved Native plan current; otherwise closeout compares round 2 with
+        # round 1 forever. Declaration still rejects dropped/rewritten work.
+        from .research_plan import frozen
+        research = frozen(store, run_id) or {}
+        round_id = request.get('round_id') or research.get('current_round_id') or 'legacy'
+        path = _folder(config) / 'plan.json'
+        if path.is_file():
+            plan = json.loads(path.read_text(encoding='utf-8-sig'))
+            plan['scout_tasks'] = [
+                {key: task[key] for key in ('slot_id', 'assignment', 'result_file')}
+                for task in result['scout_execution'] if task['round_id'] == round_id]
+            _save(path, plan)
+            _save(Path(config['packet_root']) / 'plan.json', plan)
     if name == 'reconciliation_save' and config.get('packet_root'):
         _save(_folder(config) / 'reconciliation.json', result)
     if name == 'finish_research_round' and config.get('packet_root'):
