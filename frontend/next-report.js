@@ -1,5 +1,5 @@
 // Reuse the saved contract, not old facts, reviews or runtime authorizations.
-export function nextReportUI({$,api,savedVersion,getCurrent,confirm,applyRequirements,clearSources,notice,getTemplate}){
+export function nextReportUI({$,api,savedVersion,getCurrent,confirm,applyRequirements,clearSources,notice,getTemplate,refreshTime=()=>{}}){
  let pending=false,contract=null;
  const form=()=>$('requirements');
  function set(name,value){const field=form()?.elements?.[name];if(!field)return;
@@ -41,6 +41,7 @@ export function nextReportUI({$,api,savedVersion,getCurrent,confirm,applyRequire
    const box=$('next-report-notice');
    if(box){box.hidden=false;$('next-report-summary').textContent=`基于《${data.previous.title}》的已保存版本开始下一期。${data.notice}`+
      (data.reader?` 当前读者：${data.reader.name}；用途：${data.reader.decisions}；偏好：${data.reader.preferences}。请确认是否仍适用。`:'');}
+   refreshTime();
    form()?.elements?.title?.focus?.();
    notice('已复用约定；请填写本期标题、时间范围并选择材料');
   }finally{pending=false}

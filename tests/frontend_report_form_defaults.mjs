@@ -121,4 +121,9 @@ test('actual preview handler uses normalized text-period response; submit omits 
  input('target-words','5000');input('max-words','5500');input('budget-search-requests','30');
  $('requirements').onsubmit({preventDefault(){},target:$('requirements')});await work;
  assert.equal(submitted.requirements.target_words,5000);assert.equal(submitted.requirements.max_words,5500);assert.equal(submitted.requirements.research_budget.search_requests,30);
+ $('requirements').elements.previous_report_version_id={value:'prior-version'};
+ for(const key of ['period','period_start','period_end'])$('requirements').elements[key].value='';
+ await vm.runInContext('previewReportTime()',context);
+ assert.match($('report-system-clock').textContent,/请填写并确认本期时间范围/);
+ assert.doesNotMatch($('report-system-clock').textContent,/2026-09/);
 });

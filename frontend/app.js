@@ -188,7 +188,7 @@ function acceptCommand(){
 // Only editorial preferences lack a form control. Runtime/template snapshots are
 // deliberately rebuilt by the server and must never be copied from a prior run.
 let writingPreferencesOverride;
-const nextReport=nextReportUI({$,api,savedVersion,getTemplate:id=>{const t=state?.templates?.find(t=>t.id===id);return t?{...t,sections:parse(t.spec).sections||[]}:null},getCurrent:()=>current,confirm:message=>confirm(message),applyRequirements,notice,clearSources:()=>{selected.clear();referenceSelected.clear();document.querySelectorAll('[data-check],[data-reference-source]').forEach(input=>input.checked=false);renderReferenceSources()}});
+const nextReport=nextReportUI({$,api,savedVersion,getTemplate:id=>{const t=state?.templates?.find(t=>t.id===id);return t?{...t,sections:parse(t.spec).sections||[]}:null},getCurrent:()=>current,confirm:message=>confirm(message),applyRequirements,refreshTime:()=>previewReportTime(),notice,clearSources:()=>{selected.clear();referenceSelected.clear();document.querySelectorAll('[data-check],[data-reference-source]').forEach(input=>input.checked=false);renderReferenceSources()}});
 nextReport.bind();
 function preserveWritingPreferences(req,previous,override){
  if(!Object.prototype.hasOwnProperty.call(req,'writing_preferences'))req.writing_preferences=[...(Array.isArray(override)?override:Array.isArray(previous?.writing_preferences)?previous.writing_preferences:[])];
@@ -565,6 +565,8 @@ let reportTimePreviewTicket=0;
 async function previewReportTime(){
  const ticket=++reportTimePreviewTicket;
  const form=$('requirements'),box=$('report-system-clock');
+ if(form.elements.previous_report_version_id?.value&&!['period','period_start','period_end'].some(key=>form.elements[key].value.trim())){box.textContent='请填写并确认本期时间范围；不会沿用上期日期。';return}
+ box.textContent='正在核对本期时间范围…';
  try{const requirements={title:form.elements.title.value||'预览',objective:form.elements.objective.value||'预览'};for(const key of ['period','period_start','period_end','report_timezone'])requirements[key]=form.elements[key].value;const t=await api('report-time-preview',{requirements});if(ticket!==reportTimePreviewTicket)return;reportFormDefaults.setWindow(t,requirements);box.textContent=`系统日期：${t.today} · ${t.timezone}；报告范围：${t.start} 至 ${t.end_exclusive}（不含结束时刻）。提交时冻结。`;}catch(e){if(ticket===reportTimePreviewTicket)box.textContent=e.message}
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
