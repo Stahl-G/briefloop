@@ -1,5 +1,5 @@
 // Reuse the saved contract, not old facts, reviews or runtime authorizations.
-export function nextReportUI({$,api,savedVersion,getCurrent,confirm,applyRequirements,clearSources,notice,getTemplate,refreshTime=()=>{}}){
+export function nextReportUI({$,api,savedVersion,getCurrent,applyRequirements,clearSources,notice,getTemplate,refreshTime=()=>{}}){
  let pending=false,contract=null;
  const form=()=>$('requirements');
  function set(name,value){const field=form()?.elements?.[name];if(!field)return;
@@ -12,7 +12,6 @@ export function nextReportUI({$,api,savedVersion,getCurrent,confirm,applyRequire
  function requirementsForTemplate(id){return contract&&form()?.elements?.previous_report_version_id?.value&&contract.template_id===id?contract:null}
  async function start(){
   if(pending||!getCurrent())return;
-  if(!confirm('将当前保存版本作为下一期的参考约定？会替换尚未提交的材料与需求，清空旧材料选择、标题和时间范围；不会启动模型。'))return;
   pending=true;
   try{
    const version=await savedVersion();

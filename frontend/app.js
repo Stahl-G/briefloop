@@ -188,7 +188,7 @@ function acceptCommand(){
 // Only editorial preferences lack a form control. Runtime/template snapshots are
 // deliberately rebuilt by the server and must never be copied from a prior run.
 let writingPreferencesOverride;
-const nextReport=nextReportUI({$,api,savedVersion,getTemplate:id=>{const t=state?.templates?.find(t=>t.id===id);return t?{...t,sections:parse(t.spec).sections||[]}:null},getCurrent:()=>current,confirm:message=>confirm(message),applyRequirements,refreshTime:()=>previewReportTime(),notice,clearSources:()=>{selected.clear();referenceSelected.clear();document.querySelectorAll('[data-check],[data-reference-source]').forEach(input=>input.checked=false);renderReferenceSources()}});
+const nextReport=nextReportUI({$,api,savedVersion,getTemplate:id=>{const t=state?.templates?.find(t=>t.id===id);return t?{...t,sections:parse(t.spec).sections||[]}:null},getCurrent:()=>current,applyRequirements,refreshTime:()=>previewReportTime(),notice,clearSources:()=>{selected.clear();referenceSelected.clear();document.querySelectorAll('[data-check],[data-reference-source]').forEach(input=>input.checked=false);renderReferenceSources()}});
 nextReport.bind();
 function preserveWritingPreferences(req,previous,override){
  if(!Object.prototype.hasOwnProperty.call(req,'writing_preferences'))req.writing_preferences=[...(Array.isArray(override)?override:Array.isArray(previous?.writing_preferences)?previous.writing_preferences:[])];
