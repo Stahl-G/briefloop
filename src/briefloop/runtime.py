@@ -513,6 +513,7 @@ class Worker:
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
         self._queue_wakes=[threading.Event() for _ in range(4)]
         self.store._job_wakeup=self.wake
+        self.store._scout_budget_for_job=self._scout_budget
         self.schedule_thread=threading.Thread(target=self.schedule_loop,name='briefloop-schedules',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
         self.task_thread=None
@@ -584,6 +585,7 @@ class Worker:
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
         if self.extraction_thread.is_alive():self.extraction_thread.join(timeout=12)
         if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
+        if getattr(self.store,'_scout_budget_for_job',None)==self._scout_budget:self.store._scout_budget_for_job=None
 
     def schedule_loop(self):
         from .schedules import tick

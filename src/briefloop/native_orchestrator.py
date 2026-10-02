@@ -9,7 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .store import dump
+from .store import dump, now
 from .native_roles import ToolError, _atomic, _json_result
 from .revision_metadata import binding_schema, response_schema, validate_arrays, validate_bindings
 
@@ -19,7 +19,7 @@ READ_ACTIONS = {'inspect', 'capabilities', 'templates', 'workflows', 'profile_re
 RUN_ACTIONS = {'set_reader_contract', 'freeze_research_plan', 'begin_research_round',
                'finish_research_round', 'set_scout_tasks', 'reconciliation_save', 'evidence_span',
                'claim_create', 'claim_bind', 'company_update', 'company_review_complete'}
-CHAT_ACTIONS = READ_ACTIONS | {'generate', 'assess', 'comment', 'export_word', 'profile_update', 'company_config', 'company_resolve', 'revise_document', 'learn', 'template_import', 'template_rebuild', 'import_word_revision'}
+CHAT_ACTIONS = READ_ACTIONS | {'stop_job', 'generate', 'assess', 'comment', 'export_word', 'profile_update', 'company_config', 'company_resolve', 'revise_document', 'learn', 'template_import', 'template_rebuild', 'import_word_revision'}
 
 
 def _save(path, value):
@@ -102,7 +102,8 @@ def action(store, config, args):
                 frozen_req = json.loads(view.one('runs', result['run_id'])['requirements'])
                 result['accepted_requirements'] = {**result.get('accepted_requirements', {}),
                     'length_mode': frozen_req.get('length_mode', 'soft'),
-                    'length_requirement': frozen_req.get('length_requirement')}
+                    'length_requirement': frozen_req.get('length_requirement'),
+                    'fact_check': frozen_req.get('fact_check')}
             else:
                 from .models import Settings, Requirements, runtime_fields
                 settings = Settings.model_validate({**view.settings(), **request['runtime']})
@@ -118,13 +119,28 @@ def action(store, config, args):
                 result = {'job_id': job['id'], 'run_id': run['id'], 'status': 'queued',
                           'accepted_requirements': {key: value for key, value in json.loads(run['requirements']).items()
                               if key in ('title', 'target_minutes', 'hard_timeout_minutes', 'research_budget', 'key_questions',
-                                         'writing_preferences', 'target_words', 'max_words', 'length_mode', 'length_requirement', 'period', 'search_policy')}}
+                                         'writing_preferences', 'target_words', 'max_words', 'length_mode', 'length_requirement', 'period', 'search_policy', 'fact_check')}}
                 view.set_meta(key, {'fingerprint': fingerprint, 'result': result})
         store.wake_jobs()
         from .task_notify import notify
         notify(store, store.one('jobs', result['job_id']), 'queued')
         return _json_result(result)
     result = workspace_action(store, request)
+    if name == 'set_scout_tasks' and 'scout_tasks' in request and config.get('packet_root'):
+        # A successful declaration is the binding plan for this round. Keep the
+        # saved Native plan current; otherwise closeout compares round 2 with
+        # round 1 forever. Declaration still rejects dropped/rewritten work.
+        from .research_plan import frozen
+        research = frozen(store, run_id) or {}
+        round_id = request.get('round_id') or research.get('current_round_id') or 'legacy'
+        path = _folder(config) / 'plan.json'
+        if path.is_file():
+            plan = json.loads(path.read_text(encoding='utf-8-sig'))
+            plan['scout_tasks'] = [
+                {key: task[key] for key in ('slot_id', 'assignment', 'result_file')}
+                for task in result['scout_execution'] if task['round_id'] == round_id]
+            _save(path, plan)
+            _save(Path(config['packet_root']) / 'plan.json', plan)
     if name == 'reconciliation_save' and config.get('packet_root'):
         _save(_folder(config) / 'reconciliation.json', result)
     if name == 'finish_research_round' and config.get('packet_root'):
@@ -174,8 +190,10 @@ def _child(store, config, directory, callback):
         with harness._lock:
             path = _folder(config) / 'agents.json'
             records = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {'agents': []}
+            previous = next((a for a in records['agents'] if a['agent_id'] == identity), {})
             records['agents'] = [a for a in records['agents'] if a['agent_id'] != identity]
-            records['agents'].append({'agent_id': identity, 'role': role, 'status': status})
+            timing = {'started': now()} if status == 'running' else {'started': previous.get('started'), 'ended': now()}
+            records['agents'].append({'agent_id': identity, 'role': role, 'status': status, **timing})
             _save(path, records)
     with harness.child_runtime(config['session_id'], runtime):
         _alive(store, config)
@@ -225,13 +243,29 @@ def run_scouts(store, config, args):
         committed = {task['slot_id']: task for task in view(store, config['run_id'])['scout_execution'] if task['round_id'] == identity}
     for task in tasks:
         expected = committed.get(task['slot_id'])
-        result_file = str((folder / ('round-' + round_id) / task['slot_id'] / 'result.json').resolve())
-        if not expected or expected['assignment'] != str(task.get('assignment') or '').strip() or expected['result_file'] != result_file:
-            raise ToolError('实际 Scout 任务必须匹配已保存 scout_tasks 的分工与结果路径；先补全本轮计划')
+        scoped = {folder / ('round-' + round_id) / task['slot_id'] / 'result.json',
+                  store.root / 'research' / config['run_id'] / 'rounds' / round_id / task['slot_id'] / 'result.json'}
+        if round_id == '1':
+            scoped.add(folder / task['slot_id'] / 'result.json')
+        if not expected or expected['assignment'] != str(task.get('assignment') or '').strip():
+            raise ToolError('实际 Scout 任务必须匹配已保存 scout_tasks 的分工；先读取 research_status')
+        result_file = Path(expected['result_file'])
+        if result_file not in scoped or result_file.resolve() != result_file:
+            raise ToolError('已登记 Scout 结果路径不属于本任务、本轮与槽位')
+        if task.get('result_file') and task['result_file'] != str(result_file):
+            raise ToolError('实际 Scout 结果路径须沿用已登记路径：' + str(result_file))
+    # A concurrent job may have occupied slots while the initial packet was
+    # prepared. Reclaim now-free capacity within the original frozen ceiling.
+    budget_for_job = getattr(store, '_scout_budget_for_job', None)
+    budget = budget_for_job(job) if budget_for_job else None
+    if budget:
+        ceiling = min(int((frozen_plan or {}).get('frozen_runtime', {}).get('max_parallel') or limit),
+                      int((frozen_plan or {}).get('structure', {}).get('parallel') or limit), len(tasks))
+        limit = max(1, min(ceiling, budget(ceiling)))
     update(store, config['run_id'], [{'slot_id': task['slot_id'], 'status': 'dispatched'} for task in tasks])
     results = []
     def execute(task):
-        path = folder / ('round-' + round_id) / task['slot_id']
+        path = Path(committed[task['slot_id']]['result_file']).parent
         path.mkdir(parents=True, exist_ok=True)
         assignment = path / 'assignment.json'
         if assignment.exists() and json.loads(assignment.read_text(encoding='utf-8')) != task:
@@ -251,14 +285,15 @@ def run_scouts(store, config, args):
     with ThreadPoolExecutor(max_workers=min(limit, len(tasks))) as pool:
         results = list(pool.map(execute, tasks))
     _alive(store, config)
-    paths = sorted(folder.glob('round-*/scout-*/result.json'))
+    paths = sorted({Path(task['result_file']) for task in view(store, config['run_id'])['scout_execution']
+                    if Path(task['result_file']).is_file()})
     # All rounds remain available; replayed slots are not duplicated.
     joined = join_scouts(store, paths, run_id=config['run_id']) if paths else {'sources': [], 'gaps': []}
     from .research_handoff import current_research
     joined = current_research(store, config['run_id'], joined, register=True)
     _save(folder / 'research.json', joined)
     _save(Path(config['packet_root']) / 'research.json', joined)
-    return _json_result({'tasks': results, 'research_file': 'research.json', 'sources': len(joined['sources']), 'gaps': joined['gaps'], 'gap_records': joined.get('gap_records', []), 'gap_history': joined.get('gap_history', []), 'execution_gaps': joined.get('execution_gaps', [])})
+    return _json_result({'parallel_limit': limit, 'tasks': results, 'research_file': 'research.json', 'sources': len(joined['sources']), 'gaps': joined['gaps'], 'gap_records': joined.get('gap_records', []), 'gap_history': joined.get('gap_history', []), 'execution_gaps': joined.get('execution_gaps', [])})
 
 
 def _refresh_research(store, config):

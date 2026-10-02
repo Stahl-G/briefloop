@@ -50,7 +50,7 @@ test('monthly boundary uses calendar days through a spring DST transition',()=>{
 
 test('actual tier handler updates automatic budget but preserves numeric, preset and saved overrides',()=>{
  const {$,defaults,input,budget,lengths}=view();
- const context=vm.createContext({$,reportFormDefaults:defaults,reportMarket:{prepare(){}},renderBudgetProviderScope(){}});
+ const context=vm.createContext({$,reportFormDefaults:defaults,reportMarket:{prepare(){}},nextReport:{clear(){}},renderBudgetProviderScope(){}});
  vm.runInContext(section(source,'const RESEARCH_TIERS=','const BUDGET_FIELDS=','frontend/app.js'),context);
  vm.runInContext(section(source,"$('research-tier').onchange=",'let budgetPolling=false;','frontend/app.js'),context);
  const tier=value=>{$('research-tier').value=value;$('research-tier').emit('change')};
@@ -104,7 +104,7 @@ test('actual preview handler uses normalized text-period response; submit omits 
  const {$,defaults,input,lengths}=view();
  $('requirements').elements.objective=$('objective');input('period','2026-09');
  let resolvePreview,submitted,work;
- const context=vm.createContext({$,reportFormDefaults:defaults,reportMarket:{prepare(){}},
+ const context=vm.createContext({$,reportFormDefaults:defaults,reportMarket:{prepare(){}},nextReport:{clear(){}},
   api:async(path,payload)=>path==='report-time-preview'?new Promise(resolve=>{resolvePreview=resolve}):(submitted=payload,{payload:'{}'}),
   FormData:class{constructor(){this.values={title:'行业动态',objective:'研究',period:'2026-09',report_profile:'industry_periodic',target_words:'5000',max_words:'5500'}}entries(){return Object.entries(this.values)}has(){return false}},
   action:fn=>{work=fn()},state:{settings:{company_context_enabled:true}},lengthControls:{read:()=>({length_mode:'soft'})},quickReport:{read:()=>({})},
@@ -121,4 +121,9 @@ test('actual preview handler uses normalized text-period response; submit omits 
  input('target-words','5000');input('max-words','5500');input('budget-search-requests','30');
  $('requirements').onsubmit({preventDefault(){},target:$('requirements')});await work;
  assert.equal(submitted.requirements.target_words,5000);assert.equal(submitted.requirements.max_words,5500);assert.equal(submitted.requirements.research_budget.search_requests,30);
+ $('requirements').elements.previous_report_version_id={value:'prior-version'};
+ for(const key of ['period','period_start','period_end'])$('requirements').elements[key].value='';
+ await vm.runInContext('previewReportTime()',context);
+ assert.match($('report-system-clock').textContent,/请填写并确认本期时间范围/);
+ assert.doesNotMatch($('report-system-clock').textContent,/2026-09/);
 });

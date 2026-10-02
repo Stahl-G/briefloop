@@ -113,6 +113,8 @@ class Requirements(Model):
     # A saved reader profile (#858); create_run freezes it into reader_profile.
     reader_id: str | None = Field(default=None, max_length=80)
     reader_profile: dict | None = None
+    previous_report_version_id: str | None = Field(default=None, max_length=100)
+    previous_report_hash: str | None = Field(default=None, max_length=64)
     # Report body language. The interface, internal records and review notes
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"
@@ -362,7 +364,7 @@ class Settings(RoleModel):
     default_template_id: str | None = None
     company_context_enabled: bool | None = None
     # Workspace-wide default for the per-task fact_check switch; tasks may override.
-    fact_checker: bool = False
+    fact_checker: bool = True
     # Workspace-wide optional local file quality checks via officecli; the
     # switch has no effect while the binary is not installed.
     officecli_enabled: bool = False

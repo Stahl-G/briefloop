@@ -358,6 +358,9 @@ class Store:
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
+        if clone is None:
+            from .next_report import validate_origin
+            validate_origin(self, req)
         if clone is not None and req.completion_mode == 'fast_web':req.completion_mode='fast'
         if req.completion_mode=='fast_web' and not req.allow_web:
             raise ValueError('快速联网需要允许公开检索；保持离线请选择已有材料快速模式。')
@@ -384,7 +387,7 @@ class Store:
         # The task choice overrides the workspace default; the resolved bool is what
         # the run stores, so resume and later phases never re-read settings for it.
         if req.fact_check is None:
-            req.fact_check = self.settings().get('fact_checker') is True
+            req.fact_check = req.allow_web and self.settings().get('fact_checker') is True
         if req.fact_check and not req.allow_web:
             raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
         from .backends import require_main_chain
@@ -441,6 +444,9 @@ class Store:
             from .readers import validate_global_skill
             validate_global_skill(self,options['skill_id'])
         stored=req.model_dump()
+        if not stored.get('previous_report_version_id'):
+            stored.pop('previous_report_version_id', None)
+            stored.pop('previous_report_hash', None)
         # Runs without a saved reader keep the exact requirement shape older
         # learning comparisons were frozen against.
         if stored.get('reader_id') is None:
@@ -449,7 +455,9 @@ class Store:
         with self.tx() as c:
             c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(stored), dump(source_ids), options["skill_id"] if "skill_id" in options else reader_skill(self,req.reader_id), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
-                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(stored),))
+                remembered={key:value for key,value in stored.items()
+                            if key not in ('previous_report_version_id','previous_report_hash')}
+                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(remembered),))
             if options.get("research_protocol") == 'quality_v1' and req.completion_mode not in ('fast', 'fast_web'):
                 c.execute("INSERT INTO meta VALUES(?,?)", ('scout_coverage_version:'+rid, dump(1)))
             if options.get("research_protocol"):
