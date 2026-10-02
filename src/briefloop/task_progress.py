@@ -72,7 +72,7 @@ def summary(store, job_id):
         for task in scout_view(store, run_id)['execution_gaps']:
             timeline.append({'label': f"第 {task['round_index']} 轮 {task['slot_id']}：" + labels[task['status']],
                              'detail': public_text(task['assignment'] + ('；' + task['reason'] if task['reason'] else '')),
-                             'status': 'error' if task['status'] == 'failed' else 'warn', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
+                             'status': 'error' if task['status'] == 'failed' else 'warn', 'not_started': task['status'] == 'planned', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
     event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',
@@ -124,7 +124,7 @@ def summary(store, job_id):
     timeline.sort(key=lambda item: item.get('time') or '')
     agents = [{'id': public_text(a.get('id')), 'role': public_text(a.get('role'), 60),
                'task': public_text(a.get('task')), 'activity': public_text(a.get('activity')),
-               'status': a.get('status', 'unknown')} for a in p.get('agents', [])]
+               'status': a.get('status', 'unknown'), 'started': a.get('started'), 'ended': a.get('ended')} for a in p.get('agents', [])]
     requests = list(pending_requests(store, run_id).values()) if run else []
     searches = [r for r in requests if r.get('operation') == 'search']
     search_counts = {s: sum(r.get('status') == s for r in searches) for s in ('completed', 'failed', 'reserved')}

@@ -17,6 +17,7 @@ function stepState(value,active){
  return ['running','active'].includes(value)?(active?'active':'pending'):'pending';
 }
 function stepTime(step,now){
+ if(step.not_started)return '尚未开始';
  const duration=step.duration_ms??(step.duration_seconds==null?null:Number(step.duration_seconds)*1000);
  if(duration!==null&&Number.isFinite(Number(duration))&&Number(duration)>=0)return elapsedText('1970-01-01T00:00:00Z',Number(duration));
  if(step.started&&(step.ended||step.status==='active'))return elapsedText(step.started,step.ended?Date.parse(step.ended):now);
