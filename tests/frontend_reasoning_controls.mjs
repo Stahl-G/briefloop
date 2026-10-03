@@ -56,3 +56,21 @@ test('Claude only offers advertised effort levels and unknown saved values fall 
  const live=reasoningControls({api:async()=>({kind:'levels',options:[{id:'low'},{id:'high'}]})});control.value='high';await live.configure(control,'claude','real-model');
  assert.deepEqual(control.children.map(option=>option.value),['none','low','high']);assert.equal(control.value,'high');
 });
+
+test('pending and failed discovery preserve the selection; settling refreshes summaries without saving',async t=>{
+ const {control}=dom(t);control.value='medium';let resolve,saves=0;const summaries=[];
+ control.onchange=()=>saves++;
+ const ui=reasoningControls({api:()=>new Promise(done=>resolve=done),onUpdate:input=>summaries.push(input.value)});
+ const pending=ui.configure(control,'claude','selected-model');
+ assert.equal(control.value,'medium');
+ assert.ok(control.children.some(option=>option.value==='medium'));
+ // A user can explicitly choose the default while discovery is pending.
+ control.value='none';resolve({options:[{id:'medium'},{id:'high'}]});await pending;
+ assert.equal(control.value,'none');assert.deepEqual(summaries,['none']);assert.equal(saves,0);
+ control.value='high';const failed=reasoningControls({api:async()=>{throw Error('offline')}});
+ await failed.configure(control,'claude','selected-model');assert.equal(control.value,'high');
+ assert.equal(saves,0,'discovery never emits a persistence event');
+ const unsupported=reasoningControls({api:async()=>({options:[{id:'medium'}]}),onUpdate:input=>summaries.push(input.value)});
+ await unsupported.configure(control,'claude','selected-model');
+ assert.equal(control.value,'none');assert.equal(summaries.at(-1),'none');
+});
