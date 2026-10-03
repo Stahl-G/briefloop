@@ -27,6 +27,7 @@ def _labels(language=None):
                 'finding_status': {'open': 'Open', 'addressed_pending_review': 'Response awaiting review'},
                 'gap_status': {'open': 'Open', 'addressed': 'Addressed · awaiting review',
                                'review_needed': 'Review required', 'unresolved': 'Unresolved'},
+                'review_complete': 'Independent review complete',
                 'reviewed': 'Independently reviewed · not released', 'open_findings': 'open findings',
                 'release_id': 'Release', 'manifest': 'Manifest',
                 'version': 'Version', 'body_hash': 'Body hash', 'exported': 'Exported',
@@ -54,6 +55,7 @@ def _labels(language=None):
             'finding_status': {'open': '未结', 'addressed_pending_review': '已回应 · 待复核'},
             'gap_status': {'open': '未结', 'addressed': '已处理 · 待复核',
                            'review_needed': '需复核', 'unresolved': '未解决'},
+            'review_complete': '已完成独立审阅',
             'reviewed': '已完成独立审阅 · 未正式交付', 'open_findings': '项未结发现',
             'release_id': '交付', 'manifest': '清单',
             'version': '版本', 'body_hash': '正文哈希', 'exported': '导出',
@@ -588,7 +590,7 @@ def html_report(store, version_id, *, excerpts=True):
 
     appendix_b.append('<h3>%s</h3>' % _esc(t['review']))
     if review_applicable:
-        review_text = t['reviewed']
+        review_text = t['review_complete']
     elif newest_review and newest_review['status'] == 'complete':
         review_text = t['review_stale']
     elif newest_review and newest_review['status'] in ('queued', 'running'):

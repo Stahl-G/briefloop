@@ -170,3 +170,17 @@ def test_chinese_pending_review_and_gap_labels(tmp_path):
     page = html_report(store, brief['id'])
     assert '最近一次已保存审阅不适用于当前输入' in page and '1 项未结发现' in page
     assert '已回应 · 待复核' in appendix(page) and '已处理 · 待复核' in appendix(page)
+
+
+def test_released_version_review_appendix_does_not_contradict_cover(tmp_path, monkeypatch):
+    store, _, brief = sample(tmp_path)
+    complete_review(store, brief)
+    from briefloop import release
+    monkeypatch.setattr(release, 'list_releases', lambda *_: [
+        {'id': 'release-fixture', 'version_id': brief['id'], 'status': 'released',
+         'result': {'manifest_hash': 'frozen-manifest'}}])
+    page = html_report(store, brief['id'])
+    assert 'This version has a formal delivery' in page
+    assert 'Independent review complete' in appendix(page)
+    assert 'not released' not in page
+    assert manifest(page)['review']['applicable'] is True
