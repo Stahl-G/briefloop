@@ -225,7 +225,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   async function payload(signal) {
     phase('checking', 'verify-payload');
     const manifest = JSON.parse(await fs.readFile(path.join(payloadPath, 'manifest.json'), 'utf8'));
-    if (!/^\d+\.\d+\.\d+$/.test(manifest.version || '') || typeof manifest.wheel !== 'string'
+    if (!/^\d+\.\d+\.\d+(?:(?:rc|a|b)\d+|\.dev\d+)?$/.test(manifest.version || '') || typeof manifest.wheel !== 'string'
         || !/^briefloop-[a-zA-Z0-9_.-]+\.whl$/.test(manifest.wheel) || path.basename(manifest.wheel) !== manifest.wheel
         || !/^[a-f0-9]{64}$/i.test(manifest.sha256 || '')) throw new EnvironmentError('invalid_payload', '随包运行组件清单无效，请重新安装 App。');
     const wheel = path.join(payloadPath, manifest.wheel);

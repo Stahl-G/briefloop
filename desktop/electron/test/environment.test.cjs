@@ -378,3 +378,14 @@ test('macOS actual process/file scan keeps an occupied old environment and remov
  assert.equal((await fs.stat(path.join(directory,busy))).isDirectory(),true);
  assert.equal(unrelated.exitCode,null);
 });
+
+
+test('declared prerelease versions can prepare and validate without using a stable version',async t=>{
+  const f=await fixture(t);
+  await f.payload('0.19.1.dev7');
+  assert.equal((await f.environment.prepare()).state,'ready');
+  await f.payload('0.19.1rc1');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  await f.payload('0.19.1-preview');
+  assert.equal((await createEnvironment(f.config).inspect()).error.code,'invalid_payload');
+});
