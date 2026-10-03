@@ -13,6 +13,7 @@ from .document_model import (normalize_document, brief_document, table_layout,
 from .document_export import (reader_labels, reader_locator, reader_source_blocks,
                               without_duplicate_cover_heading)
 from .models import report_language
+from .delivery_state import unresolved_findings, unresolved_gap_records
 from .task_labels import label as task_label
 
 
@@ -22,6 +23,11 @@ def _labels(language=None):
                 'appendix_c': 'Appendix C · About This File', 'toc': 'Contents',
                 'released': 'This version has a formal delivery; this export is not part of its frozen package', 'draft': 'Working draft · not independently reviewed',
                 'reviewing': 'Independent review in progress', 'review_failed': 'Latest independent review did not complete',
+                'review_stale': 'Latest saved review does not apply to the current inputs · review required',
+                'finding_status': {'open': 'Open', 'addressed_pending_review': 'Response awaiting review'},
+                'gap_status': {'open': 'Open', 'addressed': 'Addressed · awaiting review',
+                               'review_needed': 'Review required', 'unresolved': 'Unresolved'},
+                'review_complete': 'Independent review complete',
                 'reviewed': 'Independently reviewed · not released', 'open_findings': 'open findings',
                 'release_id': 'Release', 'manifest': 'Manifest',
                 'version': 'Version', 'body_hash': 'Body hash', 'exported': 'Exported',
@@ -45,6 +51,11 @@ def _labels(language=None):
             'toc': '目录',
             'released': '该版本已有正式交付；本导出文件未纳入冻结交付包', 'draft': '工作稿 · 未经独立审阅',
             'reviewing': '独立审阅进行中', 'review_failed': '最近一次独立审阅未完成',
+            'review_stale': '最近一次已保存审阅不适用于当前输入 · 需重新审阅',
+            'finding_status': {'open': '未结', 'addressed_pending_review': '已回应 · 待复核'},
+            'gap_status': {'open': '未结', 'addressed': '已处理 · 待复核',
+                           'review_needed': '需复核', 'unresolved': '未解决'},
+            'review_complete': '已完成独立审阅',
             'reviewed': '已完成独立审阅 · 未正式交付', 'open_findings': '项未结发现',
             'release_id': '交付', 'manifest': '清单',
             'version': '版本', 'body_hash': '正文哈希', 'exported': '导出',
@@ -139,7 +150,17 @@ def html_report(store, version_id, *, excerpts=True):
     release = releases[0] if releases else None
     reviews = status.get('reviews') or []
     newest_review = reviews[0] if reviews else None
-    open_findings = [f for f in status.get('findings', []) if f.get('status') == 'open']
+    open_findings = unresolved_findings(status.get('findings', []))
+    review_applicable = None
+    review_error = None
+    if newest_review and newest_review['status'] == 'complete':
+        from .review import validate_applicable_review
+        try:
+            validate_applicable_review(store, newest_review['id'], version_id)
+            review_applicable = True
+        except (ValueError, OSError):
+            review_applicable = False
+            review_error = 'input_unverified'
 
     label = brief_label(store, brief, language=language)
 
@@ -442,11 +463,15 @@ def html_report(store, version_id, *, excerpts=True):
         banner_cls, banner_text = 'draft', t['draft']
     elif newest_review['status'] in ('queued', 'running'):
         banner_cls, banner_text = 'progress', t['reviewing']
-    elif newest_review['status'] == 'complete':
+    elif newest_review['status'] == 'complete' and review_applicable:
         banner_cls = 'reviewed'
         banner_text = t['reviewed'] + ' · %d %s' % (len(open_findings), t['open_findings'])
+    elif newest_review['status'] == 'complete':
+        banner_cls, banner_text = 'warn', t['review_stale']
     else:
         banner_cls, banner_text = 'warn', t['review_failed']
+    if open_findings and banner_cls != 'reviewed':
+        banner_text += ' · %d %s' % (len(open_findings), t['open_findings'])
 
     cover_fields = ' · '.join(_esc(requirements[k]) for k in ('period', 'organization', 'industry', 'report_date')
                              if str(requirements.get(k) or '').strip())
@@ -545,15 +570,13 @@ def html_report(store, version_id, *, excerpts=True):
         appendix_b.append('<p class="check-line">%s</p>' % _esc(t['checks_unavailable']))
     appendix_b.append('<p class="appendix-note">%s</p>' % _esc(t['checks_note']))
 
-    gap_records = [g for g in detail.get('gap_records', []) if isinstance(g, dict) and g.get('status') == 'open']
-    if gap_records:
-        items = ''.join('<li><strong>%s</strong>%s%s</li>'
+    gap_records = unresolved_gap_records(detail)
+    items = ''.join('<li><strong>%s</strong>%s%s · %s</li>'
                         % (_esc(g.get('impact', '')),
                            (' · ' + _esc(g['related'])) if g.get('related') else '',
-                           (' · ' + _esc(g['action'])) if g.get('action') else '')
+                           (' · ' + _esc(g['action'])) if g.get('action') else '',
+                           _esc(t['gap_status'].get(g.get('status', 'open'), g.get('status', 'open'))))
                         for g in gap_records)
-    else:
-        items = ''.join('<li>%s</li>' % _esc(g) for g in detail.get('gaps', []) or [])
     appendix_b.append('<h3>%s</h3>%s' % (_esc(t['gaps']), '<ul>%s</ul>' % items if items else
                                         '<p class="muted">%s</p>' % _esc(t['no_issues'])))
 
@@ -565,21 +588,29 @@ def html_report(store, version_id, *, excerpts=True):
     else:
         appendix_b.append('<h3>%s</h3><p class="muted">%s</p>' % (_esc(t['conflicts']), _esc(t['no_issues'])))
 
-    complete_reviews = [r for r in reviews if r['status'] == 'complete']
     appendix_b.append('<h3>%s</h3>' % _esc(t['review']))
-    if complete_reviews:
-        if open_findings:
-            rows = ''.join('<li><span class="sev sev-%s">%s</span> %s</li>'
+    if review_applicable:
+        review_text = t['review_complete']
+    elif newest_review and newest_review['status'] == 'complete':
+        review_text = t['review_stale']
+    elif newest_review and newest_review['status'] in ('queued', 'running'):
+        review_text = t['reviewing']
+    elif newest_review:
+        review_text = t['review_failed']
+    else:
+        review_text = t['no_review']
+    appendix_b.append('<p class="check-line">%s</p>' % _esc(review_text))
+    if open_findings:
+        rows = ''.join('<li><span class="sev sev-%s">%s</span> %s · %s</li>'
                            % (_esc((f.get('data') or {}).get('severity', '')),
                               _esc((f.get('data') or {}).get('severity', '')),
                               _esc((f.get('data') or {}).get('description')
-                                   or (f.get('data') or {}).get('kind') or ''))
+                                   or (f.get('data') or {}).get('kind') or ''),
+                              _esc(t['finding_status'].get(f.get('status'), f.get('status', 'open'))))
                            for f in open_findings)
-            appendix_b.append('<ul>%s</ul>' % rows)
-        else:
-            appendix_b.append('<p class="muted">%s</p>' % _esc(t['no_issues']))
-    else:
-        appendix_b.append('<p class="muted">%s</p>' % _esc(t['no_review']))
+        appendix_b.append('<ul>%s</ul>' % rows)
+    elif review_applicable:
+        appendix_b.append('<p class="muted">%s</p>' % _esc(t['no_issues']))
     appendix_b.append('</section>')
 
     # ----- appendix C -----
@@ -603,7 +634,9 @@ def html_report(store, version_id, *, excerpts=True):
                 'briefloop_version': __version__, 'market': market,
                 'release': ({'id': release['id'], 'manifest_hash': (release['result'] if isinstance(release['result'], dict) else json.loads(release['result'])).get('manifest_hash')}
                             if release else None),
-                'review': ({'id': newest_review['id'], 'status': newest_review['status']} if newest_review else None),
+                'review': ({'id': newest_review['id'], 'status': newest_review['status'],
+                            'applicable': review_applicable, 'applicability_error': review_error}
+                           if newest_review else None),
                 'sources': [{'n': n, 'id': sid, 'url': (sources.get(sid) or {}).get('url'),
                              'sha256': (sources.get(sid) or {}).get('hash'),
                              'created': (sources.get(sid) or {}).get('created')}

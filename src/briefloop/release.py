@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from .deliverable_spec import SOFT_CONTRACT_KINDS, clause_items, requirement_severity
+from .delivery_state import unresolved_findings, unresolved_gap_records
 from .store import dump, now, uid
 from .platform_support import filesystem_path, path_redirected
 
@@ -174,10 +175,8 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
 
     for binding in snapshot['evidence']['bindings']:
         check_claim(binding)
-    for finding in findings:
+    for finding in unresolved_findings(findings):
         data = finding['data']
-        if finding['status'] in ('resolved', 'dismissed_with_evidence'):
-            continue
         # A writing/method problem must not re-block through a "major" finding; a
         # concrete factual or evidence finding still blocks.
         if finding_is_soft(data, severity) or data.get('severity') == 'minor':
@@ -192,10 +191,7 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
         else:
             issue('conflict_unresolved', conflict['data']['description'], conflict_id=conflict['id'])
     detail = snapshot.get('detail') or {}
-    gap_records = detail.get('gap_records') or [{'impact': str(text), 'status': 'open'} for text in (detail.get('gaps') or [])]
-    for record in gap_records:
-        if record.get('status') == 'resolved':
-            continue
+    for record in unresolved_gap_records(detail):
         # Unresolved gaps are surfaced but do not block on their own; a core evidence
         # gap still blocks through the claim and conflict checks.
         code = 'delivery_gap_unresolved' if record.get('status') == 'unresolved' else 'delivery_gap_open'
