@@ -1,10 +1,9 @@
 import {versionInformationHTML} from './report-version-info.js';
 import {reasoningControls,settingsEffort,reasoningModel} from './reasoning-controls.js';
 import {$,esc} from './dom.js';
-import {clock,day,dayTime,dateTime,dateTimeSeconds,moment} from './time.js';
+import {clock,dayTime,dateTimeSeconds,moment} from './time.js';
 import {api,uploadSource,setToken,getUploadLimits,setSourceUploadHost} from './api.js';
 import {createReportBrowsing} from './report-browsing.js';
-import {createSourceLibrarySearch} from './source-library-search.js';
 import {createProviderCapabilities} from './provider-capabilities.js';
 import {createModelCatalog,createProviderCatalog} from './model-catalog.js';
 import {createRuntimeModelPicker} from './runtime-model-picker.js';
@@ -67,8 +66,10 @@ import {createLengthControls} from './length-controls.js';
 import {createReportFormDefaults} from './report-form-defaults.js';
 import {sessionBudgetUI} from './session-budget.js';
 import {createReportSources} from './report-sources.js';
-import {SEARCH_LABELS,searchSettingsUI} from './search-settings.js';
+import {searchSettingsUI} from './search-settings.js';
 import {researchBudgetUI} from './research-budget.js';
+import {sourceViewerUI} from './source-viewer.js';
+import {runSourceIds,sourceState,sourceStatusChip,sourceTitle,sourceHost,sourcesPageUI} from './sources-page.js';
 import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -102,7 +103,7 @@ let state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,lear
 const reportSources=createReportSources({$,esc,getState:()=>state,getCurrent:()=>current,runSourceIds,sourceState,sourceStatusChip,sourceTitle,sourceHost,getEditor:()=>editor,reveal:()=>setReportTab('sources'),openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
 const citationSources=createCitationSources({element:$('editor'),getSources:()=>state?.sources||[],getCurrent:()=>current,focusSource:id=>reportSources.focus(id),openSource:id=>openSourceDrawer(id,sourceUsage()).catch(err=>notice(err.message,true))});
 const sessionBudget=sessionBudgetUI({$,api,action,notice,getState:()=>state});
-const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta,svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:closeSourceDrawer,onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
+const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta,svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:()=>closeSourceDrawer(),onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
 const feedbackList=createFeedbackList({$,esc,getState:()=>state,openLearning:()=>page('learning')});
 const retryLearning=learningRetry({api,getPlan:()=>state?.learning_authorization?.plan,confirm:text=>confirm(text),describePlan:learningPlanText});
@@ -121,6 +122,11 @@ const searchSettings=searchSettingsUI({api,getState:()=>state,runtimeName,render
 const {readSearchPolicy,loadSearchPolicy,renderSearchProvider,refreshTavilySettings,moveSearchSettings}=searchSettings;
 const researchBudget=researchBudgetUI({api,parse,getState:()=>state,getCurrent:()=>current,readSearchPolicy,selectTierBudget:budget=>reportFormDefaults.selectTierBudget(budget)});
 const {readResearchBudget,reflectBudgetPreset,initializeResearchBudget,renderBudgetProviderScope,refreshReportBudget}=researchBudget;
+const sourceViewer=sourceViewerUI({api,action,office});
+const {showSource,resetSourceMedia}=sourceViewer;
+const sourcesPage=sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBrowsing,getState:()=>state,
+ showSourceMedia:sourceViewer.showSourceMedia,drawerSourceMediaView:sourceViewer.drawerSourceMediaView,applySourceLinks:sourceViewer.applySourceLinks,sourceProvenanceRows:sourceViewer.sourceProvenanceRows});
+const {sourceUsage,renderSourcesPage,setSourceDrawerTab,openSourceDrawer,closeSourceDrawer}=sourcesPage;
 const compactControls=compactReportControlsUI({api,action,refresh,notice,page,showSettings,settingsView,setAutoLearn,chatBackendChoice,backendValue,runtimeName,sessionBudget,
  getState:()=>state,getComposerOptions:()=>composerOptions,pendingReview:()=>reviewControls.pending()});
 const {compactReportInstruction,compactFactAvailability,syncCompactReportControls,mountCompactReportControls}=compactControls;
@@ -1495,75 +1501,7 @@ async function updateLearningPause(){
 }
 $('auto-learn').onchange=async event=>{const enabled=event.target.checked;event.target.disabled=true;try{await setAutoLearn(enabled);await refresh();await updateLearningPause()}catch(e){notice(e.message,true)}finally{event.target.disabled=false;syncCompactReportControls()}};
 
-function sourceOriginalLink(result){
- const provenance=result.provenance||{};
- return {label:provenance.original_kind==='provider_response'?'下载 Tavily 返回内容 ↗':'下载原件 ↗',href:result.original_url||''};
-}
-function applySourceLinks(result,els){
- const source=result.source||{};
- if(els.link){els.link.textContent=els.linkLabel||source.url||'';els.link.title=source.url||'';els.link.href=source.url||'#';els.link.hidden=!source.url}
- if(els.original){const original=sourceOriginalLink(result);els.original.textContent=original.label;els.original.hidden=!original.href;if(original.href){els.original.href=original.href;els.original.download=source.name||''}else els.original.removeAttribute('href')}
-}
-function sourceProvenanceRows(result){
- const provenance=result.provenance||{},rows=[];
- if(provenance.fetched_at)rows.push(['抓取时间',moment(provenance.fetched_at)||String(provenance.fetched_at)])
- if(provenance.content_type)rows.push(['内容类型',String(provenance.content_type)]);
- return rows;
-}
-function showSourceProvenance(result,el){if(!el)return;const rows=sourceProvenanceRows(result);el.innerHTML=rows.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('');el.hidden=!rows.length}
-function showSource(result){
- applySourceLinks(result,{link:$('source-link'),original:$('source-original')});
- showSourceMedia(result);
- $('source-title').textContent=(result.source||{}).name||'来源';$('source-body').textContent=(result.source||{}).error||result.text||'';
- showSourceProvenance(result,$('source-provenance'));
- $('source-dialog').showModal();
-}
-
-let sourceMediaId=null;
-const dialogSourceMediaView=()=>({media:$('source-media'),images:$('source-images'),controls:$('source-page-controls'),note:$('source-media-note'),pages:$('source-pages'),render:$('source-pages-render')});
-const drawerSourceMediaView=()=>({media:$('source-drawer-media'),images:$('source-drawer-images'),controls:$('source-drawer-page-controls'),note:$('source-drawer-media-note'),pages:$('source-drawer-pages'),render:$('source-drawer-pages-render')});
-function resetSourceMedia(view){view=view||dialogSourceMediaView();sourceMediaId=null;if(!view.media)return;view.media.hidden=true;view.images.replaceChildren();if(view.render){view.render.disabled=false;view.render.hidden=false}const label=view.controls?.querySelector?.('label');if(label)label.textContent='查看 PDF 页码';const officeButton=officeMediaButton(view);if(officeButton)officeButton.hidden=true}
-function officeMediaButton(view){
- // The drawer has a static control; the source dialog gets an equivalent one lazily.
- if(!view.media)return null;
- if(view.media.id==='source-drawer-media')return $('source-drawer-office-render');
- let button=$('source-office-render');
- if(!button){button=document.createElement('button');button.type='button';button.className='outline';button.id='source-office-render';button.hidden=true;button.textContent='OfficeCLI 查看页面（本地渲染，不调用模型）';view.controls?.after?.(button)}
- return button;
-}
-function showSourceMedia(result,view){
- view=view||dialogSourceMediaView();sourceMediaId=null;
- const media=result.attachment;
- if(!media||result.source?.status!=='ready'){resetSourceMedia(view);return}
- const isPDF=media.media_type==='application/pdf',isImage=media.media_type?.startsWith('image/');
- // OfficeCLI page preview is an optional enhancement: without the switch an
- // Office original renders exactly like today, with no extra controls.
- const isOfficeFile=typeof office!=='undefined'&&office.officeEnabled()&&/\.(docx|xlsx|pptx)$/i.test(result.source?.name||'');
- if(!isPDF&&!isImage&&!isOfficeFile){resetSourceMedia(view);return}
- resetSourceMedia(view);sourceMediaId=result.source.id;
- view.media.hidden=false;
- if(isOfficeFile){
-  view.controls.hidden=false;view.pages.value='1';
-  const label=view.controls?.querySelector?.('label');if(label)label.textContent='查看页码（1–4）';
-  if(view.render)view.render.hidden=true;
-  const officeButton=officeMediaButton(view);if(officeButton){officeButton.hidden=false;officeButton.onclick=()=>action(()=>office.previewSourceInto(sourceMediaId,view,officeButton))}
-  view.note.textContent='Office 原件可用 OfficeCLI 本地渲染页面查看；本地渲染，不调用模型，预览失败不影响文件本身。';
-  return;
- }
- view.controls.hidden=!isPDF;view.pages.value='1';
- view.note.textContent=isPDF?`PDF 原件可用${media.pages?'，共 '+media.pages+' 页':''}。正文提取不覆盖所有图表，可按页查看。`:'原图已保存；发送给支持视觉的模型时会作为图片输入，不冒充 OCR 文本。';
- if(isImage&&result.image_url){const img=document.createElement('img');img.src=result.image_url;img.alt=result.source.name||'来源图片';img.className='source-preview-image';view.images.append(img)}
- if(view.render)view.render.onclick=()=>action(()=>renderSourcePages(sourceMediaId,view));
-}
-async function renderSourcePages(id,view){
- if(!id||!view)return;const value=view.pages.value.trim();if(!/^\d+(?:\s*[,，]\s*\d+)*$/.test(value))throw Error('请输入页码，例如 1 或 1,3');
- const pages=[...new Set(value.split(/[,，]/).map(Number))];if(pages.some(p=>p<1)||pages.length>4)throw Error('每次请选择 1–4 页，页码从 1 开始');
- view.render.disabled=true;
- try{const result=await api('source-pages',{source_id:id,pages});if(sourceMediaId!==id)return;view.images.replaceChildren();
-  for(const page of result.pages){const figure=document.createElement('figure');const caption=document.createElement('figcaption');caption.textContent='第 '+page.page+' 页';const img=document.createElement('img');img.className='source-preview-image';img.alt=caption.textContent;img.src=page.url;figure.append(caption,img);view.images.append(figure)}
- }finally{if(sourceMediaId===id)view.render.disabled=false}
-}
-$('source-dialog').addEventListener('close',()=>resetSourceMedia());
+sourceViewer.init();
 
 searchSettings.init();
 let candidatesPolling=false;
@@ -2104,139 +2042,13 @@ function runConflicts(runId){
 }
 function reportDescription(b){if(b.objective)return b.objective;const run=(state.runs||[]).find(r=>r.id===b.run_id);const req=run?parse(run.requirements):{};if(req.objective)return req.objective;const md=(b.markdown||b.excerpt||'').replace(/[#>*`\[\]]/g,' ').replace(/\s+/g,' ').trim();return md.slice(0,120)}
 function renderReports(){reportBrowsing.render()}
-function sourceState(s){return s.status!=='ready'?s.status:s.needs_visual?'visual':'ready'}
-function sourceStatusChip(st){return `<span class="chip ${st==='ready'?'success':st==='visual'?'warn':'danger'}">${st==='ready'?'可用':st==='visual'?'需视觉读取':esc(sourceStatusLabel({status:st}))}</span>`}
-function sourceIsWeb(s){return !!(s&&s.url)}
-function sourceHost(s){try{return new URL(s.url||s.name).hostname.replace(/^www\./,'')}catch{return ''}}
-function sourceTitle(s){const n=(s&&s.name)||'';let label;if(n&&!/^https?:\/\//i.test(n))label=n;else{const u=(s&&s.url)||n;try{const p=new URL(u);let seg=decodeURIComponent((p.pathname.split('/').filter(Boolean).pop()||''));seg=seg.replace(/\.[a-z0-9]{1,5}$/i,'').replace(/[-_]+/g,' ').trim();label=seg||p.hostname.replace(/^www\./,'')}catch{label=n||(s&&s.id)||'来源'}}return label.length>160?label.slice(0,159)+'…':label}
-function prettifyUrl(url){if(!url)return '';let out=url;try{const p=new URL(url);out=p.hostname.replace(/^www\./,'')+decodeURI(p.pathname)+(p.search||'')}catch{}return out.length>110?out.slice(0,107)+'…':out}
-function runSourceIds(run){if(!run)return[];if(Array.isArray(run.all_source_ids))return run.all_source_ids;try{const ids=parse(run.source_ids);return Array.isArray(ids)?ids:[]}catch{return[]}}
-function sourceUsage(){const map=new Map();for(const run of(state.runs||[])){const ids=runSourceIds(run);const brief=(state.briefs||[]).find(b=>b.run_id===run.id);const title=brief?(parse(brief.detail).title||'简报'):'报告';for(const id of ids){if(!map.has(id))map.set(id,[]);map.get(id).push({run_id:run.id,title})}}return map}
-function usageHTML(id,usage){const count=state.source_report_counts?.[id];return `<div data-source-report-usage="${esc(id)}"><p class="help">${count?`${count} 份报告，正在读取关联报告…`:'正在核对关联报告…'}</p></div>`}
-function wireUsage(pane){if(!pane)return;pane.querySelectorAll('[data-open-report]').forEach(b=>b.onclick=()=>{const brief=(state.briefs||[]).find(x=>x.run_id===b.dataset.openReport);if(brief&&openBrief(brief,{follow:false})){closeSourceDrawer();page('report')}})}
-$('sources-channel-filter').onchange=()=>{renderSourcesPage.sig=null;renderSourcesPage()};
-const sourceLibrarySearch=createSourceLibrarySearch({api,onChange:()=>{renderSourcesPage.sig=null;renderSourcesPage()}});
-const sourceSearchReasons={failed:'获取失败',visual_partial:'仅检索提取文字，图片未检索',empty_text:'没有可读正文',too_large:'正文超过2 MiB，未检索',changed:'文件已被改动，未检索',unreadable:'正文无法读取',metadata_unreadable:'读取状态无法确认，未检索'};
-function renderSourcesPage(){
- const box=$('sources-page-list');if(!box||!state)return;
- const all=state.sources||[],usage=sourceUsage();
- const q=($('sources-search')?.value||'').trim();
- const type=$('sources-type-filter')?.value||'';
- const channel=$('sources-channel-filter')?.value||'';
- const status=renderSourcesPage.status||'';
- sourceLibrarySearch.update({query:q,type,channel,status,workspace:state.workspace_id,
-  sources:all.map(s=>[s.id,s.hash,s.status,s.needs_visual,s.name,s.url,s.discovery_providers])});
- const search=sourceLibrarySearch.state,matches=new Map(search.items.map(item=>[item.source_id,item]));
- const failed=all.filter(s=>sourceState(s)==='failed');
- const rows=all.filter(s=>{
-  if(type&&(type==='web'?!sourceIsWeb(s):sourceIsWeb(s)))return false;
-  if(channel&&(channel==='unrecorded'?(s.discovery_providers||[]).length:!(s.discovery_providers||[]).includes(channel)))return false;
-  if(status&&sourceState(s)!==status)return false;
-  if(q&&!matches.has(s.id))return false;
-  return true;
- });
- if($('sources-page-count'))$('sources-page-count').textContent=q?
-  `已检查 ${search.scanned}/${search.scanned||search.exhausted?search.total:'…'} 个候选，找到 ${search.items.length} 个来源`+(search.unsearchedCount?` · ${search.unsearchedCount} 份正文未完整检索`:'')+(search.exhausted&&!search.unsearchedCount?' · 搜索完成':''):
-  `共 ${all.length} 个来源`+(failed.length?` · ${failed.length} 个获取失败`:'');
- const retry=$('sources-retry-all');if(retry){retry.hidden=!failed.length;retry.disabled=!failed.length}
- const sig=JSON.stringify([q,type,status,channel,search,rows.map(s=>{const u=usage.get(s.id)||[];return [s.id,s.status,s.needs_visual,s.name,s.url,s.created,state.source_report_counts?.[s.id]??u.length,s.discovery_providers]})]);if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
- box.innerHTML=rows.length?rows.map(s=>{const host=sourceHost(s),web=sourceIsWeb(s),u=usage.get(s.id)||[],st=sourceState(s);const when=day(s.created);return `<div class="sources-row" data-src-row="${esc(s.id)}"><div class="src-name"><span class="src-title">${esc(sourceTitle(s))}</span><small>${esc(host||'本地文件')} · ${esc(when)} 更新${(s.discovery_providers||[]).length?' · 发现：'+esc(s.discovery_providers.map(p=>SEARCH_LABELS[p]||p).join('、')):''}</small></div><div class="src-type">${web?'网站':'文件'}</div><div class="src-status">${sourceStatusChip(st)}</div><div class="src-usage">${(state.source_report_counts?.[s.id]??u.length)?esc((state.source_report_counts?.[s.id]??u.length)+' 份报告'):'—'}</div><div class="src-actions"><div class="menu-wrap"><button type="button" class="ghost" data-src-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多">⋯</button><div class="popover" role="menu" hidden>${['failed','cancelled','interrupted','visual'].includes(st)?'<button type="button" role="menuitem" data-sources-retry="'+esc(s.id)+'">重新读取</button>':''}${web?'<button type="button" role="menuitem" data-sources-copy="'+esc(s.url||'')+'">复制链接</button><a role="menuitem" href="'+esc(s.url)+'" target="_blank" rel="noreferrer">打开原文</a>':''}</div></div></div></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
- if(q){
-  if(!rows.length)box.innerHTML=`<p class="help">${search.loading?'正在检索本地材料…':search.error?'搜索未完成。':search.exhausted?(search.unsearchedCount?'已检索正文未找到匹配，仍有正文未能读取。':'没有匹配的来源。'):'本页未命中，仍有材料未检索。'}</p>`;
-  box.querySelectorAll('[data-src-row]').forEach(row=>{const match=matches.get(row.dataset.srcRow),name=row.querySelector('.src-name');for(const hit of match?.hits||[]){const context=document.createElement('p');context.className='source-search-context';context.textContent=`第 ${hit.start_line} 行 · ${hit.context}`;name.append(context)}});
-  const footer=document.createElement('div');footer.className='source-search-footer';
-  if(search.unsearchedCount){const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent=`${search.unsearchedCount} 份正文未完整检索`;details.append(summary);for(const item of search.unsearched){const line=document.createElement('p');line.textContent=`${item.name}：${sourceSearchReasons[item.reason]||'未检索'}`;details.append(line)}footer.append(details)}
-  if(search.error){const error=document.createElement('p');error.textContent=search.error;footer.append(error);const restart=document.createElement('button');restart.type='button';restart.className='outline';restart.textContent='重新搜索';restart.onclick=()=>{sourceLibrarySearch.update({});renderSourcesPage.sig=null;renderSourcesPage()};footer.append(restart)}
-  else if(search.next||search.loading){const more=document.createElement('button');more.type='button';more.className='outline';more.textContent=search.loading?'正在检索…':'继续搜索';more.disabled=search.loading;more.onclick=()=>sourceLibrarySearch.more();footer.append(more)}
-  box.append(footer);
- }
- box.querySelectorAll('[data-src-row]').forEach(row=>row.onclick=e=>{if(e.target.closest('.menu-wrap'))return;openSourceDrawer(row.dataset.srcRow,usage,matches.get(row.dataset.srcRow)).catch(err=>notice(err.message,true))});
- box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=e=>{e.stopPropagation();action(async()=>{const src=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(sourceStatusLabel(src),['failed','cancelled','interrupted'].includes(src.status))})});
- box.querySelectorAll('[data-sources-copy]').forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await copyText(b.dataset.sourcesCopy);notice('链接已复制')}catch{notice('复制失败',true)}});
- box.querySelectorAll('.menu-wrap').forEach(wrap=>{const t=wrap.querySelector('[data-src-menu]'),pop=wrap.querySelector('.popover');if(!t||!pop)return;t.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(x=>x.hidden=true);pop.hidden=!open;t.setAttribute('aria-expanded',String(open))}});
-}
-function renderSourceOverview(s,result,usage){
- const pane=document.querySelector('[data-source-pane="overview"]');if(!pane)return;
- const st=sourceState(s),host=sourceHost(s);
- const date=dateTime(s.created);
- const statusText=st==='ready'?'正文已成功解析':st==='visual'?'正文提取不完整，需要视觉读取':sourceStatusLabel(s);
- const prov=result?sourceProvenanceRows(result):[];
- let html=`<section class="source-section"><h3>来源</h3><p class="source-value">${esc(sourceTitle(s))}</p><p class="help">${esc(host||'本地文件')} · ${esc(date)}</p></section>`
-  +`<section class="source-section"><h3>读取</h3><p class="source-value">${sourceStatusChip(st)} ${statusText}</p>${s.error?`<p class="help">${esc(s.error)}</p>`:''}</section>`;
- if(prov.length)html+=`<section class="source-section"><h3>抓取信息</h3><dl class="source-provenance">${prov.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></section>`;
- html+=`<section class="source-section"><h3>原始名称</h3><p class="source-value mono">${esc(s.name||'—')}</p>${s.url?`<h3>原始链接</h3><a class="source-link" href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(prettifyUrl(s.url))} ↗</a>`:''}</section>`
-  +`<section class="source-section"><h3>使用于</h3>${usageHTML(s.id,usage)}</section>`;
- pane.innerHTML=html;
- wireUsage(pane);
-}
-function renderSourceText(result){
- const body=$('source-drawer-body');if(!body)return;
- const source=result.source||{};
- body.textContent=source.error||result.text||'没有可读正文。';
- showSourceMedia(result,drawerSourceMediaView());
-}
-function setSourceDrawerTab(name){
- const drawer=$('source-drawer');if(!drawer)return;
- if(!['overview','text','usage'].includes(name))name='overview';
- drawer.querySelectorAll('[data-source-pane]').forEach(p=>p.hidden=p.dataset.sourcePane!==name);
- drawer.querySelectorAll('[data-source-tab]').forEach(b=>markTab(b,b.dataset.sourceTab===name));
-}
-async function openSourceDrawer(id,usage,match){
- const s=(state.sources||[]).find(x=>x.id===id);if(!s)return;
- const drawer=$('source-drawer'),backdrop=$('source-drawer-backdrop');if(!drawer)return;
- const workspace=state.workspace_id;
- drawer.dataset.sourceId=id;
- const request=String((Number(drawer.dataset.request)||0)+1);drawer.dataset.request=request;
- const host=sourceHost(s);
- const brand=$('source-drawer-brand');if(brand)brand.textContent=host||'本地文件';
- const title=$('source-drawer-title');if(title)title.textContent=sourceTitle(s);
- const domain=$('source-drawer-domain');if(domain)domain.textContent=s.url?prettifyUrl(s.url):'';
- const chips=$('source-drawer-chips');if(chips)chips.innerHTML=`<span class="chip">${sourceIsWeb(s)?'网站':'文件'}</span>${sourceStatusChip(sourceState(s))}`;
- const original=$('source-drawer-original');if(original){original.hidden=true;original.removeAttribute('href')}
- const link=$('source-drawer-source');if(link){link.hidden=true;link.removeAttribute('href')}
- const retry=$('source-drawer-retry');if(retry)retry.hidden=!['failed','cancelled','interrupted','visual'].includes(sourceState(s));if(retry)retry.onclick=()=>action(async()=>{const r=await api('retry-source',{source_id:s.id});notice(sourceStatusLabel(r),['failed','cancelled','interrupted'].includes(r.status))});
- renderSourceOverview(s,null,usage);
- const up=document.querySelector('[data-source-pane="usage"]');if(up){up.innerHTML=usageHTML(s.id,usage);wireUsage(up)}
- const body=$('source-drawer-body');if(body)body.textContent='正在读取…';showSourceMedia({source:s,attachment:null},drawerSourceMediaView());
- drawer.hidden=false;if(backdrop)backdrop.hidden=false;
- setSourceDrawerTab('overview');
- let result=null;
- try{result=await api('source?id='+encodeURIComponent(id))}catch(e){if(drawer.dataset.request===request&&state.workspace_id===workspace&&body)body.textContent='读取失败：'+e.message}
- if(!result||drawer.dataset.request!==request||state.workspace_id!==workspace)return;
- applySourceLinks(result,{link:$('source-drawer-source'),linkLabel:'打开原文 ↗',original:$('source-drawer-original')});
- renderSourceOverview(s,result,usage);
- reportBrowsing.sourceUsage(id,()=>drawer.querySelectorAll('[data-source-report-usage]'),()=>drawer.dataset.request===request&&state.workspace_id===workspace);
- renderSourceText(result);
- if(match?.hits?.length){
-  setSourceDrawerTab('text');
-  if(result.source.hash!==match.source_hash){body.textContent='来源已变化，请重新搜索后定位。';return}
-  const hit=match.hits[0],lines=result.text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/),line=lines[hit.start_line-1];
-  if(line===undefined){body.textContent='来源行号已变化，请重新搜索后定位。';return}
-  const before=document.createTextNode(lines.slice(0,hit.start_line-1).join('\n')+(hit.start_line>1?'\n':''));
-  const target=document.createElement('mark');target.className='source-search-hit';target.textContent=line;target.title=`第 ${hit.start_line} 行`;
-  const after=document.createTextNode((hit.start_line<lines.length?'\n':'')+lines.slice(hit.start_line).join('\n'));
-  body.replaceChildren(before,target,after);target.scrollIntoView({block:'center'});
- }
-}
-function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1)}if(b)b.hidden=true}
 const templateOutput=createTemplateOutput({api,notice,refresh,getState:()=>state,getCurrent:()=>current,savedVersion,
  openBrief:brief=>{const opened=openBrief(brief);if(opened)page('report');return opened},uploadPayload,getUploadLimits});
 const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,
  syncTemplateLanguage:template=>reportLanguageForm.syncTemplate(template),openTemplateOutput:(id,mode)=>templateOutput.open(id,mode)});
 if($('new-report'))$('new-report').onclick=()=>page('setup');
-if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
-if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
+sourcesPage.init();
 if($('templates-upload'))$('templates-upload').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;await api('template-import',await uploadPayload(file,getUploadLimits()));e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式')});
-if($('sources-search'))$('sources-search').oninput=()=>{renderSourcesPage.sig='';renderSourcesPage()};
-if($('sources-type-filter'))$('sources-type-filter').onchange=()=>{renderSourcesPage.sig='';renderSourcesPage()};
-document.querySelectorAll('[data-sources-status]').forEach(b=>b.onclick=()=>{renderSourcesPage.status=b.dataset.sourcesStatus;document.querySelectorAll('[data-sources-status]').forEach(x=>markTab(x,x===b));renderSourcesPage.sig='';renderSourcesPage()});
-if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(state.sources||[]).filter(s=>['failed','cancelled','interrupted'].includes(s.status));if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个失败来源`)});
-if($('sources-add-file'))$('sources-add-file').onclick=()=>$('sources-upload').click();
-if($('sources-add-url-open'))$('sources-add-url-open').onclick=()=>{const row=$('sources-add-url-row');if(row){row.hidden=false;const u=$('sources-url');if(u)u.focus()}};
-if($('sources-add-url-cancel'))$('sources-add-url-cancel').onclick=()=>{const row=$('sources-add-url-row');if(row)row.hidden=true};
-if($('source-drawer-close'))$('source-drawer-close').onclick=()=>closeSourceDrawer();
-if($('source-drawer-backdrop'))$('source-drawer-backdrop').onclick=()=>closeSourceDrawer();
-document.querySelectorAll('[data-source-tab]').forEach(b=>b.onclick=()=>setSourceDrawerTab(b.dataset.sourceTab));
 reportBrowsing.init();
 if($('report-tasks-all'))$('report-tasks-all').onclick=()=>{renderTasks.showAll=!renderTasks.showAll;renderTasks();renderTaskGraph()};
 if($('report-chat-expand'))$('report-chat-expand').onclick=()=>openReportChat();
