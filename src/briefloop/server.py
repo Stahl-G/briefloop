@@ -234,6 +234,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
                     self.send(200, {'label': brief_label(store, brief, language=requirements.get('language')),
                                     'market_convention': resolve_market(requirements)})
+                elif u.path=='/api/export-html':
+                    from .html_export import html_report
+                    if q.get('workspace_id', [store.meta('workspace_id')])[0] != store.meta('workspace_id'):
+                        raise ValueError('工作区已切换，请在原工作区导出')
+                    page=html_report(store,q['version'][0],excerpts=q.get('excerpts',['1'])[0]!='0')
+                    self.send(200,page.encode('utf-8'),'text/html; charset=utf-8')
                 elif u.path=='/api/reports':
                     from .report_browsing import reports
                     self.send(200,reports(store,**{key:q[key][0] for key in ('cursor','limit','q','status','days','sources','source_id') if key in q}))
