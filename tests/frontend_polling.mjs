@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {adaptivePoll} from '../frontend/polling.js';
-import {updatePanel} from '../frontend/report-panels.js';
+import {homeUI} from '../frontend/home.js';
 
 test('polling backs off idle/hidden, refreshes on return and never overlaps a slow request',async()=>{
  const timers=new Map();let sequence=0,listener,active=false,release,calls=0;
@@ -48,21 +48,19 @@ test('a snapshot that differs only by the server clock keeps the page; timed tas
 });
 
 test('an unchanged task banner keeps its buttons across polls and a closed one stays consistent',()=>{
- const start=source.indexOf('const BANNER_RESULT_KINDS=');
- const end=source.indexOf('\n}\n',source.indexOf('function renderTaskBanner(){'))+3;
  let writes=0,stored=null;const buttons=new Map();
  const box={hidden:true,className:'',html:'',get innerHTML(){return this.html},set innerHTML(value){writes++;this.html=value},
   querySelector:selector=>{if(!buttons.has(selector))buttons.set(selector,{});return buttons.get(selector)}};
  const job={id:'job',kind:'generate',status:'running',payload:'{}',created:new Date().toISOString()};
- const context=vm.createContext({$:()=>box,state:{jobs:[job],briefs:[],runs:[]},parse:value=>JSON.parse(value||'{}'),esc:String,
-  statuses:{running:'运行中'},taskLabel:()=>'生成报告',updatePanel,page(){},action(){},api(){},openBrief(){},
-  localStorage:{getItem:()=>stored,setItem:(_,value)=>{stored=value}}});
- vm.runInContext(source.slice(start,end),context);
- vm.runInContext('renderTaskBanner();renderTaskBanner()',context);
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>stored,setItem:(_,value)=>{stored=value}}});
+ const state={jobs:[job],briefs:[],runs:[]};
+ const {renderTaskBanner}=homeUI({$:()=>box,getState:()=>state,parse:value=>JSON.parse(value||'{}'),
+  statuses:{running:'运行中'},taskLabel:()=>'生成报告',page(){},action(){},api(){},openBrief(){}});
+ renderTaskBanner();renderTaskBanner();
  assert.equal(writes,1,'polling with the same task does not replace the announced banner');
  assert.equal(box.hidden,false);assert.match(box.html,/正在生成报告/);
  buttons.get('[data-banner-close]').onclick();
  assert.equal(box.hidden,true);assert.equal(box.html,'');
- job.status='complete';job.updated=new Date().toISOString();vm.runInContext('renderTaskBanner()',context);
+ job.status='complete';job.updated=new Date().toISOString();renderTaskBanner();
  assert.equal(box.hidden,false);assert.match(box.html,/新报告已生成/);
 });

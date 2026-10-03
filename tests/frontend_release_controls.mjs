@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {scheduleUI} from '../frontend/schedules.js';
+import {homeUI} from '../frontend/home.js';
 import {section as sectionOf} from './source_section.mjs';
 
 const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
@@ -49,10 +50,10 @@ test('applying settings updates the next-turn effort, and clearing it selects mo
 
 test('task completion clears the rail even while an existing conversation is open',()=>{
  const $=elements(),state={jobs:[{id:'job1',kind:'generate',status:'running',created:'2026-09-21T00:00:00Z'}]};
+ const {renderHomeTasks}=homeUI({$,getState:()=>state,taskLabel:()=> '生成简报',parse:value=>JSON.parse(value||'{}'),openTask(){},taskFor(){}});
  const context=vm.createContext({settingsEffort,$,state,chat:{home:false,messages:[{role:'user'}],session:null},chatActive:()=>false,
-  taskLabel:()=> '生成简报',bannerTitle:()=> 'Test report',esc:String,dayTime:String,chatStates:{},
+  renderHomeTasks,chatStates:{},
   renderMessages(){},renderActivities(){},autoOpenActivity(){},renderRequests(){},renderContext(){},renderSessions(){},renderSessionLifecycle(){},updateComposer(){},modelLabel(){}});
- vm.runInContext(section('function renderHomeTasks()','function homeReportRowHTML('),context);
  vm.runInContext(section('function renderChat()','async function selectChat('),context);
  vm.runInContext('renderChat()',context);
  assert.equal($('home-rail').hidden,false);

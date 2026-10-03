@@ -5,6 +5,7 @@ import {section,allFrontendSources} from './source_section.mjs';
 
 const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
 const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
+const home=fs.readFileSync(new URL('../frontend/home.js',import.meta.url),'utf8');
 const schedules=fs.readFileSync(new URL('../frontend/schedules.js',import.meta.url),'utf8');
 const genre=fs.readFileSync(new URL('../frontend/templates.js',import.meta.url),'utf8');
 const tokens=fs.readFileSync(new URL('../src/briefloop/static/tokens.css',import.meta.url),'utf8');
@@ -34,11 +35,11 @@ test('home loads tokens.css and keeps composer progressive disclosure markers',(
 });
 
 test('renderHome shows main recent when rows exist and rail for running jobs',()=>{
-  assert.match(app,/has-home-rail/);
-  assert.match(app,/home-rail-jobs/);
-  assert.match(app,/home-rail-recent-list/);
-  const renderHome=section(app,'function renderHome()','function homeReportRowHTML(','frontend/app.js');
-  const rail=section(app,'function renderHomeTasks()','function homeReportRowHTML(','frontend/app.js');
+  assert.match(home,/has-home-rail/);
+  assert.match(home,/home-rail-jobs/);
+  assert.match(home,/home-rail-recent-list/);
+  const renderHome=section(home,'function renderHome()','function homeReportRowHTML(','frontend/home.js');
+  const rail=section(home,'function renderHomeTasks()','function homeReportRowHTML(','frontend/home.js');
   assert.match(rail,/has-home-rail/);
   assert.match(rail,/home-rail-jobs/);
   assert.match(renderHome,/home-block-recent/);
@@ -48,7 +49,7 @@ test('renderHome shows main recent when rows exist and rail for running jobs',()
 test('home does not render empty schedule/report placeholders',()=>{
   assert.doesNotMatch(schedules,/还没有计划/);
   assert.match(schedules,/home-block-schedule/);
-  const renderHome=section(app,'function renderHome()','function autoOpenActivity','frontend/app.js');
+  const renderHome=section(home,'function renderHome()',' return {bannerTitle','frontend/home.js');
   assert.doesNotMatch(renderHome,/还没有报告/);
   assert.match(renderHome,/home-block-recent/);
   assert.match(app,/anchoredPopover\(\{trigger:\$\('composer-params'\)/);
@@ -71,10 +72,10 @@ test('the category palette lives in the tokens and avoids the status hues',()=>{
 });
 
  test('home hydrates linear ICONS from settings icon set',()=>{
-  assert.match(app,/svgLineIcon/);
-  assert.match(app,/hydrateHomeIcons/);
-  assert.match(app,/reportIconMeta/);
-  assert.match(app,/ICONS\[name\]/);
+  assert.match(home,/svgLineIcon/);
+  assert.match(home,/hydrateHomeIcons/);
+  assert.match(home,/reportIconMeta/);
+  assert.match(home,/ICONS\[name\]/);
 });
 
 test('the Opencode effort field is not wired to the model picker',()=>{
