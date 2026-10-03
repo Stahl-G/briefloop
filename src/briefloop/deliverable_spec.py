@@ -239,3 +239,123 @@ def save_reader_contract(store, run_id, value):
         raise ValueError('这份产物约定已绑定稿件；新要求需建立新的要求/报告版本，不能覆盖历史解释')
     store.set_meta(key,checked)
     return checked
+
+
+ANALYSIS_CHECKLIST_CANDIDATE = 'chapter-v1'
+
+
+def analysis_check_instructions(spec):
+    """Explicit experiment appendix; ordinary role instructions never include it."""
+    return '''章级分析检查候选（仅本轮显式实验，不替代四维评价）：
+先判断每章在本轮读者约定中的职责，再检查它是否已有职责所需的判断。不是每个段落、章节或正确事实都必须有 so-what；不按含义句比例、关键词或段落数量评分。
+在 assessment.analysis_checks 为每个待检查的章写一项：chapter_quote 是可唯一定位本章的逐字片段（优先包括标题）；requirement_quote 是原始 requirement_items.text 或本章已冻结 sections.purpose 中支持职责判断的连续原话；expectation 为 required / optional / not_required / uncertain；judgment_quote 是本章已有判断的原句，没有则为空；rationale 先解释职责，再说明判断是否已有。
+required 仅用于明确要求本章完成影响判断、取舍或观察节点的情况。纯新闻列表、事实说明、资料表格/输入章可为 not_required；职责不明确、要求的适用章不清楚或材料不足以确定判断应存在时为 uncertain，不强迫补写。不能用邻章判断充当本章已完成，也不能把通用“行业重要/值得关注”当具体判断。
+即使判断与原句事实都正确，也先看职责；事实章可不写分析。required 且确无判断时才记录缺失；已有判断即逐字给出 judgment_quote，缺少、编造或不匹配的引用不得当检查通过。
+套话 filler、重复 restatement、离题 off_topic 属独立表达问题；不要改名为 no_implication，也不要仅因类别名把可选润色升级成必修。保留原四维印象分；不要把任意分析低分自动变成修订要求。
+示例（虚构，不能用作报告事实）：要求“数据章列出季度指标”时，“## 数据\n交付 100 台，上季 90 台。”为 not_required，不需强行预测；要求“影响章给出本次扩容决策的观察节点”时，同一事实只有列表而没有判断可为 required 且缺失。已写“交付比上季多 10 台；是否继续扩容，应结合下一季度订单覆盖率核对”时，原句已有有条件的观察节点，不应报缺失；不能据 100/90 台断言需求驱动或未来必然增长。职责不清楚则 uncertain。
+有明确 required 缺失时仍须说明材料边界：补写材料支持的取舍/观察节点，或明确相关判断尚不能形成；不要求制造因果或预测。检查范围与不确定性保存在检查记录中。'''
+
+
+def _analysis_chapter_span(markdown, quote):
+    """Locate an exact unique quote and its Markdown chapter; no semantic inference."""
+    import re
+    if not quote.strip() or markdown.count(quote) != 1:
+        return None
+    start = markdown.index(quote)
+    headings = list(re.finditer(r'^ {0,3}(#{1,6})[ \t]+.*$', markdown, re.MULTILINE))
+    preceding = [heading for heading in headings if heading.start() <= start]
+    heading = preceding[-1] if preceding else None
+    lower = heading.start() if heading else 0
+    level = len(heading.group(1)) if heading else 0
+    following = [item for item in headings if item.start() > start
+                 and (not heading or len(item.group(1)) <= level)]
+    upper = following[0].start() if following else len(markdown)
+    if start + len(quote) > upper:
+        return None
+    return lower, upper
+
+
+def validate_analysis_checks(assessment, spec, markdown):
+    """Validate provenance only. The model owns expectation and semantic judgment.
+
+    Returned status cannot be supplied by the model. A missing/ambiguous reference
+    remains uncertain, never passed or a compulsory repair. Raw assessment is kept.
+    """
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    requirement_items = spec.get('requirement_items', [])
+    requirements = [item['text'] for item in requirement_items]
+    results, spans = [], []
+    for index, original in enumerate(data.get('analysis_checks', [])):
+        item = original if isinstance(original, dict) else original.model_dump()
+        check = {key: item.get(key, '') for key in ('chapter_quote', 'requirement_quote', 'expectation', 'judgment_quote', 'rationale')}
+        errors = []
+        span = _analysis_chapter_span(markdown, check['chapter_quote'])
+        if span is None:
+            errors.append('chapter_quote 必须连续逐字存在并可唯一定位一章。')
+        # Only a purpose belonging to this quoted chapter may authorize a repair;
+        # a neighboring chapter's purpose is not a blanket analysis requirement.
+        import re
+        chapter_title = re.sub(r'^ {0,3}#{1,6}[ \t]+|[ \t]+#+[ \t]*$', '',
+                               markdown[span[0]:span[1]].split('\n', 1)[0]).strip() if span else ''
+        chapter_sections = [section for section in spec.get('sections', [])
+                            if span and section.get('title') == chapter_title]
+        section_requirements = [section.get('purpose', '') for section in chapter_sections]
+        quote = check['requirement_quote']
+        if quote and not any(quote in text for text in requirements + section_requirements):
+            errors.append('requirement_quote 不在原始要求或本章冻结 purpose 中。')
+        if check['expectation'] == 'required' and not quote.strip():
+            errors.append('required 缺少明确职责要求的原话。')
+        if check['expectation'] not in ('required', 'optional', 'not_required', 'uncertain') or not check['rationale'].strip():
+            errors.append('缺少有效职责判断或说明。')
+        judgment = check['judgment_quote']
+        if judgment and (not span or markdown[span[0]:span[1]].count(judgment) != 1):
+            errors.append('judgment_quote 不在同一章中连续逐字唯一存在。')
+        manual_section = any(section.get('mode') == 'manual' for section in chapter_sections)
+        manual_requirement = bool(quote) and bool(chapter_title) and any(quote in requirement['text']
+            and chapter_title in requirement['text']
+            and requirement.get('kind') in ('manual', 'manual_assignment') for requirement in requirement_items)
+        if errors or check['expectation'] == 'uncertain':
+            status = 'uncertain'
+        elif manual_section or manual_requirement:
+            # Frozen human assignment wins over a model's required expectation.
+            # Keep the original model fields; only the controller-derived action changes.
+            status = 'manual'
+        elif check['expectation'] == 'required':
+            status = 'judgment_present' if judgment.strip() else 'missing'
+        else:
+            status = check['expectation']
+        results.append({**check, 'id': f'analysis_chapter:{index}', 'status': status,
+                        'validation_errors': errors})
+        if status == 'manual':
+            results[-1]['preservation_note'] = '冻结要求将本章或该条内容留给人工，仅保留占位；模型判断不能赋予自动补写权限。'
+        spans.append(span)
+    for index, span in enumerate(spans):
+        if span and spans.count(span) > 1:
+            results[index]['status'] = 'uncertain'
+            results[index]['validation_errors'].append('同一章返回多个检查，不能判定职责检查完成。')
+    return results
+
+
+def candidate_assessment(assessment, spec, markdown):
+    """Revision-only view; original scores/findings and saved draft remain untouched."""
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    checked = validate_analysis_checks(data, spec, markdown)
+    result = deepcopy(data)
+    result['analysis_checks'] = checked
+    result['analysis_check_coverage'] = {
+        'status': 'not_checked' if not checked else ('partial' if any(check['status'] == 'uncertain' for check in checked) else 'reported'),
+        'reported_chapters': len(checked),
+        'uncertain_chapters': sum(check['status'] == 'uncertain' for check in checked),
+        'scope': '未返回章级检查即未覆盖；已返回也不代表全部章节覆盖或语义判定通过。'}
+    raw = result.get('findings', [])
+    result['analysis_check_unverified_findings'] = [finding for finding in raw if finding.get('kind') == 'no_implication']
+    result['findings'] = [finding for finding in raw if finding.get('kind') != 'no_implication']
+    for check in checked:
+        if check['status'] != 'missing':
+            continue
+        result['findings'].append({'dimension': 'analysis', 'severity': 'minor',
+            'kind': 'no_implication', 'description': check['rationale'],
+            'report_quote': check['chapter_quote'], 'requirement': check['requirement_quote'],
+            'suggestion': '仅在材料支持范围内完成本章明确职责；可用有条件的取舍或观察节点，材料不足则说明相关判断尚不能形成，不编造因果或预测。',
+            'check_ids': [check['id']]})
+    return result

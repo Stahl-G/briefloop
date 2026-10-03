@@ -492,6 +492,15 @@ class Finding(Model):
     block_ids: list[str] = Field(default_factory=list)
 
 
+class AnalysisCheck(Model):
+    """Opt-in chapter experiment; no score or repair authority by itself."""
+    chapter_quote: str = Field(default='', description='本章中连续逐字存在且可唯一定位的片段，优先包含章节标题。')
+    requirement_quote: str = Field(default='', description='支持本章职责判断的原始要求或已冻结章节 purpose 连续逐字片段；不能自拟要求。')
+    expectation: Literal['required', 'optional', 'not_required', 'uncertain']
+    judgment_quote: str = Field(default='', description='本章已有影响判断、取舍或观察节点的原句；确无时为空，不用邻章判断代替。')
+    rationale: str = Field(default='', description='先说明章节职责是否要求判断，再说明判断是否已有及其依据；不按比例计数。')
+
+
 class Assessment(Model):
     brief_hash: str
     status: Literal["complete", "incomplete"] = "complete"
@@ -502,6 +511,7 @@ class Assessment(Model):
     analysis: int | None = Field(default=None, ge=1, le=5)
     expression: int | None = Field(default=None, ge=1, le=5)
     checks: list[dict] = Field(default_factory=list)
+    analysis_checks: list[AnalysisCheck] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
 
     @model_validator(mode="after")

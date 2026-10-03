@@ -11,7 +11,7 @@ from wikiskill.k4_lock import workspace_lock
 
 SCHEMA = 'semantic-calibration.v1'
 IDENTITY_FIELDS = ('dataset_id', 'provider', 'model', 'endpoint', 'questions', 'policy',
-                   'prefilter', 'response_shape', 'code_hash', 'script_hashes', 'max_attempts',
+                   'prefilter', 'response_shape', 'response_format', 'code_hash', 'script_hashes', 'max_attempts',
                    'timeout_seconds_per_attempt', 'max_request_bytes', 'allow_private_external')
 
 
@@ -27,7 +27,7 @@ def identity(protocol):
 
 def arm_id(protocol):
     # A changed prompt or code must not grant a second look at one arm's heldout data.
-    return digest({key: protocol[key] for key in ('provider', 'model', 'endpoint', 'response_shape', 'prefilter')})
+    return digest({key: protocol[key] for key in ('provider', 'model', 'endpoint', 'response_shape', 'response_format', 'prefilter')})
 
 
 def _policy_path(dataset, policy_id):

@@ -236,6 +236,7 @@ def test_must_fix_expression_anchor_and_overall_consistency():
     assert not overall_inconsistent({'status': 'complete', 'overall': '建议修改', 'expression': 2})
 
 
+
 def test_formal_gate_surfaces_open_and_unresolved_gaps():
     review = {'status': 'complete', 'coverage_scan_complete': True, 'requirement_checks': []}
     base = {'requirements': {'requirement_items': []}, 'evidence': {'bindings': []}, 'conflicts': []}

@@ -153,7 +153,10 @@ def checked_endpoint(endpoint):
     return endpoint
 
 
-def request_body(case, provider, model, with_probabilities=False):
+RESPONSE_FORMATS = ('json_schema', 'json_object')
+
+
+def request_body(case, provider, model, with_probabilities=False, response_format='json_schema'):
     q = question(case['task'])
     if provider == 'jev':
         return {'model': model, 'state': case['state'], 'questions': {'judgment': q}}
@@ -167,6 +170,13 @@ def request_body(case, provider, model, with_probabilities=False):
             'required': criteria, 'additionalProperties': False}
         schema['required'].append('probabilities')
         instruction = '返回 {"choice": "允许的类别", "probabilities": {每个类别: 0到1的概率，合计为1}}，不生成解释。'
+    if response_format == 'json_object':
+        # For endpoints without strict schemas: the schema goes in the instruction and
+        # parse_response still rejects any answer that does not match it exactly.
+        return {'model': model, 'messages': [
+            {'role': 'system', 'content': dump(q) + '\n' + instruction + '\n输出一个符合以下 JSON Schema 的 JSON 对象：' + dump(schema)},
+            {'role': 'user', 'content': dump(case['state'])}],
+            'response_format': {'type': 'json_object'}}
     return {'model': model, 'messages': [
         {'role': 'system', 'content': dump(q) + '\n' + instruction},
         {'role': 'user', 'content': dump(case['state'])}],
@@ -175,7 +185,9 @@ def request_body(case, provider, model, with_probabilities=False):
 
 def http_call(endpoint, body, key, timeout):
     request = urllib.request.Request(endpoint, data=dump(body).encode(), headers={
-        'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key})
+        'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key,
+        # Some gateways refuse the default urllib agent outright.
+        'User-Agent': 'briefloop-semantic-experiment/1'})
     with urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout) as response:
         raw = response.read(2_000_001)
         if len(raw) > 2_000_000:
@@ -255,8 +267,11 @@ def clean_secret(value, key):
 
 def _execute(dataset, out, provider='rules', model=None, endpoint=None, key=None, split='dev',
             allow_network=False, allow_private=False, timeout=30, attempts=2, max_bytes=60000,
-            use_prefilter=False, with_probabilities=False, transport=http_call, frozen_policy=None):
+            use_prefilter=False, with_probabilities=False, transport=http_call, frozen_policy=None,
+            response_format='json_schema'):
     manifest, cases = load_dataset(dataset)
+    if response_format not in RESPONSE_FORMATS or response_format != 'json_schema' and provider != 'llm':
+        raise ValueError('response_format 仅对 llm 臂可选 json_schema / json_object')
     if split not in ('dev', 'validation', 'test') or not any(c['split'] == split for c in cases):
         raise ValueError('所选 split 无样本或名称无效')
     if provider not in ('rules', 'jev', 'llm'):
@@ -276,6 +291,7 @@ def _execute(dataset, out, provider='rules', model=None, endpoint=None, key=None
                 'provider': provider, 'model': model, 'endpoint': endpoint, 'split': split,
                 'questions': {k: question(k) for k in TASKS}, 'policy': POLICY,
                 'prefilter': use_prefilter, 'response_shape': 'choice+probabilities' if with_probabilities or provider == 'jev' else 'choice',
+                'response_format': response_format if provider == 'llm' else None,
                 'code_hash': code_hash,
                 'script_hashes': {name: digest(Path(__file__).with_name(name).read_bytes()) for name in
                                   ('engine.py', 'dataset.py', 'assessment.py', 'governance.py')},
@@ -314,7 +330,7 @@ def _execute(dataset, out, provider='rules', model=None, endpoint=None, key=None
             append_event(events_path, {**base, 'event': 'result', 'at': now(), 'status': 'completed',
                          'answer': rules(case), 'model': 'rules-v2', 'latency_s': 0, 'usage': None})
             continue
-        body = request_body(case, provider, model, with_probabilities)
+        body = request_body(case, provider, model, with_probabilities, response_format)
         request_hash = digest(body)
         save_path = out / (case['case_id'] + '.request.json')
         if save_path.exists():
@@ -373,12 +389,13 @@ def _execute(dataset, out, provider='rules', model=None, endpoint=None, key=None
 
 def execute(dataset, out, provider='rules', model=None, endpoint=None, key=None, split='dev',
             allow_network=False, allow_private=False, timeout=30, attempts=2, max_bytes=60000,
-            use_prefilter=False, with_probabilities=False, transport=http_call, frozen_policy=None):
+            use_prefilter=False, with_probabilities=False, transport=http_call, frozen_policy=None,
+            response_format='json_schema'):
     from wikiskill.k4_lock import workspace_lock
     with workspace_lock(Path(out)):
         return _execute(dataset, out, provider, model, endpoint, key, split, allow_network,
                         allow_private, timeout, attempts, max_bytes, use_prefilter,
-                        with_probabilities, transport, frozen_policy)
+                        with_probabilities, transport, frozen_policy, response_format)
 
 
 def outcomes(folder):
