@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
 import {allFrontendSources} from './source_section.mjs';
 import {exportFileName,printHtml,reportExportUI} from '../frontend/report-export.js';
 
-// Windows checkouts may use CRLF; the renumbering loop below matches LF boundaries.
+// Windows checkouts may use CRLF; the source assertions below match LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/report-export.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 
 test('report exports never depend on opening a new window',()=>{
@@ -113,19 +112,12 @@ test('a workspace switch during Word production stops the download from the orig
  assert.equal(notices[0][1],true,'the cancellation is an error notice');
 });
 
-test('numeric citations are renumbered with the reference list, named links are kept',()=>{
- const start=source.indexOf("for(const a of body.querySelectorAll('a[href^=\"#source-\"]')){");
- assert.ok(start>0);
- const loop=source.slice(start,source.indexOf('\n    }\n',start)+6);
- const anchor=(href,text)=>({href,textContent:text,attributes:{href},
-  getAttribute(name){return this.attributes[name]},setAttribute(name,value){this.attributes[name]=value}});
- // An older draft numbered its citations by workspace source order.
- const links=[anchor('#source-s5','5'),anchor('#source-s2','[2]'),anchor('#source-s5','5'),
-  anchor('#source-s9','（9）'),anchor('#source-s2','年度报告'),anchor('#source-s2','2 号材料')];
- const cited=[];
- vm.runInNewContext(loop,{body:{querySelectorAll:()=>links},cited});
- assert.deepEqual(cited,['s5','s2','s9']);
- assert.deepEqual(links.map(a=>[a.attributes.href,a.textContent]),[
-  ['#reference-1','1'],['#reference-2','[2]'],['#reference-1','1'],
-  ['#reference-3','（3）'],['#reference-2','年度报告'],['#reference-2','2 号材料']]);
+test('HTML/PDF export downloads the server-rendered standalone document',()=>{
+ // Citation order and numbering now come from html_export.py so HTML matches
+ // Word exactly; the page only keeps the label call for PDF metadata context.
+ assert.match(source,/api\('export-label\?version='/);
+ assert.match(source,/fetch\('\/api\/export-html\?version='\+encodeURIComponent\(version\)\+'&workspace_id='\+encodeURIComponent\(state\.workspace_id\)\)/);
+ assert.ok(!source.includes('DOMSerializer'),'no client-side document serialization remains');
+ assert.ok(!source.includes('#source-'),'no client-side citation renumbering remains');
+ assert.match(source,/response\.json\(\)\)\.error/,'server error JSON is surfaced on non-OK');
 });

@@ -514,7 +514,7 @@ async function savedVersion(){
  if(!current)throw Error('尚无稿件');
  return current.id;
 }
-const reportExport=reportExportUI({api,notice,refresh,savedVersion,toEditor,parse,getState:()=>state,getCurrent:()=>current,getEditor:()=>editor});
+const reportExport=reportExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state,getCurrent:()=>current});
 reportExport.init();
 const excelExport=excelExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state});
 excelExport.init();
