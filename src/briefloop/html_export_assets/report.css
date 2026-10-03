@@ -141,7 +141,7 @@ main { min-width: 0; }
 /* ----- citation markers (DESIGN.md 4.6) ----- */
 .cite-group {
   font-size: var(--text-2xs);
-  line-height: 0;
+  line-height: var(--leading-tight);
   font-variant-numeric: tabular-nums;
   margin-left: 1px;
   white-space: nowrap;
@@ -163,7 +163,7 @@ main { min-width: 0; }
   border-radius: var(--radius-sm);
   padding: 0 var(--space-1);
   text-decoration: none;
-  line-height: 1.6;
+  line-height: var(--leading-normal);
 }
 .cite-group a.cite ~ a.cite { margin-left: 2px; }
 .cite-group a.cite:hover { background: var(--color-primary-line); }
@@ -240,7 +240,8 @@ main > section h3 { font-size: var(--text-md); margin: var(--space-4) 0 var(--sp
 @page briefloop-report { size: A4; margin: 20mm; }
 @media print {
   body { page: briefloop-report; margin: 0; padding: 0; background: var(--color-surface); font-size: var(--text-sm); line-height: var(--leading-normal); }
-  .toc, .cite-popover, .cite-hit { display: none; }
+  .toc, .cite-popover { display: none; }
+  .cite-hit { outline: none; }
   .layout { display: block; max-width: none; }
   .report-cover { max-width: none; margin-top: 0; }
   .report-body, main > section { max-width: none; }

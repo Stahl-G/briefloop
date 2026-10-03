@@ -13,13 +13,14 @@ from .document_model import (normalize_document, brief_document, table_layout,
 from .document_export import (reader_labels, reader_locator, reader_source_blocks,
                               without_duplicate_cover_heading)
 from .models import report_language
+from .task_labels import label as task_label
 
 
 def _labels(language=None):
     if report_language(language) == 'en':
         return {'appendix_a': 'Appendix A · Sources & Evidence', 'appendix_b': 'Appendix B · Check Status',
                 'appendix_c': 'Appendix C · About This File', 'toc': 'Contents',
-                'released': 'Released', 'draft': 'Working draft · not independently reviewed',
+                'released': 'This version has a formal delivery; this export is not part of its frozen package', 'draft': 'Working draft · not independently reviewed',
                 'reviewing': 'Independent review in progress', 'review_failed': 'Latest independent review did not complete',
                 'reviewed': 'Independently reviewed · not released', 'open_findings': 'open findings',
                 'release_id': 'Release', 'manifest': 'Manifest',
@@ -31,7 +32,7 @@ def _labels(language=None):
                 'appendix_a_note': 'A locator or excerpt only marks where evidence was stored; it does not prove the source supports the conclusion. The web page may have changed — the stored snapshot and hash are authoritative.',
                 'checks_unavailable': 'Deterministic checks are temporarily unavailable.',
                 'checks_note': 'Deterministic checks do not prove factual correctness.',
-                'numbers': 'Number bindings checked', 'layout': 'Layout', 'assessment': 'Assessment',
+                'numbers': 'Number bindings checked', 'matched': 'matched', 'unmatched': 'mismatched', 'skipped': 'not checked', 'layout': 'Layout', 'assessment': 'Assessment',
                 'layout_status': {'ok': 'pass', 'issues': 'issues found'},
                 'gaps': 'Known gaps', 'conflicts': 'Unresolved conflicts', 'review': 'Independent review',
                 'no_review': 'This version has no completed independent review.',
@@ -42,7 +43,7 @@ def _labels(language=None):
                 'status': 'Status'}
     return {'appendix_a': '附录 A 来源与证据', 'appendix_b': '附录 B 核查状态', 'appendix_c': '附录 C 文件说明',
             'toc': '目录',
-            'released': '正式交付', 'draft': '工作稿 · 未经独立审阅',
+            'released': '该版本已有正式交付；本导出文件未纳入冻结交付包', 'draft': '工作稿 · 未经独立审阅',
             'reviewing': '独立审阅进行中', 'review_failed': '最近一次独立审阅未完成',
             'reviewed': '已完成独立审阅 · 未正式交付', 'open_findings': '项未结发现',
             'release_id': '交付', 'manifest': '清单',
@@ -54,9 +55,9 @@ def _labels(language=None):
             'appendix_a_note': '引用位置有原文摘录不代表该原文在语义上支持结论；网页可能已更新，以入库内容与哈希为准。',
             'checks_unavailable': '确定性检查暂不可用',
             'checks_note': '确定性检查不代表事实正确。',
-            'numbers': '数字绑定核查', 'layout': '版式检查', 'assessment': '整体评价',
+            'numbers': '数字绑定核查', 'matched': '匹配', 'unmatched': '不一致', 'skipped': '未核对', 'layout': '版式检查', 'assessment': '整体评价',
             'layout_status': {'ok': '通过', 'issues': '有问题'},
-            'gaps': '已知缺口', 'conflicts': '未决分歧', 'review': '独立审阅',
+            'gaps': '已知缺口', 'conflicts': '未决分歧', 'review': task_label('review'),
             'no_review': '本版本未经过独立审阅。',
             'no_issues': '无记录。',
             'about_files': '本文件不含来源原件、工具输出或运行记录；完整核对请在 BriefLoop 中导出审计包。',
@@ -218,7 +219,8 @@ def html_report(store, version_id, *, excerpts=True):
         for node in nodes:
             kind = node['type']
             if kind == 'hardBreak':
-                parts.append(('html', '<br>'))
+                parts.append(('break', '<br>'))
+                plain += '\n'
                 continue
             if kind == 'citation':
                 anchor, placeholder = cite_anchor(node['attrs']['sourceId'])
@@ -269,8 +271,8 @@ def html_report(store, version_id, *, excerpts=True):
 
         rendered = []
         for kind, part in parts:
-            if kind == 'cite':
-                rendered.append(('cite', part))
+            if kind in ('cite', 'break'):
+                rendered.append((kind, part))
                 continue
             index = int(part[1:])
             node, start, end, href = text_spans[index]
@@ -525,11 +527,20 @@ def html_report(store, version_id, *, excerpts=True):
         checks = brief_checks(store, version_id)
         numbers = checks.get('numbers') or {}
         layout_status = (checks.get('layout') or {}).get('status', '')
-        bits = ['%s %s/%s' % (t['numbers'], numbers.get('checked', 0), numbers.get('total', 0)),
+        bits = ['%s %s/%s · %s %s · %s %s · %s %s' % (
+                    t['numbers'], numbers.get('checked', 0), numbers.get('total', 0),
+                    t['matched'], numbers.get('matched', 0),
+                    t['unmatched'], len(numbers.get('unmatched') or []),
+                    t['skipped'], len(numbers.get('skipped') or [])),
                 '%s：%s' % (t['layout'], _esc(t['layout_status'].get(layout_status, layout_status)))]
         if checks.get('assessment_overall'):
             bits.append('%s：%s' % (t['assessment'], _esc(checks['assessment_overall'])))
         appendix_b.append('<p class="check-line">' + ' · '.join(bits) + '</p>')
+        unresolved_numbers = (numbers.get('unmatched') or []) + (numbers.get('skipped') or [])
+        if unresolved_numbers:
+            appendix_b.append('<ul>' + ''.join('<li>%s</li>' % _esc(' · '.join(
+                str(row[k]) for k in ('label', 'expected', 'reason') if row.get(k) not in (None, '')))
+                for row in unresolved_numbers) + '</ul>')
     except (ValueError, OSError):
         appendix_b.append('<p class="check-line">%s</p>' % _esc(t['checks_unavailable']))
     appendix_b.append('<p class="appendix-note">%s</p>' % _esc(t['checks_note']))

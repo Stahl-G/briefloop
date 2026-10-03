@@ -141,3 +141,43 @@ def test_endpoint_rejects_mismatched_workspace(tmp_path):
         connection.close()
     finally:
         server.shutdown(); thread.join(timeout=5); _close_service(server)
+
+
+def test_manual_line_break_exports_and_preserves_citation_order(tmp_path):
+    store, run, (a, b, _) = sample(tmp_path)
+    brief = publish(store, run, [text_p(
+        {'type': 'text', 'text': '第一行'},
+        {'type': 'citation', 'attrs': {'sourceId': a['id']}},
+        {'type': 'hardBreak'},
+        {'type': 'text', 'text': '第二行'},
+        {'type': 'citation', 'attrs': {'sourceId': b['id']}})])
+    page = html_report(store, brief['id'])
+    assert '</sup><br>第二行' in page
+    assert page.index('id="cite-1-1"') < page.index('id="cite-2-1"')
+
+
+def test_released_version_does_not_claim_this_html_is_a_frozen_delivery(tmp_path, monkeypatch):
+    store, run, _ = sample(tmp_path)
+    brief = publish(store, run, [text_p({'type': 'text', 'text': '正文'})])
+    from briefloop import release
+    monkeypatch.setattr(release, 'list_releases', lambda *_: [
+        {'id': 'release-fixture', 'version_id': brief['id'], 'status': 'released',
+         'result': {'manifest_hash': 'frozen-manifest'}}])
+    page = html_report(store, brief['id'])
+    assert '本导出文件未纳入冻结交付包' in page
+    assert 'release-fixture' in page
+
+
+def test_checks_distinguish_checked_from_matched_numbers(tmp_path, monkeypatch):
+    store, run, _ = sample(tmp_path)
+    brief = publish(store, run, [text_p({'type': 'text', 'text': '正文'})])
+    from briefloop import delivery_checks
+    monkeypatch.setattr(delivery_checks, 'brief_checks', lambda *_: {
+        'numbers': {'checked': 1, 'total': 2, 'matched': 0,
+                    'unmatched': [{'label': '收入', 'expected': 0, 'reason': '来源为 100'}],
+                    'skipped': [{'label': '成本', 'reason': '缺少依据'}]},
+        'layout': {'status': 'pass'}})
+    page = html_report(store, brief['id'])
+    assert '数字绑定核查 1/2 · 匹配 0 · 不一致 1 · 未核对 1' in page
+    assert '收入 · 0 · 来源为 100' in page
+    assert '成本 · 缺少依据' in page
