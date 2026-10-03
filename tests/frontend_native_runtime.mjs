@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {runtimeCard} from '../frontend/runtime-cards.js';
-import {section} from './source_section.mjs';
+import {section,allFrontendSources} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',dataset:{}});return elements.get(id)};
 const calls=[];
@@ -26,7 +26,7 @@ assert.equal(calls[0].body.supports_reasoning,true);
 assert.equal(el('custom-api-key').value,'');assert.equal(calls[1].route,'models?backend=briefloop-native&refresh=1');
 await el('provider-use').onclick();assert.equal(ctx.chat.nextBackend,'briefloop-native');assert.equal(el('agent-backend').value,'briefloop-native');
 assert.ok(!calls.some(call=>['runtime-test','opencode/provider-test'].includes(call.route)),'choosing a model does not launch an independent test');
-assert.doesNotMatch(source,/provider-test-model|data-runtime-test|settings-runtime-tests/);
+assert.doesNotMatch(allFrontendSources(),/provider-test-model|data-runtime-test|settings-runtime-tests/);
 const html=runtimeCard({id:'briefloop-native',name:'BriefLoop Agent',installed:true,available:true,version:'test'},{chosen:'briefloop-native',model:'custom/model',esc:x=>x});
 assert.ok(html.includes('BriefLoop Agent')&&html.includes('data-runtime-select="briefloop-native"')&&html.includes('/runtime-briefloop.svg'));
 // Opening the Native tab changes the configuration form, not the saved host.
