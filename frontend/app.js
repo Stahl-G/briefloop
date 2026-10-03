@@ -1133,7 +1133,7 @@ function renderHomeTasks(){
    const st=j.status==='queued'?'排队中':'执行中';
    return `<article class="home-rail-job" data-job-id="${esc(j.id)}"><strong>${esc(label)}</strong><small>${esc(st)} · ${esc(dayTime(j.created))}</small><button type="button" class="outline" data-rail-open-job="${esc(j.id)}">打开任务</button></article>`;
   }).join('');
-  jobList.querySelectorAll('[data-rail-open-job]').forEach(b=>b.onclick=()=>openTask(jobFor(b.dataset.railOpenJob)));
+  jobList.querySelectorAll('[data-rail-open-job]').forEach(b=>b.onclick=()=>openTask(taskFor(b.dataset.railOpenJob)));
  }
  // Keep rail recent in sync only when rail is shown with reports too (jobs-only rail may omit recent)
  const recentBlock=$('home-rail-recent'),recentBox=$('home-rail-recent-list');
