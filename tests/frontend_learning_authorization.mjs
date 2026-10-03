@@ -7,6 +7,7 @@ import {allFrontendSources} from './source_section.mjs';
 // Windows checkouts may use CRLF; function extraction below matches LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const frontendAll=allFrontendSources();
+const compactControls=fs.readFileSync(new URL('../frontend/compact-report-controls.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 function block(name){
  const start=source.indexOf(`function ${name}(`);assert.ok(start>=0,name);
  const prefix=source.lastIndexOf('\n',start)+1,end=source.indexOf('\n}',start);
@@ -56,8 +57,8 @@ test('the settings note explains an upgraded workspace and a raised round count'
 
 test('manual learning and the report options use the same confirmation',()=>{
  assert.match(source,/if\(!confirmLearning\('现在用已保存的反馈启动一次学习验证。'\)\)return;const result=await api\('learn',\{confirm_plan:state\.learning_authorization\.plan\.fingerprint\}\)/);
- assert.match(source,/if\(key==='learn'\)\{try\{await setAutoLearn\(value\)/);
- assert.match(source,/data-option="learn">自动学习<\/label>/);
+ assert.match(compactControls,/if\(key==='learn'\)\{try\{await setAutoLearn\(value\)/);
+ assert.match(compactControls,/data-option="learn">自动学习<\/label>/);
  assert.doesNotMatch(frontendAll,/data-option="learn" checked/);
- assert.match(source,/learn:state\.learning_authorization\?\.state==='authorized'/);
+ assert.match(compactControls,/learn:state\.learning_authorization\?\.state==='authorized'/);
 });
