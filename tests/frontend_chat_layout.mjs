@@ -6,6 +6,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {section} from './source_section.mjs';
 
 // Use an installed headless Chromium, without opening a window or a model/server.
 const chromium=process.env.BRIEFLOOP_CHROMIUM_PATH;
@@ -66,7 +67,7 @@ test('report drawers cover the sticky toolbar and keep their close controls reac
   html=html.replace('href="/'+name+'"','href="'+name+'"');
  }
  const app=await fs.readFile(new URL('../frontend/app.js',import.meta.url),'utf8');
- const drawerCode=app.slice(app.indexOf('function setReportChatOpen('),app.indexOf('function openReportChat('));
+ const drawerCode=section(app,'function setReportChatOpen(','function openReportChat(','frontend/app.js');
  const script=`
  const $=id=>document.getElementById(id),chat=$('chat'),report=$('report'),bar=document.querySelector('.report-topbar');
  document.querySelectorAll('main>section').forEach(section=>section.hidden=section!==report);
