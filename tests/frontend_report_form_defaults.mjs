@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {createReportFormDefaults} from '../frontend/report-form-defaults.js';
+import {researchBudgetUI} from '../frontend/research-budget.js';
 import {section} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
@@ -50,9 +51,8 @@ test('monthly boundary uses calendar days through a spring DST transition',()=>{
 
 test('actual tier handler updates automatic budget but preserves numeric, preset and saved overrides',()=>{
  const {$,defaults,input,budget,lengths}=view();
- const context=vm.createContext({$,reportFormDefaults:defaults,reportMarket:{prepare(){}},nextReport:{clear(){}},renderBudgetProviderScope(){}});
- vm.runInContext(section(source,'const RESEARCH_TIERS=','const BUDGET_FIELDS=','frontend/app.js'),context);
- vm.runInContext(section(source,"$('research-tier').onchange=",'let budgetPolling=false;','frontend/app.js'),context);
+ researchBudgetUI({api:async()=>({}),parse:s=>JSON.parse(s||'{}'),getState:()=>null,getCurrent:()=>null,
+  readSearchPolicy:()=>({primary_provider:'native'}),selectTierBudget:budget=>defaults.selectTierBudget(budget),$}).init();
  const tier=value=>{$('research-tier').value=value;$('research-tier').emit('change')};
  tier('quick');assert.deepEqual(budget(),[6,30,12]);
  const req={research_budget:{search_requests:6,candidate_urls:30,source_pages:12}};

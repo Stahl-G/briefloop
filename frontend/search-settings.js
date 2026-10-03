@@ -1,7 +1,7 @@
 // Search policy and provider keys: one settings block, shown in Settings or inline in the report setup.
-import {$} from './dom.js';
+import {$ as lookup} from './dom.js';
 export const SEARCH_LABELS={native:'宿主自带搜索',tavily:'Tavily',duckduckgo:'DuckDuckGo',bocha:'博查',zhipu:'智谱搜索'};
-export function searchSettingsUI({api,getState,runtimeName,renderBudgetProviderScope}){
+export function searchSettingsUI({api,getState,runtimeName,renderBudgetProviderScope,$=lookup}){
  function readSearchPolicy(){return {primary_provider:$('search-provider').value,supplemental_providers:[...$('search-supplements').querySelectorAll('input[value]:checked')].map(e=>e.value).filter(v=>v!==$('search-provider').value),zhipu_engine:$('zhipu-engine').value,native_search_enabled:$('search-native').checked,coverage_mode:$('search-coverage').value,market_scope:$('search-market').value,platform_scope:[]}}
  function loadSearchPolicy(){const state=getState();const p=state.settings.search_policy||{primary_provider:state.settings.search_provider,native_search_enabled:state.settings.search_provider==='tavily'};$('search-provider').value=p.primary_provider||'native';$('search-coverage').value=p.coverage_mode||'coverage';$('search-market').value=p.market_scope||'';$('zhipu-engine').value=p.zhipu_engine||'search_std';$('search-native').checked=!!p.native_search_enabled;$('search-supplements').querySelectorAll('input[value]').forEach(e=>e.checked=(p.supplemental_providers||[]).includes(e.value));refreshBochaSettings();refreshZhipuSettings()}
  function nativeSearchName(){return SEARCH_LABELS[$('search-provider').value]||'宿主自带搜索'}

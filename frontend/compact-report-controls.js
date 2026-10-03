@@ -1,7 +1,7 @@
 // Compact report controls: same component in the composer and creation form.
-import {$} from './dom.js';
+import {$ as lookup} from './dom.js';
 import {factCheckAvailability} from './fact-check-availability.js';
-export function compactReportControlsUI({api,action,refresh,notice,page,showSettings,settingsView,setAutoLearn,chatBackendChoice,backendValue,runtimeName,sessionBudget,getState,getComposerOptions,pendingReview}){
+export function compactReportControlsUI({api,action,refresh,notice,page,showSettings,settingsView,setAutoLearn,chatBackendChoice,backendValue,runtimeName,sessionBudget,getState,getComposerOptions,pendingReview,$=lookup}){
  function compactReportInstruction(){return getComposerOptions().instruction()}
 
  function compactReportControls(where){
