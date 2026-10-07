@@ -121,7 +121,7 @@ export function sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBr
    body.replaceChildren(before,target,after);target.scrollIntoView({block:'center'});
   }
  }
- function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1)}if(b)b.hidden=true}
+ function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1);showSourceMedia({attachment:null},drawerSourceMediaView())}if(b)b.hidden=true}
  function init(){
   $('sources-channel-filter').onchange=()=>{renderSourcesPage.sig=null;renderSourcesPage()};
   if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
