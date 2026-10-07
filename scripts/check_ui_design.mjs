@@ -10,10 +10,11 @@ import {containsRetiredBrandColor} from './brand_color_guard.mjs';
 const system=fs.readFileSync(new URL('../frontend/ui-system.css',import.meta.url),'utf8');
 const tokens=fs.readFileSync(new URL('../src/briefloop/static/tokens.css',import.meta.url),'utf8');
 const launcher=fs.readFileSync(new URL('../desktop/electron/welcome.css',import.meta.url),'utf8');
+const report=fs.readFileSync(new URL('../src/briefloop/html_export_assets/report.css',import.meta.url),'utf8');
 const declared=new Set([...tokens.matchAll(/(--[\w-]+)\s*:/g)].map(m=>m[1]));
 const external=new Set(['--swatch-color']); // The selected Word template color.
 let failed=false;
-for(const [name,source] of [['ui-system.css',system],['welcome.css',launcher]]){
+for(const [name,source] of [['ui-system.css',system],['welcome.css',launcher],['report.css',report]]){
  const css=source.replace(/\/\*[\s\S]*?\*\//g,'');
  const local=new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map(m=>m[1]));
  const problems=[];
