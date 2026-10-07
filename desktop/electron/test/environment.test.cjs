@@ -345,6 +345,8 @@ test('cleanup ignores unrelated Python but preserves referenced environments and
   const config={...f.config,runProcess:async(executable,args,options)=>{
    if(executable==='/bin/ps'||args.includes('-Command')||args.some(a=>a.includes('Environment file usage unavailable'))){
     if(inventory==='failed')throw Error('Process inventory unavailable');
+    if(inventory==='malformed')return {stdout:'incomplete process inventory'};
+    if(inventory==='capped')return {stdout:JSON.stringify(commands).padEnd(65536,' ')};
     const rows=inventory==='bare'?['python3 task.py']:commands;
     return {stdout:JSON.stringify(rows)};
    }
@@ -354,7 +356,9 @@ test('cleanup ignores unrelated Python but preserves referenced environments and
   const current=JSON.parse(await fs.readFile(activeFile,'utf8')).environmentId;
   assert.deepEqual((await fs.readdir(directory)).sort(),['active.json',previous,current,busy].sort());
   await fs.mkdir(path.join(directory,idle));
-  for(const [mode,version] of [['failed','0.21.0'],['bare','0.22.0']]){
+  const uncertain=[['failed','0.21.0'],['bare','0.22.0'],['malformed','0.23.0']];
+  if(platform==='darwin')uncertain.push(['capped','0.24.0']);
+  for(const [mode,version] of uncertain){
    inventory=mode;await f.payload(version);assert.equal((await createEnvironment(config).startup()).state,'ready');
    assert.equal((await fs.stat(path.join(directory,idle))).isDirectory(),true);
   }
