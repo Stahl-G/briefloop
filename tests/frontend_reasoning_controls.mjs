@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {section} from './source_section.mjs';
 import {reasoningControls,settingsEffort,reasoningModel} from '../frontend/reasoning-controls.js';
 
 function dom(t){
@@ -73,4 +76,31 @@ test('pending and failed discovery preserve the selection; settling refreshes su
  const unsupported=reasoningControls({api:async()=>({options:[{id:'medium'}]}),onUpdate:input=>summaries.push(input.value)});
  await unsupported.configure(control,'claude','selected-model');
  assert.equal(control.value,'none');assert.equal(summaries.at(-1),'none');
+});
+
+test('settings save waits for discovery and refuses a model switched during the wait',async t=>{
+ const {control}=dom(t);control.id='effort-select';control.value='medium';
+ const elements={'effort-select':control,'model-select':{value:'first'},'model-provider':{value:''},'model-variant':{value:''}};
+ const replies=new Map(),patches=[];let backend='claude';
+ const api=(route,patch)=>route==='settings'?patches.push(patch):new Promise((resolve,reject)=>replies.set(route,{resolve,reject}));
+ const reasoning=reasoningControls({api});
+ const context=vm.createContext({$:id=>elements[id],backendValue:()=>backend,reasoning,reasoningModel,api,
+  state:{settings:{runtime_efforts:{pi:'off'}}},updateModelLabel(){}});
+ const source=fs.readFileSync('frontend/app.js','utf8');
+ vm.runInContext(section(source,'async function saveModel(){','let runtimeCatalog=','frontend/app.js'),context);
+ const key=model=>'runtime/reasoning?backend=claude&model='+model;
+ const first=vm.runInContext('saveModel()',context);
+ assert.equal(patches.length,0);assert.equal(control.value,'medium');
+ replies.get(key('first')).resolve({options:[{id:'medium'},{id:'high'}]});await first;
+ assert.equal(patches.at(-1).runtime_efforts.claude,'medium');assert.equal(patches.at(-1).runtime_efforts.pi,'off');
+ reasoning.refresh();elements['model-select'].value='second';
+ const stale=vm.runInContext('saveModel()',context);const rejected=assert.rejects(stale,/模型选择已改变/);
+ elements['model-select'].value='third';control.value='high';
+ const latest=vm.runInContext('saveModel()',context);
+ replies.get(key('third')).resolve({options:[{id:'high'}]});await latest;
+ replies.get(key('second')).resolve({options:[{id:'medium'}]});await rejected;
+ assert.equal(patches.length,2);assert.equal(patches.at(-1).model,'third');assert.equal(control.value,'high');
+ reasoning.refresh();
+ const failed=vm.runInContext('saveModel()',context);replies.get(key('third')).reject(Error('offline'));await failed;
+ assert.equal(patches.at(-1).runtime_efforts.claude,'high','a failed discovery preserves the explicit saved effort');
 });
