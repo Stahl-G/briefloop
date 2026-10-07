@@ -332,3 +332,64 @@ test('Windows creates fresh interpreter launchers and reuses verified dependenci
   assert.equal(installs.length,1);assert.ok(installs[0].args.at(-1).endsWith('.whl'));
   assert.ok(f.changes.some(v=>v.reusedDependencyCount===1));
 });
+
+test('cleanup ignores unrelated Python but preserves referenced environments and uncertain inventories',async t=>{
+ for(const platform of ['darwin','win32']){
+  const f=await fixture(t,platform);await f.environment.prepare();
+  const directory=path.join(f.root,'environments'),activeFile=path.join(directory,'active.json');
+  const previous=JSON.parse(await fs.readFile(activeFile,'utf8')).environmentId;
+  const busy='10000000-0000-4000-8000-000000000000',idle='20000000-0000-4000-8000-000000000000';
+  for(const id of [busy,idle])await fs.mkdir(path.join(directory,id));
+  const commands=[platform==='win32'?'C:\\Other\\python.exe unrelated.py':'/usr/bin/python3 /tmp/unrelated.py',path.join(directory,busy,platform==='win32'?'Scripts/python.exe':'bin/python3')+' task.py'];
+  let inventory='known';
+  const config={...f.config,runProcess:async(executable,args,options)=>{
+   if(executable==='/bin/ps'||args.includes('-Command')||args.some(a=>a.includes('Environment file usage unavailable'))){
+    if(inventory==='failed')throw Error('Process inventory unavailable');
+    if(inventory==='malformed')return {stdout:'incomplete process inventory'};
+    if(inventory==='capped')return {stdout:JSON.stringify(commands).padEnd(65536,' ')};
+    const rows=inventory==='bare'?['python3 task.py']:commands;
+    return {stdout:JSON.stringify(rows)};
+   }
+   return f.config.runProcess(executable,args,options);
+  }};
+  await f.payload('0.20.0');assert.equal((await createEnvironment(config).startup()).state,'ready');
+  const current=JSON.parse(await fs.readFile(activeFile,'utf8')).environmentId;
+  assert.deepEqual((await fs.readdir(directory)).sort(),['active.json',previous,current,busy].sort());
+  await fs.mkdir(path.join(directory,idle));
+  const uncertain=[['failed','0.21.0'],['bare','0.22.0'],['malformed','0.23.0']];
+  if(platform==='darwin')uncertain.push(['capped','0.24.0']);
+  for(const [mode,version] of uncertain){
+   inventory=mode;await f.payload(version);assert.equal((await createEnvironment(config).startup()).state,'ready');
+   assert.equal((await fs.stat(path.join(directory,idle))).isDirectory(),true);
+  }
+ }
+});
+
+test('macOS actual process/file scan keeps an occupied old environment and removes only idle fixtures', {skip:process.platform!=='darwin'}, async t=>{
+ const f=await fixture(t);await f.environment.prepare();
+ const directory=path.join(f.root,'environments');
+ const busy='30000000-0000-4000-8000-000000000000',idle='40000000-0000-4000-8000-000000000000';
+ for(const id of [busy,idle])await fs.mkdir(path.join(directory,id));
+ // An open file matters even when its process command has no environment UUID.
+ const held=await fs.open(path.join(directory,busy,'in-use'),'w');t.after(()=>held.close());
+ const unrelated=spawn('/usr/bin/python3',['-c','import time; print("ready", flush=True); time.sleep(60)'],{stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{if(unrelated.exitCode===null){const closed=new Promise(resolve=>unrelated.once('close',resolve));unrelated.kill();await closed}});
+ await new Promise((resolve,reject)=>{unrelated.stdout.once('data',resolve);unrelated.once('error',reject)});
+ const config={...f.config,runProcess:(executable,args,options)=>args.some(a=>a.includes('Environment file usage unavailable'))
+  ?runOwnedProcess('/usr/bin/python3',args,options):f.config.runProcess(executable,args,options)};
+ await f.payload('0.20.0');assert.equal((await createEnvironment(config).startup()).state,'ready');
+ await assert.rejects(fs.stat(path.join(directory,idle)),{code:'ENOENT'});
+ assert.equal((await fs.stat(path.join(directory,busy))).isDirectory(),true);
+ assert.equal(unrelated.exitCode,null);
+});
+
+
+test('declared prerelease versions can prepare and validate without using a stable version',async t=>{
+  const f=await fixture(t);
+  await f.payload('0.19.1.dev7');
+  assert.equal((await f.environment.prepare()).state,'ready');
+  await f.payload('0.19.1rc1');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  await f.payload('0.19.1-preview');
+  assert.equal((await createEnvironment(f.config).inspect()).error.code,'invalid_payload');
+});

@@ -6,6 +6,7 @@ const {spawn} = require('node:child_process');
 const {StringDecoder} = require('node:string_decoder');
 const {createHash, randomUUID} = require('node:crypto');
 const {CHECK_LOCK} = require('./dependency-lock-check.cjs');
+const {ENVIRONMENT_USAGE} = require('./environment-usage.cjs');
 const {reuseWindowsDependencies} = require('./windows-dependency-reuse.cjs');
 
 class EnvironmentError extends Error {
@@ -224,7 +225,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   async function payload(signal) {
     phase('checking', 'verify-payload');
     const manifest = JSON.parse(await fs.readFile(path.join(payloadPath, 'manifest.json'), 'utf8'));
-    if (!/^\d+\.\d+\.\d+$/.test(manifest.version || '') || typeof manifest.wheel !== 'string'
+    if (!/^\d+\.\d+\.\d+(?:(?:rc|a|b)\d+|\.dev\d+)?$/.test(manifest.version || '') || typeof manifest.wheel !== 'string'
         || !/^briefloop-[a-zA-Z0-9_.-]+\.whl$/.test(manifest.wheel) || path.basename(manifest.wheel) !== manifest.wheel
         || !/^[a-f0-9]{64}$/i.test(manifest.sha256 || '')) throw new EnvironmentError('invalid_payload', '随包运行组件清单无效，请重新安装 App。');
     const wheel = path.join(payloadPath, manifest.wheel);
@@ -329,7 +330,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       previousRecord: recorded ? active : null};
   }
   // Query command lines only (never process environments). If process discovery
-  // fails or a Python process cannot be attributed, defer cleanup conservatively.
+  // fails or a Python command has no identifiable path, defer cleanup conservatively.
   async function prune(keep, signal) {
     try {
       const current = JSON.parse(await fs.readFile(activeFile, 'utf8'));
@@ -337,16 +338,28 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       let commands;
       if (platform === 'win32') {
         const shell = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-        const script = "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(python|pythonw|briefloop).*' } | ForEach-Object { if (!$_.CommandLine) { throw 'Unavailable process command' }; $_.CommandLine }) | ConvertTo-Json -Compress";
+        const script = "$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(python|pythonw|briefloop).*' } | ForEach-Object { if (!$_.CommandLine -or !$_.ExecutablePath) { throw 'Unavailable process command' }; $_.ExecutablePath + ' ' + $_.CommandLine }) | ConvertTo-Json -Compress";
         const raw = (await run(shell, ['-NoProfile', '-NonInteractive', '-Command', script], signal, 10000)).stdout.trim();
         const result = raw ? JSON.parse(raw) : [];
         commands = Array.isArray(result) ? result : [result];
+      } else if (platform === 'darwin') {
+        const raw = (await run(verified.basePython, ['-I', '-c', ENVIRONMENT_USAGE, directory], signal, 30000)).stdout;
+        if (raw.length >= 65536) return;
+        commands = JSON.parse(raw);
+        if (!Array.isArray(commands) || commands.some(value => typeof value !== 'string')) return;
       } else {
-        commands = (await run('/bin/ps', ['-ww', '-axo', 'command='], signal, 10000)).stdout.split(/\r?\n/).filter(Boolean);
+        const raw = (await run('/bin/ps', ['-ww', '-axo', 'command='], signal, 10000)).stdout;
+        // The owned-process reader caps output. Never prune from a partial inventory.
+        if (raw.length >= 65536) return;
+        commands = raw.split(/\r?\n/).filter(Boolean);
       }
-      const root = directory.toLowerCase();
-      if (commands.some(command => /(?:^|[\/\\\s])python(?:w|[0-9.]*)?(?:\.exe)?(?:\s|$)/i.test(command) && !command.toLowerCase().includes(root))) return;
+      // An unrelated absolute Python path is not evidence that every old venv is busy.
+      // A bare executable is ambiguous (e.g. an activated venv), so retain the
+      // conservative fallback only for that case; known environment paths below
+      // protect their own UUID, including scripts launched by non-Python processes.
+      if (commands.some(command => /^\s*["']?python(?:w|[0-9.]*)?(?:\.exe)?(?:["']?\s|$)/i.test(command) && !command.toLowerCase().includes(directory.toLowerCase()))) return;
       const used = commands.join('\n').toLowerCase();
+      if (JSON.parse(await fs.readFile(activeFile, 'utf8')).environmentId !== keep[0]) return;
       for (const entry of await fs.readdir(directory, {withFileTypes: true})) {
         checkAbort(signal);
         if (!entry.isDirectory() || !UUID.test(entry.name) || keep.includes(entry.name) || used.includes(entry.name.toLowerCase())) continue;
