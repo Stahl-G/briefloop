@@ -89,14 +89,16 @@ export function createOfficeTools(deps){
   });
  }
 
- async function previewSourceInto(id,view,trigger){
+ async function previewSourceInto(id,view,trigger,isCurrent=()=>true){
   if(!id||!view)throw Error('请先选择要查看的来源');
+  if(!isCurrent()||trigger?.disabled)return;
   const pages=parsePages(view.pages?view.pages.value:'');
   if(trigger)trigger.disabled=true;
   try{
    const result=await api('office-preview',{source_id:id,pages});
+   if(!isCurrent())return;
    if(view.images)paintResult(result,view.images,view.note||{textContent:''});
-  }finally{if(trigger)trigger.disabled=false}
+  }finally{if(trigger&&isCurrent())trigger.disabled=false}
  }
 
  function officeCheckSummary(record){
