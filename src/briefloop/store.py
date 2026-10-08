@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT N
 
 
 def wal_supported(version=None):
-    """SQLite builds without the WAL-reset race fix (https://sqlite.org/wal.html §11) keep the rollback journal."""
+    """Only enable WAL on builds with the WAL-reset race fix (https://sqlite.org/wal.html §11)."""
     v = tuple(version or sqlite3.sqlite_version_info)
     return v >= (3, 51, 3) or (3, 50, 7) <= v < (3, 51, 0) or (3, 44, 6) <= v < (3, 45, 0)
 
@@ -185,6 +185,10 @@ class Store:
         c.execute("PRAGMA busy_timeout=10000")
         try:
             c.execute("BEGIN IMMEDIATE")
+            # WAL persists across interpreters. Check under the write lock before
+            # schema initialization or any application write, not just when enabling it.
+            if not wal_supported() and c.execute("PRAGMA journal_mode").fetchone()[0] == 'wal':
+                raise ValueError(f"工作区为 WAL 模式，当前 SQLite {sqlite3.sqlite_version} 未通过兼容检查；请使用含 WAL 修补的 Python 运行库后重新打开。")
             yield c
             c.commit()
         except BaseException:
