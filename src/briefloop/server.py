@@ -45,6 +45,7 @@ def _service_status(server):
     from .chat_store import BUSY_SQL
     with server._admission:
         with server.store.tx() as connection:
+            journal_mode=connection.execute('PRAGMA journal_mode').fetchone()[0]
             jobs=[dict(row) for row in connection.execute(
                 "SELECT id,kind,status FROM jobs WHERE status IN ('queued','running') ORDER BY rowid")]
             sessions=[{'id':row['id'],'title':row['title'],'status':row['status'],
@@ -55,7 +56,7 @@ def _service_status(server):
                 'busy':bool(jobs or sessions or server._active_posts),'jobs':jobs,'sessions':sessions,
                 'draining':server.draining,
                 # Diagnosable storage: the linked SQLite build and the journal mode in effect (#731).
-                'database':{'sqlite_version':sqlite3.sqlite_version,'journal_mode':server.store.journal_mode}}
+                'database':{'sqlite_version':sqlite3.sqlite_version,'journal_mode':journal_mode}}
 
 
 def _close_service(server):
