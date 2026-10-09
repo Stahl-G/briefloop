@@ -1,5 +1,5 @@
 import {sourceViewerUI} from '../frontend/source-viewer.js';
-import {sourcesPageUI} from '../frontend/sources-page.js';
+import {sourcesPageUI,sortLibrarySources} from '../frontend/sources-page.js';
 // A failed source keeps no usable original: the detail drawer must not show a
 // dead "打开原件" link. The same control must follow original_url when present and
 // open the page URL for web sources.
@@ -58,3 +58,10 @@ requests[1]({source:textSource,text:'最新正文',provenance:{},attachment:{}})
 requests[0]({source:textSource,text:'旧正文',provenance:{},attachment:{}});await a;
 assert.equal(ct.$('source-drawer-body').textContent,'最新正文');
 console.log('PASS: source hit opens the verified original line as text and stale same-source reads cannot replace it');
+
+// Newest ingestion first, including same-second rows; do not mutate report input.
+const records=[{id:'old',created:'2026-10-02T01:00:00Z'},{id:'new-a',created:'2026-10-09T00:00:00Z'},{id:'new-b',created:'2026-10-09T07:00:00+07:00'},{id:'missing'}];
+assert.deepEqual(sortLibrarySources(records).map(s=>s.id),['new-b','new-a','old','missing']);
+assert.deepEqual(sortLibrarySources(records,'oldest').map(s=>s.id),['old','new-a','new-b','missing']);
+assert.deepEqual(records.map(s=>s.id),['old','new-a','new-b','missing']);
+console.log('PASS: source library sorts by ingestion time without changing report source order');

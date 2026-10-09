@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSourceUploads} from '../frontend/source-upload.js';
+import {createSourceUploads,sourceUploadHost} from '../frontend/source-upload.js';
 import {sendSourceFile,sourceStatusLabel} from '../frontend/uploads.js';
 
 const limits={max_file_bytes:18*1048576,max_pdf_bytes:100*1048576};
@@ -48,4 +48,31 @@ test('a scanned PDF keeps the visual-reading and no-OCR notice on the finished c
  assert.equal(source.needs_visual,true);assert.equal(source.pages,3);
  assert.match(host.children[0].children[1].textContent,/视觉读取/);
  assert.match(host.children[0].children[1].textContent,/未执行 OCR/);
+});
+
+// Minimal DOM double verifies ownership and concurrent-card lifecycle.
+function element(){
+ return {children:[],dataset:{},parentElement:null,setAttribute(){},removeAttribute(){},
+  append(...items){for(const item of items){item.remove();item.parentElement=this;this.children.push(item)}},
+  prepend(item){item.remove();item.parentElement=this;this.children.unshift(item)},
+  remove(){if(this.parentElement){const siblings=this.parentElement.children;siblings.splice(siblings.indexOf(this),1);this.parentElement=null}},
+  querySelector(selector){for(const child of this.children){if(selector==='.chat-main-col'&&child.className==='chat-main-col'||selector==='[data-source-uploads]'&&child.dataset.sourceUploads!==undefined)return child;const found=child.querySelector(selector);if(found)return found}return null}
+ };
+}
+test('uploads stay inside the chat column and last dismissal removes only their host',async()=>{
+ const previous=globalThis.document;globalThis.document={createElement:element};
+ try{
+  const page=element(),main=element(),rail=element();main.className='chat-main-col';page.append(main,rail);
+  const stale=element();stale.dataset.sourceUploads='';page.prepend(stale);
+  assert.equal(sourceUploadHost(page),stale);assert.equal(stale.parentElement,main);
+  assert.deepEqual(page.children,[main,rail]);
+  const uploads=createSourceUploads({getUploadLimits:()=>limits,getToken:()=>'',progressHost:()=>sourceUploadHost(page),api:async()=>{},
+   sendFile:async()=>({status:200,body:{id:'source',status:'ready'}})});
+  await Promise.all([uploads.uploadSource({name:'a.txt',size:1}),uploads.uploadSource({name:'b.txt',size:1})]);
+  assert.equal(stale.children.length,2);
+  stale.children[0].children[3].onclick();assert.equal(stale.parentElement,main);assert.equal(stale.children.length,1);
+  stale.children[0].children[3].onclick();assert.equal(stale.parentElement,null);assert.deepEqual(page.children,[main,rail]);
+  const next=sourceUploadHost(page);assert.notEqual(next,stale);assert.equal(next.parentElement,main);
+  const sources=element();assert.equal(sourceUploadHost(sources).parentElement,sources);
+ }finally{globalThis.document=previous}
 });

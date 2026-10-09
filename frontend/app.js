@@ -3,6 +3,7 @@ import {reasoningControls,settingsEffort,reasoningModel} from './reasoning-contr
 import {$,esc} from './dom.js';
 import {clock,dateTimeSeconds,moment} from './time.js';
 import {api,uploadSource,setToken,getUploadLimits,setSourceUploadHost} from './api.js';
+import {sourceUploadHost} from './source-upload.js';
 import {createReportBrowsing} from './report-browsing.js';
 import {createProviderCapabilities} from './provider-capabilities.js';
 import {createModelCatalog,createProviderCatalog} from './model-catalog.js';
@@ -131,7 +132,7 @@ const {sourceUsage,renderSourcesPage,setSourceDrawerTab,openSourceDrawer,closeSo
 const compactControls=compactReportControlsUI({api,action,refresh,notice,page,showSettings,settingsView,setAutoLearn,chatBackendChoice,backendValue,runtimeName,sessionBudget,
  getState:()=>state,getComposerOptions:()=>composerOptions,pendingReview:()=>reviewControls.pending()});
 const {compactReportInstruction,compactFactAvailability,syncCompactReportControls,mountCompactReportControls}=compactControls;
-setSourceUploadHost(()=>{const visible=['chat','setup','sources','report'].map($).find(el=>el&&!el.hidden)||$('sources');let host=visible.querySelector('[data-source-uploads]');if(!host){host=document.createElement('div');host.dataset.sourceUploads='';visible.prepend(host)}return host},()=>refresh().catch(error=>notice(error.message,true)));
+setSourceUploadHost(()=>sourceUploadHost(['chat','setup','sources','report'].map($).find(el=>el&&!el.hidden)||$('sources')),()=>refresh().catch(error=>notice(error.message,true)));
 let tooltipTarget=null;
 function showTip(el){const tip=$('tooltip');if(!tip)return;const text=el.getAttribute('data-tip');if(!text)return;tooltipTarget=el;tip.textContent=text;tip.hidden=false;const r=el.getBoundingClientRect(),t=tip.getBoundingClientRect();let left=r.left+r.width/2-t.width/2;left=Math.max(8,Math.min(left,window.innerWidth-t.width-8));let top=r.bottom+8;if(top+t.height>window.innerHeight-8)top=r.top-t.height-8;tip.style.left=left+'px';tip.style.top=top+'px'}
 function hideTip(){const tip=$('tooltip');if(tip)tip.hidden=true;tooltipTarget=null}

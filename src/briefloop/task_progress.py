@@ -68,11 +68,15 @@ def summary(store, job_id):
                          'status': 'done' if done else 'active' if running else 'recorded', 'started': r.get('created'), 'ended': r.get('closed'), 'time': r.get('closed') or r.get('created')})
     if run:
         from .scout_coverage import view as scout_view
-        labels = {'planned': '未派发', 'dispatched': '尚未交接', 'failed': '执行未完成', 'skipped': '已说明跳过'}
-        for task in scout_view(store, run_id)['execution_gaps']:
-            timeline.append({'label': f"第 {task['round_index']} 轮 {task['slot_id']}：" + labels[task['status']],
+        labels = {'planned': '派发状态未回传', 'dispatched': '已派发，等待交接', 'failed': '执行未完成', 'skipped': '已说明跳过'}
+        for task in scout_view(store, run_id)['scout_execution']:
+            if task['status'] == 'complete':
+                continue
+            label = ('结果已写出，等待交接校验' if task.get('result_present') and task['status'] in ('planned', 'dispatched')
+                     else labels[task['status']])
+            timeline.append({'label': f"第 {task['round_index']} 轮 {task['slot_id']}：" + label,
                              'detail': public_text(task['assignment'] + ('；' + task['reason'] if task['reason'] else '')),
-                             'status': 'error' if task['status'] == 'failed' else 'warn', 'not_started': task['status'] == 'planned', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
+                             'status': 'error' if task['status'] == 'failed' else 'warn', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
     event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',

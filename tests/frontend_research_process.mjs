@@ -28,7 +28,7 @@ test('unknown step timing is not estimated from queue age, percentages, or neigh
  assert.match(html,/尚未执行/);assert.match(html,/用时未记录/);assert.doesNotMatch(html,/93|%/);
 });
 
-test('planned Scouts show not started; real child timestamps provide elapsed time',()=>{
- const html=researchProcessHTML(job,{started:job.created,timeline:[{label:'第 2 轮 scout-1：未派发',status:'warn',not_started:true}],agents:[{role:'Scout',status:'completed',started:job.created,ended:'2026-10-01T10:01:00Z'}]});
- assert.match(html,/尚未开始/);assert.match(html,/1 分 0 秒/);assert.doesNotMatch(html,/用时未记录/);
+test('missing Scout receipt keeps timing unknown; real child timestamps provide elapsed time',()=>{
+ const html=researchProcessHTML(job,{started:job.created,timeline:[{label:'第 2 轮 scout-1：派发状态未回传',status:'warn'}],agents:[{role:'Scout',status:'completed',started:job.created,ended:'2026-10-01T10:01:00Z'}]});
+ assert.doesNotMatch(html,/尚未开始/);assert.match(html,/1 分 0 秒/);assert.match(html,/用时未记录/);
 });

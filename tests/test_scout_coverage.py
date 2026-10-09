@@ -342,3 +342,31 @@ def test_closed_round_join_cannot_credit_active_round_with_slots_override(tmp_pa
     join_scouts(store, [path], run_id=run['id'], round_id=second)
     research_plan.finish_round(store, run['id'])
     assert scout_coverage.view(store, run['id'])['execution_gaps'] == []
+
+
+def test_missing_dispatch_receipt_is_unknown_and_result_is_not_admission(tmp_path):
+    from pathlib import Path
+    from briefloop.task_progress import summary
+    from briefloop.scout_tools import join_scouts
+    store, source, run, job = setup(tmp_path)
+    research_plan.freeze(store, run['id'])
+    path = store.root / 'jobs' / job['id'] / 'scout-1' / 'result.json'
+    scout_coverage.declare(store, run['id'], [dict(slot_id='scout-1', assignment='Read local material', result_file=str(path))])
+    before = store.meta('scout_coverage:' + run['id'])
+    def row():
+        return next(item for item in summary(store, job['id'])['timeline'] if 'scout-1' in item['label'])
+    assert '派发状态未回传' in row()['label']
+    assert not row().get('not_started')
+    path.parent.mkdir(parents=True)
+    path.write_text('partial invalid JSON')
+    assert '等待交接校验' in row()['label']
+    assert scout_coverage.view(store, run['id'])['scout_execution'][0]['status'] == 'planned'
+    assert store.meta('scout_coverage:' + run['id']) == before
+    with pytest.raises(research_plan.AdmissionError, match='未交接'):
+        research_plan.finish_round(store, run['id'])
+    path.unlink()
+    scout_coverage.update(store, run['id'], [dict(slot_id='scout-1', status='dispatched', reason='child-handle')])
+    assert '已派发，等待交接' in row()['label']
+    path.write_text(json.dumps({'sources': [], 'gaps': ['No matching evidence']}))
+    join_scouts(store, [path], run_id=run['id'])
+    assert scout_coverage.view(store, run['id'])['execution_gaps'] == []
