@@ -53,6 +53,7 @@ import {createFeedbackList} from './feedback-list.js';
 import {readersUI} from './readers.js';
 import {verificationBadge} from './skill-verification.js';
 import {previousReportUI} from './previous-report.js';
+import {reportStartUI} from './report-start.js';
 import {nextReportUI} from './next-report.js';
 import {learningRetry} from './learning-retry.js';
 import {templatesUI} from './templates.js';
@@ -1944,7 +1945,7 @@ const templateOutput=createTemplateOutput({api,notice,refresh,getState:()=>state
  openBrief:brief=>{const opened=openBrief(brief);if(opened)page('report');return opened},uploadPayload,getUploadLimits});
 const templatesPage=templatesUI({api,notice,action,page,renderWorkflowChoices,templateSections,getState:()=>state,
  syncTemplateLanguage:template=>reportLanguageForm.syncTemplate(template),openTemplateOutput:(id,mode)=>templateOutput.open(id,mode)});
-if($('new-report'))$('new-report').onclick=()=>page('setup');
+reportStartUI({$,openChatHome,rememberDraft,updateComposer,page,notice,isBusy:()=>chat.busy||chat.uploading>0}).bind();
 sourcesPage.init();
 if($('templates-upload'))$('templates-upload').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;await api('template-import',await uploadPayload(file,getUploadLimits()));e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式')});
 reportBrowsing.init();
