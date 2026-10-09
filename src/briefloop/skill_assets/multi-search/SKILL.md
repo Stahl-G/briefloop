@@ -7,7 +7,7 @@ description: 使用本轮允许渠道发现来源、保存正文并按具体缺�
 
 读取下方的本轮冻结策略，优先首选，必要时使用已启用补充渠道。完整调用由 `{tool}` 提供，本轮 ID 是 `{run_id}`。
 
-先用1–2条互补查询发现事件，再按主体、当地语言与一手发布聚焦；补查重要缺口，材料充分即可交接。覆盖对照用于检查单一渠道可能漏掉的地区和观点，不给每条查询机械地同时调用所有渠道。
+根据任务的研究策略选择下一步；缺少线索时可用互补查询发现事件，已有线索则按主体、当地语言与一手发布聚焦；补查重要缺口，材料充分即可交接。覆盖对照用于检查单一渠道可能漏掉的地区和观点，不给每条查询机械地同时调用所有渠道。
 
 受控渠道统一用 web-search，可传 --provider、--purpose、--reason、--gap-id、--query、--topic general|news、--time-range day|week|month|year、--start-date、--end-date、--include-domain、--exclude-domain、--max-results、--search-depth basic|advanced。博查为网页搜索，不提供独立news/depth模式；工具返回有效映射。不得读取API密钥或手写网络请求绕过记录。
 

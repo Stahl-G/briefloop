@@ -45,5 +45,14 @@ test('Auto names/defaults come from the host and explicit restrictions survive',
 test('per-chat report choices preserve global settings and fast mode does not add a fact-check stage',()=>{
  const settings={research_tier:'deep',fact_checker:true},chat={reportOptions:{completion_mode:'fast',research_tier:'quick',fact_check:true}},web={checked:false};
  const ui=createComposerOptions({$:()=>web,getChat:()=>chat,getState:()=>({settings}),availability:()=>({enabled:true}),rememberDraft(){},openSettings(){},openReview(){}});
- assert.match(ui.instruction(),/completion_mode=fast，research_tier=quick，fact_check=false/);web.checked=true;assert.match(ui.instruction(),/completion_mode=fast_web/);assert.deepEqual(settings,{research_tier:'deep',fact_checker:true});
+ assert.match(ui.instruction(),/completion_mode=fast，research_tier=quick，research_strategy=guided，fact_check=false/);web.checked=true;assert.match(ui.instruction(),/completion_mode=fast_web/);assert.deepEqual(settings,{research_tier:'deep',fact_checker:true});
+});
+
+
+test('goal-driven research is per-report and never grants network or changes workspace defaults',()=>{
+ const chat={reportOptions:{research_strategy:'goal_driven'}},state={settings:{research_tier:'standard'}},web={checked:false};
+ const ui=createComposerOptions({$:()=>web,getChat:()=>chat,getState:()=>state,availability:()=>({enabled:true})});
+ assert.equal(ui.read().research_strategy,'goal_driven');assert.match(ui.instruction(),/research_strategy=goal_driven/);
+ assert.equal(web.checked,false);assert.equal(state.settings.research_strategy,undefined);
+ chat.reportOptions={};assert.equal(ui.read().research_strategy,'guided');
 });

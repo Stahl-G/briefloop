@@ -563,7 +563,8 @@ def prepare(store, job, folder, prompt):
         prompt = prompt + '\n本次没有 shell；web_search/add_url/source_read/workspace_action 直接传 JSON 参数。最后使用 submit_fact_check 提交上述结果对象，不写文件或调用 CLI。'
     elif job['kind'] == 'generate':
         from .research_handoff import PLANNING_GUIDE, GAP_UPDATE_GUIDE
-        prompt = ('你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
+        from .task_context import READING_GUIDE
+        prompt = (READING_GUIDE + '你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
                   '来源索引里的 source_id 用 source_read 读取；packet_read 只读取本包实际文件，不存在 packet/sources 目录，不猜原文路径。'
                   '开始时用 save_plan 保存 reader_contract 与完整 scout_tasks 分工（slot_id、assignment），确无 Scout 时明确写 []；用 run_scouts 执行，可分批派发但不能静默丢掉已承诺方向。新轮先登记本轮 scout_tasks；不能继续的分工在 finish_research_round 的 scout_outcomes 中以 failed/skipped 和 reason 说明，保留未检范围。'
                   'workspace_action 提供 research_status/finish_research_round/begin_research_round 及写前 reconciliation_candidates/reconciliation_save；'

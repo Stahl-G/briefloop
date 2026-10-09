@@ -239,6 +239,7 @@ function applyRequirements(text){
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
  if(data.research_tier)set('research_tier',data.research_tier);
+ set('research_strategy',data.research_strategy||'guided');
  initializeWorkflowChoice(data,true);syncWorkflowProfile(false);
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);

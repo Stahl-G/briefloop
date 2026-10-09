@@ -66,7 +66,13 @@ def test_generation_packet_is_utf8_with_cp1252_default(tmp_path,monkeypatch,prov
     assert packet['analyst-writing.md'].replace('\r\n','\n')==instructions(deliverable,role='analyst')+'\n'+temporal_note+'\n'+PLANNING_GUIDE
     assert packet['scout-contract.md'].replace('\r\n','\n')==instructions(deliverable,role='scout')+'\n'+temporal_note
     assert json.loads(packet['reader_contract.schema.json'])==reader_contract_schema(deliverable)
-    expected={'input.json','analyst-writing.md','scout-contract.md','reader_contract.schema.json'}
+    expected={'input.json','analyst-writing.md','scout-contract.md','reader_contract.schema.json',
+              'scout-context.json','analyst-context.json'}
+    for role in ('scout', 'analyst'):
+        context=json.loads(packet[role+'-context.json'])
+        assert context['role']==role
+        assert context['purpose']['objective']=='比较公司甲与公司乙的公开披露'
+        assert '证据' in context['knowledge']['meaning'] or '原文' in context['knowledge']['meaning']
     for slot in payload['scout_slots']:
         name=Path(slot['schema_path']).relative_to(folder).as_posix()
         expected.add(name)

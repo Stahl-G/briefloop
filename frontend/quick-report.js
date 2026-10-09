@@ -9,11 +9,11 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
   const mode=$('completion-mode')?.value,enabled=['draft_first','fast','fast_web'].includes(mode),fast=['fast','fast_web'].includes(mode);
   if($('draft-target-label'))$('draft-target-label').hidden=!enabled;
   if($('draft-target'))$('draft-target').disabled=!enabled;
-  for(const node of $('requirements')?.querySelectorAll?.('[name="allow_web"], [name="fact_check"], [name="research_tier"], #auto-revision, #company-mode')||[]){
+  for(const node of $('requirements')?.querySelectorAll?.('[name="allow_web"], [name="fact_check"], [name="research_tier"], [name="research_strategy"], #auto-revision, #company-mode')||[]){
    if(fast&&!node.hasAttribute('data-fast-disabled')){
     node.setAttribute('data-fast-disabled',String(node.disabled));node.disabled=true;
     if(node.type==='checkbox'){node.setAttribute('data-fast-checked',String(node.checked));node.checked=false}
-    else{node.setAttribute('data-fast-value',node.value);node.value=node.id==='company-mode'?'off':'quick'}
+    else{node.setAttribute('data-fast-value',node.value);node.value=node.id==='company-mode'?'off':node.name==='research_strategy'?'guided':'quick'}
    }else if(!fast&&node.hasAttribute('data-fast-disabled')){
     node.disabled=node.getAttribute('data-fast-disabled')==='true';node.removeAttribute('data-fast-disabled');
     if(node.hasAttribute('data-fast-checked')){node.checked=node.getAttribute('data-fast-checked')==='true';node.removeAttribute('data-fast-checked')}
