@@ -958,13 +958,18 @@ test('provider edits freeze active turns and replace endpoint, protocol, key and
   const waiting = new Promise(resolve => { release = resolve; });
   let started;
   const toolStarted = new Promise(resolve => { started = resolve; });
+  // This case checks provider snapshots, not the one-second stall recovery
+  // exercised above. Allow Windows SDK/protocol initialization to complete
+  // without deliberately triggering a retry in the request-count assertions.
+  const transportTurn = (sessionId, executionId) => turn(sessionId, executionId,
+    { expect_json: false, require_submit: false, idle_timeout_s: 10 });
   const tools = [{ name: 'workspace_action', description: 'Fixture operation', parameters: { type: 'object' }, long_running: true }];
   try {
     save();
     const initial = await reviewer({ role: 'chat', model: 'snapshot/model', runner_tools: tools });
     script(reply.tool('workspace_action'), reply.text('old turn finished'));
     runnerTool = () => { started(); return waiting; };
-    const active = turn(initial.session_id, 'provider-active', { expect_json: false, require_submit: false });
+    const active = transportTurn(initial.session_id, 'provider-active');
     await toolStarted;
     save({ protocol: 'anthropic-messages', base_url: `http://127.0.0.1:${server.address().port}/new`,
       api_key: 'fixture-new-key', context_limit: 32768, output_limit: 256, supports_images: true });
@@ -987,7 +992,7 @@ test('provider edits freeze active turns and replace endpoint, protocol, key and
     assert.equal(resumed.runtime_policy.context_window, 32768);
     assert.equal(resumed.image_input, true);
     script(reply.anthropicText('new turn finished'));
-    assert.equal(ends(await turn(resumed.session_id, 'provider-resumed', { expect_json: false, require_submit: false }))[0].status, 'completed');
+    assert.equal(ends(await transportTurn(resumed.session_id, 'provider-resumed'))[0].status, 'completed');
     assert.deepEqual(provider.transports, [{ path: '/new/v1/messages?beta=true', key: 'fixture-new-key', output: 256 }]);
     assert.match(JSON.stringify(provider.requests[0].messages), /old turn finished/, 'provider changes preserve the transcript');
 
@@ -1003,7 +1008,7 @@ test('provider edits freeze active turns and replace endpoint, protocol, key and
       assert.equal(session.runtime_policy.output_limit, 8192);
       assert.equal(session.image_input, false);
       script(reply.anthropicText(label));
-      assert.equal(ends(await turn(session.session_id, 'provider-cleared-' + label, { expect_json: false, require_submit: false }))[0].status, 'completed');
+      assert.equal(ends(await transportTurn(session.session_id, 'provider-cleared-' + label))[0].status, 'completed');
       assert.deepEqual(provider.transports, [{ path: '/new/v1/messages?beta=true', key: 'fixture-new-key', output: 8192 }]);
     }
   } finally {
