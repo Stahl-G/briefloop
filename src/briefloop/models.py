@@ -542,15 +542,27 @@ def assessment_checks(checks, findings, expected=()):
         data = finding if isinstance(finding, dict) else finding.model_dump()
         for identity in data.get('check_ids', []):
             linked.setdefault(identity, []).append(index)
+    if expected:
+        # A misspelled or omitted check must remain visible. Do not guess which
+        # real check the model intended, or change unrelated passing results.
+        returned = {check.get('id') for check in result if isinstance(check.get('id'), str)}
+        for identity in linked:
+            if identity in returned:
+                continue
+            result.append({'id': identity, 'name': '发现关联的检查未返回',
+                           'status': 'not_checked',
+                           'reason': '评价发现引用了未返回的检查 ID：' + identity,
+                           'consistency_note': '尚不能核对这条关联；保留原发现，不自动匹配其他检查。'})
     for check in result:
         identity = check.get('id')
         indices = linked.get(identity) if isinstance(identity, str) else None
         if indices:
             check['finding_indices'] = indices
-            if check.get('status') == 'passed':
-                check['model_status'] = 'passed'
+            status = check.get('status') or check.get('result')
+            if status in ('passed', 'n/a'):
+                check.setdefault('model_status', status)
                 check['status'] = 'needs_attention'
-                check['consistency_note'] = '评价仍列出与此项关联的问题，不能同时显示为全部通过；不改变总评或问题严重程度。'
+                check['consistency_note'] = '评价仍列出与此项关联的问题，不能同时显示为全部通过或不适用；不改变总评或问题严重程度。'
     return result
 
 
