@@ -742,14 +742,14 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .external_requests import dispatch
                     result=dispatch(store,body)
                 elif path=='/api/harness/message':
-                    if body.get('next_report') is not None:
-                        from .next_report import conversation_request
-                        body.setdefault('display_text',body.get('text',''))
-                        body['text']=conversation_request(store,body.get('text',''),body['next_report'])
-                    choose_runtime(store,body.get('runtime'))
-                    from .next_report import bind_message_context
+                    from .next_report import bind_message_context, conversation_request, context_already_delivered
                     from .store import uid
                     body['message_id']=body.get('message_id') or uid('msg')
+                    if body.get('next_report') is not None:
+                        body.setdefault('display_text',body.get('text',''))
+                        compact=context_already_delivered(store,body['session_id'],body['message_id'],body['next_report'])
+                        body['text']=conversation_request(store,body.get('text',''),body['next_report'],compact=compact)
+                    choose_runtime(store,body.get('runtime'))
                     bind_message_context(store,body['session_id'],body['message_id'],body.get('next_report'))
                     if body.get('next_report') is not None:
                         body['text']+='\n当前发起会话 session_id='+body['session_id']+'；generate 使用该会话绑定本期选择。'

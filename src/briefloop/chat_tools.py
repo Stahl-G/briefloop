@@ -28,7 +28,7 @@ WORKSPACE_ACTIONS = (
     'evidence_span','claim_create','claim_bind','read_run_report','evidence_read','read_report',
     'revise_document','templates','workflows','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
-    'profile_read','profile_update','writing_agreements',
+    'profile_read','profile_update','writing_agreements','next_report',
     'freeze_research_plan','research_status','begin_research_round','finish_research_round','set_scout_tasks',
     'reconciliation_candidates','reconciliation_save','reconciliation_read',
     'export_word','inspect','stop_job','generate','assess','comment','learn',
@@ -235,6 +235,9 @@ def workspace_action(store, request):
         if owner:payload['session_id']=owner
         job=store.enqueue('assess',payload)
         return {'job_id':job['id'],'status':job['status'],'message':'已提交该版本的评分任务。'}
+    if action=='next_report':
+        from .next_report import prepare
+        return prepare(store,request['version_id'])
     if action=='writing_agreements':
         from .writing_agreements import listing
         return {'items':listing(store,request.get('version_id'))}
@@ -355,6 +358,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"stop_job","job_id":"真实任务ID"}}：用户要求停止任务时，先通过 inspect 确认具体任务，再停止该任务及其子任务，已保存稿件保留。用户要求“停掉旧任务再重新生成”时先取得停止回执，再提交新任务；停止失败时如实说明，不启动重复任务。目标不明确时先问，不猜 ID，不停止整个服务。以回执的实际 status 为准，已经完成的任务不会变成 cancelled。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
+- {{"action":"next_report","version_id":"明确关联的往期版本ID"}}：只读获取该版本可沿用的报告约定；不创建任务、不复用旧事实或授权。
 - {{"action":"writing_agreements","version_id":"真实简报版本ID"}}：查看这份报告及后续期适用的写作约定。工作区范围约定对所有新报告生效。
 新任务的 writing_agreements 由服务端冻结，不手填，不把它们重复抄进 writing_preferences；writing_preferences 只记录本轮额外要求。用户本轮明确要跳过某条时，generate.requirements.writing_agreement_exclusions 传真实ID；遇到本轮要求与旧约定冲突先说明并使用用户本轮选择，不能让学习评分推翻明确要求。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。

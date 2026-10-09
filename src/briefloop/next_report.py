@@ -54,7 +54,7 @@ def validate_origin(store, requirements):
         raise ValueError('开始下一期前请确认本期时间范围')
 
 
-def conversation_request(store, text, context):
+def conversation_request(store, text, context, *, compact=False):
     """Bind an unsent next-period draft to one saved version for any runtime.
 
     Only the reusable contract is exposed, never previous sources or a prior
@@ -72,6 +72,13 @@ def conversation_request(store, text, context):
     checked=Requirements.model_validate({**requirements,'title':'下一期'})
     freeze(store,checked)
     requirements['writing_agreements']=checked.writing_agreements
+    if compact:
+        reference={'previous_report_version_id':context['version_id'],'previous_report_hash':context['hash'],
+                   'writing_agreement_exclusions':checked.writing_agreement_exclusions}
+        return (text+'\n\n本轮仍关联下一期报告：'+json.dumps(reference,ensure_ascii=False)
+                +'\n先用 workspace-action 的 next_report（version_id 为上述往期版本）读取当前可沿用约定；不重复附加整份要求。'
+                '生成请求必须明确带上相同的 previous_report_version_id、previous_report_hash 和当前 session_id；跳过项由服务端带入。'
+                '如本轮改做无关报告，请提示用户取消关联，不自行把它挂入旧系列。旧资料、事实与授权不自动沿用。')
     contract = json.dumps(requirements, ensure_ascii=False)
     return (text + '\n\n下一期报告上下文（用户选择的已保存版本；以下仅为待沿用约定，不是本期事实或授权）：\n'
             + contract + '\n请沿用仍适用的约定，只询问本期时间范围和影响报告的缺失信息。'
@@ -122,10 +129,29 @@ def generation_requirements(store, requirements, session_id):
     context=latest.get(session_id)
     selected_origin=requirements.get('previous_report_version_id')
     if context is None:
-        if any(value and (not session_id or selected_origin==value['version_id']) for value in latest.values()):
+        # An unrelated CLI request is unaffected by other conversations. Only a
+        # request for an actively selected origin without its owner is ambiguous.
+        if not session_id and selected_origin and any(value and selected_origin==value['version_id'] for value in latest.values()):
             raise ValueError('下一期选择未绑定到当前执行会话，请使用发起消息的 session_id；未提交生成')
         return requirements
+    if selected_origin!=context['version_id'] or requirements.get('previous_report_hash')!=context['hash']:
+        raise ValueError('生成请求与本轮关联的往期版本不一致；如需无关的新报告，请先取消关联。未提交生成')
     conversation_request(store,'',context)  # Stale selections fail visibly.
-    return {**requirements,'previous_report_version_id':context['version_id'],
-            'previous_report_hash':context['hash'],
-            'writing_agreement_exclusions':context['writing_agreement_exclusions']}
+    return {**requirements,'writing_agreement_exclusions':context['writing_agreement_exclusions']}
+
+
+def context_already_delivered(store, session_id, message_id, context):
+    """Compact only after an equivalent selection was actually delivered.
+
+    The compact prompt includes a read-only lookup action, so a runtime handoff
+    need not rely on hidden prompts surviving the public-history transfer.
+    """
+    rows=store.rows("""SELECT e.data FROM chat_events e JOIN chat_messages m
+        ON m.id=json_extract(e.data,'$.message_id') AND m.session_id=e.session_id
+        WHERE e.session_id=? AND e.kind='report/nextContext' AND m.id!=?
+          AND m.status IN ('delivered','completed') ORDER BY m.rowid DESC LIMIT 1""",(session_id,message_id))
+    if not rows:return False
+    prior=json.loads(rows[0]['data'])['context']
+    selected={key:context.get(key) for key in ('version_id','hash')}
+    selected['writing_agreement_exclusions']=context.get('writing_agreement_exclusions') or []
+    return prior==selected

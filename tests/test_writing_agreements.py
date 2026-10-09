@@ -78,10 +78,16 @@ def test_next_period_selection_is_bound_to_executing_message_not_model_copy(tmp_
     context={'version_id':brief['id'],'hash':brief['hash'],'writing_agreement_exclusions':[rule['id']]}
     bind_message_context(store,sid,'first',context)
     chats.message(sid,'做十月一期',mid='first',status='delivered')
-    # The model omits BOTH origin and exclusions. The server restores the exact UI choices.
-    request={'action':'generate','session_id':sid,'requirements':{'title':'October','objective':'Review','period':'2026-10'},'source_ids':[source['id']]}
+    # The model must name the origin, but need not copy the UI exclusions.
+    request={'action':'generate','session_id':sid,'requirements':{'title':'October','objective':'Review','period':'2026-10','previous_report_version_id':brief['id'],'previous_report_hash':brief['hash']},'source_ids':[source['id']]}
     bind_message_context(store,sid,'queued',None)
     chats.message(sid,'别的要求',mid='queued')
+    before=(len(store.rows('SELECT id FROM runs')),len(store.rows('SELECT id FROM jobs')))
+    for override in ({'previous_report_version_id':None,'previous_report_hash':None},
+                     {'previous_report_version_id':'another-version'},{'previous_report_hash':'different'}):
+        with pytest.raises(ValueError,match='取消关联'):
+            workspace_action(store,{**request,'requirements':{**request['requirements'],**override}})
+        assert before==(len(store.rows('SELECT id FROM runs')),len(store.rows('SELECT id FROM jobs')))
     result=workspace_action(store,request)
     frozen=json.loads(store.one('runs',result['run_id'])['requirements'])
     assert frozen['previous_report_version_id']==brief['id']
@@ -89,10 +95,39 @@ def test_next_period_selection_is_bound_to_executing_message_not_model_copy(tmp_
     assert not resolve(frozen)['writing_preferences']
     with pytest.raises(ValueError,match='session_id'):
         workspace_action(store,{k:v for k,v in request.items() if k!='session_id'})
+    # Unrelated terminal / another chat must not be blocked by the bound conversation.
+    unrelated={**request,'requirements':{'title':'Other','objective':'Other purpose'}}
+    for owner in (None,chats.create('Unrelated',{},tmp_path)['id']):
+        unbound=workspace_action(store,{**unrelated,'session_id':owner})
+        saved=json.loads(store.one('runs',unbound['run_id'])['requirements'])
+        assert 'previous_report_version_id' not in saved and not resolve(saved)['writing_preferences']
     # A retry cannot replace the browser's original choice.
     with pytest.raises(ValueError,match='同一消息'):
         bind_message_context(store,sid,'first',{**context,'writing_agreement_exclusions':[]})
     # Only the next delivered message clears its own context; a queued one never changes an active turn.
     chats.patch_message('first',status='completed');chats.patch_message('queued',status='delivered')
-    other=workspace_action(store,request)
+    other=workspace_action(store,unrelated)
     assert 'previous_report_version_id' not in json.loads(store.one('runs',other['run_id'])['requirements'])
+
+
+def test_followup_uses_small_reference_with_read_only_lookup(tmp_path):
+    from briefloop.next_report import bind_message_context,context_already_delivered
+    store=Store(tmp_path);_,_,brief=report(store);chats=ChatStore(store)
+    sid=chats.create('Next',{},tmp_path)['id']
+    context={'version_id':brief['id'],'hash':brief['hash']}
+    bind_message_context(store,sid,'first',context)
+    assert not context_already_delivered(store,sid,'second',context)  # Failed send: no message.
+    chats.message(sid,'next',mid='first')
+    assert not context_already_delivered(store,sid,'second',context)  # Merely queued.
+    chats.patch_message('first',status='delivered')
+    assert context_already_delivered(store,sid,'second',context)
+    assert not context_already_delivered(store,sid,'second',{**context,'writing_agreement_exclusions':['different']})
+    full=conversation_request(store,'确认十月',context)
+    compact=conversation_request(store,'确认十月',context,compact=True)
+    assert len(compact)<len(full) and '"objective"' not in compact and 'next_report' in compact
+    assert brief['id'] in compact and brief['hash'] in compact
+    lookup=workspace_action(store,{'action':'next_report','version_id':brief['id']})
+    assert lookup['requirements']['objective']=='Review' and not store.rows('SELECT id FROM jobs')
+    assert not context_already_delivered(store,sid,'first',context)  # Idempotent retry.
+    chats.patch_message('first',status='failed')
+    assert not context_already_delivered(store,sid,'second',context)
