@@ -4,6 +4,7 @@ This separates history, not OS permissions. Shared configuration and file auth
 are linked, never copied into reports or interpreted as model input.
 """
 import hashlib
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -86,11 +87,13 @@ class CodexHome:
         if len(candidates) != 1:
             raise RuntimeError('旧 Codex 会话有多个历史文件，未自动选择或覆盖。')
         source = candidates[0]
-        # Active rollout paths keep their date layout. Archived ones can sit at
-        # the root; retain that relative layout and let Codex index the copy.
-        source_base = next(self.source/name for name in ('sessions', 'archived_sessions')
-                           if source.is_relative_to(self.source/name))
-        target = self.root/'sessions'/source.relative_to(source_base)
+        # Archived rollouts live at the archive root. Put the imported copy in
+        # the dated sessions layout so Codex's normal history index can find it.
+        try:
+            day = date.fromisoformat(source.name.removeprefix('rollout-')[:10])
+        except ValueError as exc:
+            raise RuntimeError('旧 Codex 会话文件名无法识别，未自动迁移。') from exc
+        target = self.root/'sessions'/f'{day.year:04}'/f'{day.month:02}'/f'{day.day:02}'/source.name
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         before = source.stat()
         fd, temporary = tempfile.mkstemp(prefix='.import-', dir=target.parent)

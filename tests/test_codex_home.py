@@ -37,15 +37,18 @@ def test_history_is_private_but_file_login_and_config_are_shared(tmp_path):
         CodexHome(environ={'CODEX_HOME':str(source)},state_root=tmp_path/'private')
 
 
-def test_import_only_bound_id_preserves_original_and_private_progress(tmp_path):
+@pytest.mark.parametrize('archived', [False, True])
+def test_import_only_bound_id_preserves_original_and_private_progress(tmp_path, archived):
     source, home=fixture_home(tmp_path)
     identity=str(uuid4());other=str(uuid4())
-    folder=source/'sessions'/'2026'/'10'/'09';folder.mkdir(parents=True)
+    folder=source/'archived_sessions' if archived else source/'sessions'/'2026'/'10'/'09'
+    folder.mkdir(parents=True)
     original=folder/f'rollout-2026-10-09T00-00-00-{identity}.jsonl'
     original.write_bytes(b'synthetic private conversation\n')
     (folder/f'rollout-{other}.jsonl').write_bytes(b'unrelated\n')
     home.import_bound_thread(identity)
     copied=next((home.root/'sessions').rglob('*.jsonl'))
+    assert copied.parent==home.root/'sessions'/'2026'/'10'/'09'
     assert copied.read_bytes()==original.read_bytes()
     copied.write_bytes(b'new private progress\n')
     home.import_bound_thread(identity)
@@ -73,7 +76,7 @@ def test_live_old_thread_is_not_imported(tmp_path,monkeypatch):
     import briefloop.codex_home as module
     source, home=fixture_home(tmp_path)
     identity=str(uuid4());folder=source/'archived_sessions';folder.mkdir()
-    original=folder/f'rollout-{identity}.jsonl';original.write_bytes(b'synthetic\n')
+    original=folder/f'rollout-2026-10-09T00-00-00-{identity}.jsonl';original.write_bytes(b'synthetic\n')
     copy=module.shutil.copyfileobj
     def racing_read(src,dst):
         copy(src,dst)
