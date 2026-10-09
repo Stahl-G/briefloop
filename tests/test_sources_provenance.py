@@ -325,3 +325,24 @@ def test_fallback_reader_connects_only_to_the_address_it_checked(monkeypatch):
     try:sources._fetch_bytes('https://stable.example/report')
     except OSError:pass
     assert connections==[('93.184.215.14',443)]
+
+
+def test_gzip_web_response_is_readable_and_original_is_retained(tmp_path,monkeypatch):
+    import gzip
+    store=Store(tmp_path)
+    document=b'<html><title>Release</title><body>Python release announcement</body></html>'
+    raw=gzip.compress(document)
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(raw,'text/html','utf-8'))
+    record=sources.fetch(store,'https://example.test/release')
+    metadata=json.loads((store.root/'sources'/(record['id']+'.provenance.json')).read_text())
+    assert record['status']=='ready' and record['name']=='Release'
+    assert 'Python release announcement' in store.source_text(record['id'])
+    assert (store.root/metadata['original_path']).read_bytes()==raw
+    assert metadata['raw_sha256']==hashlib.sha256(raw).hexdigest()
+    assert metadata['decoded_sha256']==hashlib.sha256(document).hexdigest()
+    # Corruption and expansion limits remain visible failures, never ready text.
+    for raw in (raw[:-4],raw[:10]+b'\xff'*20,gzip.compress(b'x'*(15*1024*1024+1))):
+        failed=sources.fetch(store,'https://example.test/broken')
+        assert failed['status']=='failed' and store.source_text(failed['id'])==''
+        metadata=json.loads((store.root/'sources'/(failed['id']+'.provenance.json')).read_text())
+        assert (store.root/metadata['original_path']).read_bytes()==raw

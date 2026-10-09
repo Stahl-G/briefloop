@@ -8,6 +8,8 @@ from io import BytesIO
 from urllib.parse import urlsplit
 from pathlib import Path
 import hashlib
+import gzip
+import zlib
 import http.client
 import ipaddress
 import re
@@ -346,6 +348,18 @@ def _fetch_suffix(name,data,content_type):
             'image/gif':'.gif','image/tiff':'.tiff','image/bmp':'.bmp','text/html':'.html','text/plain':'.txt'}.get(kind,'.bin')
 
 
+def _http_document(data):
+    """Decode a gzip response without replacing the retained wire snapshot."""
+    if not data.startswith(b'\x1f\x8b'):return data
+    try:
+        with gzip.GzipFile(fileobj=BytesIO(data)) as stream:
+            decoded=stream.read(15*1024*1024+1)
+    except (OSError,EOFError,zlib.error) as exc:
+        raise ValueError('网页 gzip 响应损坏，原件已保留') from exc
+    if len(decoded)>15*1024*1024:raise ValueError('网页解压后过大，原件已保留，请下载后上传')
+    return decoded
+
+
 def _fetch(store, url, *, allow_private=False):
     from .store import uid,now,content_hash,dump
     from .media import detect_media_type,safe_source_path
@@ -363,9 +377,15 @@ def _fetch(store, url, *, allow_private=False):
                 'media_type':detect_media_type(raw_name,data,content_type),'needs_visual':False,'pages':None}
     text='';error=None;extractor='source extraction'
     try:
-        blocked=_html_block_reason(data,content_type,encoding)
+        document=_http_document(data)
+        if document is not data:
+            provenance.update({'response_encoding':'gzip','decoded_sha256':hashlib.sha256(document).hexdigest()})
+            title=html_title(document,content_type,encoding)
+            name=title or raw_name
+            provenance['title']=title or None
+        blocked=_html_block_reason(document,content_type,encoding)
         if blocked:raise ValueError(blocked)
-        text,extractor,details=_source_content(store,raw_name,data,content_type=content_type,encoding=encoding)
+        text,extractor,details=_source_content(store,raw_name,document,content_type=content_type,encoding=encoding)
         provenance.update(details)
         if not text.strip():raise ValueError('网页没有可读取正文')
     except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:text='';error=str(exc)
