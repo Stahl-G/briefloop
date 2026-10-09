@@ -1,7 +1,7 @@
 {
   "id": "business_report",
   "label": "商业报告",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "按行业定期、工作进展或决策分析用途组织研究与写作。",
   "default_variant": "decision_memo",
   "variants": [

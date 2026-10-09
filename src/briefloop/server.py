@@ -250,6 +250,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/report-context':
                     from .report_browsing import context
                     self.send(200,context(store,q['version_id'][0]))
+                elif u.path=='/api/writing-agreements':
+                    from .writing_agreements import listing
+                    from .feedback_view import for_report, pending_for_report
+                    version=q.get('version_id',[None])[0]
+                    self.send(200,{'items':listing(store,version),'learning':for_report(store,version) if version else None,'pending_feedback':pending_for_report(store,version) if version else 0})
                 elif u.path=='/api/next-report':
                     from .next_report import prepare
                     self.send(200,prepare(store,q['version_id'][0]))
@@ -319,7 +324,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     sid=q['id'][0];attachment=source_attachment(store,sid)
                     if attachment.get('status')!='ready':raise ValueError(attachment.get('error') or '来源不可读取')
                     page=int(q['page'][0]) if q.get('page') else None
-                    path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
+                    if q.get('image'):
+                        from .article_materials import image_path
+                        path=image_path(store,sid,int(q['image'][0]))
+                    else:path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
                     if not path:raise ValueError('尚无图片页面，请先选择 PDF 页码并点击查看页面')
                     self.send(200,filesystem_path(path).read_bytes(),'image/png')
                 elif u.path=='/api/source-original':
@@ -734,7 +742,17 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .external_requests import dispatch
                     result=dispatch(store,body)
                 elif path=='/api/harness/message':
+                    from .next_report import bind_message_context, conversation_request, context_already_delivered
+                    from .store import uid
+                    body['message_id']=body.get('message_id') or uid('msg')
+                    if body.get('next_report') is not None:
+                        body.setdefault('display_text',body.get('text',''))
+                        compact=context_already_delivered(store,body['session_id'],body['message_id'],body['next_report'])
+                        body['text']=conversation_request(store,body.get('text',''),body['next_report'],compact=compact)
                     choose_runtime(store,body.get('runtime'))
+                    bind_message_context(store,body['session_id'],body['message_id'],body.get('next_report'))
+                    if body.get('next_report') is not None:
+                        body['text']+='\n当前发起会话 session_id='+body['session_id']+'；generate 使用该会话绑定本期选择。'
                     result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',store.settings().get('chat_allow_web',True))))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
@@ -836,6 +854,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     if result['feedback_id']:
                         from .learning import enqueue_feedback
                         result['learning']=enqueue_feedback(store,automatic=True)
+                elif path=='/api/writing-agreements':
+                    from .writing_agreements import remember
+                    result=remember(store,body['version_id'],body['text'],scope=body.get('scope','series'))
+                elif path=='/api/writing-agreements/revoke':
+                    from .writing_agreements import revoke
+                    result=revoke(store,body['id'])
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/native/provider':

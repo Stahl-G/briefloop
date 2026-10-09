@@ -70,12 +70,14 @@ def test_learning_waits_for_its_minimum_scout_slot(tmp_path):
     assert worker._next_runnable([learning, other])['id'] == 'other'
 
 
-def test_inline_trial_uses_actual_owner_budget_and_wakeup(tmp_path, monkeypatch):
+@pytest.mark.parametrize('report_limit', [None, 8])
+def test_inline_trial_uses_actual_owner_budget_and_wakeup(tmp_path, monkeypatch, report_limit):
     from briefloop.learning import _generate_trial
     store = Store(tmp_path)
-    store.update_settings({'max_agent_sessions': 4, 'model': 'test-model', 'model_selection_required': False})
+    store.update_settings({'max_agent_sessions': 4, 'max_parallel': 1, 'model': 'test-model', 'model_selection_required': False})
     source = store.add_source('Facts', 'Revenue was 12 million USD.')
-    case = store.create_run({'title': 'Report', 'objective': 'Explain revenue', 'allow_web': False}, [source['id']])
+    case = store.create_run({'title': 'Report', 'objective': 'Explain revenue', 'allow_web': False,
+                             **({'scout_limit': report_limit} if report_limit else {})}, [source['id']])
     runtime = object()
     owner = Worker(store, runtime=runtime)
     job = store.enqueue('learn', {})
@@ -89,6 +91,7 @@ def test_inline_trial_uses_actual_owner_budget_and_wakeup(tmp_path, monkeypatch)
 
     def generate(self, trial, *, score):
         assert self is owner
+        assert json.loads(trial['payload'])['max_parallel'] == 1
         assert self.runtime is runtime
         assert self._scout_budget(trial)(4) == 1
         assert owner.budget.snapshot()['in_use'] == 4
@@ -100,6 +103,8 @@ def test_inline_trial_uses_actual_owner_budget_and_wakeup(tmp_path, monkeypatch)
         _generate_trial(store, {**job, '_runtime': runtime, '_worker': owner}, case, None,
                         tmp_path / 'jobs' / job['id'] / 'case' / 'candidate', 'candidate')
     assert owner.budget.snapshot()['held'] == {job['id']: 2, 'other-report': 2}
+    child = store.rows("SELECT status FROM jobs WHERE json_extract(payload,'$.inline_owner_job_id')=?", (job['id'],))
+    assert child == [{'status': 'failed'}]
 
 
 def test_a_report_review_starts_on_a_full_budget_but_a_separate_review_waits(tmp_path, monkeypatch):

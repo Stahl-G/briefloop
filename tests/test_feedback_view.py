@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from briefloop.feedback_view import snapshot as feedback_snapshot
+from briefloop.feedback_view import snapshot as feedback_snapshot, for_report, pending_for_report
 from briefloop.store import Store, dump, now
 
 
@@ -19,9 +19,9 @@ def render(state):
         import {createFeedbackList} from './frontend/feedback-list.js';
         const state=JSON.parse(fs.readFileSync(0,'utf8')),nodes={};
         const $=id=>nodes[id]??={innerHTML:'',hidden:true,querySelector:()=>null};
-        const list=createFeedbackList({$,esc:String,getState:()=>state,openLearning:()=>{}});
+        const list=createFeedbackList({$,esc:String,getState:()=>state,openLearning:()=>{},startLearning:()=>{}});
         list.render();
-        process.stdout.write(JSON.stringify({rows:list.rows(),html:nodes['feedback-list'].innerHTML,hint:nodes['feedback-saved-hint'].innerHTML}));
+        process.stdout.write(JSON.stringify({rows:list.rows(),html:nodes['feedback-list'].innerHTML,hint:nodes['feedback-saved-hint'].innerHTML,next:nodes['feedback-next-step']}));
     """
     result = subprocess.run(['node', '--input-type=module', '-e', script], input=dump(state),
                             cwd=Path(__file__).resolve().parents[1], text=True, capture_output=True, check=True)
@@ -56,6 +56,11 @@ def test_snapshot_retains_old_learning_outcomes_and_real_revisions(tmp_path):
     assert revision['kind'] == 'revision'
     assert json.loads(revision['data']) == {'before': brief['id'], 'after': revised['id']}
     assert state['feedback_summary'] == {'total': 6, 'pending': 1}
+    assert for_report(store,revised['id'])['id']=='complete'
+    assert pending_for_report(store,revised['id'])==1
+    other=report(store)
+    assert for_report(store,other['id']) is None
+    assert pending_for_report(store,other['id'])==0
     rendered = render(state)
     shown = {row['id']: row for row in rendered['rows']}
     assert [shown[fid]['status'] for fid in feedback_ids] == ['整理失败', '整理中断', '整理已停止', '已整理']

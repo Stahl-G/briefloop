@@ -11,13 +11,16 @@ test('process collapses to the current action, not percent or raw model output',
  assert.match(html,/用时未记录/);
  assert.equal(processSteps(job,progress)[1].detail,'');
 });
-test('completed work defaults closed; gaps and conflicts default open and are readable in the same block',()=>{
+test('gaps remain discoverable without pushing the report below an expanded log',()=>{
  const finished={...job,status:'complete'};
  assert.match(researchProcessHTML(finished,{...progress,timeline:[]}),/研究完成/);
  assert.doesNotMatch(researchProcessHTML(finished,{...progress,timeline:[]}),/ open>/);
  const problem={...progress,gaps:[{text:'缺少本期公告'}],conflicts:[{text:'收入口径不同'}]};
  const html=researchProcessHTML(finished,problem);
- assert.match(html,/ open>/);assert.match(html,/is-warn/);assert.match(html,/is-error/);
+ assert.doesNotMatch(html,/ open>/);assert.match(html,/需要关注/);assert.match(html,/is-warn/);assert.match(html,/is-error/);
+ assert.match(researchProcessHTML(job,{...problem,needs_attention:true}),/ open>/);
+ assert.match(researchProcessHTML({...job,status:'failed'},problem),/ open>/);
+ assert.match(researchProcessHTML(job,problem,{expanded:true}),/ open>/);
  assert.match(html,/缺少本期公告/);assert.match(html,/收入口径不同/);
  assert.doesNotMatch(researchProcessHTML(finished,problem,{expanded:false}),/ open>/);
  assert.notEqual(processDisclosureKey(job,progress),processDisclosureKey(finished,progress),'completion does not inherit a running disclosure preference');

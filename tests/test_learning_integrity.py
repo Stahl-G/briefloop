@@ -48,3 +48,30 @@ def test_internal_clone_rejects_forged_token_and_corrupt_saved_snapshot(tmp_path
     run=store.create_run(req,[source['id']]);saved=json.loads(run['requirements']);saved['workflow_snapshot']['role_instructions']['writing']='tampered'
     with store.tx() as c:c.execute('UPDATE runs SET requirements=? WHERE id=?',(dump(saved),run['id']))
     with pytest.raises(ValueError,match='哈希'):store._create_learning_run(run['id'],[source['id']])
+
+
+def test_trial_preflight_failure_does_not_leave_phantom_running_job(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    store.update_settings({'model': 'synthetic-model', 'model_selection_required': False, 'max_parallel': 1})
+    source = store.add_source('Synthetic source', 'Revenue 12 million.')
+    case = store.create_run({'title': 'Synthetic review', 'objective': 'Explain revenue',
+                             'allow_web': False, 'scout_limit': 8}, [source['id']])
+    parent = store.enqueue('learn', {})
+    enqueue = store.enqueue
+
+    def corrupt_child(kind, payload, **kwargs):
+        child = enqueue(kind, payload, **kwargs)
+        if payload.get('inline_owner_job_id'):
+            saved = json.loads(child['payload'])
+            saved['max_parallel'] = 2
+            with store.tx() as connection:
+                connection.execute('UPDATE jobs SET payload=? WHERE id=?', (dump(saved), child['id']))
+            return store.one('jobs', child['id'])
+        return child
+
+    monkeypatch.setattr(store, 'enqueue', corrupt_child)
+    with pytest.raises(ValueError, match='宿主或模型条件不一致'):
+        learning._generate_trial(store, parent, case, None, tmp_path/'jobs'/parent['id']/'case'/'baseline', 'baseline')
+    child = store.rows("SELECT status,error FROM jobs WHERE json_extract(payload,'$.inline_owner_job_id')=?", (parent['id'],))
+    assert len(child) == 1 and child[0]['status'] == 'failed'
+    assert '条件不一致' in child[0]['error']

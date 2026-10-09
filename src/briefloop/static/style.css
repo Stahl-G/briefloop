@@ -1795,3 +1795,15 @@ body{font-variant-numeric:tabular-nums}
 .source-library-selection{display:flex;flex:none;margin:0}
 .source-library-selection input{width:var(--space-4);height:var(--space-4);margin:0;accent-color:var(--color-primary)}
 #sources-report-filter{max-width:100%;text-overflow:ellipsis}
+
+/* Report feedback reuses the app form and button states. */
+.report-writing-agreements { margin-block: var(--space-4); }
+.agreement-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.agreement-actions select { flex: 1; min-width: 0; }
+.report-writing-agreements summary { cursor: pointer; font-weight: var(--fw-medium); }
+.report-writing-agreements summary:focus-visible { outline: 2px solid var(--color-focus); }
+.report-writing-agreements .feedback-items { padding-inline-start: var(--space-4); }
+
+#assistant-form { flex-direction: column; align-items: stretch; }
+.assistant-feedback-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.assistant-feedback-actions button { font-size: var(--text-sm); }

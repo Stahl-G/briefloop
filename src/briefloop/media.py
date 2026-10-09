@@ -263,6 +263,10 @@ def source_attachment(store, sid):
         # must not start a second parser or turn an interrupted source into ready.
         result['raw_sha256']=metadata.get('raw_sha256')
         return result
+    from .article_materials import ARTICLE_MIME, attachment as article_attachment
+    if metadata.get('media_type')==ARTICLE_MIME:
+        result.update(article=article_attachment(store,metadata,metadata['raw_sha256']),needs_visual=bool(metadata.get('needs_visual')),raw_sha256=metadata['raw_sha256'])
+        return result
     recorded=_recorded_pdf(metadata)
     if recorded:
         # source_files verified raw_sha256; do not reread and reparse a large PDF.

@@ -28,7 +28,7 @@ WORKSPACE_ACTIONS = (
     'evidence_span','claim_create','claim_bind','read_run_report','evidence_read','read_report',
     'revise_document','templates','workflows','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
-    'profile_read','profile_update',
+    'profile_read','profile_update','writing_agreements','next_report',
     'freeze_research_plan','research_status','begin_research_round','finish_research_round','set_scout_tasks',
     'reconciliation_candidates','reconciliation_save','reconciliation_read',
     'export_word','inspect','stop_job','generate','assess','comment','learn',
@@ -206,7 +206,8 @@ def workspace_action(store, request):
         from .external_client import Client
         return Client(store.root).stop_job(job_id)
     if action=='generate':
-        requirements=Requirements.model_validate(request['requirements'])
+        from .next_report import generation_requirements
+        requirements=Requirements.model_validate(generation_requirements(store,request['requirements'],_notify_owner(request)))
         source_ids=request.get('source_ids',[])
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
         runtime_payload={}
@@ -234,6 +235,14 @@ def workspace_action(store, request):
         if owner:payload['session_id']=owner
         job=store.enqueue('assess',payload)
         return {'job_id':job['id'],'status':job['status'],'message':'已提交该版本的评分任务。'}
+    if action=='next_report':
+        from .next_report import prepare
+        return prepare(store,request['version_id'])
+    if action=='writing_agreements':
+        from .writing_agreements import listing
+        return {'items':listing(store,request.get('version_id'))}
+    if action in ('remember_writing','forget_writing'):
+        raise ValueError('请在报告页使用“下期沿用”或“撤销”；当前宿主未提供可信的用户动作绑定')
     if action=='comment':
         comment=Comment.model_validate({'version_id':request['version_id'],'text':request['text']})
         result=store.comment(comment.version_id,comment.text)
@@ -349,6 +358,9 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"stop_job","job_id":"真实任务ID"}}：用户要求停止任务时，先通过 inspect 确认具体任务，再停止该任务及其子任务，已保存稿件保留。用户要求“停掉旧任务再重新生成”时先取得停止回执，再提交新任务；停止失败时如实说明，不启动重复任务。目标不明确时先问，不猜 ID，不停止整个服务。以回执的实际 status 为准，已经完成的任务不会变成 cancelled。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
+- {{"action":"next_report","version_id":"明确关联的往期版本ID"}}：只读获取该版本可沿用的报告约定；不创建任务、不复用旧事实或授权。
+- {{"action":"writing_agreements","version_id":"真实简报版本ID"}}：查看这份报告及后续期适用的写作约定。工作区范围约定对所有新报告生效。
+新任务的 writing_agreements 由服务端冻结，不手填，不把它们重复抄进 writing_preferences；writing_preferences 只记录本轮额外要求。用户本轮明确要跳过某条时，generate.requirements.writing_agreement_exclusions 传真实ID；遇到本轮要求与旧约定冲突先说明并使用用户本轮选择，不能让学习评分推翻明确要求。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。调用前先告诉用户上限（每轮最多 3 个案例、每案例基线与候选各试写一次，另有整理、提案与比较回合；轮数按学习设置），得到明确同意后再调用；保存反馈本身不需要调用它。
 做不同主题的报告时不要在当前工作区硬混：当用户想做一份与当前工作区主题明显不同、希望彼此隔离的报告时，先确认；用户同意后，不要在对话里自己新建或写入工作区（当前“读写工作区”权限只覆盖本工作区，新建同级目录会被权限挡住），而是在回复末尾单独给出一个 ```briefloop-workspace 代码块，内容为 JSON：{{"name":"新工作区名称"}}。界面会在当前工作区同级目录新建并切换到新工作区，并让用户确认；不要声称你已切换界面。同一主题的续写、修订或同一批材料不要新建工作区。

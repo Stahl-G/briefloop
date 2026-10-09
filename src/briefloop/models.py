@@ -107,6 +107,8 @@ class Requirements(Model):
     manual_sections: list[str] = Field(default_factory=list)
     key_questions: list[str] = Field(default_factory=list)
     writing_preferences: list[str] = Field(default_factory=list)
+    writing_agreements: list[dict] = Field(default_factory=list, description="服务端冻结的明确写作约定，不作为事实或权限；请求提供的快照会被替换")
+    writing_agreement_exclusions: list[str] = Field(default_factory=list, description="本次明确不采用的约定 ID，不撤销其他期的约定")
     company_context_revision: str | None = None
     company_context_required: bool = False
     audience: str = "自己"

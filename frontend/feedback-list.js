@@ -1,6 +1,6 @@
 // Saved feedback is a learning input of its own. Show its bounded recent history
 // with persisted learning status and workspace-wide counts next to the save box.
-export function createFeedbackList({$,esc,getState,openLearning}){
+export function createFeedbackList({$,esc,getState,openLearning,startLearning}){
  const parse=value=>{try{return typeof value==='string'?JSON.parse(value):value||{}}catch{return {}}};
  const jobStatus={queued:'排队整理',running:'正在整理',complete:'已整理',failed:'整理失败',interrupted:'整理中断',cancelled:'整理已停止'};
  function rows(){

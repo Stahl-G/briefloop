@@ -200,7 +200,7 @@ def _conditions(store,case,payload):
     validated_workflow(requirements['workflow_snapshot'])
     root=Path(__file__).parent
     names=('store.py','runtime.py','deliverable_spec.py','models.py','learning.py','chat_tools.py',
-           'document_workflows.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
+           'document_workflows.py','writing_agreements.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
            'static/runtime-bridge.mjs')
     if payload.get('agent_backend') == 'briefloop-native':
         names += ('native_harness.py','native_roles.py','native_orchestrator.py','analyst.py','scout.py','agent_prompts.py','static/native-engine.mjs')
@@ -296,30 +296,32 @@ def _generate_trial(store,job,case,skill,folder,tag):
             # transaction leaves no queued window for the report dispatcher, which
             # since #728 keeps running while learning works (#747 review F1).
             connection.execute("UPDATE jobs SET status='running',updated=? WHERE id=?",(now(),jid))
-        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'inline_owner_job_id':job['id'],'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))},before_commit=own)
+        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'inline_owner_job_id':job['id'],'max_parallel':conditions['max_parallel'],'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))},before_commit=own)
         info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
         from wikiskill.product import write
         write(marker,info,immutable=True)
     trial=store.one('jobs',info['job_id'])
-    if source_snapshot(store,info['run_id'])!=expected:
-        raise ValueError('保存的学习验证来源与本次案例不同，不能复用或续跑')
-    actual=store.one('runs',info['run_id'])
-    if _conditions(store,actual,parent)!=conditions:raise ValueError('保存的学习方法或执行条件不一致')
-    trial_payload=json.loads(trial['payload'])
-    for key in ('runtime','role_models','agent_backend','max_parallel'):
-        if trial_payload.get(key)!=conditions[key]:raise ValueError('保存的学习宿主或模型条件不一致')
-    worker=job.get('_worker')
-    if worker is None:
-        worker=Worker(store)
-        worker.runtime=job['_runtime']
-    # Production reuses the owner, including its session budget, cancellation
-    # and Store wakeup callback; a new Worker would silently bypass that budget.
-    if trial['status']!='complete':
-        try:
+    try:
+        if source_snapshot(store,info['run_id'])!=expected:
+            raise ValueError('保存的学习验证来源与本次案例不同，不能复用或续跑')
+        actual=store.one('runs',info['run_id'])
+        if _conditions(store,actual,parent)!=conditions:raise ValueError('保存的学习方法或执行条件不一致')
+        trial_payload=json.loads(trial['payload'])
+        for key in ('runtime','role_models','agent_backend','max_parallel'):
+            if trial_payload.get(key)!=conditions[key]:raise ValueError('保存的学习宿主或模型条件不一致')
+        worker=job.get('_worker')
+        if worker is None:
+            worker=Worker(store)
+            worker.runtime=job['_runtime']
+        # Production reuses the owner, including its session budget, cancellation
+        # and Store wakeup callback; a new Worker would silently bypass that budget.
+        if trial['status']!='complete':
             value=worker.generate(trial,score=False);value['learning_conditions']=conditions
             store.update_job(trial['id'],'complete',result=value)
-        except Exception as exc:
-            store.update_job(trial['id'],'failed',error=str(exc));raise
+    except Exception as exc:
+        if trial['status'] in ('queued','running'):
+            store.update_job(trial['id'],'failed',error=str(exc))
+        raise
     saved=store.one('jobs',info['job_id']);result=json.loads(saved['result'] or '{}')
     if result.get('learning_conditions')!=conditions:raise ValueError('学习验证缺少实际比较条件记录')
     if _attempt_source_snapshot(store,saved,result)!=expected:
