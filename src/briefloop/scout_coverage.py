@@ -182,6 +182,13 @@ def view(store, run_id):
     for identity, record in sorted(state['rounds'].items(), key=lambda pair: pair[1]['index']):
         for task in record['tasks'].values():
             value = {'round_id': identity, 'round_index': record['index'], **task}
+            # File presence is observable progress, never join/admission credit.
+            path = Path(task['result_file'])
+            try:
+                result_present = path.resolve().is_relative_to(store.root) and path.is_file()
+            except (OSError, RuntimeError):
+                result_present = False
+            value['result_present'] = result_present
             records.append(value)
             if task['status'] != 'complete':
                 gaps.append({key: value[key] for key in ('round_id', 'round_index', 'slot_id', 'assignment', 'status', 'reason')})
