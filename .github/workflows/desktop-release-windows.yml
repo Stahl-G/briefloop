@@ -73,12 +73,26 @@ jobs:
           python -m pip install "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
       - name: Build native installer and differential update metadata
         if: inputs.artifact_run_id == ''
+        env:
+          VALIDATION_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           npm ci --prefix desktop/electron
           # Exercise Windows ownership, packaging and native installer gates.
           # Mac DMG/range-download fixtures run on macOS, not the NSIS path.
-          node --test desktop/electron/test/environment.test.cjs desktop/electron/test/service.test.cjs desktop/electron/test/windows-asar.test.cjs desktop/electron/test/workspace-switch.test.cjs desktop/electron/test/pdf-export.test.cjs desktop/electron/test/updater-integration.test.cjs
+          # Validation tooling may be repaired without rebuilding or modifying
+          # the frozen application. Copy only this test into RUNNER_TEMP and
+          # point it at the unchanged source/dependencies checked out above.
+          git fetch --no-tags origin $env:VALIDATION_SHA
+          $fixture = Join-Path $env:RUNNER_TEMP 'windows-asar.test.cjs'
+          git show "$($env:VALIDATION_SHA):desktop/electron/test/windows-asar.test.cjs" | Set-Content -LiteralPath $fixture -Encoding utf8
+          $env:BRIEFLOOP_TEST_DESKTOP_ROOT = (Resolve-Path desktop/electron).Path
+          try {
+            node --test desktop/electron/test/environment.test.cjs desktop/electron/test/service.test.cjs $fixture desktop/electron/test/workspace-switch.test.cjs desktop/electron/test/pdf-export.test.cjs desktop/electron/test/updater-integration.test.cjs
+          } finally { Remove-Item Env:BRIEFLOOP_TEST_DESKTOP_ROOT }
+          New-Item -ItemType Directory -Force desktop/electron/dist | Out-Null
+          @{validation_commit=$env:VALIDATION_SHA; application_commit=$env:SOURCE_SHA; test_sha256=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash.ToLower(); result='passed'} | ConvertTo-Json | Set-Content desktop/electron/dist/windows-validation-tooling.json -Encoding utf8
           node desktop/electron/scripts/build-windows.cjs
       - name: Install the previously built frozen installer without rebuilding
         if: inputs.artifact_run_id != ''
@@ -135,3 +149,4 @@ jobs:
             desktop/electron/dist/windows-artifact.json
             desktop/electron/dist/windows-versions.json
             desktop/electron/dist/windows-validation.json
+            desktop/electron/dist/windows-validation-tooling.json

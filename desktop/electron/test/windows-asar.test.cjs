@@ -5,17 +5,19 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const {spawn} = require('node:child_process');
+const desktopRoot=process.env.BRIEFLOOP_TEST_DESKTOP_ROOT || path.resolve(__dirname,'..');
+const requireDesktop=require('node:module').createRequire(path.join(desktopRoot,'package.json'));
 
 test('actual Electron launches the unpacked supervisor while preserving an ordinary app.asar directory', {skip:process.platform!=='win32',timeout:15000}, async t=>{
   let electron,asar;
-  try{electron=require('electron');asar=require('@electron/asar');await fs.access(electron)}
-  catch{t.skip('Install desktop Electron development dependencies for the native ASAR regression');return}
+  try{electron=requireDesktop('electron');asar=requireDesktop('@electron/asar');await fs.access(electron)}
+  catch(error){if(process.env.BRIEFLOOP_TEST_DESKTOP_ROOT)throw error;t.skip('Install desktop Electron development dependencies for the native ASAR regression');return}
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'briefloop-asar-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const directory=path.join(root,'中文 空格'),source=path.join(directory,'source');
   await fs.mkdir(source,{recursive:true});
-  for(const name of ['environment.cjs','dependency-lock-check.cjs','windows-dependency-reuse.cjs','windows-process.ps1','windows-process.cs'])
-    await fs.copyFile(path.join(__dirname,'..',name),path.join(source,name));
+  for(const name of ['environment.cjs','environment-usage.cjs','dependency-lock-check.cjs','windows-dependency-reuse.cjs','windows-process.ps1','windows-process.cs'])
+    await fs.copyFile(path.join(desktopRoot,name),path.join(source,name));
   const archive=path.join(directory,'app.asar');
   await asar.createPackageWithOptions(source,archive,{unpack:'{windows-process.ps1,windows-process.cs}'});
   const ordinary=path.join(directory,'ordinary','app.asar');

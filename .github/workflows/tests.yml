@@ -107,6 +107,14 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+      - name: Test actual Electron ASAR supervisor fixture
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --prefix desktop/electron
+          $fixture = Join-Path $env:RUNNER_TEMP 'windows-asar.test.cjs'
+          Copy-Item desktop/electron/test/windows-asar.test.cjs -Destination $fixture
+          $env:BRIEFLOOP_TEST_DESKTOP_ROOT = (Resolve-Path desktop/electron).Path
+          try { node --test $fixture } finally { Remove-Item Env:BRIEFLOOP_TEST_DESKTOP_ROOT }
       - name: Test desktop ownership and workspace recovery
         run: node --test desktop/electron/test/service.test.cjs desktop/electron/test/workspace-switch.test.cjs
       - run: npm ci
