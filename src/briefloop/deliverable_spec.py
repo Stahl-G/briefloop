@@ -6,6 +6,7 @@ source-bound interpretation for handoff, never a replacement for user input.
 from copy import deepcopy
 import hashlib
 import json
+from .writing_agreements import preferences as writing_preferences
 
 
 CONTRACT_KINDS = ('reader_content', 'research_method', 'writing_preference', 'manual_assignment')
@@ -62,7 +63,7 @@ def resolve(requirements, template=None, *, reader_contract=None):
             'template_id': requirements.get('template_id'),
             'sections': deepcopy(sections), 'manual_sections': list(requirements.get('manual_sections', [])),
             'key_questions': list(requirements.get('key_questions', [])),
-            'writing_preferences': list(requirements.get('writing_preferences', [])),
+            'writing_preferences': writing_preferences(requirements),
             'requirement_items': requirement_items(requirements),
             'references': '正文短编号，图表简注，文末精简来源表；详细核查另存',
             'interpretation_rule': 'objective及requirement_items保留用户原始要求；reader_contract是待对照原文核查的执行解释，不得降级或替换明确要求。'}
@@ -223,7 +224,7 @@ def research_record(store, brief):
 def requirement_items(requirements):
     items = []
     for kind, texts in [('objective', [requirements['objective']]), ('question', requirements.get('key_questions', [])),
-                        ('manual', requirements.get('manual_sections', [])), ('writing', requirements.get('writing_preferences', []))]:
+                        ('manual', requirements.get('manual_sections', [])), ('writing', writing_preferences(requirements))]:
         for text in texts:
             identity = 'req_' + hashlib.sha256((kind + '\0' + text).encode()).hexdigest()[:20]
             items.append({'requirement_id': identity, 'text': text, 'mode': 'manual' if kind == 'manual' else 'required',

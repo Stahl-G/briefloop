@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from briefloop.feedback_view import snapshot as feedback_snapshot
+from briefloop.feedback_view import snapshot as feedback_snapshot, for_report, pending_for_report
 from briefloop.store import Store, dump, now
 
 
@@ -56,6 +56,11 @@ def test_snapshot_retains_old_learning_outcomes_and_real_revisions(tmp_path):
     assert revision['kind'] == 'revision'
     assert json.loads(revision['data']) == {'before': brief['id'], 'after': revised['id']}
     assert state['feedback_summary'] == {'total': 6, 'pending': 1}
+    assert for_report(store,revised['id'])['id']=='complete'
+    assert pending_for_report(store,revised['id'])==1
+    other=report(store)
+    assert for_report(store,other['id']) is None
+    assert pending_for_report(store,other['id'])==0
     rendered = render(state)
     shown = {row['id']: row for row in rendered['rows']}
     assert [shown[fid]['status'] for fid in feedback_ids] == ['整理失败', '整理中断', '整理已停止', '已整理']
@@ -92,15 +97,3 @@ def test_feedback_window_uses_global_counts_and_bounded_indexed_status_lookup(tm
     plan = rows('EXPLAIN QUERY PLAN ' + queries[0])
     assert any('SEARCH j USING INDEX' in step['detail'] for step in plan)
     assert not any('SCAN j' in step['detail'] for step in plan)
-
-
-def test_learning_entry_stays_visible_after_feedback_is_claimed():
-    pending = render({'feedback_summary': {'total': 1, 'pending': 1}, 'jobs': []})['next']
-    assert not pending['hidden'] and '整理反馈' in pending['innerHTML']
-    running = render({'feedback_summary': {'total': 1, 'pending': 0},
-                      'jobs': [{'kind': 'learn', 'status': 'running'}]})['next']
-    assert not running['hidden'] and '正在整理和验证' in running['innerHTML']
-    assert '查看状态' in running['innerHTML'] and 'data-feedback-start' not in running['innerHTML']
-    complete = render({'feedback_summary': {'total': 1, 'pending': 0},
-                       'jobs': [{'kind': 'learn', 'status': 'complete'}]})['next']
-    assert complete['hidden']

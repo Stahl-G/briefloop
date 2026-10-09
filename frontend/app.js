@@ -50,6 +50,7 @@ import {mcpSelection} from './mcp-selection.js';
 import {appUpdatesUI} from './app-updates.js';
 import {revisionQuestionsUI} from './revision-questions.js';
 import {createFeedbackList} from './feedback-list.js';
+import {reportFeedbackUI} from './report-feedback.js';
 import {readersUI} from './readers.js';
 import {verificationBadge} from './skill-verification.js';
 import {previousReportUI} from './previous-report.js';
@@ -110,6 +111,7 @@ const sessionBudget=sessionBudgetUI({$,api,action,notice,getState:()=>state});
 const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta:b=>reportIconMeta(b),svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:()=>closeSourceDrawer(),onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
 const feedbackList=createFeedbackList({$,esc,getState:()=>state,openLearning:()=>page('learning'),startLearning:()=>$('learn-now').click()});
+const reportFeedback=reportFeedbackUI({$,api,esc,getCurrent:()=>current,savedVersion,openLearning:()=>page('learning'),refresh,notice});
 const retryLearning=learningRetry({api,getPlan:()=>state?.learning_authorization?.plan,confirm:text=>confirm(text),describePlan:learningPlanText});
 const readerProfiles=readersUI({api,action:(...args)=>action(...args)});
 readerProfiles.bind();
@@ -560,7 +562,6 @@ $('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new F
 $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){const s=await uploadSource(f);if(s.status==='ready')selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});if(s.status==='ready')selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
-$('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,required=$('comment-required').checked;const version=await savedVersion();await api('comment',{version_id:version,text,learning_intent:required?'explicit_requirement':'feedback'});if($('comment').value===text&&$('comment-required').checked===required){$('comment').value='';$('comment-required').checked=false;}scheduleLearning()},'反馈已保存');
 // Saving feedback is free; starting a learning validation calls models (#727).
 function learningPlanText(plan){
  return `每轮最多用 ${plan.cases} 份历史报告，每份基线和候选各试写一次（最多 ${plan.trial_generations_per_round} 次，可复用的基线不重写），每批还会最多启动 ${plan.triage_turns_per_batch} 个独立改动分类会话，每轮另有整理经验、提出候选和一次成对比较；`+
@@ -1890,6 +1891,7 @@ function renderReportStatus(){
  box.innerHTML=chips.join('');
 }
 function renderAssistantSummary(){
+ reportFeedback.render();
  reportSources.render();
  reportMarket.render();
  const box=$('assistant-summary');if(!box)return;

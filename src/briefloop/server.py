@@ -250,6 +250,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/report-context':
                     from .report_browsing import context
                     self.send(200,context(store,q['version_id'][0]))
+                elif u.path=='/api/writing-agreements':
+                    from .writing_agreements import listing
+                    from .feedback_view import for_report, pending_for_report
+                    version=q.get('version_id',[None])[0]
+                    self.send(200,{'items':listing(store,version),'learning':for_report(store,version) if version else None,'pending_feedback':pending_for_report(store,version) if version else 0})
                 elif u.path=='/api/next-report':
                     from .next_report import prepare
                     self.send(200,prepare(store,q['version_id'][0]))
@@ -843,6 +848,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     if result['feedback_id']:
                         from .learning import enqueue_feedback
                         result['learning']=enqueue_feedback(store,automatic=True)
+                elif path=='/api/writing-agreements':
+                    from .writing_agreements import remember
+                    result=remember(store,body['version_id'],body['text'],scope=body.get('scope','series'))
+                elif path=='/api/writing-agreements/revoke':
+                    from .writing_agreements import revoke
+                    result=revoke(store,body['id'])
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/native/provider':

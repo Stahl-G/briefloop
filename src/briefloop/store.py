@@ -365,6 +365,8 @@ class Store:
         if clone is None:
             from .next_report import validate_origin
             validate_origin(self, req)
+            from .writing_agreements import freeze as freeze_agreements
+            freeze_agreements(self, req)
         if clone is not None and req.completion_mode == 'fast_web':req.completion_mode='fast'
         if req.completion_mode=='fast_web' and not req.allow_web:
             raise ValueError('快速联网需要允许公开检索；保持离线请选择已有材料快速模式。')
@@ -448,6 +450,8 @@ class Store:
             from .readers import validate_global_skill
             validate_global_skill(self,options['skill_id'])
         stored=req.model_dump()
+        for key in ("writing_agreements","writing_agreement_exclusions"):
+            if not stored.get(key):stored.pop(key,None)
         if not stored.get('previous_report_version_id'):
             stored.pop('previous_report_version_id', None)
             stored.pop('previous_report_hash', None)

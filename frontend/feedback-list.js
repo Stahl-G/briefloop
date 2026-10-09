@@ -25,15 +25,6 @@ export function createFeedbackList({$,esc,getState,openLearning,startLearning}){
    list.innerHTML=`<h2>已保存的反馈</h2><p class="help">${total?countText:'还没有保存的反馈。'}${limited?`仅显示最近 ${items.length} 条。`:''}待整理的反馈在你点“现在整理成经验”或开启自动学习后，由 Wiki 维护者整理；事实纠错只记录，不写进写作技巧。</p>`
     +(items.length?`<ul class="feedback-items">${items.map(item=>`<li><span class="chip">${esc(item.status)}</span> <span class="help">${esc(item.kind)} · ${esc((item.created||'').slice(0,16).replace('T',' '))}</span><p>${esc(item.text)}</p></li>`).join('')}</ul>`:'');
   }
-  const next=$('feedback-next-step');
-  if(next){
-   const running=(getState()?.jobs||[]).some(job=>job.kind==='learn'&&['queued','running'].includes(job.status));
-   next.hidden=!pending&&!running;
-   const nextText=running?'正在整理和验证反馈，完成后可查看哪些写作方法被采用。'+(pending?`另有 ${pending} 条新反馈等待下一批整理。`:''):`本工作区有 ${pending} 条反馈待整理。保存改动后，还需要整理和验证才会形成新的写作方法。`;
-   next.innerHTML=pending||running?`<span>${nextText}</span> <button type="button" class="outline" data-feedback-open>查看状态</button>${startLearning&&!running?' <button type="button" class="outline" data-feedback-start>整理反馈</button>':''}`:'';
-   next.querySelector('[data-feedback-open]')?.addEventListener('click',openLearning);
-   next.querySelector('[data-feedback-start]')?.addEventListener('click',startLearning);
-  }
   const hint=$('feedback-saved-hint');
   if(hint){
    hint.hidden=!total;

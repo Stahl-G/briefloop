@@ -200,7 +200,7 @@ def _conditions(store,case,payload):
     validated_workflow(requirements['workflow_snapshot'])
     root=Path(__file__).parent
     names=('store.py','runtime.py','deliverable_spec.py','models.py','learning.py','chat_tools.py',
-           'document_workflows.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
+           'document_workflows.py','writing_agreements.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
            'static/runtime-bridge.mjs')
     if payload.get('agent_backend') == 'briefloop-native':
         names += ('native_harness.py','native_roles.py','native_orchestrator.py','analyst.py','scout.py','agent_prompts.py','static/native-engine.mjs')

@@ -28,7 +28,9 @@ def prepare(store, version_id):
     requirements.update(title='', period='', period_start='', period_end='', report_date='',
                         allow_web=False, fact_check=False, reference_source_ids=[],
                         previous_report_version_id=brief['id'], previous_report_hash=brief['hash'])
-    return {'requirements': requirements,
+    from .writing_agreements import listing
+    agreements=listing(store,version_id)
+    return {'requirements': requirements, 'writing_agreements':agreements,
             'previous': {'version_id': brief['id'], 'run_id': run['id'], 'hash': brief['hash'],
                          'title': json.loads(brief['detail']).get('title', previous.get('title', ''))},
             'source_ids': [], 'reader': reader,
@@ -60,9 +62,18 @@ def conversation_request(store, text, context):
     data = prepare(store, context['version_id'])
     if context.get('hash') != data['previous']['hash']:
         raise ValueError('往期报告内容已变化，请重新选择复用版本')
-    contract = json.dumps(data['requirements'], ensure_ascii=False)
+    requirements=data['requirements']
+    requirements['writing_agreement_exclusions']=context.get('writing_agreement_exclusions') or []
+    from .models import Requirements
+    from .writing_agreements import freeze
+    checked=Requirements.model_validate({**requirements,'title':'下一期'})
+    freeze(store,checked)
+    requirements['writing_agreements']=checked.writing_agreements
+    contract = json.dumps(requirements, ensure_ascii=False)
     return (text + '\n\n下一期报告上下文（用户选择的已保存版本；以下仅为待沿用约定，不是本期事实或授权）：\n'
             + contract + '\n请沿用仍适用的约定，只询问本期时间范围和影响报告的缺失信息。'
+            'writing_agreements是用户明确保存的写作约定，不是事实来源或新权限；请遵守，当前明确要求优先。'
+            '生成时完整传入writing_agreement_exclusions；不把约定文字再复制到writing_preferences，以便后续撤销能够生效。'
             '标题可由本期目的和期间拟定，不要求用户重新填完整表单。'
             '明确期间后，将 previous_report_version_id 和 previous_report_hash 连同其余适用约定传给 generate.requirements。'
             '旧资料不自动充当本期证据；本次 sources、联网、模型和费用权限以当前回合实际选择为准，'
