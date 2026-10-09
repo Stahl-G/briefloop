@@ -19,9 +19,9 @@ def render(state):
         import {createFeedbackList} from './frontend/feedback-list.js';
         const state=JSON.parse(fs.readFileSync(0,'utf8')),nodes={};
         const $=id=>nodes[id]??={innerHTML:'',hidden:true,querySelector:()=>null};
-        const list=createFeedbackList({$,esc:String,getState:()=>state,openLearning:()=>{}});
+        const list=createFeedbackList({$,esc:String,getState:()=>state,openLearning:()=>{},startLearning:()=>{}});
         list.render();
-        process.stdout.write(JSON.stringify({rows:list.rows(),html:nodes['feedback-list'].innerHTML,hint:nodes['feedback-saved-hint'].innerHTML}));
+        process.stdout.write(JSON.stringify({rows:list.rows(),html:nodes['feedback-list'].innerHTML,hint:nodes['feedback-saved-hint'].innerHTML,next:nodes['feedback-next-step']}));
     """
     result = subprocess.run(['node', '--input-type=module', '-e', script], input=dump(state),
                             cwd=Path(__file__).resolve().parents[1], text=True, capture_output=True, check=True)
@@ -92,3 +92,15 @@ def test_feedback_window_uses_global_counts_and_bounded_indexed_status_lookup(tm
     plan = rows('EXPLAIN QUERY PLAN ' + queries[0])
     assert any('SEARCH j USING INDEX' in step['detail'] for step in plan)
     assert not any('SCAN j' in step['detail'] for step in plan)
+
+
+def test_learning_entry_stays_visible_after_feedback_is_claimed():
+    pending = render({'feedback_summary': {'total': 1, 'pending': 1}, 'jobs': []})['next']
+    assert not pending['hidden'] and '整理反馈' in pending['innerHTML']
+    running = render({'feedback_summary': {'total': 1, 'pending': 0},
+                      'jobs': [{'kind': 'learn', 'status': 'running'}]})['next']
+    assert not running['hidden'] and '正在整理和验证' in running['innerHTML']
+    assert '查看状态' in running['innerHTML'] and 'data-feedback-start' not in running['innerHTML']
+    complete = render({'feedback_summary': {'total': 1, 'pending': 0},
+                       'jobs': [{'kind': 'learn', 'status': 'complete'}]})['next']
+    assert complete['hidden']
