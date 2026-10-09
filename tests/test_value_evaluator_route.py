@@ -19,7 +19,7 @@ def setup(tmp_path):
     store.set_meta('settings', {**store.settings(), 'auto_learn': False, 'company_context_enabled': False})
     source = store.add_source('虚构季度资料', '本季度交付 100 台。')
     run = store.create_run({'title': '合成内部简报', 'objective': '列出季度交付数据。',
-                            'writing_mode': 'internal_report'}, [source['id']])
+                            'writing_mode': 'internal_report', 'fact_check': False}, [source['id']])
     brief = store.publish(run['id'], {'title': '合成内部简报', 'markdown': '## 数据\n本季度交付 100 台。'})
     job = store.enqueue('assess', {'version_id': brief['id'], 'agent_backend': 'briefloop-native',
                                   'runtime': {'model': 'synthetic/controlled-local-no-api'}})

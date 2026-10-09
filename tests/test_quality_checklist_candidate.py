@@ -81,7 +81,7 @@ def saved(tmp_path):
     store = Store(tmp_path)
     store.set_meta('settings', {**store.settings(), 'auto_learn': False, 'company_context_enabled': False})
     source = store.add_source('合成季度材料', '交付 100 台，上季 90 台。')
-    run = store.create_run({'title': '合成', 'objective': OBJECTIVE}, [source['id']])
+    run = store.create_run({'title': '合成', 'objective': OBJECTIVE, 'fact_check': False}, [source['id']])
     brief = store.publish(run['id'], {'title': '合成', 'markdown': BODY})
     job = store.enqueue('generate', {'run_id': run['id'], 'agent_backend': 'codex',
                                     'runtime': {'model': 'controlled-local-no-api'}, 'quality_checklist_candidate': 'chapter-v1'})
