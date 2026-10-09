@@ -82,6 +82,42 @@ def test_disputed_old_finding_is_not_silently_marked_resolved(tmp_path):
     assert store.one('assessments', previous['id'])['data'] == previous['data']
 
 
+@pytest.mark.parametrize('status', ['passed', 'n/a'])
+def test_linked_legacy_result_cannot_hide_remaining_finding(tmp_path, status):
+    store, first, _, _ = pair(tmp_path)
+    raw = score(first, checks=[{'id': 'summary_consistency', 'result': status}],
+                findings=[{'dimension': 'evidence', 'severity': 'minor',
+                           'description': 'Summary still omits public beta.',
+                           'check_ids': ['summary_consistency']}])
+    saved = json.loads(store.assess(first['id'], raw)['data'])
+    check = saved['checks'][0]
+    assert check['status'] == 'needs_attention'
+    assert check['model_status'] == check['result'] == status
+    assert check['finding_indices'] == [0]
+    assert saved['overall'] == raw['overall'] == '达到要求'
+    assert 'status' not in raw['checks'][0]
+
+
+def test_unknown_check_link_is_observable_without_guessing_or_new_retry(tmp_path):
+    from briefloop.models import assessment_checks
+    store, first, _, _ = pair(tmp_path)
+    expected = store.assessment_context(first['id'])['assessment_checks']
+    raw = score(first, checks=[{'id': item['id'], 'status': 'passed', 'reason': 'Compared.'}
+                               for item in expected],
+                findings=[{'dimension': 'evidence', 'severity': 'minor',
+                           'description': 'Summary still omits public beta.',
+                           'check_ids': ['summary_typo', 'missing_check']}])
+    saved = json.loads(store.assess(first['id'], raw, expected_checks=expected)['data'])
+    assert [c['status'] for c in saved['checks'][:2]] == ['passed', 'passed']
+    assert [c['id'] for c in saved['checks'][2:]] == ['summary_typo', 'missing_check']
+    assert all(c['status'] == 'not_checked' and c['finding_indices'] == [0]
+               for c in saved['checks'][2:])
+    assert saved['findings'][0]['check_ids'] == raw['findings'][0]['check_ids']
+    assert assessment_checks(saved['checks'], saved['findings'], expected) == saved['checks']
+    assert saved['overall'] == raw['overall']
+    assert len(raw['checks']) == 2
+
+
 def test_legacy_saved_review_score_can_be_read_without_rewriting_new_optional_keys(tmp_path):
     from briefloop.review import ReviewOutput, _save_assessment
     store, first, _, _ = pair(tmp_path)
