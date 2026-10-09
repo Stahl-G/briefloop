@@ -442,6 +442,8 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .evaluation_reading import reading_context, GUIDE as READING_GUIDE
     from .exports import reader_markdown
     input_pack['reading_context'] = reading_context(brief)
+    from .research_reading import snapshot as research_snapshot
+    input_pack['research_context'] = research_snapshot(store, brief)
     reader_preview = reader_markdown(store, brief)
     (folder/'reader-preview.md').write_text(reader_preview, encoding='utf-8')
     (folder/'input.json').write_text(json.dumps(input_pack,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -1458,8 +1460,9 @@ class Worker:
             allowed=set(self.store.source_ids(brief['run_id']))-set(requirements.get('reference_source_ids') or [])
             diagnostics={'version_id':brief['id'],'brief_hash':brief['hash'],
                 **inspect_draft(original,requirements,store=self.store,allowed_sources=allowed)}
+            from .research_reading import snapshot as research_snapshot, GUIDE as RESEARCH_READING_GUIDE
             revision_focus='修正每条问题所在原段后，同步复核摘要、标题、相关表格和影响建议有无同一结论残留；保留来源的条件、主体、期间与事实状态。有证据认为原发现不成立时保留原文并给出依据，不机械服从旧评分。'
-            (stage/'input.json').write_text(json.dumps({'brief':brief,'assessment':assessment,'revision_reasons':reasons,'revision_focus':revision_focus,
+            (stage/'input.json').write_text(json.dumps({'brief':brief,'assessment':assessment,'revision_reasons':reasons,'revision_focus':revision_focus,'research_context':research_snapshot(self.store,brief),
                 'requirements':requirements,'review_findings':open_findings,'conflicts':review_state['conflicts'],
                 'draft_diagnostics':diagnostics,
                 'evidence':inspect_bindings(self.store,brief['id']),
@@ -1476,6 +1479,7 @@ class Worker:
             tool=tool_command(self.store.root,backend=payload.get('agent_backend','codex'))
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
 优先处理 input.revision_reasons 指向的证据、必答内容和明确要求违规；总评达到要求不豁免这些问题。普通可选润色不扩展本轮工作。
+{RESEARCH_READING_GUIDE}
 遵循 input.revision_focus：同一结论在问题原段、摘要、标题、表格、影响建议中一起核对，避免只改局部原句。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。

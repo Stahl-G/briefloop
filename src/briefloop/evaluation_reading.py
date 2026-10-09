@@ -10,6 +10,10 @@ GUIDE = '''先分清读到的是哪一种材料。brief.markdown 中 [@src_…]�
 核查抓取过程、临时行号、工具报错与补查路径属于研究记录；正文只保留会改变读者判断的限制，例如仅为公测、指定分支、最高比例、仍在讨论或缺少支持核心结论的数据。不能为了整洁删掉这些实质条件，也不要强迫把内部审计清单写回报告。'''
 
 
+from .research_reading import GUIDE as RESEARCH_GUIDE
+GUIDE += '\n' + RESEARCH_GUIDE
+
+
 def reading_context(brief):
     detail = brief.get('detail') or {}
     if isinstance(detail, str):

@@ -617,6 +617,8 @@ def build_packet(store,version_id,folder):
     save('assessment-context.json',pack_dump(store.assessment_context(version_id)).encode())
     from .evaluation_reading import reading_context
     save('reading-context.json',pack_dump(reading_context(brief)).encode())
+    from .research_reading import snapshot as research_snapshot
+    save('research-context.json',pack_dump(research_snapshot(store,brief)).encode())
     prior_reviews=store.rows('SELECT r.id,r.version_id,r.status,r.result,r.created FROM reviews r JOIN briefs b ON b.id=r.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/reviews.json',pack_dump([{**r,'result':json.loads(r['result']) if r['result'] else None} for r in prior_reviews]).encode())
     executions=[]
@@ -1057,6 +1059,8 @@ def run_review(store,runtime,job,version_id,folder):
                   if filesystem_path(folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
     if filesystem_path(folder/'packet'/'reader-preview.md').exists():
         packet_guide+=' reader-preview.md 是同一稿件通过产品阅读渲染器生成的文本预览，含短编号和自动来源表。report.txt 的 [src_…] 是核查定位标记，不是用户看到的编号；涉及引用展示/来源表的发现须对照预览，不能要求作者重复补写渲染器已生成的内容。预览不证明实际 Word 分页、样式或原生可点击性，这些须另查实际文件。'
+    if filesystem_path(folder/'packet'/'research-context.json').exists():
+        packet_guide+=' research-context.json 区分本稿保存时的缺口与本次包生成时的研究状态；对照依据核查，不改历史记录。\n'
     if filesystem_path(folder/'packet'/'reading-context.json').exists():
         from .evaluation_reading import GUIDE as READING_GUIDE
         packet_guide+=' reading-context.json 说明本次实际输入呈现和机器记录范围。\n'+READING_GUIDE
