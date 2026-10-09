@@ -35,3 +35,19 @@ test('missing Scout receipt keeps timing unknown; real child timestamps provide 
  const html=researchProcessHTML(job,{started:job.created,timeline:[{label:'第 2 轮 scout-1：派发状态未回传',status:'warn'}],agents:[{role:'Scout',status:'completed',started:job.created,ended:'2026-10-01T10:01:00Z'}]});
  assert.doesNotMatch(html,/尚未开始/);assert.match(html,/1 分 0 秒/);assert.match(html,/用时未记录/);
 });
+
+test('goal coverage distinguishes pending, evidence and unresolved questions without certification',()=>{
+ const p={...progress,goal_progress:{thinking:'PRIVATE',questions:[
+  {id:'q1',question:'收入多少？',recorded:true,status:'answered',reason:'见收入原文',remaining_question:'',evidence:[{source_id:'s1',source_name:'季度公告',locator:'line 1',excerpt:'收入 <120> 万元'}]},
+  {id:'q2',question:'增长是否持续？',recorded:true,status:'open',reason:'未披露分项',remaining_question:'客户留存未知',evidence:[]}
+ ]}};
+ const html=researchProcessHTML(job,p,{expanded:true});
+ assert.match(html,/1 个关键问题待补/);assert.match(html,/有依据/);assert.match(html,/尚待回答/);
+ assert.match(html,/data-progress-source="s1"/);assert.match(html,/&lt;120&gt;/);
+ assert.match(html,/仍需核对：客户留存未知/);assert.match(html,/不代表已通过独立核查/);
+ assert.doesNotMatch(html,/PRIVATE|已核实|chip success/);
+ const initial={...p,goal_progress:{questions:p.goal_progress.questions.map(q=>({...q,recorded:false,status:'open',evidence:[]}))}};
+ assert.match(researchProcessHTML(job,initial),/2 个关键问题待研究/);
+ assert.doesNotMatch(researchProcessHTML(job,initial),/仍需核对/);
+ assert.notEqual(processDisclosureKey(job,p),processDisclosureKey(job,initial));
+});

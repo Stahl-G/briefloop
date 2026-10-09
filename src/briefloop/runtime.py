@@ -296,6 +296,11 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
                if not sources and req['allow_web'] else
                '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
+    if strategy(req) == 'goal_driven' and not sources and req['allow_web']:
+        discovery = ('初始来源为 0，这是正常的公开信息研究任务。先围绕关键问题发现公开原文；'
+                     '问题集中时主 Agent 可直接用已授权检索和来源工具完成，存在可独立并行的问题时再派 Scout。'
+                     '不因初始材料为空强制委派，也不把没有派 Scout 写成没有开展研究。'
+                     '自行研究同样保存 research.json 的来源定位与缺口，写入本轮 handoff，登记 scout_tasks=[] 并收轮。')
     common = _opencode_common(opencode_tool) if backend == 'opencode' else COMMON
     if backend != 'codex' and backend != 'opencode':
         common = common.replace(

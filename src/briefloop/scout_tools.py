@@ -204,8 +204,14 @@ def check_handoff(store,run_id,handoff):
             gap_updates = validate_updates(store, run_id, handoff['gap_updates'])
         except ValueError as exc:
             errors.append({'path':'gap_updates','code':'invalid_gap_update','message':str(exc)})
+    from .research_goals import validate as validate_goal_coverage
+    question_coverage = None
+    try:
+        question_coverage = validate_goal_coverage(store, run_id, handoff.get('question_coverage'))
+    except (ValueError, OSError) as exc:
+        errors.append({'path':'question_coverage','code':'invalid_question_coverage','message':str(exc)})
     if errors:raise HandoffError(errors)
-    return {'gap_updates':gap_updates, 'learnings':learnings,'follow_ups':follow_ups,'covered':covered,'open_questions':open_questions,
+    return {**({'question_coverage':question_coverage} if question_coverage is not None else {}), 'gap_updates':gap_updates, 'learnings':learnings,'follow_ups':follow_ups,'covered':covered,'open_questions':open_questions,
             'unverified':sum(1 for item in learnings if item['status']=='待证')}
 
 

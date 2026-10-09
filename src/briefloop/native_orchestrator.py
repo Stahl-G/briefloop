@@ -300,9 +300,18 @@ def _refresh_research(store, config):
     from .research_handoff import current_research
     path = _folder(config) / 'research.json'
     if path.exists():
-        research = current_research(store, config['run_id'], json.loads(path.read_text(encoding='utf-8')), register=True)
-        _save(path, research)
-        _save(Path(config['packet_root']) / 'research.json', research)
+        research = json.loads(path.read_text(encoding='utf-8'))
+    else:
+        from .research_plan import frozen
+        from .scout_coverage import view
+        # A new goal run can research directly. Do not fabricate Scout receipts
+        # or hide promised workers when creating the writer's input container.
+        if not (frozen(store, config['run_id']) or {}).get('goal_contract') or view(store, config['run_id'])['scout_execution']:
+            return
+        research = {'sources': [], 'gaps': []}
+    research = current_research(store, config['run_id'], research, register=True)
+    _save(path, research)
+    _save(Path(config['packet_root']) / 'research.json', research)
 
 
 def save_handoff(store, config, args):
