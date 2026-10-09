@@ -144,16 +144,18 @@ def degrade(markdown, kind, source_text, paraphrases=None, labels=None):
         return _changed(markdown, blocks, {'kind': kind, 'inserted': OFF_TOPIC, 'needles': NEEDLES[kind]})
     if kind == 'restated_source':
         # The paragraph's own facts listed again as a separate passage, with the
-        # citation and without any judgment: accurate, sourced, and adds nothing.
+        # original sentence-level citations and without any judgment. Never
+        # borrow a paragraph's first source for unrelated or uncited facts.
         for index in body:
-            facts = [re.sub(r'\[@[^\]]*\]', '', x).replace('**', '').strip() for x in _sentences(blocks[index])[1:]]
-            facts = [x for x in facts if re.search(r'\d', x) and not JUDGMENT.search(x)][:2]
-            cited = CITATION.findall(blocks[index])
-            if len(facts) < 2 or not cited:
+            facts = [x.replace('**', '').strip() for x in _sentences(blocks[index])[1:]
+                     if re.search(r'\d', _plain(x)) and not JUDGMENT.search(_plain(x)) and CITATION.search(x)][:2]
+            if len(facts) < 2:
                 continue
-            paragraph = '来源材料列示的数据包括：' + ''.join(facts) + f'[@{cited[0]}]'
+            cited = list(dict.fromkeys(source for fact in facts for source in CITATION.findall(fact)))
+            paragraph = '来源材料列示的数据包括：' + ''.join(facts)
             blocks.insert(index + 1, paragraph)
-            return _changed(markdown, blocks, {'kind': kind, 'inserted': paragraph, 'source_id': cited[0],
+            return _changed(markdown, blocks, {'kind': kind, 'inserted': paragraph, 'source_ids': cited,
+                                               **({'source_id': cited[0]} if len(cited) == 1 else {}),
                                                'needles': NEEDLES[kind]})
         return markdown, None
     if kind == 'conclusions_removed':
