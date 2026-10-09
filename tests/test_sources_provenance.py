@@ -336,7 +336,7 @@ def test_gzip_web_response_is_readable_and_original_is_retained(tmp_path,monkeyp
     raw=gzip.compress(document)
     monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(raw,'text/html','utf-8'))
     record=sources.fetch(store,'https://example.test/release')
-    metadata=json.loads((store.root/'sources'/(record['id']+'.provenance.json')).read_text())
+    metadata=json.loads((store.root/'sources'/(record['id']+'.provenance.json')).read_text(encoding='utf-8'))
     assert record['status']=='ready' and record['name']=='Release'
     assert 'Python release announcement' in store.source_text(record['id'])
     assert (store.root/metadata['original_path']).read_bytes()==raw
@@ -346,5 +346,5 @@ def test_gzip_web_response_is_readable_and_original_is_retained(tmp_path,monkeyp
     for raw in (raw[:-4],raw[:10]+b'\xff'*20,gzip.compress(b'x'*(15*1024*1024+1))):
         failed=sources.fetch(store,'https://example.test/broken')
         assert failed['status']=='failed' and store.source_text(failed['id'])==''
-        metadata=json.loads((store.root/'sources'/(failed['id']+'.provenance.json')).read_text())
+        metadata=json.loads((store.root/'sources'/(failed['id']+'.provenance.json')).read_text(encoding='utf-8'))
         assert (store.root/metadata['original_path']).read_bytes()==raw
