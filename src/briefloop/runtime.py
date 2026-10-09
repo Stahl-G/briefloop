@@ -403,7 +403,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 '''
 
 
-def assessment_prompt(store, brief, folder, backend='codex'):
+def assessment_prompt(store, brief, folder, backend='codex', *, analysis_checklist_candidate=False):
     run=store.one('runs',brief['run_id'])
     detail=json.loads(brief.get('detail') or '{}')
     citations=detail.get('citations',[])
@@ -439,6 +439,9 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     input_pack.update(store.assessment_context(brief['id']))
+    if analysis_checklist_candidate:
+        from .deliverable_spec import ANALYSIS_CHECKLIST_CANDIDATE
+        input_pack['analysis_checklist_candidate'] = ANALYSIS_CHECKLIST_CANDIDATE
     from .evaluation_reading import reading_context, GUIDE as READING_GUIDE
     from .exports import reader_markdown
     input_pack['reading_context'] = reading_context(brief)
@@ -475,10 +478,15 @@ def assessment_prompt(store, brief, folder, backend='codex'):
                      '只读到抽取文本、作者摘录或父会话看过，不算你已核对图片。记录真实页码/图表定位；当前模型不接收图像、图像损坏或工具失败时说明实际限制，不假装已验证。')
         schema_line='评分结构见 assessment.schema.json。'
         output_line='完成后调用 submit_assessment 提交评分对象；未通过时按返回的错误修正后重新提交。原稿保持不变，不要把 JSON 写进回复正文。'
+    candidate_prompt = ''
+    if analysis_checklist_candidate:
+        from .deliverable_spec import analysis_check_instructions
+        candidate_prompt = analysis_check_instructions(deliverable)
     return context+f'''
 {input_pack['time_instructions']}
 {report_profile.get('evaluation','')}
 {instructions(deliverable,role='evaluator')}
+{candidate_prompt}
 核对正文是否完成本轮读者需求。准确限定保留在相关句子，内部核查过程留在独立记录；不要要求作者用反复免责声明证明谨慎。研究未完成照常评价覆盖。
 本次input.figures若有图表，{figure_view_word}，并按data_path/script_path及source_ids核对图中数值、轴尺度、期间、图注与正文关系。已保存图表不等于内容正确；不要只审正文忽略图表。
 {read_input}初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
@@ -1433,7 +1441,15 @@ class Worker:
             reasons=inputs.get('revision_reasons',[])
         else:
             assessment,open_findings,review=applicable_inputs(self.store,review_state,grades[0] if grades else None)
-            reasons=revision_reasons(assessment,open_findings,review)
+            analysis_context = None
+            if payload.get('quality_checklist_candidate') == 'chapter-v1':
+                from .deliverable_spec import candidate_assessment, resolve
+                detail = json.loads(brief['detail'])
+                spec = resolve(json.loads(self.store.one('runs', brief['run_id'])['requirements']),
+                               reader_contract=detail.get('reader_contract'))
+                analysis_context = {'spec': spec, 'markdown': brief['markdown']}
+                assessment = candidate_assessment(assessment, **analysis_context)
+            reasons=revision_reasons(assessment,open_findings,review,analysis_context=analysis_context)
             if not reasons:return {}
             self.store.event(job['id'],'revision_required',{'version_id':brief['id'],'reasons':reasons})
         if overall_inconsistent(assessment):
@@ -1621,7 +1637,8 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
             # The native Evaluator reads a frozen packet and submits through the
             # runner; the version it scores is fixed here, not taken from the model.
             job={**job,'native_packet':{'role':'evaluator','version_id':brief['id']}}
-        prompt=assessment_prompt(self.store,brief,folder,backend)
+        prompt=assessment_prompt(self.store,brief,folder,backend,
+            analysis_checklist_candidate=json.loads(job['payload']).get('quality_checklist_candidate') == 'chapter-v1')
         # Freeze expected identities before executing a compatibility host. Missing
         # answers remain visible, without regenerating the report or its score.
         expected=json.loads((folder/'input.json').read_text(encoding='utf-8'))['assessment_checks']
