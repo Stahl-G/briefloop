@@ -14,6 +14,7 @@ import threading
 import time
 from .rpc_writer import PipeWriter
 from .platform_support import OwnedProcess
+from .codex_home import CodexHome
 
 
 class AppServerClient:
@@ -22,10 +23,11 @@ class AppServerClient:
         from .host_bins import SEARCH_HINT, find as _find_host_bin
         executable=_find_host_bin('codex')
         if not executable:raise RuntimeError('未找到 Codex CLI；'+SEARCH_HINT)
+        self.home=CodexHome()
         self.notifications=Queue();self.server_requests=Queue()
         self._pending={};self._lock=threading.Lock();self._sequence=0;self._closed=False
         self._stderr=(root/'app-server.stderr.log').open('a')
-        self.process=OwnedProcess([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,parent_death=True)
+        self.process=OwnedProcess([executable,*self.home.overrides,'--enable','multi_agent','app-server','--listen','stdio://'],env=self.home.env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,parent_death=True)
         self._writer=PipeWriter(self.process.stdin,self._abort)
         self._reader=threading.Thread(target=self._read,daemon=True);self._reader.start()
         try:
@@ -48,6 +50,8 @@ class AppServerClient:
         self._writer.send(message,timeout=timeout)
 
     def request(self,method,params,timeout=20):
+        if method=='thread/resume':
+            self.home.import_bound_thread(params['threadId'])
         deadline=time.monotonic()+timeout
         with self._lock:
             self._sequence+=1;identifier=self._sequence;future=Future();self._pending[identifier]=future
