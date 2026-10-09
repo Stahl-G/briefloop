@@ -118,3 +118,20 @@ def test_native_direct_research_handoff_reaches_writer_input_without_fake_scout(
     notes = [n for n in research['retrieval_notes'] if n.get('kind') == 'research_round_closeout']
     assert notes[0]['question_coverage'][1]['status'] == 'open'
     assert (packet.parent/'research.json').read_bytes() == (packet/'research.json').read_bytes()
+
+
+def test_fast_web_retained_goal_selection_can_finish_its_own_search_pass(tmp_path):
+    store = Store(tmp_path)
+    run = store.create_run({'title': '快速公开检索', 'objective': '查最新公告',
+        'completion_mode': 'fast_web', 'research_strategy': 'goal_driven',
+        'fact_check': False,
+        'search_policy': {'primary_provider': 'duckduckgo', 'native_search_enabled': False}},
+        [], research_protocol='quality_v1')
+    # This is the actual fast_research.collect plan/closeout boundary. Its
+    # plain planning turns do not create a Scout/Orchestrator handoff file.
+    research_plan.freeze(store, run['id'], preset='quick',
+                         structure={'breadth': 3, 'depth': 1, 'parallel': 3})
+    research_plan.finish_round(store, run['id'], summary='快速原文读取结束，不声明覆盖完整')
+    restored = Store(tmp_path)
+    assert research_plan.status(restored, run['id'])['goal_progress'] is None
+    assert research_plan.require_writing_closeout(restored, run['id'])
