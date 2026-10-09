@@ -26,7 +26,8 @@ def test_source_follows_current_metadata_and_missing_platforms_never_pass(tmp_pa
                      'desktop/electron/package-lock.json','src/briefloop/static/index.html'):
         target=tmp_path/filename;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/filename,target)
     target=tmp_path/'desktop/electron/package.json';data=json.loads(target.read_text(encoding='utf-8'))
-    numbers=expected.split('.');numbers[-1]=str(int(numbers[-1])+1);data['version']='.'.join(numbers)
+    # Perturb the major component: patch may contain rc/a/b/dev suffixes.
+    major,rest=data['version'].split('.',1);data['version']=str(int(major)+1)+'.'+rest
     target.write_text(json.dumps(data))
     result,status=checker.check(args(tmp_path))
     assert status==1 and result['checks']['source']['status']=='mismatch'
