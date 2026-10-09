@@ -34,6 +34,7 @@ WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报�
 '''
 
 
+from .research_reading import snapshot as research_snapshot, GUIDE as RESEARCH_READING_GUIDE
 WRITING_GUIDE += '\n' + NUMBER_UNIT_GUIDE + '\n' + REPORT_CLAIM_GUIDE + '\n' + DECISION_EVIDENCE_GUIDE + '\n' + PLANNING_GUIDE
 
 
@@ -63,6 +64,8 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
     contract = store.meta('reader_contract:' + run_id) or plan.get('reader_contract')
     skill = (store.one('skills', run['skill_id']) if run.get('skill_id') else None) if skill_override is _DEFAULT_SKILL else skill_override
     writing = instructions(resolve(req, reader_contract=contract), role='analyst')
+    if base_version:
+        writing += '\n' + RESEARCH_READING_GUIDE
     writing += '\n' + time_instructions(req.get('time_context'))
     writing += '\n' + (profile_context(req).get('instructions') or '')
     writing += '\n' + (bind_context(store, skill).get('analyst') or {}).get('instructions', '')
@@ -153,6 +156,7 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
                        'mode': 'revision' if base else 'draft', 'base_version': base_version,
                        'base_hash': base['hash'] if base else None,
                        'reconciliation_id': plan.get('reconciliation_id') or (json.loads(base['detail']).get('reconciliation_id') if base else None),
+                       **({'research_context': research_snapshot(store,base)} if base else {}),
                        'feedback': feedback or [],
                        'support_files': sorted((support or {}).keys()),
                        **({'writer_input_protocol': writer_protocol} if writer_protocol != 'rich_json_v1' else {})})

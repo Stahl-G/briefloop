@@ -145,3 +145,70 @@ def test_old_v8_length_snapshot_remains_applicable_without_rewriting_frozen_byte
         connection.execute('UPDATE runs SET requirements=? WHERE id=?', (dump(requirements), run['id']))
     with pytest.raises(ValueError, match='依据发生变化'):
         review.validate_applicable_review(store, 'legacy_v8', brief['id'])
+
+
+@pytest.mark.parametrize('backend', ['codex', 'briefloop-native'])
+def test_evaluator_sees_current_resolution_separately_from_saved_report_gaps(tmp_path, backend):
+    from briefloop.research_handoff import current_research
+    store, run, source, original = report(tmp_path)
+    missing = 'Original product release not yet obtained.'
+    brief = store.publish(run['id'], {'title': 'Weekly', 'markdown': original['markdown'], 'gaps': [missing]})
+    research_plan.freeze(store, run['id'])
+    research = current_research(store, run['id'], {'sources': [], 'gaps': [missing]}, register=True)
+    identity = research['gap_records'][0]['gap_id']
+    research_plan.finish_round(store, run['id'], gap_updates=[{
+        'gap_id': identity, 'status': 'resolved', 'reason': 'The original release is now available; it says public beta.',
+        'evidence': [{'source_id': source['id'], 'locator': 'line 1', 'excerpt': 'Public beta is available.'}]}])
+    before = store.one('briefs', brief['id'])
+    folder = store.root / backend; folder.mkdir()
+    assessment_prompt(store, brief, folder, backend)
+    packet = folder / 'packet' if backend == 'briefloop-native' else folder
+    inputs = json.loads((packet / 'input.json').read_text())
+    context = inputs['research_context']
+    assert context['version_id'] == brief['id'] and context['brief_hash'] == brief['hash']
+    assert context['saved_report']['gaps'] == [missing]
+    assert context['current_research']['gaps'] == []
+    resolved = context['current_research']['gap_history'][0]
+    assert resolved['gap_id'] == identity and resolved['evidence'][0]['source_hash'] == source['hash']
+    assert 'public beta' in resolved['reason']
+    assert store.one('briefs', brief['id']) == before
+
+
+def test_current_research_context_requires_explicit_resolution_and_keeps_frozen_packets(tmp_path):
+    from briefloop.research_handoff import current_research
+    from briefloop.research_reading import snapshot
+    store, run, source, brief = report(tmp_path)
+    research_plan.freeze(store, run['id'])
+    observed = current_research(store, run['id'], {'sources': [], 'gaps': ['Product status unverified']}, register=True)
+    # An original source already exists: presence alone does not resolve a gap.
+    before = snapshot(store, brief)
+    assert before['current_research']['gaps'] == ['Product status unverified']
+    research_plan.finish_round(store, run['id'], gap_updates=[{
+        'gap_id': observed['gap_records'][0]['gap_id'], 'status': 'resolved', 'reason': 'Read the product announcement.',
+        'evidence': [{'source_id': source['id'], 'locator': 'line 1', 'excerpt': 'Public beta is available.'}]}])
+    resolved = snapshot(store, brief)
+    assert resolved['current_research']['gaps'] == []
+    assert resolved == snapshot(store, brief)  # Same recorded evidence, stable identity.
+    fingerprint, files = review.build_packet(store, brief['id'], store.root / 'review-new')
+    path = store.root / 'review-new/packet/research-context.json'
+    frozen_bytes = path.read_bytes()
+    assert json.loads(frozen_bytes) == resolved and 'research-context.json' in files
+    # A replacement source snapshot invalidates the old proof, never the old packet bytes.
+    with store.tx() as c:c.execute('UPDATE sources SET hash=? WHERE id=?', ('changed-hash', source['id']))
+    current = snapshot(store, brief)
+    assert current['current_research']['gap_records'][0]['status'] == 'open'
+    assert current['current_research']['gap_records'][0]['validation_error']
+    assert current['research_state_hash'] != resolved['research_state_hash']
+    assert path.read_bytes() == frozen_bytes
+
+
+def test_revision_writer_receives_saved_and_current_gap_context(tmp_path):
+    from briefloop.research_reading import snapshot
+    store, run, source, brief = report(tmp_path)
+    context = snapshot(store, brief)
+    packet = analyst.packet(store, run['id'], store.root / 'revision-context', plan={},
+                            research={'sources': [], 'gaps': []}, base_version=brief['id'],
+                            feedback={'research_context': context})
+    value = json.loads((packet['root'] / 'input.json').read_text())
+    assert value['research_context'] == context
+    assert value['research_context']['brief_hash'] == brief['hash']
