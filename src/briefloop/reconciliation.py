@@ -89,7 +89,7 @@ def _validate_relation(store, run_id, relation, allowed_claims, allowed_sources,
         raise ReconciliationError('关系条目必须是对象')
     label = relation.get('relation')
     if label not in RELATIONS:
-        raise ReconciliationError('未知关系：' + str(label))
+        raise ReconciliationError('未知关系：' + str(label) + '；relation 可用值：' + '、'.join(RELATIONS))
     members = list(dict.fromkeys(relation.get('member_claim_ids', []) or []))
     if len(members) < 2:
         raise ReconciliationError('一条关系至少需要两个不同的候选陈述')
@@ -136,7 +136,7 @@ def save(store, run_id, payload):
         raise ReconciliationError('对照内容必须是对象')
     status = payload.get('status')
     if status not in STATUSES:
-        raise ReconciliationError('对照状态无效：' + str(status))
+        raise ReconciliationError('对照状态无效：' + str(status) + '；status 可用值：' + '、'.join(STATUSES))
     index = candidates(store, run_id)
     allowed_claims = set(index['statement_claim_ids'])
     allowed_sources = {source['source_id'] for source in index['sources']}
