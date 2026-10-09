@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {libraryScope,createSourceLibraryControls} from '../frontend/source-library-controls.js';
+const rows=Array.from({length:60},(_,i)=>({id:String(i),archived_at:i===0?'2026-10-09':null}));
+assert.equal(libraryScope(rows[0]),false);assert.equal(libraryScope(rows[0],'archived'),true);assert.equal(libraryScope(rows[0],'all'),true);
+let ws='one',reply;
+const nodes={'sources-report-filter':{value:'',innerHTML:''},'sources-scope':{value:'active'}};
+const api=()=>new Promise(resolve=>reply=resolve);
+const controls=createSourceLibraryControls({$:id=>nodes[id],api,action:fn=>fn(),notice:()=>{},getState:()=>({workspace_id:ws}),render:()=>{}});
+controls.sync();assert.equal(controls.windowRows(rows,'filter').length,50);assert.equal(controls.includes(rows[0]),false);
+nodes['sources-load-more']={};
+controls.wire({querySelectorAll:()=>[]},rows.slice(0,50),rows);
+nodes['sources-load-more'].onclick();assert.equal(controls.windowRows(rows,'filter').length,60);
+assert.equal(controls.windowRows(rows,'new filter').length,50);
+const pending=controls.activate();ws='two';controls.sync();reply({items:[{run_id:'old-workspace',detail:'{}'}],next_cursor:null});await pending;
+assert.doesNotMatch(nodes['sources-report-filter'].innerHTML,/old-workspace/);
+console.log('PASS: library scopes, 50-row pagination, filter reset and workspace race');

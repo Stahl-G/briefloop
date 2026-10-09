@@ -77,7 +77,7 @@ def _hit(line, needle, number):
             'context': ('…' if left else '') + line[left:right] + ('…' if right < len(line) else '')}
 
 
-def search(store, query, *, run_id='', source_type='', channel='', status='', cursor='', limit=20):
+def search(store, query, *, run_id='', source_type='', channel='', status='', cursor='', limit=20, scope='all', order='oldest'):
     query = str(query).strip()
     if not query or len(query) > 256 or any(c in query for c in ('\r', '\n', '\x00')):
         raise ValueError('请输入1–256字的单行搜索文字')
@@ -87,19 +87,22 @@ def search(store, query, *, run_id='', source_type='', channel='', status='', cu
         raise ValueError('发现渠道无效')
     if type(limit) is not int or not 1 <= limit <= 20:
         raise ValueError('每页结果数必须为1–20')
+    if scope not in ('active', 'archived', 'all') or order not in ('newest', 'oldest'):
+        raise ValueError('来源范围或排序无效')
+    from .source_lifecycle import annotate, report_source_ids
     allowed = None
     if run_id:
-        run = store.one('runs', run_id)
-        if run.get('mode', 'normal') != 'normal' or run_id in store.deleted_reports():
-            raise ValueError('报告不可用')
-        allowed = set(store.source_ids(run_id))
-    rows = annotate_sources(store, store.rows('SELECT * FROM sources ORDER BY created,id'))
+        allowed = set(report_source_ids(store, run_id))
+    rows = annotate(store, annotate_sources(store, store.rows('SELECT * FROM sources ORDER BY created,rowid')))
+    if order == 'newest':
+        rows.reverse()
+    rows = [s for s in rows if scope == 'all' or bool(s['archived_at']) == (scope == 'archived')]
     rows = [s for s in rows if (allowed is None or s['id'] in allowed)
             and (not source_type or bool(s.get('url')) == (source_type == 'web'))
             and (not channel or (not s['discovery_providers'] if channel == 'unrecorded'
                                  else channel in s['discovery_providers']))]
-    key = content_hash(dump([store.meta('workspace_id'), query, run_id, source_type, channel, status,
-                             [[*[s[k] for k in ('id', 'hash', 'status', 'name', 'url', 'discovery_providers')],
+    key = content_hash(dump([store.meta('workspace_id'), query, run_id, source_type, channel, status, scope, order,
+                             [[*[s[k] for k in ('id', 'hash', 'status', 'name', 'url', 'discovery_providers', 'archived_at')],
                                _media_revision(store, s)] for s in rows]]))
     offset = 0
     if cursor:

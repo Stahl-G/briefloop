@@ -982,6 +982,7 @@ class Store:
         from .report_browsing import hot_state
         browsing=hot_state(self,jobs,run_id=run_id,version_id=version_id,pending_run=pending_run)
         from .search_policy import annotate_sources
+        from .source_lifecycle import annotate as annotate_lifecycle
         from .previous_report import annotate_sources as annotate_source_usage
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
@@ -999,7 +1000,7 @@ class Store:
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row), 'language_hint':template_language_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
-                "sources": annotate_source_usage(self,annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created"))),
+                "sources": annotate_lifecycle(self,annotate_source_usage(self,annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created,rowid")))),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 **browsing,
                 **feedback_snapshot(self),
