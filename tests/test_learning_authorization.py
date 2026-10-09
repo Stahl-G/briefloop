@@ -4,7 +4,8 @@ import json
 import pytest
 
 from briefloop import learning
-from briefloop.learning_budget import AUTHORIZATION_CODE, apply_settings_change, automatic_allowed, plan, state
+from briefloop.learning_budget import (AUTHORIZATION_CODE, LearningAuthorizationRequired, apply_settings_change,
+                                       authorization, automatic_allowed, plan, state, verify)
 from briefloop.store import Store, dump
 
 
@@ -110,3 +111,60 @@ def test_the_plan_names_every_model_that_will_bill(tmp_path):
     assert shown['model'] == 'selected-primary-model'
     assert shown['role_models']['evaluator']['model'] == 'separate-review-model'
     assert shown['counts'] == 'trial_generations' and shown['price'] == 'unknown'
+
+
+def test_legacy_automatic_scope_does_not_authorize_new_triage_invocation(tmp_path):
+    import hashlib
+    store = Store(tmp_path)
+    settings = _authorized(store)
+    bound = plan(settings)
+    old_scope = {key: bound[key] for key in ('cases', 'backend', 'model', 'role_models', 'trial_generations_per_round')}
+    old_fingerprint = hashlib.sha256(json.dumps(old_scope, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    legacy = {**settings, 'auto_learn_authorized_plan': old_fingerprint}
+    assert state(legacy) == 'plan_changed' and not automatic_allowed(legacy)
+    assert state({**settings, 'auto_learn_authorized_plan': None}) == 'needs_confirmation'
+    store.set_meta('settings', legacy)
+    _feedback(store)
+    _age_feedback(store)
+    assert learning.enqueue_feedback(store, automatic=True)['status'] == 'not_authorized'
+    assert store.rows("SELECT * FROM jobs WHERE kind='learn'") == []
+    assert all(row['batch_id'] is None for row in store.rows('SELECT batch_id FROM feedback'))
+    confirmed = apply_settings_change(legacy, {'confirm_learning_rounds': settings['k'], 'confirm_plan': bound['fingerprint']})
+    record = authorization(confirmed, 'automatic')
+    assert record['triage_turns_per_batch'] == bound['triage_turns_per_batch'] == 1
+    assert verify(record, bound) == record
+
+
+def test_frozen_budget_must_match_the_record_and_include_triage(tmp_path):
+    store = Store(tmp_path)
+    bound = plan(store.settings())
+    record = authorization(store.settings(), 'manual', confirmed=bound['fingerprint'])
+    assert verify(record, bound) == record
+    old_record = {key: value for key, value in record.items() if key != 'triage_turns_per_batch'}
+    with pytest.raises(LearningAuthorizationRequired, match='改动分类调用'):
+        verify(old_record)
+    for changed in ({key: value for key, value in bound.items() if key != 'triage_turns_per_batch'},
+                    {**bound, 'triage_turns_per_batch': 2}, {**bound, 'model': 'unconfirmed-model'},
+                    {**bound, 'scope_fingerprint': 'old-scope'}):
+        with pytest.raises(LearningAuthorizationRequired, match='冻结调用预算'):
+            verify(record, changed)
+
+
+def test_legacy_frozen_batch_pauses_before_calls_and_keeps_feedback(tmp_path):
+    store = Store(tmp_path)
+    store.update_settings({'model': 'test-model'})
+    _feedback(store)
+    bound = plan(store.settings())
+    job = learning.enqueue_feedback(store, confirmed_plan=bound['fingerprint'])
+    payload = json.loads(job['payload'])
+    payload['authorization'].pop('triage_turns_per_batch')
+    payload['budget'].pop('triage_turns_per_batch')
+    with store.tx() as c:
+        c.execute('UPDATE jobs SET payload=? WHERE id=?', (dump(payload), job['id']))
+    class NoCalls:
+        def execute(self, *args, **kwargs):
+            raise AssertionError('An unconfirmed batch must not invoke the runtime')
+    with pytest.raises(InterruptedError, match='改动分类调用'):
+        learning.learn(store, NoCalls(), store.one('jobs', job['id']))
+    assert all(row['batch_id'] == job['id'] for row in store.rows('SELECT batch_id FROM feedback'))
+    assert store.meta('last_study') is None

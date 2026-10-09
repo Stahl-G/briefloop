@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('briefloopDesktop', {
   downloadUpdate: () => ipcRenderer.invoke('updates:download'),
   installUpdate: () => ipcRenderer.invoke('updates:install'),
   // The main process renders the self-contained report and asks where to save it.
-  exportPdf: request => ipcRenderer.invoke('report:export-pdf', {html: String(request?.html ?? ''), title: String(request?.title ?? '')}),
+  exportPdf: request => ipcRenderer.invoke('report:export-pdf', {html: String(request?.html ?? ''), title: String(request?.title ?? ''), ...(request?.version_id ? {version_id: String(request.version_id), workspace_id: String(request.workspace_id ?? ''), market_convention: String(request.market_convention ?? '')} : {})}),
   onUpdateStatus: callback => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('updates:changed', listener);

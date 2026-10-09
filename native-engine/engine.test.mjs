@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUNDLE = process.env.BRIEFLOOP_NATIVE_TEST_BUNDLE || fileURLToPath(new URL("../src/briefloop/static/native-engine.mjs", import.meta.url));
@@ -46,12 +46,12 @@ const reply = {
     chunk(res, {}, "stop", usage);
     res.end("data: [DONE]\n\n");
   },
-  tool: (name, args = {}) => (res) => {
+  tool: (name, args = {}, tokenUsage = usage) => (res) => {
     if (typeof args === "function") args = args();
     res.writeHead(200, { "content-type": "text/event-stream" });
     const id = "call_" + Math.random().toString(36).slice(2, 10);
     chunk(res, { role: "assistant", tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } }] });
-    chunk(res, {}, "tool_calls", usage);
+    chunk(res, {}, "tool_calls", tokenUsage);
     res.end("data: [DONE]\n\n");
   },
   // Several calls in one assistant message.
@@ -195,6 +195,9 @@ before(async () => {
   // A personal pi setting that would break retries if the engine honoured it.
   writeFileSync(join(home, ".pi", "agent", "settings.json"), JSON.stringify({ retry: { enabled: false } }));
   copyFileSync(BUNDLE, join(engineDir, "native-engine.mjs"));
+  for (const asset of ["native-engine-image-worker.mjs", "native-engine-photon.wasm"]) {
+    copyFileSync(join(dirname(BUNDLE), asset), join(engineDir, asset));
+  }
   writeFileSync(join(engineDir, "native-engine-models.json"), JSON.stringify({ providers: { fake: {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: "openai-completions", apiKey: "FAKE_PROVIDER_KEY",
     models: [
@@ -204,6 +207,11 @@ before(async () => {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 },
       { id: "m2", name: "M2", api: "openai-completions", provider: "fake", reasoning: false, input: ["text", "image"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 },
+      // A short TTL makes hidden SDK cache warming observable in a bounded
+      // local-only test; synthetic usage/cost make warming economically eligible.
+      { id: "cached", name: "Cached fixture", api: "openai-completions", provider: "fake", reasoning: false, input: ["text"],
+        cost: { input: 3, output: 1, cacheRead: 0.3, cacheWrite: 3.75 }, promptCache: { short: 11 },
+        contextWindow: 200000, maxTokens: 1000 },
     ] } } }));
 
   const nativeDir = join(home, ".config", "briefloop", "native-engine");
@@ -281,6 +289,7 @@ after(async () => {
 test("ping reports configured entries, separately from live API availability", async () => {
   const ping = await call("ping");
   assert.equal(ping.engine, "briefloop-native/2");
+  assert.equal(ping.pi, "1.0.0");
   assert.equal(ping.models_configured, 2);
   const catalog = await describeConfiguredModels();
   const model = catalog.models.find(m => m.id === MODEL);
@@ -466,6 +475,24 @@ test("a closed session resumes from its session file with the prior conversation
   assert.match(sent, /\{\\"first\\":true\}/, "the earlier reply is part of the resumed context");
 });
 
+test("a Pi 0.85.1 transcript resumes with saved work and the current restricted contract", async () => {
+  // Produced by the released 0.85.1 bundle with a local scripted provider;
+  // synthetic content only, with the old cwd normalized for portability.
+  const legacy = join(root, "legacy-0.85.1.jsonl");
+  copyFileSync(fileURLToPath(new URL("./fixtures/pi-0.85.1-session.jsonl", import.meta.url)), legacy);
+  const session = await reviewer({ session_file: legacy });
+  assert.equal(session.resumed, true);
+  assert.deepEqual(session.tools, ["calc", "claim_trace", "packet_grep", "packet_list", "packet_read", "submit_review"]);
+  script(reply.text('{"continued":true}'));
+  assert.equal(ends(await turn(session.session_id, "legacy-upgrade"))[0].status, "completed");
+  const request = provider.requests[0];
+  const transcript = JSON.stringify(request.messages);
+  assert.match(transcript, /UPGRADE_REVISION_r7/);
+  assert.match(transcript, /grant-42 remains unresolved/);
+  assert.match(transcript, /测试系统提示：BriefLoop Reviewer/);
+  assert.equal(provider.violations.length, 0);
+});
+
 // ---- review tools ---------------------------------------------------------------
 test("the system prompt is BriefLoop's layers plus the real tool guide", async () => {
   script(reply.text('{"ok":true}'));
@@ -576,6 +603,31 @@ test("report figures are attached only when the model accepts images", async () 
   const sent = JSON.stringify(provider.requests[0].messages);
   assert.match(sent, /image_url/);
   assert.match(sent, /"delivery\\":\\"attached\\"/);
+
+  // Decode and actually resize through the shipped worker/WASM, from the
+  // isolated bundle directory with no SDK installation beside it.
+  const wide = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAC7gAAAACCAIAAABHIQbHAAAANUlEQVR4nO3OAQ0AIAgAMCQXwQhmQFrg5v4EP9U3AAAAAAAAAADgd/k6AAAAAAAAAAAAsWAAuMsBbKpOs7gAAAAASUVORK5CYII=", "base64");
+  writeFileSync(join(packet, "figures", "wide.png"), wide);
+  script(reply.text('{"ok":true}'));
+  await turn(vision.session_id, "e-img-wide", { images: [{file: "figures/wide.png"}] });
+  const wideRequest = JSON.stringify(provider.requests[0].messages);
+  assert.match(wideRequest, /original 3000x2, displayed at 2000x1/);
+  assert.doesNotMatch(wideRequest, /Image omitted/);
+  const attached = provider.requests[0].messages.at(-1).content.find(c => c.type === "image_url");
+  assert.ok(attached && !attached.image_url.url.endsWith(wide.toString("base64")));
+
+  for (const [name, base64, dimensions] of [
+    ['thin-wide', 'iVBORw0KGgoAAAANSUhEUgAAE4gAAAABCAIAAAC9c9PfAAAAJ0lEQVR4nO3CAQ0AAAzDoPo3/UuYAQhdqaqqqqqqqqqqqqqqqqrq/P4XdZYbT/K3AAAAAElFTkSuQmCC', 'original 5000x1, displayed at 2000x1'],
+    ['thin-tall', 'iVBORw0KGgoAAAANSUhEUgAAAAEAABOICAIAAAD//pCdAAAALUlEQVR4nO3DQQ0AAAwDofNvepPRDyR0laqqqqqqqqqqqqqqqqqqqqqqqqrzD90zdZZdotoAAAAAAElFTkSuQmCC', 'original 1x5000, displayed at 1x2000'],
+  ]) {
+    writeFileSync(join(packet, 'figures', `${name}.png`), Buffer.from(base64, 'base64'));
+    script(reply.text('{"ok":true}'));
+    await turn(vision.session_id, `e-img-${name}`, { images: [{ file: `figures/${name}.png` }] });
+    const request = JSON.stringify(provider.requests[0].messages);
+    assert.ok(request.includes(dimensions), request);
+    assert.doesNotMatch(request, /Image omitted/);
+    assert.ok(provider.requests[0].messages.at(-1).content.some(c => c.type === 'image_url'));
+  }
 
   const tampered = [{ ...images[0], sha256: "0".repeat(64) }];
   const bad = await reviewer({ model: VISION_MODEL });
@@ -853,12 +905,12 @@ test('interactive chat returns normal text without a JSON or submit repair', asy
   assert.deepEqual(s.tools, ['workspace_action']);
 });
 
-test('main-agent child tools may outlive the model idle interval and remain cancellable', async () => {
-  const s = await reviewer({ role:'orchestrator', runner_tools:[
+test('main-agent child tools outlive the idle interval without hidden cache-warming calls', async () => {
+  const s = await reviewer({ role:'orchestrator', model:'fake/cached', runner_tools:[
     {name:'run_scouts',description:'Run children',parameters:{type:'object',properties:{}},long_running:true,sequential:true},
     {name:'finish_task',description:'Finish',parameters:{type:'object',properties:{}},settles:true},
   ] });
-  provider.script = [reply.tool('run_scouts'), reply.tool('finish_task')];
+  script(reply.tool('run_scouts', {}, {prompt_tokens:100000,completion_tokens:2,total_tokens:100002}), reply.tool('finish_task'));
   runnerTool = async (tool) => {
     if (tool === 'run_scouts') await new Promise(r=>setTimeout(r, 1400));
     return tool === 'finish_task' ? {ok:true,settle:'{"saved":true}'} : {ok:true,content:[{type:'text',text:'Scouts completed'}]};
@@ -868,6 +920,9 @@ test('main-agent child tools may outlive the model idle interval and remain canc
   assert.equal(ends(result)[0].status,'completed');
   assert.ok(!result.some(e=>e.kind==='status' && /idle for/.test(e.message||'')));
   assert.ok(!s.tools.includes('bash') && !s.tools.includes('submit_review'));
+  assert.equal(provider.requests.length, 2, 'only the two real tool turns reach the provider');
+  assert.equal(result.filter(e=>e.kind==='usage').length, 2);
+  assert.doesNotMatch(readFileSync(s.session_file, 'utf8'), /"kind":"cache_warm"/);
 });
 
 test('locally saved provider credentials and custom models are usable without a host CLI', async () => {

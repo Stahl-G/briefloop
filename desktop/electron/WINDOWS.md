@@ -9,6 +9,13 @@ From native Windows PowerShell, build the frontend and candidate backend, then t
 For a stable release, download and stage the one frozen shared wheel instead of rebuilding it;
 see [the release contract](../../docs/release-0.26.3.md). Use Python 3.11+:
 
+Package text uses LF through `.gitattributes`, even with `core.autocrlf=true`;
+binary resources keep their original bytes. Frozen backend archives disable
+automatic newline conversion for build metadata too. For older frozen tags,
+use a fresh checkout with `core.autocrlf=false` before staging the shared wheel.
+Changing that setting does not rewrite an existing checkout. Shared-wheel
+verification still requires exact bytes and the frozen commit.
+
 ```powershell
 npm.cmd ci
 npm.cmd run build

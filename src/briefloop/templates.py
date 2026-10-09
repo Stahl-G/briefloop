@@ -187,48 +187,48 @@ def rebuild_template_version(store,template_id):
 
 
 BUILTIN_TEMPLATES = (
-        ('general-report-zh-t1.docx', 'general-report-zh-t1.spec.json', '通用报告·品牌绿'),
+        ('general-report-zh-t1.docx', 'general-report-zh-t1.spec.json', '通用报告·品牌黛蓝'),
         ('general-report-zh-t2.docx', 'general-report-zh-t2.spec.json', '通用报告·极简蓝'),
         ('general-report-zh-t3.docx', 'general-report-zh-t3.spec.json', '通用报告·珊瑚红'),
         ('general-report-zh-t4.docx', 'general-report-zh-t4.spec.json', '通用报告·石墨黑'),
         ('general-report-zh-t5.docx', 'general-report-zh-t5.spec.json', '通用报告·典雅灰'),
-        ('business-report-zh-t1.docx', 'business-report-zh-t1.spec.json', '商业报告·品牌绿'),
+        ('business-report-zh-t1.docx', 'business-report-zh-t1.spec.json', '商业报告·品牌黛蓝'),
         ('business-report-zh-t2.docx', 'business-report-zh-t2.spec.json', '商业报告·极简蓝'),
         ('business-report-zh-t3.docx', 'business-report-zh-t3.spec.json', '商业报告·珊瑚红'),
         ('business-report-zh-t4.docx', 'business-report-zh-t4.spec.json', '商业报告·石墨黑'),
         ('business-report-zh-t5.docx', 'business-report-zh-t5.spec.json', '商业报告·典雅灰'),
-        ('academic-paper-zh-t1.docx', 'academic-paper-zh-t1.spec.json', '学术论文·品牌绿'),
+        ('academic-paper-zh-t1.docx', 'academic-paper-zh-t1.spec.json', '学术论文·品牌黛蓝'),
         ('academic-paper-zh-t2.docx', 'academic-paper-zh-t2.spec.json', '学术论文·极简蓝'),
         ('academic-paper-zh-t3.docx', 'academic-paper-zh-t3.spec.json', '学术论文·珊瑚红'),
         ('academic-paper-zh-t4.docx', 'academic-paper-zh-t4.spec.json', '学术论文·石墨黑'),
         ('academic-paper-zh-t5.docx', 'academic-paper-zh-t5.spec.json', '学术论文·典雅灰'),
         ('government-doc-zh-t4.docx', 'government-doc-zh-t4.spec.json', '政府公文·石墨黑'),
-        ('annual-report-zh-t1.docx', 'annual-report-zh-t1.spec.json', '上市公司年报·品牌绿'),
+        ('annual-report-zh-t1.docx', 'annual-report-zh-t1.spec.json', '上市公司年报·品牌黛蓝'),
         ('annual-report-zh-t2.docx', 'annual-report-zh-t2.spec.json', '上市公司年报·极简蓝'),
         ('annual-report-zh-t3.docx', 'annual-report-zh-t3.spec.json', '上市公司年报·珊瑚红'),
         ('annual-report-zh-t4.docx', 'annual-report-zh-t4.spec.json', '上市公司年报·石墨黑'),
         ('annual-report-zh-t5.docx', 'annual-report-zh-t5.spec.json', '上市公司年报·典雅灰'),
-        ('legal-contract-zh-t1.docx', 'legal-contract-zh-t1.spec.json', '合同·品牌绿'),
+        ('legal-contract-zh-t1.docx', 'legal-contract-zh-t1.spec.json', '合同·品牌黛蓝'),
         ('legal-contract-zh-t2.docx', 'legal-contract-zh-t2.spec.json', '合同·极简蓝'),
         ('legal-contract-zh-t3.docx', 'legal-contract-zh-t3.spec.json', '合同·珊瑚红'),
         ('legal-contract-zh-t4.docx', 'legal-contract-zh-t4.spec.json', '合同·石墨黑'),
         ('legal-contract-zh-t5.docx', 'legal-contract-zh-t5.spec.json', '合同·典雅灰'),
-        ('meeting-minutes-zh-t1.docx', 'meeting-minutes-zh-t1.spec.json', '会议纪要·品牌绿'),
+        ('meeting-minutes-zh-t1.docx', 'meeting-minutes-zh-t1.spec.json', '会议纪要·品牌黛蓝'),
         ('meeting-minutes-zh-t2.docx', 'meeting-minutes-zh-t2.spec.json', '会议纪要·极简蓝'),
         ('meeting-minutes-zh-t3.docx', 'meeting-minutes-zh-t3.spec.json', '会议纪要·珊瑚红'),
         ('meeting-minutes-zh-t4.docx', 'meeting-minutes-zh-t4.spec.json', '会议纪要·石墨黑'),
         ('meeting-minutes-zh-t5.docx', 'meeting-minutes-zh-t5.spec.json', '会议纪要·典雅灰'),
-        ('stock-research-zh-t1.docx', 'stock-research-zh-t1.spec.json', '券商研报·品牌绿'),
+        ('stock-research-zh-t1.docx', 'stock-research-zh-t1.spec.json', '券商研报·品牌黛蓝'),
         ('stock-research-zh-t2.docx', 'stock-research-zh-t2.spec.json', '券商研报·极简蓝'),
         ('stock-research-zh-t3.docx', 'stock-research-zh-t3.spec.json', '券商研报·珊瑚红'),
         ('stock-research-zh-t4.docx', 'stock-research-zh-t4.spec.json', '券商研报·石墨黑'),
         ('stock-research-zh-t5.docx', 'stock-research-zh-t5.spec.json', '券商研报·典雅灰'),
-        ('general-report-en-t1.docx', 'general-report-en-t1.spec.json', '英文通用报告·品牌绿'),
+        ('general-report-en-t1.docx', 'general-report-en-t1.spec.json', '英文通用报告·品牌黛蓝'),
         ('general-report-en-t2.docx', 'general-report-en-t2.spec.json', '英文通用报告·极简蓝'),
         ('general-report-en-t3.docx', 'general-report-en-t3.spec.json', '英文通用报告·珊瑚红'),
         ('general-report-en-t4.docx', 'general-report-en-t4.spec.json', '英文通用报告·石墨黑'),
         ('general-report-en-t5.docx', 'general-report-en-t5.spec.json', '英文通用报告·典雅灰'),
-        ('stock-research-en-t1.docx', 'stock-research-en-t1.spec.json', '英文研报·品牌绿'),
+        ('stock-research-en-t1.docx', 'stock-research-en-t1.spec.json', '英文研报·品牌黛蓝'),
         ('stock-research-en-t2.docx', 'stock-research-en-t2.spec.json', '英文研报·极简蓝'),
         ('stock-research-en-t3.docx', 'stock-research-en-t3.spec.json', '英文研报·珊瑚红'),
         ('stock-research-en-t4.docx', 'stock-research-en-t4.spec.json', '英文研报·石墨黑'),
@@ -343,9 +343,9 @@ def prepare(store,template_id,spec):
     return template(store,template_id)
 
 
-def export_template(store,brief,document,figures,template_id=None,source_records=None):
+def export_template(store,brief,document,figures,template_id=None,source_records=None,label=None,requirements=None):
     from .document_export import render_document,without_duplicate_cover_heading
-    req=json.loads(store.one('runs',brief['run_id'])['requirements'])
+    req=requirements if requirements is not None else json.loads(store.one('runs',brief['run_id'])['requirements'])
     selected_id=template_id or req.get('template_id')
     if not selected_id:raise ValueError('未选择模板')
     row=template(store,selected_id)
@@ -394,13 +394,19 @@ def export_template(store,brief,document,figures,template_id=None,source_records
         styles={**defaults,**styles}
     if source_records is None:
         source_records={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])}
+    protected_runs=set()
     render_document(doc,document,figures=figures,styles=styles,
-                    sources=source_records,citations=detail.get('citations',[]),language=req.get('language'))
+                    sources=source_records,citations=detail.get('citations',[]),language=req.get('language'),protected_runs=protected_runs)
     if ' TOC ' in doc.element.xml:
         from .industry_export import enable_update_fields
         enable_update_fields(doc)
+    from .export_labeling import add_docx_notice, brief_label, office_properties, export_properties
+    from .market_convention import apply_docx_market_colors
+    if label is None: label = brief_label(store, brief, language=req.get('language'))
+    apply_docx_market_colors(doc, req, protected_runs=protected_runs)
+    add_docx_notice(doc, label)
     out=BytesIO();doc.save(out)
     if row.get('origin') == 'builtin':
         from .default_fonts import builtin_macro_fonts
-        return builtin_macro_fonts(out.getvalue())
-    return out.getvalue()
+        return office_properties(builtin_macro_fonts(out.getvalue()), export_properties(label, req))
+    return office_properties(out.getvalue(), export_properties(label, req))

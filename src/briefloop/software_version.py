@@ -59,7 +59,8 @@ def runtime_info():
         'pipx': '使用 pipx 更新，完成后重启服务。',
         'uv': '使用 uv 更新，完成后重启服务。',
     }[kind]
-    return {'version': __version__, 'installation': kind, 'build': build,
+    from .software_release_notes import bundled_notes
+    return {'version': __version__, 'installation': kind, 'build': build, 'release_notes': bundled_notes(__version__),
             'update_command': command, 'guidance': guidance, 'download_url': DOWNLOADS}
 
 

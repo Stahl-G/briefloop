@@ -30,7 +30,7 @@ import { AUTHOR_COMPACTION_ROLES, COMPACTION_POLICY_VERSION, continuityExtension
 import { IMAGE_MIME, inside, packetTools, toolGuide } from "./packet-tools.js";
 import { parseRunnerTools, RunnerResult, runnerTools } from "./runner-tools.js";
 
-// Respect pi 0.85.1's model-declared map: null disables a level; extended
+// Respect Pi's model-declared map: null disables a level; extended
 // levels need explicit model support. Catalog access never submits a prompt.
 function catalogThinkingLevels(model: any): string[] {
   if (!model.reasoning) return ["off"];
@@ -40,7 +40,7 @@ function catalogThinkingLevels(model: any): string[] {
   });
 }
 
-const PI_VERSION = "0.85.1";
+const PI_VERSION = "1.0.0";
 const ENGINE_VERSION = "briefloop-native/2";
 const REVIEWER_TOOLS = ["packet_list", "packet_read", "packet_grep", "claim_trace", "calc", "submit_review"];
 // Engine-local tools per role. Everything else a role can do is declared by the
@@ -555,6 +555,9 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   // Authors use Pi auto-compaction; restricted review/learning roles retain
   // their existing policy. Both auto and explicit compaction use our focus hook.
   const settingsManager = SettingsManager.inMemory({
+    // Pi 1.0 defaults to paid cache refreshes while long child tools run.
+    // Preserve BriefLoop's prior request/accounting boundary: no hidden calls.
+    cacheWarming: "off",
     retry: {
       enabled: true,
       // 2+4+…+64 s: rides out a provider or network outage of about two

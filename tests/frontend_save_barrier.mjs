@@ -1,3 +1,4 @@
+import {researchProcessHTML,processDisclosureKey} from '../frontend/research-process.js';
 import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
 import {createProviderCatalog} from '../frontend/model-catalog.js';
 // Exercise actual application functions with controlled save completion order.
@@ -74,12 +75,12 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  const oldReview=job('review_old','review','failed',{run_id:'report',version_id:original.id});
  const oldGeneration=job('job_original','generate','failed',{run_id:'report'});
  const history=[review,producer,oldReview,oldGeneration];
- const view=vm.createContext({withoutSupersededRetries,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
+ const view=vm.createContext({researchProcessHTML,processDisclosureKey,withoutSupersededRetries,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
   current:revised,pendingRun:null,state:{jobs:history,briefs:[revised,original],runs:[],sources:[],settings:{timeout_minutes:30}},
   api:async(route,payload)=>{requests.push({route,payload});return route.startsWith('events?')?[]:{}},action:async fn=>fn()});
  vm.runInContext(progressCode+section(source,'let progressRequest=','function friendlyModel','frontend/app.js'),view);
  assert.equal(vm.runInContext('effectiveReportJobs().map(j=>j.id).join(",")',view),'review_current,job_revision');
- await view.refreshProgress();assert.equal(node('run-progress').hidden,true);
+ await view.refreshProgress();assert.equal(node('run-progress').hidden,false);assert.match(node('run-progress').innerHTML,/研究完成/);assert.doesNotMatch(node('run-progress').innerHTML,/恢复任务| open>/);
  assert.deepEqual(history.map(j=>j.id),['review_current','job_revision','review_old','job_original']);
  // A failed check of this exact revision remains actionable.
  review.status='failed';await view.refreshProgress();assert.equal(node('run-progress').hidden,false);
@@ -87,7 +88,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  // A later successful Review of the same version also replaces a failed attempt
  // when no previous_job_id link was recorded (e.g. an independently requested check).
  const latestReview=job('review_latest','review','complete',{version_id:revised.id});
- history.unshift(latestReview);await view.refreshProgress();assert.equal(node('run-progress').hidden,true);
+ history.unshift(latestReview);await view.refreshProgress();assert.equal(node('run-progress').hidden,false);assert.match(node('run-progress').innerHTML,/研究完成/);assert.doesNotMatch(node('run-progress').innerHTML,/恢复任务| open>/);
  // A producer can fail after admitting the revision, before its result is stored.
  producer.status='failed';producer.result=null;await view.refreshProgress();
  assert.equal(node('run-progress').hidden,false);await node('paused-resume').onclick();
@@ -109,7 +110,7 @@ let editorContent='';
 c.changed=()=>{};
 c.updateFormattingTools=()=>{};
 c.Editor=class {constructor(options){editorContent=options.content}destroy(){}};
-c.StarterKit={configure:()=>({})};c.TableKit={};c.ReportImage={configure:()=>({})};c.Markdown={};c.TextStyle={};c.Layout={};c.Citation={};c.ReportTrailingParagraph={};c.MustFixHighlight={};
+c.StarterKit={configure:()=>({})};c.TableKit={};c.ReportImage={configure:()=>({})};c.Markdown={};c.TextStyle={};c.Layout={};c.Citation={};c.CitationPresentation={configure:()=>({})};c.ReportTrailingParagraph={};c.MustFixHighlight={};c.MarketDataColors={};
 c.toEditor=x=>x;c.editor=null;c.assessment=()=>{};c.citations=()=>{};c.renderBriefLength=()=>{};
 el('toolbar').querySelectorAll=()=>[];
 vm.runInContext(opening,c);
@@ -178,7 +179,7 @@ console.log('PASS: custom provider preserves undeclared, image-enabled and image
 const templateReader=section(source,'function readTemplateSections()','function templateSections()','frontend/app.js');
 const chapterFields={'[data-title]':{value:'Current section'},select:{value:'required'}};
 el('template-sections').querySelectorAll=()=>[{dataset:{sectionId:'shared'},querySelector:selector=>chapterFields[selector]||null}];
-const templateContext=vm.createContext({$:el,parse:JSON.parse,state:{templates:[{id:'template-a',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template A original purpose'}]})},{id:'template-b',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template B purpose'}]})}],requirements:{template_id:'template-a',sections:[{section_id:'shared',purpose:'Saved task-specific purpose'}]}}});
+const templateContext=vm.createContext({nextReport:{requirementsForTemplate:()=>null},$:el,parse:JSON.parse,state:{templates:[{id:'template-a',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template A original purpose'}]})},{id:'template-b',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template B purpose'}]})}],requirements:{template_id:'template-a',sections:[{section_id:'shared',purpose:'Saved task-specific purpose'}]}}});
 vm.runInContext(templateReader,templateContext);
 el('template-select').value='template-a';
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Saved task-specific purpose');
@@ -186,6 +187,11 @@ el('template-select').value='template-b';
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Template B purpose');
 el('template-select').value='template-a';chapterFields['[data-purpose]']={value:'Explicit form edit'};
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Explicit form edit');
+delete chapterFields['[data-purpose]'];
+templateContext.nextReport.requirementsForTemplate=id=>id==='template-a'?{sections:[{section_id:'shared',purpose:'Confirmed previous-period purpose'}]}:null;
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Confirmed previous-period purpose');
+el('template-select').value='template-b';
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Template B purpose');
 console.log('PASS: intake preserves same-template saved purpose and isolates purpose after a template switch');
 
 // A malformed pasted image must not strand the entire application in saving.

@@ -3,6 +3,16 @@ import {preflightSources,sendSourceFile,sourceStatusLabel} from './uploads.js';
 const terminal=new Set(['ready','failed','cancelled','interrupted']);
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
+// Upload cards belong to the page content, never a new homepage grid column.
+export function sourceUploadHost(page){
+ if(!page)return null;
+ const content=page.querySelector('.chat-main-col')||page;
+ let host=page.querySelector('[data-source-uploads]');
+ if(!host){host=document.createElement('div');host.dataset.sourceUploads=''}
+ if(host.parentElement!==content)content.prepend(host);
+ return host;
+}
+
 // Dependency-injected transport and view; source selection remains with the caller.
 export function createSourceUploads({api,getToken,getUploadLimits,progressHost=()=>null,onAccepted=()=>{},sendFile=sendSourceFile,delay=pause}) {
  function card(file,cancel){
@@ -26,7 +36,7 @@ export function createSourceUploads({api,getToken,getUploadLimits,progressHost=(
    },
    finish(source,error){
     progress.hidden=true;const label=source?.status==='ready'&&source.needs_visual&&source.media_type==='application/pdf'?'需要视觉读取（未执行 OCR）':source?sourceStatusLabel(source):'';status.textContent=error||[label,source?.error].filter(Boolean).join('：');
-    button.disabled=false;button.textContent='收起';button.onclick=()=>box.remove();
+    button.disabled=false;button.textContent='收起';button.onclick=()=>{box.remove();if(host.dataset.sourceUploads!==undefined&&!host.children.length)host.remove()};
    }
   };
  }

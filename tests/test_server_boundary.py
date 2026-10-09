@@ -176,8 +176,48 @@ def test_raw_source_upload_allows_larger_pdfs_and_rejects_before_creating_source
         assert status==202 and source['name']=='年报.pdf' and source['status']=='queued'
         text=post('ok.txt',b'abc')[1]
         assert text['status']=='queued'
-        deadline=time.monotonic()+5
-        while time.monotonic()<deadline and server.store.one('sources',text['id'])['status'] not in ('ready','failed'):time.sleep(.05)
+        # Two admitted uploads share one extraction slot and each launches an
+        # owned native process. Wait for both durable terminal states, rather
+        # than treating a five-second startup budget as completed extraction.
+        deadline=time.monotonic()+30
+        while True:
+            extracted=[server.store.one('sources',item['id']) for item in (source,text)]
+            assert not any(item['status'] in ('failed','cancelled','interrupted') for item in extracted), extracted
+            if all(item['status']=='ready' for item in extracted):break
+            assert time.monotonic()<deadline, extracted
+            time.sleep(.05)
         assert server.store.one('sources',source['id'])['status']=='ready'
+        assert server.store.one('sources',text['id'])['status']=='ready'
         assert server.store.source_text(text['id'])=='abc'
     finally:server.shutdown();thread.join();module._close_service(server)
+
+
+def test_service_status_reports_current_journal_mode_without_changing_it(tmp_path, monkeypatch):
+    import sqlite3
+    import briefloop.store as store_module
+    from briefloop.server import _close_service
+    monkeypatch.setattr(store_module, 'wal_supported', lambda: True)
+    server = make_server(tmp_path / 'workspace', port=0, paused=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert server.store.journal_mode == 'wal'
+        # Another process can change the persistent mode after service startup.
+        for mode in ('delete', 'wal'):
+            with sqlite3.connect(server.store.db) as connection:
+                assert connection.execute('PRAGMA journal_mode=' + mode).fetchone()[0] == mode
+            client = http.client.HTTPConnection('127.0.0.1', server.server_port)
+            try:
+                client.request('GET', '/api/service-status')
+                response = client.getresponse()
+                status, data = response.status, json.loads(response.read())
+            finally:
+                client.close()
+            assert status == 200
+            assert data['database'] == {'sqlite_version': sqlite3.sqlite_version, 'journal_mode': mode}
+            with sqlite3.connect(server.store.db) as connection:
+                assert connection.execute('PRAGMA journal_mode').fetchone()[0] == mode
+    finally:
+        server.shutdown()
+        thread.join()
+        _close_service(server)

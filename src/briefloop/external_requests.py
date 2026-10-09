@@ -51,9 +51,10 @@ class _RequestStore(Store):
         return [dict(row) for row in self.connection.execute(query, args)]
 
 
-def capabilities():
+def capabilities(store):
     return {'protocol': 1, 'actions': list(FIELDS), 'request_id_required': sorted(MUTATIONS),
-            'export_kind': 'working_draft', 'starts_service': False}
+            'export_kind': 'working_draft', 'starts_service': False,
+            'workspace_path': str(store.root.resolve()), 'workspace_id': store.meta('workspace_id')}
 
 
 def _operation(store, action, body):

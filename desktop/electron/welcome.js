@@ -2,16 +2,21 @@ const status = document.getElementById('status');
 const api = window.briefloopDesktop;
 let environment = {state: 'checking'}, opening = false, recentName = '';
 const phases = {'verify-payload': '正在校验 App 运行组件…', 'detect-python': '正在检测本机 Python…',
+  'reuse-windows-dependencies': '正在复用可用的已有依赖…',
+  'clone-environment': '正在复用已有运行环境…', 'check-existing-dependencies': '正在检查已有依赖…',
+  'reuse-dependencies': '依赖未变化，直接复用，无需下载…', 'update-dependencies': '正在补充或更新变化的依赖…',
+  'install-backend': '正在安装新版 BriefLoop 组件，无需联网…',
   'create-venv': '正在创建 App 专属环境…', 'install-dependencies': '正在下载并安装依赖，请保持网络连接…',
   'verify-imports': '正在验证运行组件…', 'verify-dependencies': '正在核对依赖完整性…',
   'activate-environment': '正在启用运行环境…'};
 // The checklist groups the environment phases into the steps a person can follow.
 const checklist = ['verify-payload', 'detect-python', 'create-venv', 'install-dependencies', 'verify-imports'];
-const checklistStep = {'check-runtime': 'verify-payload', 'verify-dependencies': 'verify-imports', 'activate-environment': 'verify-imports'};
+const checklistStep = {'reuse-windows-dependencies': 'install-dependencies', 'clone-environment': 'create-venv', 'check-existing-dependencies': 'install-dependencies',
+  'reuse-dependencies': 'install-dependencies', 'update-dependencies': 'install-dependencies', 'install-backend': 'install-dependencies', 'check-runtime': 'verify-payload', 'verify-dependencies': 'verify-imports', 'activate-environment': 'verify-imports'};
 function heading(value) {
   const version = value.version ? ` ${value.version}` : '';
   if (value.state === 'installing') return value.reason === 'update'
-    ? ['正在更新运行组件', `App 已更新到${version}，正在安装配套的运行组件，完成后即可打开工作区。`]
+    ? ['正在更新运行组件', `App 已更新到${version}，正在检查并更新配套组件，未变化的依赖会优先复用，完成后即可打开工作区。`]
     : ['正在准备运行环境', '请保持网络连接，完成后即可打开工作区。'];
   if (value.state === 'missing-python') return ['需要先安装 Python', '安装完成后回到这里重新检测。'];
   if (value.state === 'error') return ['运行环境需要处理', '工作区和报告不受影响。'];
@@ -38,7 +43,7 @@ function renderEnvironment(value) {
   document.getElementById('setup-title').textContent = value.state === 'missing-python' ? '安装 Python'
     : value.reason === 'update' ? '更新运行组件' : '准备运行环境';
   document.getElementById('environment-status').textContent = value.error?.message
-    || (value.state === 'installing' ? detail : `将使用${python}，联网下载 BriefLoop 依赖到 App 专属环境。`);
+    || (value.reuseFallback ? value.reuseFallback + ' ' : '') + (value.state === 'installing' ? detail : `将使用${python}，联网下载 BriefLoop 依赖到 App 专属环境。`);
   document.getElementById('environment-progress').hidden = value.state !== 'installing';
   document.getElementById('environment-phases').hidden = value.state !== 'installing';
   const current = checklist.indexOf(checklistStep[value.phase] || value.phase);

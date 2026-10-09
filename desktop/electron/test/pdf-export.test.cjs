@@ -35,6 +35,13 @@ function fixture(options = {}) {
     destroy() { this.destroyed = true; calls.push('destroy'); }
   }
   const context = vm.createContext({URL, path, Buffer, BrowserWindow, window,
+    AbortSignal, encodeURIComponent,
+    service: {info: {url: workspaceURL, workspace_id: 'workspace-test'}, token: 'session-test'},
+    fetch: async (url, request) => {
+      calls.push(['metadata', url, request]);
+      return options.metadataError ? {ok: false, json: async () => ({error: 'metadata failed'})}
+        : {ok: true, arrayBuffer: async () => Buffer.from('%PDF-labeled')};
+    },
     console: {warn: (...values) => calls.push(['warn', ...values])},
     welcomeURL: 'file:///welcome.html', workspaceOrigin: workspaceURL,
     app: {getPath: name => name === 'temp' ? '/tmp' : '/Users/synthetic/Downloads'},
@@ -146,6 +153,25 @@ test('only the workspace page may export, one valid document at a time', async (
 });
 
 test('preload exposes the PDF export as a fixed operation and main registers it', () => {
-  assert.match(preload, /exportPdf: request => ipcRenderer\.invoke\('report:export-pdf', \{html: String\(request\?\.html \?\? ''\), title: String\(request\?\.title \?\? ''\)\}\)/);
+  assert.match(preload, /exportPdf: request => ipcRenderer\.invoke\('report:export-pdf', \{html: String\(request\?\.html \?\? ''\), title: String\(request\?\.title \?\? ''\),/);
   assert.match(main, /ipcMain\.handle\('report:export-pdf', exportReportPdf\);/);
+});
+
+
+test('version-bound PDF metadata is applied locally before saving and failure blocks the save', async () => {
+  const request = {html: '<p>AI-generated</p>', title: 'x', version_id: 'brief-test', workspace_id: 'workspace-test', market_convention: 'cn'};
+  const good = fixture();
+  await good.context.exportReportPdf(good.event(), request);
+  const [, url, sent] = good.calls.find(call => call[0] === 'metadata');
+  assert.equal(url, workspaceURL + '/api/export-pdf-label?version=brief-test&workspace_id=workspace-test&market_convention=cn');
+  assert.equal(sent.headers['X-BriefLoop-Token'], 'session-test');
+  assert.equal(sent.headers['Content-Type'], 'application/pdf');
+  assert.equal(sent.body.toString(), '%PDF-synthetic');
+  assert.ok(good.calls.some(call => call[0] === 'write' && call[2] === '%PDF-labeled'));
+  const bad = fixture({metadataError: true});
+  await assert.rejects(bad.context.exportReportPdf(bad.event(), request), {message: 'metadata failed'});
+  assert.ok(!bad.calls.some(call => call[0] === 'save-dialog'));
+  const switched = fixture();
+  await assert.rejects(switched.context.exportReportPdf(switched.event(), {...request, workspace_id: 'wrong'}), /工作区已切换/);
+  assert.ok(!switched.calls.some(call => call[0] === 'metadata'));
 });

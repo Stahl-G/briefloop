@@ -9,6 +9,7 @@ from .models import Model, Assessment
 from .platform_support import filesystem_path, path_redirected
 from .store import dump, uid, now
 from .evidence import inspect_bindings, record
+from .execution_records import public_tool_names
 
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY,version_id TEXT NOT NULL REFERENCES briefs(id),
@@ -616,6 +617,8 @@ def build_packet(store,version_id,folder):
     save('assessment-context.json',pack_dump(store.assessment_context(version_id)).encode())
     from .evaluation_reading import reading_context
     save('reading-context.json',pack_dump(reading_context(brief)).encode())
+    from .research_reading import snapshot as research_snapshot
+    save('research-context.json',pack_dump(research_snapshot(store,brief)).encode())
     prior_reviews=store.rows('SELECT r.id,r.version_id,r.status,r.result,r.created FROM reviews r JOIN briefs b ON b.id=r.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/reviews.json',pack_dump([{**r,'result':json.loads(r['result']) if r['result'] else None} for r in prior_reviews]).encode())
     executions=[]
@@ -681,7 +684,7 @@ def accept_review(store,review_id,value,dry_run=False):
     if review['result']:
         if ReviewOutput.model_validate(review['result']).model_dump()!=result.model_dump():raise ValueError('已保存Review不可覆盖，请建立新审阅')
         if dry_run:return result
-        if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
+        if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump(),verify_locations=False)
         with store.tx() as c:_save_assessment(c,review_id,result)
         from .review_learning import record_verified_corrections
         record_verified_corrections(store,review_id)
@@ -755,6 +758,12 @@ def accept_review(store,review_id,value,dry_run=False):
                 choices = sorted({cid for parent in mixed for cid in mixed_parent_clauses[parent]})
                 raise ValueError('重大要求或执行缺口不能引用混合父 requirement_id='+','.join(mixed)
                                  +'；请引用本次冻结的具体 clause_id='+','.join(choices))
+    from .finding_anchors import validate_findings
+    preview_path=filesystem_path(packet/'reader-preview.md')
+    preview=preview_path.read_text(encoding='utf-8') if 'reader-preview.md' in review['data'].get('files',{}) else ''
+    validate_findings(current['document'],result.findings,reader_preview=preview)
+    if result.assessment is not None:
+        validate_findings(current['document'],result.assessment.findings,reader_preview=preview)
     expected_responses=set(_response_scope(store,packet,result.version_id))
     checks={}
     for check in result.response_checks:
@@ -776,7 +785,7 @@ def accept_review(store,review_id,value,dry_run=False):
             try:record(store,'evidence_spans',span_id)
             except ValueError:raise ValueError('冲突复核引用了不存在的证据片段：'+span_id) from None
     if result.status=='complete' and set(conflict_ids)!=allowed_conflicts:raise ValueError('完整审阅遗漏冲突复核')
-    if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
+    if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump(),verify_locations=False)
     if dry_run:return result
     with store.tx() as c:
         existing=c.execute('SELECT result FROM reviews WHERE id=?',(review_id,)).fetchone()
@@ -915,6 +924,8 @@ def review_status(store,version_id):
                 {**{k:r[k] for k in ('id','status','created')},'result':json.loads(r['result']) if r['result'] else None,
                  'review_mode':json.loads(r['data']).get('review_mode'),
                  'review_backend':json.loads(r['data']).get('review_backend'),
+                 'review_isolation':json.loads(r['data']).get('review_isolation'),
+                 'host_tools':public_tool_names(json.loads(r['data']).get('host_tools',[])),
                  'claim_items':[{'claim_id':check['claim_id'],'statement':claim_text.get(check['claim_id'],'')}
                                 for check in (json.loads(r['result']).get('claim_checks',[]) if r['result'] else [])],
                  **_review_requirement_index(store,r)} for r in reviews],
@@ -931,14 +942,22 @@ def review_job_payload(store,payload):
     A separately chosen Reviewer replaces the inherited main-chain backend, model
     and role models; following the main chain leaves them untouched."""
     values=dict(payload)
-    review_runtime=values.pop('review_runtime') if 'review_runtime' in values else store.settings().get('review_runtime')
+    frozen='runtime' in values
+    settings={} if frozen else store.settings()
+    review_runtime=values.pop('review_runtime') if 'review_runtime' in values else settings.get('review_runtime')
     from .review_capability import review_route,require_for_review,normalize_mode
     from .models import ROLE_NAMES
     # Existing frozen jobs without a mode keep the legacy/default execution
     # semantics; changing settings cannot turn their child into a strict review.
-    default_mode='standard' if 'runtime' in values else store.settings().get('review_mode','standard')
+    default_mode=settings.get('review_mode','standard')
     values['review_mode']=normalize_mode(values.get('review_mode',default_mode))
-    backend=values.get('agent_backend',store.settings().get('agent_backend','codex'))
+    backend=values.get('agent_backend',settings.get('agent_backend','codex'))
+    if frozen:
+        # Legacy jobs predate separate Reviewer settings/backend stamps. Their
+        # missing fields mean the original Codex/main-model defaults, not today's
+        # workspace choices; enqueue must not refill current role overrides.
+        values['agent_backend']=backend
+        values.setdefault('role_models',{role:dict(values['runtime']) for role in ROLE_NAMES})
     require_for_review((review_runtime or {}).get('backend',backend),values['review_mode'])
     route=review_route(backend,review_runtime,values['review_mode'])
     if route and route[1] is not None:
@@ -957,6 +976,18 @@ def enqueue_review(store,version_id,*,payload=None):
         if old.get('review_input')==identity:return row
     values['review_input']=identity
     return store.enqueue('review',values)
+
+
+def _capture_host_tools(store, review_id, folder):
+    """Retain safe observations before normal or recovered result admission."""
+    review = get_review(store, review_id)
+    if review['data'].get('review_isolation') != 'observed':
+        return
+    from .plain_isolation import tool_uses
+    data = {**review['data'], 'host_tools': tool_uses(folder)}
+    if data != review['data']:
+        with store.tx() as c:
+            c.execute('UPDATE reviews SET data=?,updated=? WHERE id=?', (dump(data), now(), review_id))
 
 
 def run_review(store,runtime,job,version_id,folder):
@@ -987,13 +1018,17 @@ def run_review(store,runtime,job,version_id,folder):
                 # Accepted Review records are immutable. An explicit resume gets
                 # a new packet/result with the original incomplete review retained.
                 return run_review(store,runtime,job,version_id,folder/('continue-'+str(frozen['attempt'])))
+            if 'host_tools' not in review['data']:
+                _capture_host_tools(store,identity,folder)
             return accept_review(store,identity,review['result'])
     else:
         fingerprint,files=build_packet(store,version_id,folder);identity=uid('review')
         from .deliverable_spec import clause_items as _clause_items
         protocol='clauses_v1' if _clause_items(_snapshot(store,version_id)['requirements']) else 'legacy'
+        from .review_capability import review_isolation
         data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol,
-              'review_mode':review_mode,'review_backend':review_backend}
+              'review_mode':review_mode,'review_backend':review_backend,
+              'review_isolation':review_isolation(review_backend,review_mode)}
         with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',(identity,version_id,job['id'],fingerprint,'queued',dump(data),None,now(),now()))
         filesystem_path(marker).write_text(dump({'review_id':identity}),encoding='utf-8');review=get_review(store,identity)
     # A transport-complete result can have failed only schema admission. Retry
@@ -1002,6 +1037,7 @@ def run_review(store,runtime,job,version_id,folder):
     if filesystem_path(saved_output).exists():
         validate_applicable_review(store,identity,version_id)
         raw=filesystem_path(saved_output).read_bytes()
+        _capture_host_tools(store,identity,folder)
         try:return accept_review(store,identity,json.loads(raw))
         except (ValueError,TypeError) as exc:
             archived=_archive_review_output(folder)
@@ -1023,6 +1059,8 @@ def run_review(store,runtime,job,version_id,folder):
                   if filesystem_path(folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
     if filesystem_path(folder/'packet'/'reader-preview.md').exists():
         packet_guide+=' reader-preview.md 是同一稿件通过产品阅读渲染器生成的文本预览，含短编号和自动来源表。report.txt 的 [src_…] 是核查定位标记，不是用户看到的编号；涉及引用展示/来源表的发现须对照预览，不能要求作者重复补写渲染器已生成的内容。预览不证明实际 Word 分页、样式或原生可点击性，这些须另查实际文件。'
+    if filesystem_path(folder/'packet'/'research-context.json').exists():
+        packet_guide+=' research-context.json 区分本稿保存时的缺口与本次包生成时的研究状态；对照依据核查，不改历史记录。\n'
     if filesystem_path(folder/'packet'/'reading-context.json').exists():
         from .evaluation_reading import GUIDE as READING_GUIDE
         packet_guide+=' reading-context.json 说明本次实际输入呈现和机器记录范围。\n'+READING_GUIDE
@@ -1068,6 +1106,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 {output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
+report_quote 如提供，须为本版正文或阅读预览中的连续原话，不能用省略号拼接；block_ids 如提供必须对应引文所在段落。缺失内容可省略引文并关联实际要求；历史 response_to 可以保留旧引文。位置匹配不代表事实已核实。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression 或软条款的 missing_requirement/execution_gap；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
 '''
@@ -1120,6 +1159,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
             validate_applicable_review(store,identity,version_id)
             repair=prompt+'\n上次回复的 JSON 结构未通过校验：'+str(exc)+'。仅修正字段结构，保留已完成核查的判断和依据，不重新研究或改稿。assessment.checks 是对象数组，可省略或使用 []，不能填写字符串数组。仍只回复完整 JSON。'
             runtime.execute(stage,repair,folder,resume_on_complete=True)
+        _capture_host_tools(store,identity,folder)
         return accept_review(store,identity,json.loads(filesystem_path(folder/'review.json').read_text(encoding='utf-8-sig')))
     except Exception as exc:
         with store.tx() as c:c.execute('UPDATE reviews SET status=?,updated=? WHERE id=? AND result IS NULL',('cancelled' if isinstance(exc,InterruptedError) else 'incomplete',now(),identity))

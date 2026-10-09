@@ -12,7 +12,8 @@ from .models import ResearchGap, ResearchGapUpdate, ScoutResult
 from .store import dump
 
 
-PLANNING_GUIDE = '''研究交接的 gaps/gap_records 是当前仍待核对的问题；gap_history 保留主 Agent 明确判定已解决的历史及依据，不把历史缺口继续写成当前事实。partial 只就 remaining_question 补查；未更新的缺口仍是 open。证据定位通过仅表示来源和摘录可回查，不证明判断正确，重要结论仍需按原文核对。
+PLANNING_GUIDE = '''execution_gaps 是逐轮 Scout 执行未完成或明确跳过的范围，含 assignment/status/reason，不是来源事实缺口。成功恢复会清除同一任务的执行提示，实质证据缺口仍以 gap_records 为准。影响必答问题或核心判断的未检范围须向读者说明其限制；未派发不等于未找到，未找到不等于不存在。
+研究交接的 gaps/gap_records 是当前仍待核对的问题；gap_history 保留主 Agent 明确判定已解决的历史及依据，不把历史缺口继续写成当前事实。partial 只就 remaining_question 补查；未更新的缺口仍是 open。证据定位通过仅表示来源和摘录可回查，不证明判断正确，重要结论仍需按原文核对。
 写作计划和 writing_instructions 是组织建议，不是事实来源；若与冻结原文在状态、时间或主体上冲突，以原文写事实并在研究记录说明，不照抄被升级的主线，同时保留用户明确的写作要求。主 Agent 的写作计划、章节主线和给 Analyst 的指令同样受研究证据约束：不得把考虑中/公测/上月/最高/预测/适用条件升级或省略。关键二手消息若影响主结论，利用现有搜索与读取能力定向查找一手正文；找到以后明确更新旧缺口，不把历史读取失败当现状。按读者目标检查重要候选的覆盖，纳入或省略的重要候选在研究记录中简述理由，不把厂商数量或来源数量当覆盖率。
 研究收尾用已有 finish_research_round.summary 记录：本轮重要候选纳入/省略的理由、哪些承重结论仍只有二手稿、补查结果和剩余影响。handoff 的 covered/follow_ups/open_questions 继续保存具体问题；这些记录会随 research.retrieval_notes 交给写稿，属于主 Agent 的研究判断，不是事实认证。若重要候选可能遗漏或核心结论仍缺一手正文，先核对本轮材料索引；按预算与剩余轮次使用现有 begin_research_round/run_scouts 或已授权来源读取定向补查。补查要回答具体缺口，不重新扫全行业或为凑来源加调用；预算耗尽或仍无法获取时保留未检范围和理由，不把“未取得/未找到”改写成“来源不存在/没有发生”。Reviewer 不负责补查，不增加默认轮次。
 读者正文只保留会影响判断的限制，如公测、指定分支、最高值、讨论中或关键数据未披露；抓取失败、查询过程、工具返回的临时 line 行号及自我复核清单留研究记录与引用元数据。公开引用用稳定的标题、日期、章节/页码和链接，不以抓取器行号作为读者入口。不能为了减少过程噪音删掉必要条件。'''
@@ -198,6 +199,12 @@ def current_research(store, run_id, research, *, register=False):
         represented = {item['description'] for item in state['records'].values()}
         represented.update(item.get('remaining_question', '') for item in state['updates'])
         observe(state, run_id, [text for text in descriptions if text not in represented])
+    from .scout_coverage import view as scout_view
+    execution = scout_view(store, run_id)
     notes = [item for item in value['retrieval_notes']
-             if not (item.get('kind') == 'research_round_closeout' and item.get('generated_by') == 'briefloop')]
-    return {**value, **gap_view(store, run_id, state), 'retrieval_notes': notes + _closeout_notes(store, run_id)}
+             if not (item.get('kind') in ('research_round_closeout', 'scout_execution') and item.get('generated_by') == 'briefloop')]
+    return {**value, **gap_view(store, run_id, state), 'execution_gaps': execution['execution_gaps'],
+            'retrieval_notes': notes + _closeout_notes(store, run_id) + [
+                {'kind': 'scout_execution', 'generated_by': 'briefloop', **task,
+                 'scope': '执行状态与未检范围；完成仅说明结果已交接，不表示证据缺口已解决。'}
+                for task in execution['scout_execution']]}

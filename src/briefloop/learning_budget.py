@@ -15,9 +15,14 @@ from .backends import BACKEND_LABELS
 MAX_CASES = 3
 # Baseline and candidate trial per case; a reusable baseline is not rewritten.
 TRIALS_PER_CASE = 2
+# One logical Evaluator invocation classifies a batch's new revisions. Host
+# internal turns and token use are not bounded by this invocation count.
+TRIAGE_TURNS_PER_BATCH = 1
 # An explicit human requirement allows one repair round (learning.learn).
 EXPLICIT_REQUIREMENT_ROUNDS = 2
 AUTHORIZATION_CODE = 'learning_authorization_required'
+SCOPE_FIELDS = ('cases', 'backend', 'model', 'role_models', 'trial_generations_per_round',
+                'other_turns_per_round', 'triage_turns_per_batch')
 
 
 class LearningAuthorizationRequired(ValueError):
@@ -43,6 +48,8 @@ def plan(settings):
         'max_trial_generations': MAX_CASES * TRIALS_PER_CASE * rounds,
         # Each round also runs the maintainer and proposer turns and one pairwise comparison.
         'other_turns_per_round': 3,
+        # One logical Evaluator invocation per batch classifies new revisions (#858).
+        'triage_turns_per_batch': TRIAGE_TURNS_PER_BATCH,
         'web': False,
         'backend': backend,
         'backend_label': BACKEND_LABELS.get(backend, backend),
@@ -56,7 +63,7 @@ def plan(settings):
     value['fingerprint'] = _sha(value)
     # The automatic record authorizes rounds up to the confirmed number, so its
     # scope covers who runs the work, not how many rounds were chosen.
-    value['scope_fingerprint'] = _sha({key: value[key] for key in ('cases', 'backend', 'model', 'role_models', 'trial_generations_per_round')})
+    value['scope_fingerprint'] = _sha({key: value[key] for key in SCOPE_FIELDS})
     return value
 
 
@@ -73,7 +80,9 @@ def state(settings):
         return 'needs_confirmation'
     if int(settings['k']) > authorized:
         return 'rounds_exceed'
-    if settings.get('auto_learn_authorized_plan') not in (None, plan(settings)['scope_fingerprint']):
+    if not settings.get('auto_learn_authorized_plan'):
+        return 'needs_confirmation'
+    if settings.get('auto_learn_authorized_plan') != plan(settings)['scope_fingerprint']:
         return 'plan_changed'
     return 'authorized'
 
@@ -102,14 +111,36 @@ def authorization(settings, kind, *, confirmed=None):
     else:
         raise ValueError('Unknown learning authorization kind')
     return {'kind': kind, 'rounds': current['rounds'], 'fingerprint': current['fingerprint'],
-            'max_trial_generations': current['max_trial_generations']}
+            'max_trial_generations': current['max_trial_generations'],
+            'triage_turns_per_batch': current['triage_turns_per_batch']}
 
 
-def verify(record):
-    """Execution-time check: a batch queued without a record never starts."""
-    if not isinstance(record, dict) or record.get('kind') not in ('automatic', 'manual') or not record.get('fingerprint'):
-        raise LearningAuthorizationRequired('这批学习没有可核验的额度确认记录（可能是升级前排队的）；'
+def verify(record, budget=None):
+    """Execution-time check, including the additional revision-triage allowance.
+
+    Pre-triage frozen records do not cover this invocation. Keep their feedback
+    and completed work, and require a new confirmation before resuming.
+    """
+    if (not isinstance(record, dict) or record.get('kind') not in ('automatic', 'manual') or not record.get('fingerprint')
+            or type(record.get('triage_turns_per_batch')) is not int
+            or record['triage_turns_per_batch'] != TRIAGE_TURNS_PER_BATCH):
+        raise LearningAuthorizationRequired('这批学习没有包含改动分类调用的可核验额度确认记录（可能是升级前排队的）；'
                                             '请在设置中确认调用上限后重新发起，反馈和已完成的试写都保留')
+    if budget is not None:
+        # Compare with the frozen plan, never today's settings. A new record may
+        # not be attached to an older plan that omitted the triage invocation.
+        valid = (isinstance(budget, dict) and type(budget.get('triage_turns_per_batch')) is int
+                 and budget['triage_turns_per_batch'] == record['triage_turns_per_batch']
+                 and budget.get('fingerprint') == record['fingerprint']
+                 and budget.get('rounds') == record.get('rounds')
+                 and budget.get('max_trial_generations') == record.get('max_trial_generations'))
+        if valid:
+            fingerprint = _sha({key: value for key, value in budget.items() if key not in ('fingerprint', 'scope_fingerprint')})
+            scope = _sha({key: budget.get(key) for key in SCOPE_FIELDS})
+            valid = budget['fingerprint'] == fingerprint and budget.get('scope_fingerprint') == scope
+        if not valid:
+            raise LearningAuthorizationRequired('这批学习的冻结调用预算与确认记录不一致或未包含改动分类调用；'
+                                                '请重新查看调用上限并确认，反馈和已完成的试写都保留')
     return record
 
 

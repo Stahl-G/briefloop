@@ -37,6 +37,12 @@ def sync_content_citations(store, run_id, detail, document, figures):
         if sid not in present:
             ref={'source_id':sid,'locator':locator,'excerpt':''}
             citations.append(ref);derived.append(ref);present.add(sid)
+    # The final set includes bibliography, data rows, rich nodes and figures.
+    # Every saving path calls this helper before committing a draft/revision.
+    from .previous_report import source_usage
+    for ref in citations:
+        if ref['source_id'] in references or source_usage(store,ref['source_id'])=='previous_report':
+            raise ValueError('往期报告或风格参考不能作为报告事实引用')
     detail['citations']=citations
     detail['content_citations']=derived
 
@@ -84,5 +90,6 @@ def markdown_bundle(store,brief):
                 return m[1]+path+m[2]+extra+notes
             text=marker.sub(replace,text)
             archive.writestr(path,figure['image_bytes'])
-        archive.writestr('report.md',text)
+        from .export_labeling import brief_label, markdown_label
+        archive.writestr('report.md',markdown_label(text,brief_label(store,brief)))
     return output.getvalue()

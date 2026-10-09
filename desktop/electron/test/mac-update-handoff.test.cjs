@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const {promisify} = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
-const {prepare} = require('../mac-update-handoff.cjs');
+const {prepare, installationDirectory} = require('../mac-update-handoff.cjs');
 test('Mac ZIP handoff preserves bundle symlinks, checks version, and never installs it', {skip:process.platform !== 'darwin'}, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(),'briefloop-zip-handoff-'));
   t.after(()=>fs.rm(directory,{recursive:true,force:true}));
@@ -18,9 +18,16 @@ test('Mac ZIP handoff preserves bundle symlinks, checks version, and never insta
   const zip=path.join(directory,'BriefLoop-1.2.3-arm64-mac.zip');
   await execFile('/usr/bin/ditto',['-c','-k','--keepParent',path.dirname(source),zip]);
   const result=await prepare(zip,'1.2.3');
-  assert.equal(await fs.readlink(path.join(result,'Applications')),'/Applications');
+  assert.equal(await fs.readlink(path.join(result,'安装位置')),'/Applications');
   assert.equal(await fs.readlink(path.join(result,'BriefLoop.app/Contents/Versions/Current')),'A');
   assert.equal((await fs.stat(zip)).isFile(),true);
   await assert.rejects(prepare(zip,'1.2.4'),/identity mismatch/);
   await assert.rejects(fs.stat(result),{code:'ENOENT'});
+});
+
+
+test('handoff follows the actual installed App directory, not always system Applications',()=>{
+  assert.equal(installationDirectory({isInApplicationsFolder:()=>true,getPath:()=>'/Users/example/Applications/BriefLoop.app/Contents/MacOS/BriefLoop'}),'/Users/example/Applications');
+  assert.equal(installationDirectory({isInApplicationsFolder:()=>false,getPath:()=>'/Volumes/BriefLoop/BriefLoop.app/Contents/MacOS/BriefLoop'}),'/Applications');
+  assert.equal(installationDirectory({}),'/Applications');
 });

@@ -77,7 +77,7 @@ def validate(store, body):
     # Freeze the optional paid check when the schedule is saved. A later change
     # of workspace defaults must not silently enable it on recurring reports.
     if req['fact_check'] is None:
-        req['fact_check']=store.settings().get('fact_checker') is True
+        req['fact_check']=req['allow_web'] and req['completion_mode'] not in ('fast','fast_web') and store.settings().get('fact_checker') is True
     if req['fact_check'] and not req['allow_web']:
         raise ValueError('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
     if req['fact_check']:

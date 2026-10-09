@@ -87,7 +87,7 @@ def test_saved_citation_locators_survive_plain_template_and_http_word_exports(tm
     try:
         store=server.store
         import_builtin(store)
-        template_id=store.rows("SELECT id FROM templates WHERE name='通用报告·品牌绿'")[0]['id']
+        template_id=store.rows("SELECT id FROM templates WHERE name='通用报告·品牌黛蓝'")[0]['id']
         source=store.add_source('Official synthetic source','Revenue 12',url='https://example.org/report')
         unused=store.add_source('Uncited material','Not used in the saved body')
         run=store.create_run({'title':'Revenue report','objective':'Preserve saved locating text'},[source['id']])

@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import {createReviewControls,reviewModeMetadataHTML} from '../frontend/review-controls.js';
 
 function view({backend='codex',mode='standard',runtime=null,capability=true,allowWeb=true,saveError=false}={}){
- const standard=[{id:'codex',label:'Codex CLI'},{id:'opencode',label:'OpenCode CLI'},{id:'briefloop-native',label:'BriefLoop Agent'}];
+ const standard=[{id:'codex',label:'Codex CLI'},{id:'opencode',label:'OpenCode CLI'},{id:'briefloop-native',label:'BriefLoop Agent'},
+  {id:'claude',label:'Claude Code',isolation:'observed'},{id:'codebuddy',label:'CodeBuddy',isolation:'observed'}];
  const settings={review_mode:mode,review_runtime:runtime};
- const state={settings,...(capability?{review_capability:{standard_review:standard,strict_review:standard.slice(2),review_choices:standard}}:{})};
+ const state={settings,...(capability?{review_capability:{standard_review:standard,strict_review:standard.filter(item=>item.id==='briefloop-native'),review_choices:standard}}:{})};
  const calls=[],notices=[],nodes={};
  const node=id=>nodes[id]||(nodes[id]={value:'',textContent:'',hidden:false,disabled:false,innerHTML:'',listeners:{},addEventListener(kind,fn){this.listeners[kind]=fn}});
  const modeControl=node('mode-control'),modeHelp=node('mode-help');
@@ -82,6 +83,27 @@ test('failed runtime save cannot submit the formerly saved backend',async()=>{
  assert.match(v.node('review-runtime-status').textContent,/未保存：offline/);
  await assert.rejects(v.controls.startReview(),/尚未保存/);
  assert.ok(v.calls.every(call=>call.path==='settings'));
+});
+
+test('bridge reviewer actual handlers preserve effort and disclose native permissions before starting',async()=>{
+ for(const backend of ['claude','codebuddy']){
+  const v=view({runtime:{backend,model:'host-model',reasoning_effort:'medium'}});
+  assert.equal(v.node('review-variant').value,'medium');
+  assert.equal(v.node('effort-label').textContent,'推理强度');
+  assert.match(v.node('review-model').placeholder,/模型 ID/);
+  assert.match(v.modeHelp.textContent,/沿用宿主原生权限，未强制只读/);
+  assert.match(v.node('review-start').title,/未强制只读/);
+  assert.doesNotMatch(v.modeHelp.textContent,/只读核对/);
+  v.node('review-variant').value='high';await v.node('review-variant').listeners.change();
+  assert.deepEqual(v.calls[0].payload.review_runtime,{backend,model:'host-model',reasoning_effort:'high'});
+  v.controls.renderReviewRuntime();assert.equal(v.node('review-variant').value,'high');
+  assert.match(v.node('review-runtime-summary').textContent,/high/);
+  await v.controls.startReview();
+  assert.equal(v.calls[1].path,'review');assert.equal(v.calls[1].payload.review_mode,'standard');
+ }
+ const followed=view({backend:'claude'});
+ assert.match(followed.modeHelp.textContent,/未强制只读/);
+ assert.match(followed.node('review-start').title,/未强制只读/);
 });
 
 test('historical review mode is never inferred from current settings and unsafe backend text is escaped',()=>{

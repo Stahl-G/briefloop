@@ -5,6 +5,7 @@ PAGE_SIZE = 30
 HOT_VERSIONS = 40
 _VISIBLE = "r.mode='normal' AND NOT EXISTS (SELECT 1 FROM meta m WHERE m.key='deleted_report:'||r.id)"
 _SOURCE_COUNT = "(SELECT count(*) FROM (SELECT value AS id FROM json_each(r.source_ids) UNION SELECT source_id FROM run_sources WHERE run_id=r.id))"
+_EXECUTION_REVISION = "(SELECT coalesce(max(e.seq),0) FROM events e WHERE e.kind='writer_version' AND json_extract(e.data,'$.version_id') IN (SELECT original.id FROM briefs original WHERE original.run_id=b.run_id))"
 _COLUMNS = """b.rowid AS position,b.id,b.run_id,b.parent_id,b.author,b.hash,b.created,
  json_object('title',substr(json_extract(b.detail,'$.title'),1,300)) AS detail,
  substr(b.markdown,1,400) AS excerpt,
@@ -18,7 +19,7 @@ _COLUMNS = """b.rowid AS position,b.id,b.run_id,b.parent_id,b.author,b.hash,b.cr
  (SELECT id FROM assessments WHERE version_id=b.id ORDER BY rowid DESC LIMIT 1) AS assessment_id,
  (SELECT json_extract(data,'$.status') FROM assessments WHERE version_id=b.id ORDER BY rowid DESC LIMIT 1) AS assessment_status,
  (SELECT json_extract(data,'$.overall') FROM assessments WHERE version_id=b.id ORDER BY rowid DESC LIMIT 1) AS assessment_overall,
- """ + _SOURCE_COUNT + " AS source_count"
+ """ + _SOURCE_COUNT + " AS source_count," + _EXECUTION_REVISION + " AS execution_revision"
 _STATUS = """CASE
  WHEN (SELECT json_extract(data,'$.status') FROM assessments WHERE version_id=b.id ORDER BY rowid DESC LIMIT 1)='complete' THEN 'scored'
  WHEN EXISTS(SELECT 1 FROM jobs j WHERE j.kind='release' AND j.status='complete' AND json_extract(j.payload,'$.version_id')=b.id) THEN 'released'
@@ -113,4 +114,7 @@ def context(store, version_id):
     latest=store.rows(f'SELECT {_COLUMNS} FROM briefs b JOIN runs r ON r.id=b.run_id WHERE b.run_id=? ORDER BY b.rowid DESC LIMIT 1',(run_id,))[0]
     original=store.rows(f'SELECT {_COLUMNS} FROM briefs b JOIN runs r ON r.id=b.run_id WHERE b.run_id=? ORDER BY b.rowid LIMIT 1',(run_id,))[0]
     assessments=store.rows('SELECT * FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(version_id,))
-    return {'run':run,'assessments':assessments,'latest':latest,'original':original}
+    from .version_execution import describe
+    selected=store.one('briefs',version_id)
+    revision=store.rows('SELECT '+_EXECUTION_REVISION+' AS revision FROM briefs b WHERE b.id=?',(version_id,))[0]['revision']
+    return {'run':run,'assessments':assessments,'latest':latest,'original':original,'execution_provenance':describe(store,selected),'execution_revision':revision}

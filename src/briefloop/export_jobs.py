@@ -26,7 +26,8 @@ def export_input(store, brief, template_override=None):
     rendered_ids = dict.fromkeys(source_ids({'type': 'doc', 'content': blocks}) + indexed)
     rendered_sources = {sid: {'name': run_sources[sid]['name'], 'url': run_sources[sid]['url'] or ''}
                         if sid in run_sources else None for sid in rendered_ids}
-    identity = {'renderer': 34 if requirements.get('template_id') else 35, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+    from .export_labeling import brief_label
+    identity = {'ai_label': brief_label(store, brief, language=requirements.get('language')), 'renderer': 36 if requirements.get('template_id') else 37, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': document, 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
                 'sources': rendered_sources,
@@ -109,13 +110,13 @@ def generate_word(store, job, cancelled):
     if req.get('template_id'):
         from .templates import export_template
         blob = export_template(store, brief, identity['document'], figures,
-                               template_id=payload.get('template_id'), source_records=source_records)
+                               template_id=payload.get('template_id'), source_records=source_records, label=identity['ai_label'], requirements=req)
     else:
         blob = docx_bytes(document=identity['document'], report_profile=req.get('report_profile', 'brief'),
                           title=detail.get('title', req.get('title', '')), report_date=req.get('report_date', ''),
                           organization=req.get('organization', ''), period=req.get('period', ''), industry=req.get('industry', ''),
                           figures=figures, source_records=source_records, language=req.get('language'),
-                          citations=detail.get('citations',[]))
+                          citations=detail.get('citations',[]), label=identity['ai_label'], requirements=req)
     stage(3, '检查 Word 文件和资源')
     from docx import Document
     from io import BytesIO

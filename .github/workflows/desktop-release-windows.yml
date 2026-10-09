@@ -14,6 +14,14 @@ on:
         description: SHA-256 of the shared release wheel
         required: true
         type: string
+      artifact_run_id:
+        description: Optional prior Windows build run; verify its installer without rebuilding
+        required: false
+        type: string
+      installer_sha256:
+        description: Required SHA-256 when reusing a prior installer
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -22,6 +30,7 @@ jobs:
     # This manual job only downloads the frozen wheel; it never publishes assets.
     permissions:
       contents: write
+      actions: read
     runs-on: windows-latest
     timeout-minutes: 25
     defaults:
@@ -63,6 +72,7 @@ jobs:
           python tests/check_distribution.py "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
           python -m pip install "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
       - name: Build native installer and differential update metadata
+        if: inputs.artifact_run_id == ''
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           npm ci --prefix desktop/electron
@@ -70,11 +80,50 @@ jobs:
           # Mac DMG/range-download fixtures run on macOS, not the NSIS path.
           node --test desktop/electron/test/environment.test.cjs desktop/electron/test/service.test.cjs desktop/electron/test/windows-asar.test.cjs desktop/electron/test/workspace-switch.test.cjs desktop/electron/test/pdf-export.test.cjs desktop/electron/test/updater-integration.test.cjs
           node desktop/electron/scripts/build-windows.cjs
+      - name: Install the previously built frozen installer without rebuilding
+        if: inputs.artifact_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.artifact_run_id }}
+          INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -c "import os,re; assert re.fullmatch(r'[0-9]+',os.environ['SOURCE_RUN']); assert re.fullmatch(r'[0-9a-f]{64}',os.environ['INSTALLER_SHA256'])"
+          $previous = Join-Path $env:RUNNER_TEMP 'frozen-windows-artifacts'
+          gh run download $env:SOURCE_RUN --name windows-release --dir $previous
+          $record = Get-Content -LiteralPath (Join-Path $previous 'windows-artifact.json') -Raw | ConvertFrom-Json
+          if ($record.git_head -ne $env:SOURCE_SHA -or $record.dirty -or $record.sha256 -ne $env:INSTALLER_SHA256) { throw 'Original installer provenance differs' }
+          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          $installer = Join-Path $previous "BriefLoop-Setup-$version-x64.exe"
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLower() -ne $env:INSTALLER_SHA256) { throw 'Original installer bytes differ' }
+          New-Item -ItemType Directory -Force desktop/electron/dist | Out-Null
+          Copy-Item -Path "$previous/*" -Destination desktop/electron/dist
+          $installed = Join-Path $env:RUNNER_TEMP 'BriefLoop-native-acceptance'
+          $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$installed" -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or !(Test-Path -LiteralPath "$installed/BriefLoop.exe")) { throw 'Native silent installation failed' }
+          Copy-Item -LiteralPath $installed -Destination desktop/electron/dist/win-unpacked -Recurse
       - name: Verify packaged executable and shared backend
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $wheel = @(Get-ChildItem desktop/electron/backend/*.whl)[0].FullName
           python scripts/check_versions.py --cli (Get-Command briefloop).Source --windows-app desktop/electron/dist/win-unpacked/BriefLoop.exe --wheel $wheel > desktop/electron/dist/windows-versions.json
+      - name: Start actual packaged backend and verify Office exports
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $app = (Resolve-Path desktop/electron/dist/win-unpacked/BriefLoop.exe).Path
+          $script = (Resolve-Path desktop/electron/scripts/verify-packaged-backend.cjs).Path
+          $resources = (Resolve-Path desktop/electron/dist/win-unpacked/resources).Path
+          $data = Join-Path $env:RUNNER_TEMP 'briefloop-release-acceptance'
+          $output = Join-Path (Resolve-Path desktop/electron/dist).Path 'windows-validation.json'
+          $arguments = @($script, $resources, $data, $output) | ForEach-Object { '"' + $_ + '"' }
+          $process = Start-Process -FilePath $app -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+          if ($process.ExitCode -ne 0) { throw "Packaged backend check failed: $($process.ExitCode)" }
+          if (!(Test-Path -LiteralPath $output)) { throw 'Packaged validation output is missing' }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
@@ -85,3 +134,4 @@ jobs:
             desktop/electron/dist/latest.yml
             desktop/electron/dist/windows-artifact.json
             desktop/electron/dist/windows-versions.json
+            desktop/electron/dist/windows-validation.json

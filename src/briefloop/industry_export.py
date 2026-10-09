@@ -75,7 +75,7 @@ def append_figure(paragraph, figure_id, figure, alt, *, max_width, max_height, l
     return paragraph
 
 
-def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150), max_figure_height=Mm(180), language=None):
+def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150), max_figure_height=Mm(180), language=None, protected_runs=None):
     """Preserve normal inline content; registered figures occupy their MD position."""
     from docx.opc.constants import RELATIONSHIP_TYPE
     bold=italic=False;link=None;after_figure=False
@@ -106,6 +106,7 @@ def append_inline(paragraph, children, *, figures=None, max_figure_width=Mm(150)
                 paragraph=_paragraph_after(paragraph);after_figure=False
             # Nonregistered local/remote images remain alt text; no fetch is done.
             run=paragraph.add_run(content);run.bold,run.italic=bold,italic
+            if child.type=='code_inline' and protected_runs is not None:protected_runs.add(run._r)
             if link is not None:
                 run.font.color.rgb=RGBColor.from_string(BLUE);run.font.underline=True;link.append(run._r)
     return paragraph

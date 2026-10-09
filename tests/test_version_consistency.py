@@ -42,7 +42,14 @@ def test_desktop_must_use_shared_wheel_and_failed_remote_evidence_stays_failed(t
     with zipfile.ZipFile(wheel,'w') as z:
         z.writestr('briefloop-test.dist-info/METADATA',f'Name: briefloop\nVersion: {expected}\n')
     digest=hashlib.sha256(wheel.read_bytes()).hexdigest()
-    (base/'manifest.json').write_text(json.dumps({'version':expected,'wheel':wheel.name,'sha256':digest}))
+    lock=b'pydantic==2.13.5 --hash=sha256:'+b'0'*64+b'\n'
+    manifest={'version':expected,'wheel':wheel.name,'sha256':digest}
+    (base/'manifest.json').write_text(json.dumps(manifest))
+    # Without the hash-locked dependency list the backend is not verified (#851).
+    with pytest.raises(ValueError,match='dependency lock'):
+        checker.backend_versions(tmp_path,digest)
+    (base/'requirements.txt').write_bytes(lock)
+    (base/'manifest.json').write_text(json.dumps({**manifest,'requirements':'requirements.txt','requirements_sha256':hashlib.sha256(lock).hexdigest()}))
     assert checker.backend_versions(tmp_path,digest)['backend_wheel']==expected
     with pytest.raises(ValueError,match='shared release wheel'):
         checker.backend_versions(tmp_path,'0'*64)

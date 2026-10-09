@@ -1,6 +1,6 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
 from typing import Literal, get_args
-from datetime import date
+from datetime import date, datetime
 from .industry_data import IndustryData
 from .writing_guidance import NUMBER_UNIT_GUIDE
 from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, field_validator, model_serializer
@@ -20,6 +20,11 @@ LENGTH_PRESETS = {'quick':(350,500),'compact':(800,1000),'balanced':(1500,2000),
 LENGTH_PRESETS_EN = {'quick':(250,350),'compact':(500,650),'balanced':(1000,1300),'detailed':(1300,1600)}
 DEEP_LENGTH = {'zh':(10000,12000),'en':(6500,8000)}
 INDUSTRY_LENGTH = {'zh':(5000,5500),'en':(3200,3600)}
+# A periodic industry report covering about a month carries several times a
+# weekly's events; 5,000 characters left most of them out (2026-10 AI monthly).
+INDUSTRY_MONTHLY_LENGTH = {'zh':(9000,10000),'en':(5800,6500)}
+MONTHLY_MIN_DAYS = 25
+MONTHLY_SCOUTS = 8
 
 
 def report_language(value):
@@ -105,9 +110,16 @@ class Requirements(Model):
     company_context_revision: str | None = None
     company_context_required: bool = False
     audience: str = "自己"
+    # A saved reader profile (#858); create_run freezes it into reader_profile.
+    reader_id: str | None = Field(default=None, max_length=80)
+    reader_profile: dict | None = None
+    previous_report_version_id: str | None = Field(default=None, max_length=100)
+    previous_report_hash: str | None = Field(default=None, max_length=64)
     # Report body language. The interface, internal records and review notes
     # stay Chinese; only the report text and its length presets follow this.
     language: Literal["zh", "en"] = "zh"
+    # Frozen per report; older reports resolve from their own language.
+    market_convention: Literal["cn", "intl"] | None = None
     extent: Literal["quick", "compact", "balanced", "detailed"] = "balanced"
     allow_web: bool = True
     search_policy: SearchPolicy | None = None
@@ -125,6 +137,9 @@ class Requirements(Model):
     # Explicit lifecycle choice; the historical quick research preset is unchanged.
     completion_mode: Literal["standard", "draft_first", "fast", "fast_web"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
+    scout_limit: int | None = Field(default=None, ge=1, le=16, description=(
+        '本报告最多可同时派发的 Scout 数（1–16）。按期间与覆盖面在开始前决定：一周左右的报告约 4；'
+        '一个月左右的月报约 8；跨多个行业、市场或语言的大型报告可到 12–16。用户没提时不写，系统按期间自动设定（月报为 8）。'))
     # Independent fact-check switch chosen at task creation; None follows the
     # workspace default, which create_run resolves to a concrete bool on the run
     # so pause/resume and later phases read one stored choice.
@@ -163,8 +178,24 @@ class Requirements(Model):
             raise ValueError('报告日期应为 YYYY-MM-DD')
         return value
 
+    def covers_month(self):
+        """A report whose stated period spans about a month, or that names itself a monthly."""
+        try:
+            # Use the same period parser as admission: chat and the report form
+            # may submit "2026-09" or a date range in period, without date fields.
+            from .report_time import freeze
+            window = freeze({'period': self.period, 'period_start': self.period_start,
+                             'period_end': self.period_end, 'report_timezone': self.report_timezone})
+            if (datetime.fromisoformat(window['end_exclusive']).date() - datetime.fromisoformat(window['start']).date()).days >= MONTHLY_MIN_DAYS:
+                return True
+        except ValueError:
+            pass
+        return any(word in (self.title or '').casefold() for word in ('月报','月度','monthly'))
+
     @model_validator(mode='after')
     def fill_length_preferences(self):
+        if self.market_convention is None:
+            self.market_convention = "intl" if self.language == "en" else "cn"
         if self.length_mode == 'strict':
             if self.max_words is None or not self.length_requirement or not self.length_requirement.text.strip():
                 raise ValueError('严格篇幅需要明确上限和用户要求来源；仅有旧 max_words 不构成严格限制')
@@ -172,9 +203,18 @@ class Requirements(Model):
                 originals = [self.objective, self.raw_input, *self.writing_preferences]
                 if not any(self.length_requirement.text in original for original in originals):
                     raise ValueError('严格篇幅的 user_quote 必须逐字出现在 objective、raw_input 或 writing_preferences 中')
-        target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else INDUSTRY_LENGTH[self.language]
+        monthly = self.covers_month()
+        target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else
+                        (INDUSTRY_MONTHLY_LENGTH if monthly else INDUSTRY_LENGTH)[self.language]
                         if self.report_profile=="industry_periodic" else length_presets(self.language)[self.extent])
-        if self.length_mode == 'strict':target=min(target,self.max_words)
+        if monthly and self.scout_limit is None:
+            self.scout_limit=MONTHLY_SCOUTS
+        if monthly and 'research_budget' not in self.model_fields_set:
+            # Only the unset default follows the period; an explicit budget is kept.
+            self.research_budget=ResearchBudget(**RESEARCH_BUDGET_PRESETS['monthly'])
+        # An auto-selected target must fit an explicit maximum, including a soft
+        # length preference. Explicitly contradictory target/max values still fail.
+        if self.max_words is not None:target=min(target,self.max_words)
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:
@@ -256,11 +296,18 @@ def runtime_fields(value, backend='codex'):
     return selected
 
 
+class RoleOverride(RoleModel):
+    """A per-role model override and the engine it was chosen on. A model id means
+    nothing on another engine, so an override tagged for a different engine is not
+    applied there."""
+    backend: str | None = Field(default=None, max_length=40)
+
+
 class ReviewRuntime(RoleModel):
     """The backend and model the independent Reviewer runs on, chosen apart
     from the main chain. Mode-specific capability admission decides whether
     this backend can provide standard or strict review."""
-    backend: Literal['codex', 'opencode', 'briefloop-native']
+    backend: Literal['codex', 'opencode','briefloop-native','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode']
     model: str = Field(min_length=1, max_length=100)
     model_variant: str | None = Field(default=None, min_length=1, max_length=100)
 
@@ -291,7 +338,7 @@ class Settings(RoleModel):
         return {validate_backend(backend): RoleModel(model='default', reasoning_effort=effort).reasoning_effort
                 for backend, effort in values.items()}
     model_selection_required: bool = True
-    role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    role_models: dict[Literal['evaluator','maintainer','proposer'], RoleOverride] = Field(default_factory=dict)
     # None: the Reviewer follows agent_backend and the Evaluator model.
     review_runtime: ReviewRuntime | None = None
     review_mode: Literal['standard', 'strict'] = 'standard'
@@ -306,6 +353,9 @@ class Settings(RoleModel):
     auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
+    # Workspace-wide ceiling on concurrent agent sessions: reports, their Scouts,
+    # separate reviews and the main task lane together (#728).
+    max_agent_sessions: int = Field(default=12, ge=2, le=64)
     # Legacy settings key now means a soft planning target, never a deadline.
     timeout_minutes: int = Field(default=60, ge=0, le=240)
     hard_timeout_minutes: int = Field(default=0, ge=0, le=1440)
@@ -314,7 +364,7 @@ class Settings(RoleModel):
     default_template_id: str | None = None
     company_context_enabled: bool | None = None
     # Workspace-wide default for the per-task fact_check switch; tasks may override.
-    fact_checker: bool = False
+    fact_checker: bool = True
     # Workspace-wide optional local file quality checks via officecli; the
     # switch has no effect while the binary is not installed.
     officecli_enabled: bool = False
@@ -502,15 +552,27 @@ def assessment_checks(checks, findings, expected=()):
         data = finding if isinstance(finding, dict) else finding.model_dump()
         for identity in data.get('check_ids', []):
             linked.setdefault(identity, []).append(index)
+    if expected:
+        # A misspelled or omitted check must remain visible. Do not guess which
+        # real check the model intended, or change unrelated passing results.
+        returned = {check.get('id') for check in result if isinstance(check.get('id'), str)}
+        for identity in linked:
+            if identity in returned:
+                continue
+            result.append({'id': identity, 'name': '发现关联的检查未返回',
+                           'status': 'not_checked',
+                           'reason': '评价发现引用了未返回的检查 ID：' + identity,
+                           'consistency_note': '尚不能核对这条关联；保留原发现，不自动匹配其他检查。'})
     for check in result:
         identity = check.get('id')
         indices = linked.get(identity) if isinstance(identity, str) else None
         if indices:
             check['finding_indices'] = indices
-            if check.get('status') == 'passed':
-                check['model_status'] = 'passed'
+            status = check.get('status') or check.get('result')
+            if status in ('passed', 'n/a'):
+                check.setdefault('model_status', status)
                 check['status'] = 'needs_attention'
-                check['consistency_note'] = '评价仍列出与此项关联的问题，不能同时显示为全部通过；不改变总评或问题严重程度。'
+                check['consistency_note'] = '评价仍列出与此项关联的问题，不能同时显示为全部通过或不适用；不改变总评或问题严重程度。'
     return result
 
 
@@ -552,6 +614,18 @@ class SaveRevision(Model):
     markdown: str = ''
     editor_document: dict | None = None
     allow_markdown_conversion: bool = Field(default=False, strict=True)
+
+
+class ReaderSave(Model):
+    id: str | None = Field(default=None, max_length=80)
+    name: str = Field(min_length=1, max_length=80)
+    decisions: str = Field(default='', max_length=1000)
+    preferences: str = Field(default='', max_length=2000)
+
+
+class RevisionAnswer(Model):
+    edit_id: str = Field(min_length=1)
+    category: Literal['taste','fact_correction','reader_specific','skip']
 
 
 class Comment(Model):
@@ -609,11 +683,21 @@ class ResearchGap(Model):
     validation_error: str | None = None
 
 
+class ScoutExecutionGap(Model):
+    round_id: str
+    round_index: int
+    slot_id: str
+    assignment: str
+    status: Literal['planned', 'dispatched', 'failed', 'skipped']
+    reason: str = ''
+
+
 class ScoutResult(Model):
     sources: list[ScoutEvidence]
     gaps: list[str] = Field(default_factory=list)
     gap_records: list[ResearchGap] = Field(default_factory=list)
     gap_history: list[ResearchGap] = Field(default_factory=list)
+    execution_gaps: list[ScoutExecutionGap] = Field(default_factory=list)
     search_summary: str = ""
     retrieval_notes: list[dict] = Field(default_factory=list)
 

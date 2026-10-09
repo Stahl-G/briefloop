@@ -17,7 +17,7 @@ const chapterTitle={value:''},chapterMode={value:''};
 const renderRow=(title,mode)=>{chapterTitle.value=title;chapterMode.value=mode};
 el('template-sections').querySelectorAll=selector=>selector==='[data-section-id]'?rows:[];
 Object.defineProperty(el('template-sections'),'innerHTML',{get:()=>'',set:html=>{sectionWrites++;renderRow((/value="([^"]*)"/.exec(html)||[,''])[1],'required')}});
-const templates=vm.createContext({$:el,console,JSON,state:null,CSS:{escape:s=>s},esc:value=>String(value),
+const templates=vm.createContext({nextReport:{requirementsForTemplate:()=>null},$:el,console,JSON,state:null,CSS:{escape:s=>s},esc:value=>String(value),
  parse:value=>{try{return JSON.parse(value||'{}')}catch{return {}}}});
 vm.runInContext(templateCode,templates);
 templates.state={templates:[{id:'t1',name:'我的模板',status:'ready',revision:1,spec:JSON.stringify({sections:[{section_id:'summary',title:'核心摘要',purpose:'模板用途'}]})}],
@@ -47,7 +47,7 @@ console.log('PASS: template choice survives refreshes and an unready template bl
 const evidenceB={checked:false};
 el('source-list').querySelector=selector=>selector.includes('"b"')?evidenceB:null;
 const profileCode=section(source,'const INDUSTRY_TASK_OUTLINE=',"$('industry-task-outline').onclick",'frontend/app.js');
-const c=vm.createContext({$:el,console,JSON,CSS:{escape:s=>s},validateLengthInputs:()=>{},
+const c=vm.createContext({$:el,console,JSON,CSS:{escape:s=>s},validateLengthInputs:()=>{},reportFormDefaults:{sync(){}},
  LENGTH_PRESETS:{compact:[800,1000],balanced:[1500,2000],detailed:[2000,2500]},
  selected:new Set(['a','b']),referenceSelected:new Set(['b']),
  state:{sources:[{id:'a',status:'ready'},{id:'b',status:'ready'}]}});

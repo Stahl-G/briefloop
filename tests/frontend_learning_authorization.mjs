@@ -7,13 +7,14 @@ import {allFrontendSources} from './source_section.mjs';
 // Windows checkouts may use CRLF; function extraction below matches LF boundaries.
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const frontendAll=allFrontendSources();
+const compactControls=fs.readFileSync(new URL('../frontend/compact-report-controls.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 function block(name){
  const start=source.indexOf(`function ${name}(`);assert.ok(start>=0,name);
  const prefix=source.lastIndexOf('\n',start)+1,end=source.indexOf('\n}',start);
  const line=source.slice(prefix,source.indexOf('\n',start));
  return line.trimEnd().endsWith('}')&&!line.trimEnd().endsWith('{')?line:source.slice(prefix,end+2);
 }
-const plan={cases:3,rounds:1,rounds_with_explicit_requirement:2,trial_generations_per_round:6,max_trial_generations:12,backend_label:'Codex CLI',model:'gpt-5.6-luna',role_models:{evaluator:{model:'separate-review-model'}},web:false,price:'unknown',fingerprint:'a'.repeat(64)};
+const plan={cases:3,rounds:1,rounds_with_explicit_requirement:2,trial_generations_per_round:6,triage_turns_per_batch:1,max_trial_generations:12,backend_label:'Codex CLI',model:'gpt-5.6-luna',role_models:{evaluator:{model:'separate-review-model'}},web:false,price:'unknown',fingerprint:'a'.repeat(64)};
 
 function context(answer){
  const calls=[],prompts=[];
@@ -29,6 +30,7 @@ test('turning automatic learning on shows the bound and records only a confirmat
  assert.deepEqual(cancelled.calls,[]);
  assert.match(cancelled.prompts[0],/每轮最多用 3 份历史报告/);
  assert.match(cancelled.prompts[0],/试写合计不超过 12 次/);
+ assert.match(cancelled.prompts[0],/1 个独立改动分类会话/);
  assert.match(cancelled.prompts[0],/Codex CLI · gpt-5\.6-luna/);
  assert.match(cancelled.prompts[0],/角色模型 evaluator=separate-review-model/);
  assert.match(cancelled.prompts[0],/不含宿主内部子 agent 的回合或 token 数/);
@@ -55,8 +57,8 @@ test('the settings note explains an upgraded workspace and a raised round count'
 
 test('manual learning and the report options use the same confirmation',()=>{
  assert.match(source,/if\(!confirmLearning\('现在用已保存的反馈启动一次学习验证。'\)\)return;const result=await api\('learn',\{confirm_plan:state\.learning_authorization\.plan\.fingerprint\}\)/);
- assert.match(source,/if\(key==='learn'\)\{try\{await setAutoLearn\(value\)/);
- assert.match(source,/data-option="learn">自动学习<\/label>/);
+ assert.match(compactControls,/if\(key==='learn'\)\{try\{await setAutoLearn\(value\)/);
+ assert.match(compactControls,/data-option="learn">自动学习<\/label>/);
  assert.doesNotMatch(frontendAll,/data-option="learn" checked/);
- assert.match(source,/learn:state\.learning_authorization\?\.state==='authorized'/);
+ assert.match(compactControls,/learn:state\.learning_authorization\?\.state==='authorized'/);
 });

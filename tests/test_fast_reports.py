@@ -38,7 +38,7 @@ class Writer:
 
 def setup(tmp_path, *, internal=False):
     store=Store(tmp_path)
-    store.set_meta('settings',{**store.settings(),'company_context_enabled':False,'auto_learn':False})
+    store.set_meta('settings',{**store.settings(),'company_context_enabled':False,'auto_learn':False,'model':'synthetic-writer','model_selection_required':False})
     source=store.add_source('Synthetic quarterly disclosure','本测试材料为虚构。\n收入 120 万元，同比增长 20%\n以上为本季度实际数。')
     req={'title':'季度观察','objective':'解释收入变化，保留限制','allow_web':False,'fact_check':False,'completion_mode':'fast'}
     if internal:req['writing_mode']='internal_report'
@@ -72,3 +72,31 @@ def test_fast_admission_does_not_silently_truncate_or_start_web_research(tmp_pat
     frozen=json.loads(run['requirements'])
     assert frozen['allow_web'] is False and frozen['fact_check'] is False
     assert frozen['company_context_required'] is False
+
+
+def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,monkeypatch):
+    from briefloop import fast_reports
+    from briefloop.chat_store import ChatStore
+    from briefloop.version_execution import record_plain_output,describe
+    store,source,run,job,runtime,worker=setup(tmp_path)
+    chat=ChatStore(store);session=chat.create('Writer',{'backend':'codex','model':'old-model'},tmp_path)
+    old=chat.message(session['id'],'Write',status='completed',turn_id='old',runtime={'backend':'codex','model':'old-model','effort':'low'})
+    new=chat.message(session['id'],'Write again',status='completed',turn_id='new',runtime={'backend':'codex','model':'new-model','effort':'high'})
+    execute=runtime.execute
+    def bound_execute(task,prompt,folder,*args,**kwargs):
+        result=execute(task,prompt,folder,*args,**kwargs)
+        if folder.name=='fast-writing':record_plain_output(store,job,folder.name,(folder/'response.txt').read_text(),session['id'],old['id'])
+        return result
+    runtime.execute=bound_execute
+    response=fast_reports._response
+    def changed_after_read(folder,*,raw=None):
+        result=response(folder,raw=raw)
+        replacement='Different later message'
+        record_plain_output(store,job,folder.name,replacement,session['id'],new['id'])
+        (folder/'response.txt').write_text(replacement)
+        return result
+    monkeypatch.setattr(fast_reports,'_response',changed_after_read)
+    result=fast_reports.generate(worker,job)
+    brief=store.one('briefs',result['version_id'])
+    assert '120' in brief['markdown'] and 'Different later' not in brief['markdown']
+    assert describe(store,brief)['configuration']['model']=='old-model'

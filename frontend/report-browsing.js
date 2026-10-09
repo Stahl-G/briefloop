@@ -7,10 +7,10 @@ export function createReportBrowsing({api,getState,getCurrent,openBrief,page,not
  let selectedContext=null,contextTicket=0,contextRequest='',historyTicket=0,historyData=null;
  const bodies=new Map();
  const parse=value=>JSON.parse(value||'{}');
- function briefSummary(full){const {id,run_id,parent_id,author,hash,created,position,latest_version_id}=full;return {id,run_id,parent_id,author,hash,created,position,latest_version_id,detail:JSON.stringify({title:parse(full.detail).title})}}
+ function briefSummary(full){const {id,run_id,parent_id,author,hash,created,position,latest_version_id,execution_revision}=full;return {id,run_id,parent_id,author,hash,created,position,latest_version_id,execution_revision,detail:JSON.stringify({title:parse(full.detail).title})}}
  const filters=()=>({q:($('reports-search')?.value||'').trim(),status:$('reports-filter-status')?.value||'',days:$('reports-filter-time')?.value||'',sources:$('reports-filter-source')?.value||''});
  function stateRoute(current,pending){const q=new URLSearchParams();if(current){q.set('run_id',current.run_id);q.set('version_id',current.id)}if(pending)q.set('pending_run',pending);return 'state'+(q.size?'?'+q:'')}
- function contextKey(snapshot,current){const b=snapshot.briefs?.find(b=>b.id===current?.id),r=snapshot.runs?.find(r=>r.id===current?.run_id);return JSON.stringify([current?.id,b?.assessment_id||null,r?.source_count,snapshot.briefs?.find(b=>b.run_id===current?.run_id)?.id])}
+ function contextKey(snapshot,current){const b=snapshot.briefs?.find(b=>b.id===current?.id),r=snapshot.runs?.find(r=>r.id===current?.run_id);return JSON.stringify([current?.id,b?.assessment_id||null,r?.source_count,snapshot.briefs?.find(b=>b.run_id===current?.run_id)?.id,b?.execution_revision??0])}
  function mergeContext(snapshot,current){
   if(!selectedContext||selectedContext.version!==current?.id)return;
   const {data}=selectedContext;
@@ -22,25 +22,26 @@ export function createReportBrowsing({api,getState,getCurrent,openBrief,page,not
   snapshot.briefs.sort((a,b)=>(b.position||0)-(a.position||0));
  }
  function acceptState(next,current){
-  if(current?.context&&selectedContext?.version!==current.id){const data=current.context;selectedContext={version:current.id,key:JSON.stringify([current.id,data.assessments[0]?.id||null,data.run.source_count,data.latest.id]),data,brief:briefSummary(current)}}
+  if(current?.context&&selectedContext?.version!==current.id){const data=current.context;selectedContext={version:current.id,key:JSON.stringify([current.id,data.assessments[0]?.id||null,data.run.source_count,data.latest.id,data.execution_revision??0]),data,brief:briefSummary(current)}}
   const key=contextKey(next,current);mergeContext(next,current);
   if(current&&selectedContext?.key!==key&&contextRequest!==key){
    const ticket=++contextTicket;contextRequest=key;
    api('report-context?version_id='+encodeURIComponent(current.id)).then(data=>{
     if(ticket!==contextTicket||getCurrent()?.id!==current.id)return;
+    if(Object.hasOwn(data,'execution_provenance')){current.execution_provenance=data.execution_provenance;current.execution_revision=data.execution_revision;current.context=data;const cached=bodies.get(current.id);if(cached){cached.execution_provenance=data.execution_provenance;cached.execution_revision=data.execution_revision;cached.context=data}}
     selectedContext={version:current.id,key,data,brief:briefSummary(current)};mergeContext(getState(),current);onContext();
    }).catch(error=>{if(ticket===contextTicket)notice(error.message,true)}).finally(()=>{if(ticket===contextTicket)contextRequest=''});
   }
   return next;
  }
  function adopt(full){
-  if(full.context){++contextTicket;contextRequest='';selectedContext={version:full.id,key:JSON.stringify([full.id,full.context.assessments[0]?.id||null,full.context.run.source_count,full.context.latest.id]),data:full.context,brief:briefSummary(full)};mergeContext(getState(),full)}
+  if(full.context){++contextTicket;contextRequest='';selectedContext={version:full.id,key:JSON.stringify([full.id,full.context.assessments[0]?.id||null,full.context.run.source_count,full.context.latest.id,full.context.execution_revision??0]),data:full.context,brief:briefSummary(full)};mergeContext(getState(),full)}
   remember(full);
  }
  function remember(full){bodies.delete(full.id);bodies.set(full.id,full);while(bodies.size>6)bodies.delete(bodies.keys().next().value)}
  async function loadBrief(b){
   if(!b||'markdown' in b)return b;
-  const cached=bodies.get(b.id);if(cached&&(!b.hash||cached.hash===b.hash))return cached;
+  const cached=bodies.get(b.id);if(cached&&(!b.hash||cached.hash===b.hash)&&(cached.execution_revision??0)===(b.execution_revision??0))return cached;
   const full=await api('brief?id='+encodeURIComponent(b.id));remember(full);return full;
  }
  async function fetchReports(append=false){
@@ -71,7 +72,7 @@ export function createReportBrowsing({api,getState,getCurrent,openBrief,page,not
    const result=await historyPage(current.run_id,append?historyData?.next_cursor||'':'');
    if(ticket!==historyTicket||getCurrent()?.run_id!==current.run_id||!$('history-dialog').open)return;
    historyData={...result,items:append?[...historyData.items,...result.items]:result.items};
-   $('history-list').innerHTML=historyData.items.map(b=>`<button class="history-row" data-history-version="${esc(b.id)}"><strong>${b.id===b.latest_version_id?'当前稿件':b.author==='agent'?'生成稿件':'历史快照'}</strong><span>${dateTimeSeconds(b.created)}</span></button>`).join('')+(result.next_cursor?'<button type="button" data-testid="history-load-more">加载更多历史版本</button>':'');
+   $('history-list').innerHTML=historyData.items.map(b=>`<button class="history-row" data-history-version="${esc(b.id)}"><strong>${b.id===b.latest_version_id?'当前稿件':b.author==='agent'?'生成稿件':b.author==='import'?'往期原稿':'历史快照'}</strong><span>${dateTimeSeconds(b.created)}</span></button>`).join('')+(result.next_cursor?'<button type="button" data-testid="history-load-more">加载更多历史版本</button>':'');
    $('history-list').querySelectorAll('[data-history-version]').forEach(button=>button.onclick=()=>{if(openBrief(historyData.items.find(b=>b.id===button.dataset.historyVersion))){$('history-dialog').close()}});
    const more=$('history-list').querySelector('[data-testid="history-load-more"]');if(more)more.onclick=()=>{more.disabled=true;read(true).catch(error=>{more.disabled=false;notice(error.message,true)})};
   }

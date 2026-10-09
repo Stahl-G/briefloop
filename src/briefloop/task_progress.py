@@ -4,6 +4,7 @@ import re
 from .research_plan import frozen, pending_requests
 from .research_budget import snapshot
 from .task_labels import label as task_label
+from .progress import public_failure
 
 ACTIVE = ('queued', 'running')
 
@@ -62,8 +63,20 @@ def summary(store, job_id):
     for r in opened:
         done = r['status'] == 'closed'
         timeline.append({'label': f"第 {r['index']} 轮研究" + ('已收束' if done else '进行中' if running else '未收束'),
-                         'detail': public_text((r.get('outcome') or {}).get('summary')),
-                         'status': 'done' if done else 'active' if running else 'recorded', 'time': r.get('closed') or r.get('created')})
+                         'detail': public_text(((r.get('outcome') or {}).get('summary') or '')
+                                               + (('；提前收束理由：' + r['outcome']['early_stop_reason']) if (r.get('outcome') or {}).get('early_stop_reason') else '')),
+                         'status': 'done' if done else 'active' if running else 'recorded', 'started': r.get('created'), 'ended': r.get('closed'), 'time': r.get('closed') or r.get('created')})
+    if run:
+        from .scout_coverage import view as scout_view
+        labels = {'planned': '派发状态未回传', 'dispatched': '已派发，等待交接', 'failed': '执行未完成', 'skipped': '已说明跳过'}
+        for task in scout_view(store, run_id)['scout_execution']:
+            if task['status'] == 'complete':
+                continue
+            label = ('结果已写出，等待交接校验' if task.get('result_present') and task['status'] in ('planned', 'dispatched')
+                     else labels[task['status']])
+            timeline.append({'label': f"第 {task['round_index']} 轮 {task['slot_id']}：" + label,
+                             'detail': public_text(task['assignment'] + ('；' + task['reason'] if task['reason'] else '')),
+                             'status': 'error' if task['status'] == 'failed' else 'warn', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
     event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',
@@ -85,7 +98,18 @@ def summary(store, job_id):
             stage = label
             revision_phase = True
         history_label = {'writing': '按审阅意见修订已开始', 'checking': '修订稿已保存，进入复核', 'repairing_metadata': '依据关联与处理说明进入修复'}.get(data.get('stage'), label) if e['kind'] == 'revision_progress' else label
-        if label: timeline.append({'label': history_label, 'detail': '', 'status': 'recorded', 'time': e['created']})
+        detail = ''
+        if e['kind'] == 'plain_isolation':
+            # Fast plain turns state how they were held to their materials.
+            from .plain_isolation import public_record, summary as isolation_summary
+            isolation = public_record(data)
+            label = history_label = {'research': '检索规划', 'evidence': '补充依据'}.get(data.get('phase'), '快速写作') + (
+                '：配置要求关闭工具，已记录引擎报告的活动' if isolation['level'] == 'enforced' else '：只读权限不等于材料隔离' if isolation['level'] == 'restricted' else '：引擎工具未关闭，已记录使用情况')
+            detail = public_text(isolation_summary(isolation))
+        if e['kind'] == 'fast_unsupported':
+            label = history_label = '找不到原文依据的结论已单独列出'
+            detail = public_text(data.get('message'))
+        if label: timeline.append({'label': history_label, 'detail': detail, 'status': 'recorded', 'time': e['created']})
     if run:
         from .reconciliation import _stored
         records = _stored(store, run_id)
@@ -104,7 +128,7 @@ def summary(store, job_id):
     timeline.sort(key=lambda item: item.get('time') or '')
     agents = [{'id': public_text(a.get('id')), 'role': public_text(a.get('role'), 60),
                'task': public_text(a.get('task')), 'activity': public_text(a.get('activity')),
-               'status': a.get('status', 'unknown')} for a in p.get('agents', [])]
+               'status': a.get('status', 'unknown'), 'started': a.get('started'), 'ended': a.get('ended')} for a in p.get('agents', [])]
     requests = list(pending_requests(store, run_id).values()) if run else []
     searches = [r for r in requests if r.get('operation') == 'search']
     search_counts = {s: sum(r.get('status') == s for r in searches) for s in ('completed', 'failed', 'reserved')}
@@ -130,6 +154,10 @@ def summary(store, job_id):
         if brief:stage='初稿已保存，完整核验待继续' if not running else '正在完成初稿'
         for item in stages:
             if item.get('id')=='evaluate':item.update(label='完整核验待继续',status='pending')
+    if running and not child and p.get('runtime_notice'):
+        stage=public_text(p.get('stage')) or stage
+    from .conflicts import for_run as run_conflicts
+    conflicts = [{'text': public_text(item['data'].get('description'))} for item in run_conflicts(store, run_id) if item['status'] != 'resolved'] if run else []
     return {'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
             'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,
@@ -139,6 +167,6 @@ def summary(store, job_id):
             'search_metered': bool(budget and budget['used']['search_requests'] is not None),
             'budget_remaining': budget['remaining'] if budget else None,
             'gaps': [{'text': public_text(g.get('question') or g.get('description') or g.get('reason'))} for r in opened for g in r.get('gaps', [])],
-            'agents': agents, 'stages': stages, 'timeline': timeline[-12:],
+            'conflicts': conflicts, 'agents': agents, 'stages': stages, 'timeline': timeline[-12:],
             'version_id': brief['id'] if brief else None,
-            'error': '任务未完成，请打开任务查看错误与恢复选项。' if job['status'] in ('failed', 'interrupted') else None}
+            'error': (public_failure(job.get('error')) or '任务未完成，请打开任务查看错误与恢复选项。') if job['status'] in ('failed', 'interrupted') else None}

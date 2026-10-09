@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS assessments(id TEXT PRIMARY KEY, version_id TEXT NOT 
  data TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, version_id TEXT NOT NULL REFERENCES briefs(id),
  kind TEXT NOT NULL, data TEXT NOT NULL, batch_id TEXT, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS readers(id TEXT PRIMARY KEY, name TEXT NOT NULL, decisions TEXT NOT NULL, preferences TEXT NOT NULL,
+ status TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS skill_verifications(skill_id TEXT PRIMARY KEY, reader_id TEXT, status TEXT NOT NULL,
+ learned_edits TEXT NOT NULL, job_id TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS revision_edits(id TEXT PRIMARY KEY, feedback_id TEXT NOT NULL REFERENCES feedback(id),
+ edit_key TEXT NOT NULL, data TEXT NOT NULL, category TEXT, decided_by TEXT, status TEXT NOT NULL,
+ created TEXT NOT NULL, updated TEXT NOT NULL, UNIQUE(feedback_id, edit_key));
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
  payload TEXT NOT NULL, result TEXT, error TEXT, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
@@ -108,6 +115,12 @@ CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT N
 """
 
 
+def wal_supported(version=None):
+    """Only enable WAL on builds with the WAL-reset race fix (https://sqlite.org/wal.html §11)."""
+    v = tuple(version or sqlite3.sqlite_version_info)
+    return v >= (3, 51, 3) or (3, 50, 7) <= v < (3, 51, 0) or (3, 44, 6) <= v < (3, 45, 0)
+
+
 class Store:
     def __init__(self, workspace):
         self._job_wakeup = None
@@ -118,7 +131,7 @@ class Store:
         self.db = self.root/"briefloop.db"
         with self.tx() as c:
             c.executescript(SCHEMA)
-            c.executescript("CREATE INDEX IF NOT EXISTS briefs_run ON briefs(run_id); CREATE INDEX IF NOT EXISTS assessments_version ON assessments(version_id); CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind);")
+            c.executescript("CREATE INDEX IF NOT EXISTS briefs_run ON briefs(run_id); CREATE INDEX IF NOT EXISTS assessments_version ON assessments(version_id); CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind); CREATE INDEX IF NOT EXISTS events_writer_version ON events(json_extract(data,'$.version_id'),seq) WHERE kind='writer_version';")
             from .schedules import SCHEMA as SCHEDULE_SCHEMA
             c.executescript(SCHEDULE_SCHEMA)
             from .evidence import SCHEMA as EVIDENCE_SCHEMA
@@ -135,6 +148,9 @@ class Store:
             c.executescript(SOURCE_UPDATE_SCHEMA)
             c.executescript(FACT_CHECK_SCHEMA)
             c.executescript(OFFICE_SCHEMA)
+            # executescript commits first, so the IMMEDIATE lock is gone by now. Take it
+            # again: concurrent first opens must not both add the same column (#731).
+            if not c.in_transaction:c.execute("BEGIN IMMEDIATE")
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
@@ -142,6 +158,24 @@ class Store:
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
             c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))
+
+        self.journal_mode = self._journal_mode()
+
+    def _journal_mode(self):
+        """Use WAL where the SQLite build is safe for it (#731); report the mode actually in effect."""
+        c = sqlite3.connect(self.db, timeout=10)
+        try:
+            c.execute("PRAGMA busy_timeout=10000")
+            mode = c.execute("PRAGMA journal_mode").fetchone()[0]
+            if mode != 'wal' and wal_supported():
+                # Persistent per database file. A file system without WAL support, or a
+                # connection holding a lock, leaves the previous mode; that is not an error.
+                mode = c.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            return mode
+        except sqlite3.OperationalError:
+            return c.execute("PRAGMA journal_mode").fetchone()[0]
+        finally:
+            c.close()
 
     @contextmanager
     def tx(self):
@@ -151,6 +185,10 @@ class Store:
         c.execute("PRAGMA busy_timeout=10000")
         try:
             c.execute("BEGIN IMMEDIATE")
+            # WAL persists across interpreters. Check under the write lock before
+            # schema initialization or any application write, not just when enabling it.
+            if not wal_supported() and c.execute("PRAGMA journal_mode").fetchone()[0] == 'wal':
+                raise ValueError(f"工作区为 WAL 模式，当前 SQLite {sqlite3.sqlite_version} 未通过兼容检查；请使用含 WAL 修补的 Python 运行库后重新打开。")
             yield c
             c.commit()
         except BaseException:
@@ -188,12 +226,15 @@ class Store:
         backend=result.get('agent_backend','codex')
         shaped={}
         for role,config in result['role_models'].items():
+            # Legacy overrides belong to the workspace engine they were saved on.
+            # Bind them before a settings patch or a chat job chooses another host.
+            tag={'backend':config.get('backend') or backend}
             try:
-                shaped[role]=runtime_fields(config,backend)
+                shaped[role]={**runtime_fields(config,config.get('backend') or backend),**tag}
             except ValueError:
                 # A backend switch can strand old model ids; keep them visible
                 # so the UI can show them, and fail loudly only when enqueued.
-                shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
+                shaped[role]={**{key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config},**tag}
         result['role_models']=shaped
         return result
 
@@ -210,6 +251,11 @@ class Store:
             current=self.settings(connection=c)
             body=changes(current) if callable(changes) else changes
             merged=apply_settings_change(current,body)
+            if isinstance(body.get('role_models'),dict):
+                # Record which engine a newly chosen role model belongs to.
+                engine=merged.get('agent_backend','codex')
+                merged['role_models']={role:({**config,'backend':config.get('backend') or engine} if isinstance(config,dict) and config.get('model') else config)
+                                       for role,config in (merged.get('role_models') or {}).items()}
             # Saving a model is the explicit choice the pending flag waits for.
             if 'model_selection_required' not in body and str(body.get('model') or '').strip():
                 merged['model_selection_required']=False
@@ -316,6 +362,9 @@ class Store:
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
+        if clone is None:
+            from .next_report import validate_origin
+            validate_origin(self, req)
         if clone is not None and req.completion_mode == 'fast_web':req.completion_mode='fast'
         if req.completion_mode=='fast_web' and not req.allow_web:
             raise ValueError('快速联网需要允许公开检索；保持离线请选择已有材料快速模式。')
@@ -342,7 +391,7 @@ class Store:
         # The task choice overrides the workspace default; the resolved bool is what
         # the run stores, so resume and later phases never re-read settings for it.
         if req.fact_check is None:
-            req.fact_check = self.settings().get('fact_checker') is True
+            req.fact_check = req.allow_web and self.settings().get('fact_checker') is True
         if req.fact_check and not req.allow_web:
             raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
         from .backends import require_main_chain
@@ -353,6 +402,13 @@ class Store:
             require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'),
                                    options.get('review_runtime',self.settings().get('review_runtime')),
                                    options.get('review_mode',self.settings().get('review_mode','standard')))
+        if not req.reader_id:req.reader_id=None
+        if clone is None and req.reader_id:
+            # The run keeps the profile it was written for (#858); later edits do not rewrite it.
+            from .readers import frozen
+            req.reader_profile=frozen(self,req.reader_id)
+            if not req.audience.strip() or req.audience=='自己':req.audience=req.reader_profile['name']
+        elif clone is None:req.reader_profile=None
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
@@ -377,6 +433,9 @@ class Store:
         if set(source_ids) & set(req.reference_source_ids):
             raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
+            from .previous_report import source_usage
+            if not options.get('previous_report_import') and source_usage(self,sid)=='previous_report':
+                raise ValueError('往期报告只用于约定和写法参考；请放入参考材料，并另选本期原始来源')
             source=self.one("sources", sid)
             if source['status'] in ('queued','extracting','cancelled','interrupted'):
                 raise ValueError('来源尚未读取完成，请等待或重新读取：'+source['name'])
@@ -384,11 +443,27 @@ class Store:
         validate_request(self,req,source_ids)
         if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
+        from .readers import skill_for as reader_skill
+        if 'skill_id' in options and clone is None and options.get('mode','normal')=='normal':
+            from .readers import validate_global_skill
+            validate_global_skill(self,options['skill_id'])
+        stored=req.model_dump()
+        if not stored.get('previous_report_version_id'):
+            stored.pop('previous_report_version_id', None)
+            stored.pop('previous_report_hash', None)
+        # Runs without a saved reader keep the exact requirement shape older
+        # learning comparisons were frozen against.
+        if stored.get('reader_id') is None:
+            stored.pop('reader_id',None);stored.pop('reader_profile',None)
         rid = uid("run")
         with self.tx() as c:
-            c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(req.model_dump()), dump(source_ids), options.get("skill_id",self.meta("active_skill")), now(), options.get("mode","normal")))
+            c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(stored), dump(source_ids), options["skill_id"] if "skill_id" in options else reader_skill(self,req.reader_id), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal" and options.get("remember_requirements", True):
-                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(req.model_dump()),))
+                remembered={key:value for key,value in stored.items()
+                            if key not in ('previous_report_version_id','previous_report_hash')}
+                c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(remembered),))
+            if options.get("research_protocol") == 'quality_v1' and req.completion_mode not in ('fast', 'fast_web'):
+                c.execute("INSERT INTO meta VALUES(?,?)", ('scout_coverage_version:'+rid, dump(1)))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
         return self.one("runs", rid)
@@ -397,6 +472,8 @@ class Store:
         run=self.one('runs',run_id)
         if source_id in json.loads(run['requirements']).get('reference_source_ids',[]):
             raise ValueError('风格参考不能登记为本期证据')
+        from .previous_report import source_usage
+        if source_usage(self,source_id)=='previous_report':raise ValueError('往期报告不能登记为本期证据，请作为参考材料使用')
         self.one('sources',source_id)
         with self.tx() as c:
             c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,source_id))
@@ -406,10 +483,10 @@ class Store:
         acquired=self.rows('SELECT source_id FROM run_sources WHERE run_id=? ORDER BY rowid',(run_id,))
         return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
 
-    def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
+    def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent', writer=None):
         # Explicit source-document imports are user-authored first versions,
         # not generated drafts or revisions that should trigger learning.
-        if author not in ('agent', 'example', 'user'):raise ValueError('无效稿件作者')
+        if author not in ('agent', 'example', 'user', 'import'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
         run=self.one("runs", run_id)
@@ -429,13 +506,14 @@ class Store:
             from .reconciliation import exists
             if not exists(self,run_id,draft.reconciliation_id):
                 raise ValueError('稿件引用的对照记录不存在或不属于本报告：'+draft.reconciliation_id)
-        for ref in draft.citations:
-            try:self.one("sources", ref.source_id)
+        def validate_fact_citation(source_id):
+            try:self.one("sources", source_id)
             except ValueError:
-                # A made-up or mistyped id must say which one, not "Record not found".
-                raise ValueError('引用的来源 '+ref.source_id+' 不在本工作区；请使用登记工具返回的真实 source_id') from None
-            if ref.source_id in references:
-                raise ValueError('风格参考不能作为报告事实引用')
+                raise ValueError('引用的来源 '+source_id+' 不在本工作区；请使用登记工具返回的真实 source_id') from None
+            from .previous_report import source_usage
+            if source_id in references or source_usage(self,source_id)=='previous_report':
+                raise ValueError('往期报告或风格参考不能作为报告事实引用')
+        for ref in draft.citations:validate_fact_citation(ref.source_id)
         if draft.report_data is not None:
             from .report_tools import prepare_for_run
             prepared=prepare_for_run(self,run_id,draft.report_data.model_dump(mode='json'))
@@ -454,6 +532,9 @@ class Store:
         detail=draft.model_dump(mode='json',exclude={'markdown','editor_document'})
         from .figure_support import sync_content_citations
         sync_content_citations(self,run_id,detail,draft.editor_document,assets)
+        # Data rows, editor nodes and figures can append citations after input
+        # validation. Check the final set before publishing or attaching sources.
+        for ref in detail['citations']:validate_fact_citation(ref['source_id'])
         if draft.editor_document is not None:detail['document_schema']=1
         if company_review:detail['company_context']={'revision':company_review['revision'],'review':company_review}
         with self.tx() as c:
@@ -473,11 +554,14 @@ class Store:
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, author, draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
+                if author=='agent':
+                    from .version_execution import insert_receipt
+                    insert_receipt(c,vid,sha,writer)
             for ref in detail['citations']:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None, *, citations=None, author='user', allow_markdown_conversion=False):
+    def revise(self, base_version, markdown='', editor_document=None, *, citations=None, author='user', allow_markdown_conversion=False, writer=None):
         if author not in ('user','agent'):raise ValueError('无效修订作者')
         if type(allow_markdown_conversion) is not bool:raise ValueError('明确转换标记必须是布尔值')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
@@ -543,6 +627,9 @@ class Store:
                     detail['report_data_needs_review']=True
             sha=document_hash(editor_document) if editor_document is not None else content_hash(markdown)
             c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, base["run_id"], base_version, author, markdown, sha, dump(detail), dump(editor_document) if editor_document is not None else None, now()))
+            if author=='agent':
+                from .version_execution import insert_receipt
+                insert_receipt(c,vid,sha,writer)
             if author=='user' and semantic_signature(markdown)!=semantic_signature(base['markdown']):
                 c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (uid("feedback"), vid, "revision", dump({"before": base_version, "after": vid}), None, now()))
         return self.one("briefs", vid)
@@ -625,7 +712,7 @@ class Store:
             for finding in context['revision_context']['findings'])
         return context
 
-    def validate_assessment(self, version_id, value):
+    def validate_assessment(self, version_id, value, *, verify_locations=True):
         """Read-only admission checks shared by persistence and retry caching."""
         brief = self.one("briefs", version_id)
         assessment = Assessment.model_validate(value)
@@ -636,6 +723,12 @@ class Store:
         for f in assessment.findings:
             if f.source_id:
                 self.one("sources", f.source_id)
+        if verify_locations:
+            from .finding_anchors import validate_findings
+            from .document_model import brief_document
+            from .exports import reader_markdown
+            brief=self.one('briefs',version_id)
+            validate_findings(brief_document(brief),assessment.findings,reader_preview=reader_markdown(self,brief))
         return assessment
 
     def assess(self, version_id, value, *, basis=None, expected_checks=None):
@@ -689,7 +782,18 @@ class Store:
         def change(settings):
             if not settings.get('model_selection_required'):return {}
             chosen=backend or settings.get('agent_backend','codex')
-            fields=runtime_fields(runtime or {},chosen)
+            selected=dict(runtime or {})
+            # Chat transports use effort/variant; workspace settings use the
+            # longer names. Preserve explicit model-default choices as well.
+            if chosen=='codex' and 'reasoning_effort' not in selected and 'effort' in selected:
+                selected['reasoning_effort']=selected['effort']
+            if chosen in ('opencode','briefloop-native') and 'model_variant' not in selected and 'variant' in selected:
+                selected['model_variant']=selected['variant']
+            fields=runtime_fields(selected,chosen)
+            if chosen in ('opencode','briefloop-native') and 'model_variant' in selected:
+                fields['model_variant']=selected['model_variant']
+            if chosen=='codex' and 'service_tier' in selected:
+                fields['service_tier']=selected['service_tier']
             if not str(fields.get('model') or '').strip():return {}
             if chosen not in ('codex','opencode','briefloop-native'):
                 fields['runtime_efforts']={**settings.get('runtime_efforts',{}),chosen:fields.pop('reasoning_effort',None)}
@@ -704,7 +808,8 @@ class Store:
         roles={}
         for role in ROLE_NAMES:
             candidate=overrides.get(role)
-            if not candidate:
+            if not candidate or (candidate.get('backend') and candidate['backend']!=backend):
+                # No override, or one chosen on another engine: follow the main chain.
                 roles[role]=dict(base)
                 continue
             try:
@@ -761,8 +866,15 @@ class Store:
             if kind!='review':payload['review_runtime']=review_runtime
             if kind=='generate':
                 payload.setdefault('auto_revision',self.settings()['auto_revision'])
-                payload.setdefault('max_parallel',self.settings()['max_parallel'])
+                # The report's own Scout ceiling, chosen at creation, wins over the workspace default.
+                limit=(json.loads(self.one('runs',payload['run_id'])['requirements']).get('scout_limit')
+                       if payload.get('run_id') else None)
+                payload.setdefault('max_parallel',int(limit) if limit else self.settings()['max_parallel'])
             if kind=='generate' and payload.get('run_id'):
+                # New runs bind this contract at application admission; old persisted runs remain compatible.
+                version=self.meta('scout_coverage_version:'+payload['run_id'])
+                payload.pop('scout_coverage_version',None)
+                if version == 1:payload['scout_coverage_version']=1
                 runs=self.rows('SELECT requirements FROM runs WHERE id=?',(payload['run_id'],))
                 if runs and json.loads(runs[0]['requirements']).get('writing_mode')=='internal_report':payload.setdefault('reader_contract_required',True)
         jid = uid("job")
@@ -798,8 +910,8 @@ class Store:
             c.execute("INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)", (job_id, kind, dump(data), now()))
 
     def bind_skill(self, skill_id):
-        if skill_id:
-            self.one("skills", skill_id)
+        from .readers import validate_global_skill
+        validate_global_skill(self,skill_id)
         self.set_meta("active_skill", skill_id)
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
@@ -814,8 +926,15 @@ class Store:
             length_mode=req.get('length_mode','soft'),length_requirement=req.get('length_requirement'))
         from .report_browsing import context
         brief['context']=context(self,version_id)
+        brief['execution_provenance']=brief['context']['execution_provenance']
+        brief['execution_revision']=brief['context']['execution_revision']
         brief['latest_version_id']=brief['context']['latest']['id']
         brief['position']=self.rows('SELECT rowid AS position FROM briefs WHERE id=?',(version_id,))[0]['position']
+        from .plain_isolation import public_notes
+        detail=json.loads(brief['detail'])
+        if 'research_notes' in detail:
+            detail['research_notes']=public_notes(detail['research_notes'])
+            brief['detail']=dump(detail)
         return brief
 
     def search_briefs(self, text):
@@ -863,9 +982,15 @@ class Store:
         from .report_browsing import hot_state
         browsing=hot_state(self,jobs,run_id=run_id,version_id=version_id,pending_run=pending_run)
         from .search_policy import annotate_sources
+        from .source_lifecycle import annotate as annotate_lifecycle
+        from .previous_report import annotate_sources as annotate_source_usage
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
+        from .revision_edits import snapshot as revision_snapshot
+        from .feedback_view import snapshot as feedback_snapshot
+        from .readers import listing as reader_listing, reader_scope_ids, skill_for
+        from .skill_verification import refresh as skill_refresh
         from .task_labels import reported_labels
         from . import office_cli
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
@@ -875,14 +1000,17 @@ class Store:
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row), 'language_hint':template_language_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
-                "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
+                "sources": annotate_lifecycle(self,annotate_source_usage(self,annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created,rowid")))),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 **browsing,
-                "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
+                **feedback_snapshot(self),
+                "revision_edits": revision_snapshot(self),
+                "readers": reader_listing(self),
+                "skill_verifications": skill_refresh(self),
                 "jobs": jobs,
                 "task_labels": reported_labels(),
-                "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
-                "active_skill": self.meta("active_skill"),
+                "skills": [{**s,"reader_scope_ids":reader_scope_ids(self,s["id"])} for s in self.rows("SELECT * FROM skills ORDER BY rowid DESC")],
+                "active_skill": skill_for(self,None),
                 "wiki": (self.root/"wiki/index.md").read_text(encoding='utf-8') if (self.root/"wiki/index.md").exists() else ""}
 
 

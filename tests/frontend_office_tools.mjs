@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import {beginPanel,updatePanel} from '../frontend/report-panels.js';
 import {createAssessmentPanel} from '../frontend/assessment-panel.js';
 import {createOfficeTools,officeIssueLine} from '../frontend/office-tools.js';
+import {section} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const deliverySource=fs.readFileSync(new URL('../frontend/delivery.js',import.meta.url),'utf8');
@@ -126,7 +127,7 @@ test('Excel preview captions identify the selected worksheet and cell scope',asy
 
 test('word export rows add office summary and preview only when enabled',()=>{
  const job={id:'job_1',kind:'export_docx',status:'complete',payload:JSON.stringify({version_id:'v1',run_id:'r1'}),result:JSON.stringify({download_url:'/saved.docx',office:{tool:'officecli',tool_version:'1.0.152',validate:{status:'ok',summary:'Validation passed: no errors found.'},issues:{status:'ok',count:0,items:[]}}})};
- const code=source.slice(source.indexOf('function renderWordExports(){'),source.indexOf('function renderWordExports(){')+source.slice(source.indexOf('function renderWordExports(){')).indexOf('\n}')+2);
+ const code=section(source,'function renderWordExports(){','\n}','frontend/app.js')+'\n}';
  const setup=extra=>{
   let html='';
   const buttons=extra.buttons||[];

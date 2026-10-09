@@ -114,7 +114,7 @@ def write_reader(store, brief, target, arm):
     text = reader_markdown(store, brief)
     (target/'report.md').write_text(text)
     body = MarkdownIt('commonmark', {'html': False}).enable('table').render(text)
-    page = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Analyst 对比稿</title><style>body{max-width:980px;margin:48px auto;padding:0 28px;background:#faf9f6;color:#1e2320;font:17px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}h1,h2,h3{line-height:1.4}a{color:#006838}table{border-collapse:collapse;display:block;overflow:auto;font-size:15px}td,th{border:1px solid #dedfd8;padding:8px 12px}header{font-size:14px;color:#6a706b;border-bottom:1px solid #dedfd8;padding-bottom:12px}</style><header>'
+    page = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Analyst 对比稿</title><style>body{max-width:980px;margin:48px auto;padding:0 28px;background:#faf9f6;color:#1e2320;font:17px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}h1,h2,h3{line-height:1.4}a{color:#2448B8}table{border-collapse:collapse;display:block;overflow:auto;font-size:15px}td,th{border:1px solid #dedfd8;padding:8px 12px}header{font-size:14px;color:#6a706b;border-bottom:1px solid #dedfd8;padding-bottom:12px}</style><header>'
     page += html.escape(arm['name']+' · '+arm['model'])+'</header><article>'+body+'</article></html>'
     (target/'report.html').write_text(page)
 

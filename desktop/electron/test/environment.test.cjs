@@ -9,37 +9,47 @@ const {spawn} = require('node:child_process');
 const vm = require('node:vm');
 const {createEnvironment, runOwnedProcess, pythonCandidates} = require('../environment.cjs');
 
-async function fixture(t) {
+async function fixture(t, platform='darwin') {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'briefloop-environment-test-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const payloadPath=path.join(root,'payload'),host=path.join(root,'host-python');
   await fs.mkdir(payloadPath);await fs.writeFile(host,'Synthetic host marker',{mode:0o700});
-  let version='0.19.0',failInstall=false,waitInstall=false,enteredInstall;
+  let version='0.19.0',failInstall=false,waitInstall=false,enteredInstall,lockedPackagesMatch=true;
   const versions=new Map(),calls=[],changes=[];
-  async function payload(next) {
+  async function payload(next, dependencyVersion='1.0') {
     version=next;const wheel=`briefloop-${version}-py3-none-any.whl`,bytes=Buffer.from('Synthetic wheel fixture '+version);
-    await fs.writeFile(path.join(payloadPath,wheel),bytes);
-    await fs.writeFile(path.join(payloadPath,'manifest.json'),JSON.stringify({version,wheel,sha256:createHash('sha256').update(bytes).digest('hex')}));
+    const lock=Buffer.from('synthetic-dependency=='+dependencyVersion+' --hash=sha256:'+'0'.repeat(64)+'\n');
+    await fs.writeFile(path.join(payloadPath,wheel),bytes);await fs.writeFile(path.join(payloadPath,'requirements.txt'),lock);
+    await fs.writeFile(path.join(payloadPath,'manifest.json'),JSON.stringify({version,wheel,sha256:createHash('sha256').update(bytes).digest('hex'),
+      requirements:'requirements.txt',requirements_sha256:createHash('sha256').update(lock).digest('hex')}));
   }
   await payload(version);
   const runProcess=async(executable,args,options)=>{
     calls.push({executable,args,options});
     if(args.includes('-c')&&args.some(value=>value.includes('list(sys.version_info')))return {stdout:JSON.stringify({version:[3,12,5],executable:host})};
+    if(args.includes('-c')&&args.some(value=>value.includes('checked = 0')))return {stdout:JSON.stringify({matches:lockedPackagesMatch})};
+    if(args.includes('-c')&&args.some(value=>value.includes('def copy_dependencies')))return {stdout:JSON.stringify({reused:['synthetic-dependency'],skipped:[]})};
+    if(executable==='/bin/cp'){
+      const [source,target]=args.slice(-2);await fs.cp(source,target,{recursive:true});versions.set(target,versions.get(source));return {stdout:''};
+    }
     if(args[2]==='venv'){
-      const target=args.at(-1);versions.set(target,version);await fs.mkdir(path.join(target,'bin'));
-      await fs.writeFile(path.join(target,'bin','python3'),'Synthetic venv marker',{mode:0o700});return {stdout:''};
+      const target=args.at(-1);versions.set(target,version);await fs.mkdir(path.join(target,platform==='win32'?'Scripts':'bin'));
+      await fs.writeFile(path.join(target,platform==='win32'?'Scripts':'bin',platform==='win32'?'python.exe':'python3'),'Synthetic venv marker',{mode:0o700});return {stdout:''};
     }
     if(args.includes('install')){
       enteredInstall?.();
       if(waitInstall)await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(Error('cancelled fake install')),{once:true}));
       if(failInstall)throw Error('https://private.invalid/?token=do-not-expose');
+      // Installing the wheel is what gives the environment its BriefLoop version.
+      if(args.at(-1).endsWith('.whl'))versions.set(path.dirname(path.dirname(executable)),version);
       return {stdout:''};
     }
     if(args.includes('-c')){await fs.access(executable);return {stdout:JSON.stringify({version:versions.get(args.at(-1))})};}
     assert.equal(args.at(-1),'check');return {stdout:'No broken requirements found.'};
   };
-  const config={app:{getPath:()=>root},payloadPath,platform:'darwin',arch:'arm64',candidates:[host],runProcess,changed:value=>changes.push(value)};
+  const config={app:{getPath:()=>root},payloadPath,platform,arch:platform==='win32'?'x64':'arm64',candidates:[host],runProcess,changed:value=>changes.push(value)};
   return {root,host,payloadPath,payload,config,calls,changes,environment:createEnvironment(config),
+    invalidateDependencies:()=>{lockedPackagesMatch=false},
     failInstall:()=>{failInstall=true},recover:()=>{failInstall=false},
     waitInstall:()=>{waitInstall=true;return new Promise(resolve=>{enteredInstall=resolve})}};
 }
@@ -61,8 +71,9 @@ test('prepare verifies declared modules and pip check before atomically selectin
   const activeFile=path.join(f.root,'environments','active.json'),before=await fs.readFile(activeFile,'utf8');
   const record=JSON.parse(before),target=path.join(f.root,'environments',record.environmentId);
   assert.equal(runtime.python,path.join(target,'bin','python3'));
-  const install=f.calls.find(call=>call.args.includes('install'));
-  assert.deepEqual(install.args.slice(0,10),['-I','-m','pip','--isolated','--disable-pip-version-check','--no-input','install','--only-binary=:all:','--index-url','https://pypi.org/simple']);
+  const [locked,wheel]=f.calls.filter(call=>call.args.includes('install'));
+  assert.deepEqual(locked.args.slice(0,13),['-I','-m','pip','--isolated','--disable-pip-version-check','--no-input','install','--require-hashes','--only-binary=:all:','--index-url','https://pypi.org/simple','-r',path.join(f.payloadPath,'requirements.txt')]);
+  assert.deepEqual(wheel.args.slice(6),['install','--no-deps','--no-index','--force-reinstall',path.join(f.payloadPath,'briefloop-0.19.0-py3-none-any.whl')]);
   assert.equal(f.calls.find(call=>call.args[2]==='venv').args.at(-1),target);
   const verify=f.calls.find(call=>call.args.some(value=>value.includes('importlib.import_module'))).args.join(' ');
   for(const name of ['briefloop','wikiskill','mcp','docx','lxml','PIL','pypdf','pypdfium2','openpyxl'])assert.ok(verify.includes(`"${name}"`));
@@ -115,8 +126,13 @@ test('first install and repair wait for the user; updates preserve environments 
   const directory=path.join(f.root,'environments'),stale=path.join(directory,'00000000-0000-4000-8000-000000000000');
   await fs.mkdir(stale);await fs.writeFile(path.join(directory,'keep-me.txt'),'not an environment');
   const one=JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).environmentId;
-  await f.payload('0.20.0');assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  f.calls.length=0;await f.payload('0.20.0');assert.equal((await createEnvironment(f.config).startup()).state,'ready');
   const two=JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).environmentId;
+  // A macOS update on the same base Python starts from an APFS clone, not a new venv.
+  const clone=f.calls.find(c=>c.executable==='/bin/cp');
+  assert.deepEqual(clone.args,['-c','-R',path.join(directory,one),path.join(directory,two)]);
+  assert.ok(!f.calls.some(c=>c.args[2]==='venv'));
+  assert.equal(JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).cloned,true);
   assert.deepEqual((await fs.readdir(directory)).sort(),['active.json','keep-me.txt',path.basename(stale),one,two].sort());
   await fs.unlink(path.join(directory,two,'bin','python3'));f.calls.length=0;
   const repair=await createEnvironment(f.config).startup();
@@ -275,4 +291,105 @@ test('welcome hides unavailable retries and preserves the cleanup guard after ca
   assert.equal(getElementById('prepare').hidden,true);assert.equal(getElementById('inspect').hidden,true);
   changed({state:'error',retryable:true,error:{code:'process_failed',message:'普通安装失败，可以重试。'}});
   assert.equal(getElementById('prepare').hidden,false);assert.equal(getElementById('inspect').hidden,false);
+});
+
+
+test('unchanged locked dependencies are reused without running pip install requirements',async t=>{
+  const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+  await f.payload('0.20.0');
+  const updated=createEnvironment(f.config);assert.equal((await updated.startup()).state,'ready');
+  const installs=f.calls.filter(c=>c.args.includes('install'));
+  assert.equal(installs.length,1);assert.ok(installs[0].args.at(-1).endsWith('.whl'));
+  assert.ok(f.changes.some(x=>x.phase==='reuse-dependencies'));
+  assert.ok(f.calls.some(c=>c.args.at(-1)==='check'));
+});
+
+test('changed lock and mismatched installed dependencies still use locked installer',async t=>{
+  for(const changed of [true,false]){
+    const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+    await f.payload('0.20.0',changed?'2.0':'1.0');if(!changed)f.invalidateDependencies();
+    assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+    assert.ok(f.calls.some(c=>c.args.includes('--require-hashes')));
+    assert.ok(f.changes.some(x=>x.phase==='update-dependencies'));
+  }
+});
+
+test('a changed lock cannot take the warm-start shortcut even for identical wheel',async t=>{
+  const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+  await f.payload('0.19.0','2.0');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  assert.ok(f.calls.some(c=>c.args.includes('--require-hashes')));
+});
+
+
+test('Windows creates fresh interpreter launchers and reuses verified dependencies before the app wheel',async t=>{
+  const f=await fixture(t,'win32');await f.environment.prepare();f.calls.length=0;
+  await f.payload('0.20.0');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  assert.equal(f.calls.filter(c=>c.args[2]==='venv').length,1);
+  assert.equal(f.calls.filter(c=>c.executable==='/bin/cp').length,0);
+  const installs=f.calls.filter(c=>c.args.includes('install'));
+  assert.equal(installs.length,1);assert.ok(installs[0].args.at(-1).endsWith('.whl'));
+  assert.ok(f.changes.some(v=>v.reusedDependencyCount===1));
+});
+
+test('cleanup ignores unrelated Python but preserves referenced environments and uncertain inventories',async t=>{
+ for(const platform of ['darwin','win32']){
+  const f=await fixture(t,platform);await f.environment.prepare();
+  const directory=path.join(f.root,'environments'),activeFile=path.join(directory,'active.json');
+  const previous=JSON.parse(await fs.readFile(activeFile,'utf8')).environmentId;
+  const busy='10000000-0000-4000-8000-000000000000',idle='20000000-0000-4000-8000-000000000000';
+  for(const id of [busy,idle])await fs.mkdir(path.join(directory,id));
+  const commands=[platform==='win32'?'C:\\Other\\python.exe unrelated.py':'/usr/bin/python3 /tmp/unrelated.py',path.join(directory,busy,platform==='win32'?'Scripts/python.exe':'bin/python3')+' task.py'];
+  let inventory='known';
+  const config={...f.config,runProcess:async(executable,args,options)=>{
+   if(executable==='/bin/ps'||args.includes('-Command')||args.some(a=>a.includes('Environment file usage unavailable'))){
+    if(inventory==='failed')throw Error('Process inventory unavailable');
+    if(inventory==='malformed')return {stdout:'incomplete process inventory'};
+    if(inventory==='capped')return {stdout:JSON.stringify(commands).padEnd(65536,' ')};
+    const rows=inventory==='bare'?['python3 task.py']:commands;
+    return {stdout:JSON.stringify(rows)};
+   }
+   return f.config.runProcess(executable,args,options);
+  }};
+  await f.payload('0.20.0');assert.equal((await createEnvironment(config).startup()).state,'ready');
+  const current=JSON.parse(await fs.readFile(activeFile,'utf8')).environmentId;
+  assert.deepEqual((await fs.readdir(directory)).sort(),['active.json',previous,current,busy].sort());
+  await fs.mkdir(path.join(directory,idle));
+  const uncertain=[['failed','0.21.0'],['bare','0.22.0'],['malformed','0.23.0']];
+  if(platform==='darwin')uncertain.push(['capped','0.24.0']);
+  for(const [mode,version] of uncertain){
+   inventory=mode;await f.payload(version);assert.equal((await createEnvironment(config).startup()).state,'ready');
+   assert.equal((await fs.stat(path.join(directory,idle))).isDirectory(),true);
+  }
+ }
+});
+
+test('macOS actual process/file scan keeps an occupied old environment and removes only idle fixtures', {skip:process.platform!=='darwin'}, async t=>{
+ const f=await fixture(t);await f.environment.prepare();
+ const directory=path.join(f.root,'environments');
+ const busy='30000000-0000-4000-8000-000000000000',idle='40000000-0000-4000-8000-000000000000';
+ for(const id of [busy,idle])await fs.mkdir(path.join(directory,id));
+ // An open file matters even when its process command has no environment UUID.
+ const held=await fs.open(path.join(directory,busy,'in-use'),'w');t.after(()=>held.close());
+ const unrelated=spawn('/usr/bin/python3',['-c','import time; print("ready", flush=True); time.sleep(60)'],{stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{if(unrelated.exitCode===null){const closed=new Promise(resolve=>unrelated.once('close',resolve));unrelated.kill();await closed}});
+ await new Promise((resolve,reject)=>{unrelated.stdout.once('data',resolve);unrelated.once('error',reject)});
+ const config={...f.config,runProcess:(executable,args,options)=>args.some(a=>a.includes('Environment file usage unavailable'))
+  ?runOwnedProcess('/usr/bin/python3',args,options):f.config.runProcess(executable,args,options)};
+ await f.payload('0.20.0');assert.equal((await createEnvironment(config).startup()).state,'ready');
+ await assert.rejects(fs.stat(path.join(directory,idle)),{code:'ENOENT'});
+ assert.equal((await fs.stat(path.join(directory,busy))).isDirectory(),true);
+ assert.equal(unrelated.exitCode,null);
+});
+
+
+test('declared prerelease versions can prepare and validate without using a stable version',async t=>{
+  const f=await fixture(t);
+  await f.payload('0.19.1.dev7');
+  assert.equal((await f.environment.prepare()).state,'ready');
+  await f.payload('0.19.1rc1');
+  assert.equal((await createEnvironment(f.config).startup()).state,'ready');
+  await f.payload('0.19.1-preview');
+  assert.equal((await createEnvironment(f.config).inspect()).error.code,'invalid_payload');
 });

@@ -12,9 +12,54 @@ from .platform_support import filesystem_path
 ENDED = {'completed', 'done', 'closed', 'failed', 'errored', 'interrupted', 'cancelled', 'canceled', 'shutdown'}
 
 
+# Fixed public texts. Provider messages may carry URLs, credentials or tool output,
+# so only these classifications (and a parsed reset delay) are ever shown.
+CONNECTION = '模型连接失败；请检查网络和模型服务后重试，已有来源与稿件保留。'
+QUOTA = '模型服务额度已用完或被限流{reset}；可稍后恢复任务，或在设置中换用其他执行引擎。已有来源与稿件保留。'
+AUTH = '模型服务未登录或凭据无效；请在对应 CLI 或设置中重新登录后恢复任务。已有来源与稿件保留。'
+MODEL = '所选模型在当前执行引擎上不可用，或缺少该模型要求的推理强度；请在设置中重新选择后恢复任务。'
+HOST_PERMISSION = '执行引擎在后台请求了命令授权，BriefLoop 无法代为确认，本轮已终止；请在该 CLI 的权限设置中允许相应操作，或换用内置引擎。'
+PUBLIC_FAILURES = {'模型连接失败': CONNECTION, '模型服务未登录': AUTH,
+                   '所选模型在当前执行引擎上不可用': MODEL,
+                   '执行引擎在后台请求了命令授权': HOST_PERMISSION}
+_PUBLIC_QUOTA = re.compile(re.escape(QUOTA).replace(re.escape('{reset}'),
+    r'(?:，约 (?:\d{1,3} 小时(?: \d{1,2} 分钟)?|\d{1,2} 分钟)后恢复)?'))
+
+
+def _reset_delay(text):
+    match = re.search(r'resets? in\s+((?:\d{1,3}h)?\s*(?:\d{1,2}m)?\s*(?:\d{1,2}s)?)', text, re.I)
+    if not match:
+        return ''
+    hours = re.search(r'(\d+)h', match.group(1)); minutes = re.search(r'(\d+)m', match.group(1))
+    parts = ([hours.group(1) + ' 小时'] if hours else []) + ([minutes.group(1) + ' 分钟'] if minutes else [])
+    return '，约 ' + ' '.join(parts) + '后恢复' if parts else ''
+
+
+def public_failure(message):
+    """Classify provider and host failures into fixed text; never publish provider text or request URLs."""
+    text = str(message or '').strip()
+    if text in PUBLIC_FAILURES.values() or _PUBLIC_QUOTA.fullmatch(text):
+        return text
+    for prefix, fixed in PUBLIC_FAILURES.items():
+        if text.startswith(prefix):
+            return fixed
+    if re.match(r'^(?:connection error|api connection error|connect(?:ion)? timeout)', text, re.I):
+        return CONNECTION
+    if re.search(r'quota|rate.?limit|too many requests|\b429\b|usage limit|额度|配额|限流', text, re.I):
+        return QUOTA.format(reset=_reset_delay(text))
+    if re.search(r'unauthori[sz]ed|\b401\b|not (?:logged|signed) in|log ?in required|please (?:log|sign) ?in|invalid api key|authentication failed|未登录', text, re.I):
+        return AUTH
+    if re.search(r'invalid model|model not found|unknown model|unsupported model|requires --effort|模型不存在', text, re.I):
+        return MODEL
+    if text.startswith(('后台任务没有用户可回答宿主授权请求', '后台调用未绑定可处理授权的任务')):
+        return HOST_PERMISSION
+    return None
+
+
 def role_label(role):
     text=str(role or '子任务')
     if any(key in text.lower() for key in ('evaluator','scorer','assessor')):
+        if any(key in text.lower() for key in ('triage','改动分类')):return 'Evaluator · 改动分类'
         if any(key in text.lower() for key in ('assessor','pairwise','比较')):return 'Evaluator · 比较'
         if any(key in text.lower() for key in ('scorer','single','评分')):return 'Evaluator · 评分'
         return 'Evaluator'
@@ -78,6 +123,7 @@ class ProgressTracker:
         self.store=store;self.job_id=job_id;self.folder=Path(folder)
         self.signature=None;self.offset=0;self.tail=b'';self.message='';self.workers={}
         self.runtime_issue=None
+        self.failure_message=None
         rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job_id,))
         self.last=rows[0]['data'] if rows else None
         context = context or {}
@@ -100,6 +146,8 @@ class ProgressTracker:
         elif role in ('evaluator', 'scorer', 'assessor'):
             self.phase = (('comparison', '比较候选稿', 'Evaluator 正在比较新旧稿件')
                           if context.get('evaluation_mode') == 'pairwise' else
+                          ('triage', '改动分类', 'Evaluator 正在判断每处改动的性质')
+                          if context.get('evaluation_mode') == 'triage' else
                           ('evaluation', '独立评分', 'Evaluator 正在独立评分'))
         elif role in ('maintainer', 'proposer'):
             self.phase = (('maintainer', '整理反馈经验', 'Maintainer 正在整理反馈经验')
@@ -152,14 +200,31 @@ class ProgressTracker:
                     elif kind=='child.turn.completed':
                         status=data.get('status')
                         row['status']=status if isinstance(status,str) and status in ENDED else 'unknown'
+                if kind=='turn.started':
+                    self.runtime_issue=None
+                    self.failure_message=None
+                if kind=='runtime.status':
+                    message=str(data.get('message') or '')
+                    retry=re.match(r'^retry (\d{1,3})/(\d{1,3}):',message)
+                    if retry:
+                        attempt,limit=map(int,retry.groups())
+                        if 1<=attempt<=limit:
+                            self.failure_message=None
+                            self.runtime_issue=(f'模型服务正在重试（{attempt}/{limit}）',f'模型请求暂未成功，正在第 {attempt}/{limit} 次自动重试；已有来源与稿件保留。')
+                    elif message.startswith('provider retry exhausted:'):
+                        reason=public_failure(message.partition(':')[2].strip())
+                        self.failure_message=reason
+                        self.runtime_issue=('模型服务重试已结束',reason or '自动重试未成功，正在保存失败记录；已有来源与稿件保留。')
                 if kind=='error':
                     # Provider errors may contain request URLs, credentials, or
                     # raw tool output. Classify locally; only fixed text is public.
                     detail=event.get('data') or event.get('error') or event
                     message=detail.get('message','') if isinstance(detail,dict) else ''
+                    self.failure_message=public_failure(message)
                     reconnect=bool(re.search(r'reconnect|waiting for network|retrying|重连',str(message),re.I))
                     self.runtime_issue=(
                         ('模型连接中断，正在重试','正在等待模型连接恢复；已有来源和产物保留。') if reconnect else
+                        (self.failure_message.split('；',1)[0],self.failure_message) if self.failure_message else
                         ('模型执行遇到错误','模型返回错误，正在等待运行状态更新；已有来源和产物保留。'))
                 elif kind in ('item.started','item.completed') and item.get('type') in (
                         'agent_message','agentMessage','command_execution','commandExecution','collab_tool_call',
@@ -188,6 +253,8 @@ class ProgressTracker:
                     if row.get('status') not in ENDED:
                         row['status']=agent.get('status','running')
                     row['task']=str(agent.get('responsibility',''))[:240]
+                    for field in ('started','ended'):
+                        if agent.get(field):row[field]=agent[field]
             except (ValueError,OSError):pass
         workers=list(self.workers.values())
         active=[w for w in workers if w.get('status') not in ENDED | {'unknown'}]
@@ -212,7 +279,7 @@ class ProgressTracker:
             stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]
         message=self.message
         if self.runtime_issue:stage,message=self.runtime_issue
-        value={'stage':stage,'message':message,'agents':workers,'stages':stages,'draft_ready':paths[3].exists() or self.has_saved_draft}
+        value={'stage':stage,'message':message,'runtime_notice':bool(self.runtime_issue),'agents':workers,'stages':stages,'draft_ready':paths[3].exists() or self.has_saved_draft}
         def semantic(item):
             if isinstance(item,dict):return {key:semantic(part) for key,part in item.items() if key!='last_activity'}
             if isinstance(item,list):return [semantic(part) for part in item]

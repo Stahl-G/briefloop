@@ -234,7 +234,7 @@ def test_markdown_save_requires_explicit_rich_replacement(tmp_path):
     source=store.add_source('Synthetic source','Reported value 12')
     run=store.create_run({'title':'Report','objective':'Preserve formatting'},[source['id']])
     original=store.publish(run['id'],{'title':'Report','editor_document':{'type':'doc','content':[
-        {'type':'paragraph','content':[{'type':'text','text':'Formatted report','marks':[{'type':'textStyle','attrs':{'color':'#006838'}}]}]}]}})
+        {'type':'paragraph','content':[{'type':'text','text':'Formatted report','marks':[{'type':'textStyle','attrs':{'color':'#723B9A'}}]}]}]}})
     assert store.revise(original['id'],original['markdown'])['id']==original['id']
     with pytest.raises(ValueError,match='明确转换'):
         store.revise(original['id'],'Replacement from Markdown')

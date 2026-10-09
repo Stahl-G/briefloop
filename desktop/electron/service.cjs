@@ -137,6 +137,10 @@ class WorkspaceService {
     if (!this.info) throw Error('工作区服务尚未就绪，请稍后重试。');
     const info = this.info;
     await this.request('/api/service-stop', {pid: info.pid, workspace_id: info.workspace_id, ...(cancelBusy ? {busy_action: 'cancel'} : {})});
+    // Only after admission accepts shutdown, release the owner reader. Leaving
+    // stdin open makes CPython finalize with a daemon holding its buffered lock.
+    // A rejected busy shutdown retains the writer and the running service.
+    this.child?.stdin.end();
     const done = await finishesWithin(this.exited, 90000);
     if (!done) throw Error('工作区仍在保存或停止任务，窗口已保留，请稍后重试。');
     // Remove only our own stale marker, after the owned child has really exited.

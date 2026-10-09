@@ -1,3 +1,4 @@
+import {versionInformationHTML} from '../frontend/report-version-info.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,9 +22,9 @@ test('opening another version immediately refreshes scored and unscored headers 
  const configurable={configure:()=>({})};
  let renders=0;
  const context=vm.createContext({state,current:briefs[0],dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],
-  $,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
-  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
-  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},
+  $,versionInformationHTML,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
+  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
+  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
   api:async()=>state,syncPendingReport:()=>{},renderWordExports:()=>{},render:()=>renders++,renderTasks:()=>{},renderTaskBanner:()=>{},refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},delivery:{refreshReleaseState:async()=>{}}});
  // Run the real app entry point and renderers; only editor/DOM plumbing is stubbed.
  vm.runInContext([
@@ -57,8 +58,8 @@ test('polled version summaries load their body once and a later choice wins',asy
  const requests=[];let resolveBody;
  const context=vm.createContext({state,current:null,dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],pendingRun:null,
   $,parse:JSON.parse,esc:String,notice:()=>{},updateDownloads:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
-  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
-  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},
+  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
+  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
   api:route=>{requests.push(route);return new Promise(resolve=>{resolveBody=resolve})},encodeURIComponent});
  vm.runInContext(functionBefore('renderVersionSelect','showPendingReport')+'\n'+functionBefore('syncPendingReport','tryOpenPending')+'\n'+oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
  $('empty').hidden=false;
@@ -76,9 +77,10 @@ test('polled version summaries load their body once and a later choice wins',asy
  assert.equal(requests.length,1,'an unchanged hash reuses the loaded body');
  // A newer choice made while a body is loading must not be replaced by it.
  vm.runInContext("state.briefs[1]={...state.briefs[1],hash:'h3'};openBrief(state.briefs[1]);openBrief(state.briefs[0])",context);
- resolveBody({...summary,hash:'h3',markdown:'Late old'});
+ resolveBody({...summary,hash:'h3',markdown:'Late old',execution_provenance:{mode:'ai',configuration:{model:'STALE-WRITER'}}});
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(vm.runInContext('current.id',context),'new');
+ assert.doesNotMatch(versionInformationHTML(context.current,{esc:String}),/STALE-WRITER/);
 });
 
 test('a loading body never overrides a later pending report or the report being waited for',async()=>{
@@ -92,8 +94,8 @@ test('a loading body never overrides a later pending report or the report being 
   const configurable={configure:()=>({})};
   const context=vm.createContext({state:{briefs,sources:[],runs:[],jobs:[]},current:null,pendingRun:null,dirty:false,saving:false,followUpdates:true,editor:null,highlightQuotes:[],$,
    parse:s=>JSON.parse(s||'{}'),esc:String,notice:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},updateDownloads:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
-   Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
-   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},
+   Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
+   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
    api:route=>{requests.push(route);return new Promise(resolve=>resolvers.set(route,resolve))},encodeURIComponent});
   vm.runInContext([functionBefore('renderVersionSelect','showPendingReport'),oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>section(source,`function ${name}(`,'\n}','frontend/app.js')+'\n}')].join('\n'),context);
   return {context,requests,resolve:brief=>resolvers.get('brief?id='+brief.id)({...brief,markdown:'Body for '+brief.id})};
@@ -121,7 +123,7 @@ test('opening an older report or middle snapshot immediately rebuilds the versio
  const configurable={configure:()=>({})};
  const ctx=vm.createContext({state,current:null,dirty:false,saving:false,followUpdates:false,pendingRun:null,editor:null,highlightQuotes:[],$,parse:JSON.parse,esc:String,
   notice(){},updateDownloads(){},syncPendingReport(){},renderWordExports(){},renderReportStatus(){},renderAssistantSummary(){},
-  Editor:class{constructor(config){configs.push(config)}destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
+  Editor:class{constructor(config){configs.push(config)}destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
   editorDocument:x=>x,toEditor:x=>x,changed(){},updateFormattingTools(){},assessment(){},citations(){},renderBriefLength(){},setReportView(){}});
  ctx.reportBrowsing=createReportBrowsing({api:()=>{throw Error('must not wait for a poll')},getState:()=>state,getCurrent:()=>ctx.current});
  vm.runInContext(functionBefore('renderVersionSelect','showPendingReport')+'\n'+oneLine('openBrief'),ctx);

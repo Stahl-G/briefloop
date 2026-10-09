@@ -42,7 +42,7 @@ ASSETS = SRC / 'briefloop' / 'template_assets'
 # ------------------------------------------------------------------ themes
 
 THEMES = (
-    {'code': 't1', 'label': '品牌绿', 'primary': '006838', 'heading_east': '黑体', 'body_east': '宋体', 'body_size': 10.5},
+    {'code': 't1', 'label': '品牌黛蓝', 'primary': '2448B8', 'heading_east': '黑体', 'body_east': '宋体', 'body_size': 10.5},
     {'code': 't2', 'label': '极简蓝', 'primary': '2563EB', 'heading_east': 'PingFang SC', 'body_east': 'PingFang SC', 'body_size': 11},
     {'code': 't3', 'label': '珊瑚红', 'primary': 'C62828', 'heading_east': '微软雅黑', 'body_east': '微软雅黑', 'body_size': 9.5},
     {'code': 't4', 'label': '石墨黑', 'primary': '1E2320', 'heading_east': '黑体', 'body_east': '宋体', 'body_size': 12},
