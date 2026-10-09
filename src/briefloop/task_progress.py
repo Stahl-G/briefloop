@@ -25,19 +25,32 @@ def summary(store, job_id):
         run_id = store.one('briefs', payload['version_id'])['run_id']
     run = store.one('runs', run_id) if run_id else None
     req = json.loads(run['requirements']) if run else {}
-    children = store.rows("SELECT * FROM jobs WHERE json_extract(payload,'$.parent_job_id')=? ORDER BY rowid", (job_id,))
+    children = store.rows("SELECT * FROM jobs WHERE json_extract(payload,'$.parent_job_id')=?"
+                          + (" OR json_extract(payload,'$.inline_owner_job_id')=?" if job['kind']=='learn' else "")
+                          + " ORDER BY rowid", (job_id,job_id) if job['kind']=='learn' else (job_id,))
     related = [job] + children
     ids = [j['id'] for j in related]
     events = store.rows('SELECT * FROM events WHERE job_id IN (' + ','.join('?' for _ in ids) + ') ORDER BY seq DESC LIMIT 100', ids)[::-1]
-    progress_event = next((e for e in reversed(events) if e['kind'] == 'runtime_progress'), None)
-    p = json.loads(progress_event['data']) if progress_event else {}
     running = job['status'] in ACTIVE
     child = next((j for j in reversed(children) if j['status'] in ACTIVE), None) if running else None
+    learning = None
+    if job['kind']=='learn':
+        phase_events=store.rows("SELECT * FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(job_id,))
+        learning=phase_events[0] if phase_events else None
+    # Inline learning trials execute under their own jobs. A finished proposer
+    # or previous trial must not remain the current activity of the owner.
+    progress_event = next((e for e in reversed(events) if e['kind']=='runtime_progress'
+                           and (job['kind']!='learn' or (e['job_id']==(child or job)['id']
+                                and (child or not learning or e['seq']>learning['seq'])))),None)
+    p = json.loads(progress_event['data']) if progress_event else {}
     stage = public_text(p.get('stage')) or ('等待开始' if job['status'] == 'queued' else task_label(job['kind'], '处理任务'))
     if running and req.get('completion_mode') in ('fast','fast_web') and job['kind']=='generate':
         stage='直接阅读材料并写作'
+    if running and learning and not progress_event:
+        stage={'maintainer':'正在整理反馈经验','proposer':'正在提出技能改进','validation':'正在试写并比较候选'}.get(json.loads(learning['data']).get('phase'),'正在整理和验证反馈')
     if child:
-        stage = task_label(child['kind'], '子任务') + ('等待开始' if child['status'] == 'queued' else '进行中')
+        child_stage=task_label(child['kind'], '子任务') + ('等待开始' if child['status']=='queued' else '进行中')
+        stage=('验证候选 · '+(public_text(p.get('stage')) or child_stage)) if job['kind']=='learn' else child_stage
     if not running:
         stage = {'complete': '任务已结束', 'failed': '任务未完成', 'cancelled': '任务已停止', 'interrupted': '任务已中断'}.get(job['status'], '任务状态待确认')
     # Review/export cards point at their actual input, not an unrelated newer edit.
@@ -138,6 +151,8 @@ def summary(store, job_id):
     stages = [{'id': s.get('id'), 'label': public_text(s.get('label'), 70), 'status': s.get('status')} for s in stages]
     if revision_phase:
         stages = [{'id': 'revision', 'label': '修订与复核', 'status': 'active'}]
+    if learning and not progress_event:
+        stages = [{'id':'learning','label':stage,'status':'active'}]
     if child:
         stages = [{'id': child['kind'], 'label': task_label(child['kind'], '子任务'), 'status': 'active'}]
     if not running:
@@ -145,9 +160,11 @@ def summary(store, job_id):
             if s['status'] == 'active': s['status'] = 'paused' if job['status'] != 'complete' else 'recorded'
     for s in stages:
         if s['id'] == 'research' and not brief and (not opened or any(r['status'] == 'active' for r in opened)) and s['status'] == 'done': s['status'] = 'active' if running else 'paused'
-    started_event = next((e for e in reversed(events) if e['kind'] == 'runtime_started'), None)
+    started_event = next((e for e in reversed(events) if e['kind']=='runtime_started'
+                          and (job['kind']!='learn' or (e['job_id']==(child or job)['id']
+                               and (child or not learning or e['seq']>learning['seq'])))),None)
     session_id = json.loads(started_event['data']).get('session_id') if started_event and running else None
-    activity_times = [x for x in [p.get('last_activity'), progress_event['created'] if progress_event else None] + [r.get('updated') or r.get('created') for r in requests] if x]
+    activity_times = [x for x in [p.get('last_activity'), progress_event['created'] if progress_event else None, learning['created'] if learning else None] + [r.get('updated') or r.get('created') for r in requests] if x]
     starts=store.rows("SELECT created FROM events WHERE job_id=? AND kind='job_started' ORDER BY seq DESC LIMIT 1",(job_id,))
     own_start=starts[0]['created'] if starts else None
     if req.get('completion_mode')=='draft_first' and job['kind']=='generate':
