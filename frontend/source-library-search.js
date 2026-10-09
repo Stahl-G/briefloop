@@ -6,7 +6,7 @@ export function createSourceLibrarySearch({api,onChange,delay=250}){
  async function load(cursor,version){
   if(version!==generation)return;
   state={...state,loading:true,error:''};notify();
-  const params=new URLSearchParams({q:input.query,type:input.type||'',channel:input.channel||'',status:input.status||''});
+  const params=new URLSearchParams({q:input.query,type:input.type||'',channel:input.channel||'',status:input.status||'',scope:input.scope||'all',order:input.order||'oldest',run_id:input.runId||''});
   if(cursor)params.set('cursor',cursor);
   try{
    const result=await api('source-search?'+params);

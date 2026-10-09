@@ -5,6 +5,7 @@ import {uploadSource,getUploadLimits} from './api.js';
 import {preflightSources,sourceStatusLabel} from './uploads.js';
 import {copyText} from './clipboard.js';
 import {createSourceLibrarySearch} from './source-library-search.js';
+import {createSourceLibraryControls} from './source-library-controls.js';
 import {SEARCH_LABELS} from './search-settings.js';
 const parse=s=>JSON.parse(s||'{}');
 export function sourceState(s){return s.status!=='ready'?s.status:s.needs_visual?'visual':'ready'}
@@ -27,33 +28,38 @@ export function sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBr
  function sourceUsage(){const map=new Map();for(const run of(getState().runs||[])){const ids=runSourceIds(run);const brief=(getState().briefs||[]).find(b=>b.run_id===run.id);const title=brief?(parse(brief.detail).title||'简报'):'报告';for(const id of ids){if(!map.has(id))map.set(id,[]);map.get(id).push({run_id:run.id,title})}}return map}
  function usageHTML(id,usage){const count=getState().source_report_counts?.[id];return `<div data-source-report-usage="${esc(id)}"><p class="help">${count?`${count} 份报告，正在读取关联报告…`:'正在核对关联报告…'}</p></div>`}
  function wireUsage(pane){if(!pane)return;pane.querySelectorAll('[data-open-report]').forEach(b=>b.onclick=()=>{const brief=(getState().briefs||[]).find(x=>x.run_id===b.dataset.openReport);if(brief&&openBrief(brief,{follow:false})){closeSourceDrawer();page('report')}})}
+ const controls=createSourceLibraryControls({$,api,action,notice,getState,render:()=>{renderSourcesPage.sig=null;renderSourcesPage()}});
  const sourceLibrarySearch=createSourceLibrarySearch({api,onChange:()=>{renderSourcesPage.sig=null;renderSourcesPage()}});
  const sourceSearchReasons={failed:'获取失败',visual_partial:'仅检索提取文字，图片未检索',empty_text:'没有可读正文',too_large:'正文超过2 MiB，未检索',changed:'文件已被改动，未检索',unreadable:'正文无法读取',metadata_unreadable:'读取状态无法确认，未检索'};
  function renderSourcesPage(){
   const box=$('sources-page-list');if(!box||!getState())return;
+  controls.sync();
   const all=getState().sources||[],usage=sourceUsage();
   const q=($('sources-search')?.value||'').trim();
   const type=$('sources-type-filter')?.value||'';
   const channel=$('sources-channel-filter')?.value||'';
   const status=renderSourcesPage.status||'';
   const order=$('sources-sort')?.value||'newest';
-  sourceLibrarySearch.update({query:q,type,channel,status,workspace:getState().workspace_id,
-   sources:all.map(s=>[s.id,s.hash,s.status,s.needs_visual,s.name,s.url,s.discovery_providers])});
+  sourceLibrarySearch.update({query:q,type,channel,status,scope:controls.scope(),runId:controls.runId,order,workspace:getState().workspace_id,
+   sources:all.map(s=>[s.id,s.hash,s.status,s.needs_visual,s.name,s.url,s.discovery_providers,s.archived_at])});
   const search=sourceLibrarySearch.state,matches=new Map(search.items.map(item=>[item.source_id,item]));
-  const failed=all.filter(s=>sourceState(s)==='failed');
+  const failed=all.filter(s=>controls.includes(s)&&sourceState(s)==='failed');
   const rows=sortLibrarySources(all.filter(s=>{
+   if(!controls.includes(s))return false;
    if(type&&(type==='web'?!sourceIsWeb(s):sourceIsWeb(s)))return false;
    if(channel&&(channel==='unrecorded'?(s.discovery_providers||[]).length:!(s.discovery_providers||[]).includes(channel)))return false;
    if(status&&sourceState(s)!==status)return false;
    if(q&&!matches.has(s.id))return false;
    return true;
   }),order);
+  const visible=controls.windowRows(rows,JSON.stringify([q,type,status,channel,order,controls.scope(),controls.runId,getState().workspace_id]));
   if($('sources-page-count'))$('sources-page-count').textContent=q?
    `已检查 ${search.scanned}/${search.scanned||search.exhausted?search.total:'…'} 个候选，找到 ${search.items.length} 个来源`+(search.unsearchedCount?` · ${search.unsearchedCount} 份正文未完整检索`:'')+(search.exhausted&&!search.unsearchedCount?' · 搜索完成':''):
-   `共 ${all.length} 个来源`+(failed.length?` · ${failed.length} 个获取失败`:'');
+   `已显示 ${visible.length} / ${rows.length} 个来源`+(failed.length?` · ${failed.length} 个获取失败`:'');
   const retry=$('sources-retry-all');if(retry){retry.hidden=!failed.length;retry.disabled=!failed.length}
-  const sig=JSON.stringify([q,type,status,channel,order,search,rows.map(s=>{const u=usage.get(s.id)||[];return [s.id,s.status,s.needs_visual,s.name,s.url,s.created,getState().source_report_counts?.[s.id]??u.length,s.discovery_providers]})]);if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
-  box.innerHTML=rows.length?rows.map(s=>{const host=sourceHost(s),web=sourceIsWeb(s),u=usage.get(s.id)||[],st=sourceState(s);const when=day(s.created);return `<div class="sources-row" data-src-row="${esc(s.id)}"><div class="src-name"><span class="src-title">${esc(sourceTitle(s))}</span><small>${esc(host||'本地文件')} · ${esc(when)} 入库${(s.discovery_providers||[]).length?' · 发现：'+esc(s.discovery_providers.map(p=>SEARCH_LABELS[p]||p).join('、')):''}</small></div><div class="src-type">${web?'网站':'文件'}</div><div class="src-status">${sourceStatusChip(st)}</div><div class="src-usage">${(getState().source_report_counts?.[s.id]??u.length)?esc((getState().source_report_counts?.[s.id]??u.length)+' 份报告'):'—'}</div><div class="src-actions"><div class="menu-wrap"><button type="button" class="ghost" data-src-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多">⋯</button><div class="popover" role="menu" hidden>${['failed','cancelled','interrupted','visual'].includes(st)?'<button type="button" role="menuitem" data-sources-retry="'+esc(s.id)+'">重新读取</button>':''}${web?'<button type="button" role="menuitem" data-sources-copy="'+esc(s.url||'')+'">复制链接</button><a role="menuitem" href="'+esc(s.url)+'" target="_blank" rel="noreferrer">打开原文</a>':''}</div></div></div></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
+  const sig=JSON.stringify([q,type,status,channel,order,controls.scope(),controls.runId,controls.pageLimit,controls.selectionKey,search,rows.map(s=>{const u=usage.get(s.id)||[];return [s.id,s.status,s.needs_visual,s.name,s.url,s.created,s.archived_at,getState().source_report_counts?.[s.id]??u.length,s.discovery_providers]})]);if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
+  box.innerHTML=visible.length?visible.map(s=>{const host=sourceHost(s),web=sourceIsWeb(s),u=usage.get(s.id)||[],st=sourceState(s);const when=day(s.created);return `<div class="sources-row" data-src-row="${esc(s.id)}"><div class="src-name"><div class="source-library-name"><label class="source-library-selection">${controls.selectBox(s)}</label><span class="src-title">${esc(sourceTitle(s))}</span></div><small>${esc(host||'本地文件')} · ${esc(when)} 入库${s.archived_at?' · 已归档':''}${(s.discovery_providers||[]).length?' · 发现：'+esc(s.discovery_providers.map(p=>SEARCH_LABELS[p]||p).join('、')):''}</small></div><div class="src-type">${web?'网站':'文件'}</div><div class="src-status">${sourceStatusChip(st)}</div><div class="src-usage">${(getState().source_report_counts?.[s.id]??u.length)?esc((getState().source_report_counts?.[s.id]??u.length)+' 份报告'):'—'}</div><div class="src-actions"><div class="menu-wrap"><button type="button" class="ghost" data-src-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-source-archive="${esc(s.id)}" data-archived="${!s.archived_at}">${s.archived_at?'恢复到日常':'归档来源'}</button>${['failed','cancelled','interrupted','visual'].includes(st)?'<button type="button" role="menuitem" data-sources-retry="'+esc(s.id)+'">重新读取</button>':''}${web?'<button type="button" role="menuitem" data-sources-copy="'+esc(s.url||'')+'">复制链接</button><a role="menuitem" href="'+esc(s.url)+'" target="_blank" rel="noreferrer">打开原文</a>':''}</div></div></div></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
+  if(controls.loadingRun)box.innerHTML='<p class="help">正在读取这份报告的来源…</p>';
   if(q){
    if(!rows.length)box.innerHTML=`<p class="help">${search.loading?'正在检索本地材料…':search.error?'搜索未完成。':search.exhausted?(search.unsearchedCount?'已检索正文未找到匹配，仍有正文未能读取。':'没有匹配的来源。'):'本页未命中，仍有材料未检索。'}</p>`;
    box.querySelectorAll('[data-src-row]').forEach(row=>{const match=matches.get(row.dataset.srcRow),name=row.querySelector('.src-name');for(const hit of match?.hits||[]){const context=document.createElement('p');context.className='source-search-context';context.textContent=`第 ${hit.start_line} 行 · ${hit.context}`;name.append(context)}});
@@ -63,7 +69,8 @@ export function sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBr
    else if(search.next||search.loading){const more=document.createElement('button');more.type='button';more.className='outline';more.textContent=search.loading?'正在检索…':'继续搜索';more.disabled=search.loading;more.onclick=()=>sourceLibrarySearch.more();footer.append(more)}
    box.append(footer);
   }
-  box.querySelectorAll('[data-src-row]').forEach(row=>row.onclick=e=>{if(e.target.closest('.menu-wrap'))return;openSourceDrawer(row.dataset.srcRow,usage,matches.get(row.dataset.srcRow)).catch(err=>notice(err.message,true))});
+  box.querySelectorAll('[data-src-row]').forEach(row=>row.onclick=e=>{if(e.target.closest('.menu-wrap,.source-library-selection'))return;openSourceDrawer(row.dataset.srcRow,usage,matches.get(row.dataset.srcRow)).catch(err=>notice(err.message,true))});
+  controls.wire(box,visible,rows);
   box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=e=>{e.stopPropagation();action(async()=>{const src=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(sourceStatusLabel(src),['failed','cancelled','interrupted'].includes(src.status))})});
   box.querySelectorAll('[data-sources-copy]').forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await copyText(b.dataset.sourcesCopy);notice('链接已复制')}catch{notice('复制失败',true)}});
   box.querySelectorAll('.menu-wrap').forEach(wrap=>{const t=wrap.querySelector('[data-src-menu]'),pop=wrap.querySelector('.popover');if(!t||!pop)return;t.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(x=>x.hidden=true);pop.hidden=!open;t.setAttribute('aria-expanded',String(open))}});
@@ -133,6 +140,7 @@ export function sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBr
  }
  function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d){d.hidden=true;d.dataset.request=String((Number(d.dataset.request)||0)+1);showSourceMedia({attachment:null},drawerSourceMediaView())}if(b)b.hidden=true}
  function init(){
+  controls.init();
   if($('sources-sort'))$('sources-sort').onchange=()=>{renderSourcesPage.sig=null;renderSourcesPage()};
   $('sources-channel-filter').onchange=()=>{renderSourcesPage.sig=null;renderSourcesPage()};
   if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
@@ -140,7 +148,7 @@ export function sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBr
   if($('sources-search'))$('sources-search').oninput=()=>{renderSourcesPage.sig='';renderSourcesPage()};
   if($('sources-type-filter'))$('sources-type-filter').onchange=()=>{renderSourcesPage.sig='';renderSourcesPage()};
   document.querySelectorAll('[data-sources-status]').forEach(b=>b.onclick=()=>{renderSourcesPage.status=b.dataset.sourcesStatus;document.querySelectorAll('[data-sources-status]').forEach(x=>markTab(x,x===b));renderSourcesPage.sig='';renderSourcesPage()});
-  if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(getState().sources||[]).filter(s=>['failed','cancelled','interrupted'].includes(s.status));if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个失败来源`)});
+  if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(getState().sources||[]).filter(s=>controls.includes(s)&&['failed','cancelled','interrupted'].includes(s.status));if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个失败来源`)});
   if($('sources-add-file'))$('sources-add-file').onclick=()=>$('sources-upload').click();
   if($('sources-add-url-open'))$('sources-add-url-open').onclick=()=>{const row=$('sources-add-url-row');if(row){row.hidden=false;const u=$('sources-url');if(u)u.focus()}};
   if($('sources-add-url-cancel'))$('sources-add-url-cancel').onclick=()=>{const row=$('sources-add-url-row');if(row)row.hidden=true};
@@ -148,5 +156,5 @@ export function sourcesPageUI({api,action,notice,page,openBrief,markTab,reportBr
   if($('source-drawer-backdrop'))$('source-drawer-backdrop').onclick=()=>closeSourceDrawer();
   document.querySelectorAll('[data-source-tab]').forEach(b=>b.onclick=()=>setSourceDrawerTab(b.dataset.sourceTab));
  }
- return {init,sourceUsage,renderSourcesPage,setSourceDrawerTab,openSourceDrawer,closeSourceDrawer};
+ return {init,activate:controls.activate,sourceUsage,renderSourcesPage,setSourceDrawerTab,openSourceDrawer,closeSourceDrawer};
 }

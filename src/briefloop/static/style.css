@@ -1788,3 +1788,10 @@ body{font-variant-numeric:tabular-nums}
  #chat-form .composer-options{flex-basis:100%}
  #chat-form .model-picker{max-width:100%}
 }
+
+/* Library organization preserves the source/evidence identity. */
+.sources-batch{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin-block:var(--space-3);font-size:var(--text-sm)}
+.source-library-name{display:flex;align-items:center;gap:var(--space-3);min-width:0}
+.source-library-selection{display:flex;flex:none;margin:0}
+.source-library-selection input{width:var(--space-4);height:var(--space-4);margin:0;accent-color:var(--color-primary)}
+#sources-report-filter{max-width:100%;text-overflow:ellipsis}
