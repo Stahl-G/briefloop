@@ -114,7 +114,10 @@ def call_search(query,parameters,*,key_file=None):
     form={'q':' '.join(terms),'kl':'wt-wt'}
     if parameters['time_range']:form['df']=_TIME_FILTERS[parameters['time_range']]
     text,raw=_post(form)
-    return {'results':_parse(text)},raw,None,None
+    # The HTML endpoint has no result-count parameter. Enforce the requested
+    # page size before shared-budget admission so one parallel query cannot
+    # consume the slots intended for all the other questions. Keep raw intact.
+    return {'results':_parse(text)[:parameters['max_results']]},raw,None,None
 
 
 def rows(parsed):

@@ -74,27 +74,29 @@ for(const [operation,label] of [['check','更新检查失败（当前安装不�
 console.log('PASS: checking errors do not imply installation failure or repeat an old release target');
 
 // Version-keyed asynchronous notes must never replace the current changelog or a later target.
+const [major,minor,patch]=version.split('.').map(value=>Number.parseInt(value,10));
+const [olderRelease,newerRelease,failedRelease]=[1,2,3].map(offset=>`${major}.${minor}.${patch+offset}`);
 let emit,resolveOlder;
 const notesPage=fixture({updateStatus:async()=>({currentAppVersion:version,state:'current',releaseVersion:version}),onUpdateStatus:fn=>{emit=fn}},
- async selected=>selected==='0.30.0'?new Promise(resolve=>{resolveOlder=resolve}):({version:selected,state:'loaded',notes:'<script>new release</script>'}));
+ async selected=>selected===olderRelease?new Promise(resolve=>{resolveOlder=resolve}):({version:selected,state:'loaded',notes:'<script>new release</script>'}));
 await notesPage.ui.refreshAppUpdates();
 assert.equal(notesPage.el('app-update-notes-box').hidden,true);
-emit({currentAppVersion:version,state:'available',releaseVersion:'0.30.0',source:'github'});
-emit({currentAppVersion:version,state:'available',releaseVersion:'0.31.0',source:'github'});
+emit({currentAppVersion:version,state:'available',releaseVersion:olderRelease,source:'github'});
+emit({currentAppVersion:version,state:'available',releaseVersion:newerRelease,source:'github'});
 await new Promise(resolve=>setImmediate(resolve));
-resolveOlder({version:'0.30.0',state:'loaded',notes:'Older release'});
+resolveOlder({version:olderRelease,state:'loaded',notes:'Older release'});
 await new Promise(resolve=>setImmediate(resolve));
-assert.match(notesPage.el('app-update-notes-title').textContent,/0.31.0/);
+assert.ok(notesPage.el('app-update-notes-title').textContent.includes(newerRelease));
 assert.equal(notesPage.el('app-update-notes').textContent,'<script>new release</script>');
 assert.equal(notesPage.el('app-update-current-notes').textContent,'Bundled current changes');
-emit({currentAppVersion:version,state:'error',releaseVersion:'0.31.0',source:'github',error:{operation:'check',message:'Offline'},retryable:true});
+emit({currentAppVersion:version,state:'error',releaseVersion:newerRelease,source:'github',error:{operation:'check',message:'Offline'},retryable:true});
 assert.equal(notesPage.el('app-update-notes-box').hidden,true);
 assert.equal(notesPage.el('app-update-latest-version').textContent,'可用版本检查未完成');
 assert.equal(notesPage.el('app-update-current-notes').textContent,'Bundled current changes');
 assert.equal(notesPage.el('app-update-error').textContent,'Offline');
 console.log('PASS: bundled current changelog, exact target text, delayed target race and offline check distinction');
 
-const failedNotes=fixture({updateStatus:async()=>({currentAppVersion:version,state:'available',releaseVersion:'0.32.0',source:'github'})},async()=>{throw Error('Offline')});
+const failedNotes=fixture({updateStatus:async()=>({currentAppVersion:version,state:'available',releaseVersion:failedRelease,source:'github'})},async()=>{throw Error('Offline')});
 await failedNotes.ui.refreshAppUpdates();await new Promise(resolve=>setImmediate(resolve));
 assert.match(failedNotes.el('app-update-notes').textContent,/无法获取/);
 assert.equal(failedNotes.el('app-update-download').hidden,false);

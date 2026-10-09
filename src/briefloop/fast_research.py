@@ -114,9 +114,16 @@ def collect(worker, job, run, folder):
             raise ValueError('快速查询计划必须包含 1 至 '+str(budget['search_requests'])+' 个查询。')
         for row in rows:
             if (not isinstance(row,dict) or set(row)-{'provider','query','reason'} or row.get('provider') not in available
-                    or not isinstance(row.get('query'),str) or not 1<=len(row['query'].strip())<=70
+                    or not isinstance(row.get('query'),str) or not row['query'].strip()
                     or not isinstance(row.get('reason',''),str) or len(row.get('reason',''))>500):
-                raise ValueError('快速查询必须使用已配置渠道、70字符以内公开关键词和简短原因。')
+                raise ValueError('快速查询必须使用已配置渠道、非空公开关键词和简短原因。')
+            # Provider-specific restrictions belong to the actual adapter;
+            # Zhipu's 70-character limit must not reject other providers.
+            websearch.provider_module(row['provider']).validate_search(row['query'], {
+                'topic':'general','time_range':None,'start_date':None,'end_date':None,
+                'include_domains':[],'exclude_domains':[],
+                'max_results':min(5,budget['candidate_urls']),'search_depth':'basic',
+                'search_engine':policy.get('zhipu_engine','search_std')})
         keys=[(r['provider'],r['query'].strip()) for r in rows]
         if len(set(keys))!=len(keys):raise ValueError('查询计划包含重复搜索，请恢复任务重新生成计划。')
         return {'queries':rows}
@@ -126,7 +133,9 @@ def collect(worker, job, run, folder):
     plan=_decision(worker,job,directory/'query-plan',
         '为报告规划一轮精简公开搜索。只返回 JSON {"queries":[{"provider":"渠道ID","query":"公开关键词","reason":"信息需求"}]}。'
         '不调用工具，不写文章，不把私人资料或秘密复制为搜索词。优先官方原文；查询互补并覆盖必答问题，保留时间范围。'
-        f'最多 {budget["search_requests"]} 次，每个查询最多70字符；可以少于上限，不凑次数。允许且已配置的渠道：'+dump(available)
+        f'最多 {budget["search_requests"]} 次，使用聚焦关键词；可以少于上限，不凑次数。'
+        +('智谱 zhipu 的查询限制为70字符，其他渠道不沿用该限制。' if 'zhipu' in available else '')
+        +'允许且已配置的渠道：'+dump(available)
         +'。用户要求：'+dump(planning),queries)
     def search(item):
         index,row=item

@@ -1,5 +1,7 @@
+import {createResearchGoalProgress} from './research-goal-progress.js';
 import {esc} from './dom.js';
 
+const goalProgress=createResearchGoalProgress({esc});
 const activeStates=new Set(['queued','running']);
 const warnings=new Set(['warn','warning','gap','paused','skipped','unknown','pending_init']);
 const errors=new Set(['error','failed','errored','conflict','contradiction']);
@@ -35,7 +37,7 @@ export function processSteps(job,p={}){
 }
 export function processDisclosureKey(job,p={}){
  const attention=processSteps(job,p).filter(step=>['warn','error'].includes(step.status)).map(step=>[step.label,step.detail]);
- return JSON.stringify([job.id,activeStates.has(job.status)?'active':job.status,attention]);
+ return JSON.stringify([job.id,activeStates.has(job.status)?'active':job.status,attention,(p.goal_progress?.questions||[]).map(q=>[q.id,q.recorded,q.status])]);
 }
 export function researchProcessHTML(job,p={}, {expanded,now=Date.now()}={}){
  const active=activeStates.has(job.status),steps=processSteps(job,p),attention=steps.some(step=>['warn','error'].includes(step.status));
@@ -44,5 +46,5 @@ export function researchProcessHTML(job,p={}, {expanded,now=Date.now()}={}){
  // Evidence gaps remain visible in the summary; they do not displace a saved report.
  const opened=typeof expanded==='boolean'?expanded:Boolean(p.needs_attention)||['failed','interrupted'].includes(job.status);
  const visibleSteps=attention?[...steps].sort((a,b)=>Number(['warn','error'].includes(b.status))-Number(['warn','error'].includes(a.status))):steps;
- return `<details class="research-process task-progress-detail" data-testid="research-process" data-process-state="${esc(processDisclosureKey(job,p))}" data-task-detail="${esc(job.id)}" ${opened?'open':''}><summary><span class="ai-mark" aria-hidden="true"></span><span class="research-process-title">${esc(title)} · ${steps.length} 步 · ${esc(timing)}</span>${attention?'<span class="research-process-attention">需要关注</span>':''}</summary><ol class="research-process-steps" aria-label="可核对的执行动作">${visibleSteps.map(step=>`<li class="process-step is-${step.status}" ${['warn','error'].includes(step.status)?'data-process-attention="true"':''}><span class="process-step-dot" aria-hidden="true"></span><span class="process-step-description"><span class="sr-only">${labels[step.status]}：</span>${esc(step.label)}${step.detail?`<span class="process-step-detail">${esc(step.detail)}</span>`:''}</span><span class="process-step-time">${esc(stepTime(step,now))}</span></li>`).join('')||'<li class="process-step-empty">尚无可核对的执行记录</li>'}</ol></details>`;
+ return `<details class="research-process task-progress-detail" data-testid="research-process" data-process-state="${esc(processDisclosureKey(job,p))}" data-task-detail="${esc(job.id)}" ${opened?'open':''}><summary><span class="ai-mark" aria-hidden="true"></span><span class="research-process-title">${esc(title)} · ${steps.length} 步 · ${esc(timing)}${p.goal_progress?' · '+esc(goalProgress.summary(p.goal_progress)):''}</span>${attention?'<span class="research-process-attention">需要关注</span>':''}</summary>${goalProgress.html(p.goal_progress)}<ol class="research-process-steps" aria-label="可核对的执行动作">${visibleSteps.map(step=>`<li class="process-step is-${step.status}" ${['warn','error'].includes(step.status)?'data-process-attention="true"':''}><span class="process-step-dot" aria-hidden="true"></span><span class="process-step-description"><span class="sr-only">${labels[step.status]}：</span>${esc(step.label)}${step.detail?`<span class="process-step-detail">${esc(step.detail)}</span>`:''}</span><span class="process-step-time">${esc(stepTime(step,now))}</span></li>`).join('')||'<li class="process-step-empty">尚无可核对的执行记录</li>'}</ol></details>`;
 }

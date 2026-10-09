@@ -160,9 +160,17 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
     # Do not change fingerprints of historical plans without this field.
     if 'research_strategy' in requirements:
         snapshot['research_strategy'] = requirements['research_strategy']
-    fingerprint = _fingerprint(snapshot)
     with store.tx() as connection:
         existing = _read_plan(connection, run_id)
+        # Fast web has its own single-pass closeout and does not consume the
+        # full-flow strategy choice retained by the form. Never require an
+        # agent handoff that this execution path cannot produce.
+        if (requirements.get('research_strategy') == 'goal_driven'
+                and requirements.get('completion_mode') not in ('fast', 'fast_web')
+                and (not existing or existing.get('goal_contract'))):
+            from .research_goals import contract
+            snapshot['goal_contract'] = contract(requirements)
+        fingerprint = _fingerprint(snapshot)
         if existing:
             if existing.get('plan_fingerprint') == fingerprint:
                 return existing
@@ -564,6 +572,8 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         handoff = json.loads(handoff_path.read_text(encoding='utf-8-sig')) if handoff_path.exists() else {}
         if not isinstance(handoff, dict):
             raise ValueError('handoff.json 必须为对象')
+        from .research_goals import validate as validate_goal_coverage
+        question_coverage = validate_goal_coverage(store, run_id, handoff.get('question_coverage'), plan=plan, require_complete=True)
         closeout = closeout_snapshot(handoff, summary)
         if gap_updates is None:
             gap_updates = handoff.get('gap_updates', [])
@@ -577,6 +587,9 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         info['outcome'] = {'summary': summary, 'closeout': closeout, 'gap_ids': [record['id'] for record in records], 'gap_updates': accepted_updates, 'closed_at': now(),
                            **({'continue_research': True} if continue_research else {}),
                            **({'early_stop_reason': early_stop_reason.strip()[:1000]} if (early_stop_reason or '').strip() else {})}
+        if question_coverage is not None:
+            info['outcome']['question_coverage'] = question_coverage
+            info['outcome']['closeout']['question_coverage'] = question_coverage
         if scout_record.get('declared'):
             info['outcome']['scout_tasks'] = list(scout_record['tasks'].values())
         plan['current_round_id'] = None
@@ -842,4 +855,6 @@ def search_slots_left(store, connection, run_id, round_id):
 def status(store, run_id):
     from .research_handoff import gap_view
     from .scout_coverage import view as scout_view
-    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': frozen(store, run_id), **gap_view(store, run_id), **scout_view(store, run_id)}
+    from .research_goals import view as goal_view
+    plan = frozen(store, run_id)
+    return {'protocol': store.meta(_protocol_key(run_id)), 'plan': plan, 'goal_progress': goal_view(plan), **gap_view(store, run_id), **scout_view(store, run_id)}

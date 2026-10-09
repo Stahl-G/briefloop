@@ -41,7 +41,7 @@ def workspace_action(store, request):
     if action=='capabilities':
         from .source_updates import SourceTimes,ChangeInput
         from .evidence import EvidenceInput,ClaimInput
-        from .reconciliation import OPEN_QUESTIONS_GUIDE
+        from .reconciliation import OPEN_QUESTIONS_GUIDE, STATUSES, RELATIONS
         from .models import Citation
         return {'actions':list(WORKSPACE_ACTIONS),'schemas':{
             'source_snapshot.timing':SourceTimes.model_json_schema(),
@@ -51,6 +51,8 @@ def workspace_action(store, request):
             'revise_document.citations':{'type':'array','items':Citation.model_json_schema(),
                 'description':'可选；完整替换引用说明列表，省略则保留；正文/图表必需的来源引用仍会自动补齐。source_id 必须为本报告已登记的事实来源；locator/excerpt 是引用描述，不代表已通过独立定位核验。'}},
             'reconciliation_save.open_questions':OPEN_QUESTIONS_GUIDE,
+            'reconciliation_save.status':{'type':'string','enum':list(STATUSES)},
+            'reconciliation_save.relations.relation':{'type':'string','enum':list(RELATIONS)},
             'export_word.template_id':'可选；就绪模板ID（内置或自备）。缺省沿用报告设置。同稿换版式：正文与版本不变，仅按所选模板重排生成 Word。',
             'authority':'当前执行此命令的运行时接口；不从其他源码目录推定已安装能力。'}
     if action=='source_impacts':

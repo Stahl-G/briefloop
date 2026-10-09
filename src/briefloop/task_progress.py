@@ -175,7 +175,20 @@ def summary(store, job_id):
         stage=public_text(p.get('stage')) or stage
     from .conflicts import for_run as run_conflicts
     conflicts = [{'text': public_text(item['data'].get('description'))} for item in run_conflicts(store, run_id) if item['status'] != 'resolved'] if run else []
-    return {'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
+    from .research_goals import view as goal_view
+    goal_progress = goal_view(plan)
+    if goal_progress:
+        names = {s['id']: s['name'] for s in sources}
+        source_hashes = {sid: store.one('sources', sid)['hash'] for sid in names}
+        goal_progress = {'questions': [{
+            'id': item['id'], 'question': public_text(item['question']),
+            'status': item['status'], 'recorded': item['recorded'],
+            'reason': public_text(item['reason']), 'remaining_question': public_text(item['remaining_question']),
+            'evidence': [{'source_id': ref['source_id'], 'source_name': names.get(ref['source_id'], '来源'),
+                'locator': public_text(ref['locator']), 'excerpt': public_text(ref['excerpt'], 1200),
+                'source_hash': ref['source_hash'], 'source_changed': source_hashes.get(ref['source_id']) != ref['source_hash']} for ref in item['evidence']]
+        } for item in goal_progress['questions']]}
+    return {'goal_progress': goal_progress, 'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
             'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,
             'tier': plan.get('preset_id') or req.get('research_tier'),'completion_mode':req.get('completion_mode','standard'),
