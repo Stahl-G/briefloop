@@ -123,8 +123,10 @@ def test_owned_group_eperm_requires_reap_and_successful_reprobe(monkeypatch):
 
 def test_app_server_write_and_close_are_bounded(tmp_path,monkeypatch):
     import briefloop.app_server as module
+    from briefloop.codex_home import CodexHome
     from briefloop import host_bins
     original=module.OwnedProcess
+    monkeypatch.setattr(module,'CodexHome',lambda:CodexHome(environ={'CODEX_HOME':str(tmp_path/'source')},state_root=tmp_path/'private'))
     program='import sys,json,time;r=json.loads(sys.stdin.readline());print(json.dumps({"id":r["id"],"result":{}}),flush=True);time.sleep(60)'
     monkeypatch.setattr(host_bins,'find',lambda name:sys.executable)
     monkeypatch.setattr(module,'OwnedProcess',lambda args,**kw:original([sys.executable,'-c',program],**kw))
