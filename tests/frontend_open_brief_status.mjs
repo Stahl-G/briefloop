@@ -24,7 +24,7 @@ test('opening another version immediately refreshes scored and unscored headers 
  const context=vm.createContext({state,current:briefs[0],dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],
   $,versionInformationHTML,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
-  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
+  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},reportFeedback:{render(){}},
   api:async()=>state,syncPendingReport:()=>{},renderWordExports:()=>{},render:()=>renders++,renderTasks:()=>{},renderTaskBanner:()=>{},refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},delivery:{refreshReleaseState:async()=>{}}});
  // Run the real app entry point and renderers; only editor/DOM plumbing is stubbed.
  vm.runInContext([
@@ -59,7 +59,7 @@ test('polled version summaries load their body once and a later choice wins',asy
  const context=vm.createContext({state,current:null,dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],pendingRun:null,
   $,parse:JSON.parse,esc:String,notice:()=>{},updateDownloads:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
-  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
+  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},reportFeedback:{render(){}},
   api:route=>{requests.push(route);return new Promise(resolve=>{resolveBody=resolve})},encodeURIComponent});
  vm.runInContext(functionBefore('renderVersionSelect','showPendingReport')+'\n'+functionBefore('syncPendingReport','tryOpenPending')+'\n'+oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
  $('empty').hidden=false;
@@ -95,7 +95,7 @@ test('a loading body never overrides a later pending report or the report being 
   const context=vm.createContext({state:{briefs,sources:[],runs:[],jobs:[]},current:null,pendingRun:null,dirty:false,saving:false,followUpdates:true,editor:null,highlightQuotes:[],$,
    parse:s=>JSON.parse(s||'{}'),esc:String,notice:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},updateDownloads:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
    Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},Markdown:{},MustFixHighlight:{},MarketDataColors:{},
-   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},
+   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},reportSources:{render(){}},reportMarket:{render(){}},reportFeedback:{render(){}},
    api:route=>{requests.push(route);return new Promise(resolve=>resolvers.set(route,resolve))},encodeURIComponent});
   vm.runInContext([functionBefore('renderVersionSelect','showPendingReport'),oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>section(source,`function ${name}(`,'\n}','frontend/app.js')+'\n}')].join('\n'),context);
   return {context,requests,resolve:brief=>resolvers.get('brief?id='+brief.id)({...brief,markdown:'Body for '+brief.id})};

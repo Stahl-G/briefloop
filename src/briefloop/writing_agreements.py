@@ -9,14 +9,25 @@ from .store import dump, now, uid
 KEY = 'writing_agreements'
 
 
+def report_version(store, version_id):
+    try:return store.one('briefs',version_id)
+    except ValueError as exc:raise ValueError('报告版本不存在，请重新选择报告') from exc
+
+
 def series_root(store, version_id):
-    run_id=store.one('briefs',version_id)['run_id'];seen=set()
+    brief=report_version(store,version_id)
+    if not brief:raise ValueError('报告版本不存在，请重新选择报告')
+    run_id=brief['run_id'];seen=set()
     while run_id not in seen:
         seen.add(run_id)
-        req=json.loads(store.one('runs',run_id)['requirements'])
+        run=store.one('runs',run_id)
+        if not run:raise ValueError('报告任务不存在，无法读取写作约定')
+        req=json.loads(run['requirements'])
         parent=req.get('previous_report_version_id')
         if not parent:return run_id
-        run_id=store.one('briefs',parent)['run_id']
+        brief=report_version(store,parent)
+        if not brief:raise ValueError('关联的往期报告不存在，请重新选择报告')
+        run_id=brief['run_id']
     raise ValueError('往期报告关联存在循环，无法确定约定范围')
 
 
@@ -71,16 +82,3 @@ def preferences(requirements):
     """Deterministic writer/evaluator contract, deduplicated without paraphrase."""
     return list(dict.fromkeys([*requirements.get('writing_preferences',[]),
                               *[x['text'] for x in requirements.get('writing_agreements',[])]]))
-
-
-def from_chat(store, request, *, session_id):
-    """Keep the actual user quote; sources/worker prompts cannot self-adopt rules."""
-    if not session_id:raise ValueError('请从报告页保存约定，或在当前对话明确提出要求')
-    if store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(session_id,)):
-        raise ValueError('后台报告角色不能将材料或自己的建议保存为用户约定')
-    rows=store.rows("SELECT text FROM chat_messages WHERE session_id=? AND role='user' ORDER BY rowid DESC LIMIT 1",(session_id,))
-    quote=request.get('user_quote')
-    if not isinstance(quote,str) or not quote.strip() or not rows or quote not in rows[0]['text']:
-        raise ValueError('需要本轮用户逐字提出的要求；模型推断或原材料不能作为采用依据')
-    if request['action']=='forget_writing':return revoke(store,request['id'])
-    return remember(store,request['version_id'],quote,scope=request.get('scope','series'))

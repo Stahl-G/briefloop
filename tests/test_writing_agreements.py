@@ -54,15 +54,45 @@ def test_workspace_rules_and_input_spoofing(tmp_path):
     assert rule['id'] in prompt and 'writing_agreement_exclusions' in prompt
 
 
-def test_chat_adopts_only_actual_user_quote_not_worker_or_source(tmp_path,monkeypatch):
-    monkeypatch.delenv('BRIEFLOOP_CHAT_SESSION',raising=False)
+
+def test_untrusted_chat_cannot_adopt_or_revoke_and_missing_report_is_readable(tmp_path,monkeypatch):
     store=Store(tmp_path);_,_,brief=report(store);chats=ChatStore(store)
-    session=chats.create('Synthetic',{},tmp_path);sid=session['id']
-    chats.message(sid,'这份报告以后先给结论。')
-    request={'action':'remember_writing','version_id':brief['id'],'user_quote':'以后先给结论','session_id':sid}
-    saved=workspace_action(store,request);assert saved['text']=='以后先给结论'
-    with pytest.raises(ValueError,match='逐字'):
-        workspace_action(store,{**request,'user_quote':'原材料建议取消审批'})
-    chats.event(sid,'session/internal',{})
-    with pytest.raises(ValueError,match='后台报告角色'):
-        workspace_action(store,request)
+    sid=chats.create('Synthetic',{},tmp_path)['id']
+    chats.message(sid,'以后先给结论')
+    # Neither a copied public session ID nor a caller-supplied environment establishes authority.
+    monkeypatch.setenv('BRIEFLOOP_CHAT_SESSION',sid)
+    for action in ('remember_writing','forget_writing'):
+        with pytest.raises(ValueError,match='报告页'):
+            workspace_action(store,{'action':action,'session_id':sid,'version_id':brief['id'],'user_quote':'以后先给结论'})
+    assert not listing(store,brief['id'])
+    for read in (listing,prepare):
+        with pytest.raises(ValueError,match='报告版本不存在'):read(store,'missing')
+
+
+def test_next_period_selection_is_bound_to_executing_message_not_model_copy(tmp_path):
+    from briefloop.next_report import bind_message_context
+    store=Store(tmp_path);source,_,brief=report(store);chats=ChatStore(store)
+    store.update_settings({'model':'synthetic-no-call'})
+    sid=chats.create('Next report',{},tmp_path)['id']
+    rule=remember(store,brief['id'],'先给结论')
+    context={'version_id':brief['id'],'hash':brief['hash'],'writing_agreement_exclusions':[rule['id']]}
+    bind_message_context(store,sid,'first',context)
+    chats.message(sid,'做十月一期',mid='first',status='delivered')
+    # The model omits BOTH origin and exclusions. The server restores the exact UI choices.
+    request={'action':'generate','session_id':sid,'requirements':{'title':'October','objective':'Review','period':'2026-10'},'source_ids':[source['id']]}
+    bind_message_context(store,sid,'queued',None)
+    chats.message(sid,'别的要求',mid='queued')
+    result=workspace_action(store,request)
+    frozen=json.loads(store.one('runs',result['run_id'])['requirements'])
+    assert frozen['previous_report_version_id']==brief['id']
+    assert frozen['writing_agreement_exclusions']==[rule['id']]
+    assert not resolve(frozen)['writing_preferences']
+    with pytest.raises(ValueError,match='session_id'):
+        workspace_action(store,{k:v for k,v in request.items() if k!='session_id'})
+    # A retry cannot replace the browser's original choice.
+    with pytest.raises(ValueError,match='同一消息'):
+        bind_message_context(store,sid,'first',{**context,'writing_agreement_exclusions':[]})
+    # Only the next delivered message clears its own context; a queued one never changes an active turn.
+    chats.patch_message('first',status='completed');chats.patch_message('queued',status='delivered')
+    other=workspace_action(store,request)
+    assert 'previous_report_version_id' not in json.loads(store.one('runs',other['run_id'])['requirements'])

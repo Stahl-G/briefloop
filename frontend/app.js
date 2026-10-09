@@ -111,7 +111,7 @@ const sessionBudget=sessionBudgetUI({$,api,action,notice,getState:()=>state});
 const reportBrowsing=createReportBrowsing({api,getState:()=>state,getCurrent:()=>current,openBrief,page,notice,reportStatus,reportDescription,reportIconMeta:b=>reportIconMeta(b),svgLineIcon,runSourceCount,openRelease:b=>action(()=>delivery.openReleaseDialog(b)),onUsageOpen:()=>closeSourceDrawer(),onContext:()=>{assessment();citations();renderBriefLength();renderReportStatus();renderAssistantSummary()}});
 const revisionQuestions=revisionQuestionsUI({api,action:(...args)=>action(...args)});
 const feedbackList=createFeedbackList({$,esc,getState:()=>state,openLearning:()=>page('learning'),startLearning:()=>$('learn-now').click()});
-const reportFeedback=reportFeedbackUI({$,api,esc,getCurrent:()=>current,savedVersion,openLearning:()=>page('learning'),refresh,notice});
+const reportFeedback=reportFeedbackUI({$,api,esc,getCurrent:()=>current,savedVersion,openLearning:()=>page('learning'),refresh,notice,scheduleLearning});
 const retryLearning=learningRetry({api,getPlan:()=>state?.learning_authorization?.plan,confirm:text=>confirm(text),describePlan:learningPlanText});
 const readerProfiles=readersUI({api,action:(...args)=>action(...args)});
 readerProfiles.bind();
@@ -1137,7 +1137,7 @@ async function sendChat(event){
   const reportOptions=compactReportInstruction();
   const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked,next_report:chat.nextReportContext||null};const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
-  await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();chat.nextReportContext=null;rememberDraft();renderAttachments();
+  await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();rememberDraft();renderAttachments();
   // The runtime used here is the chosen model; keep the pending-selection state in sync.
   // Per-turn choice does not overwrite the new-conversation default.
   state.settings={...state.settings,model_selection_required:false};

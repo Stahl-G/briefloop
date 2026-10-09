@@ -13,7 +13,7 @@ export function learningMessage(job){
  return '整理已结束，采用结果未记录。';
 }
 
-export function reportFeedbackUI({$,api,esc,getCurrent,savedVersion,openLearning,refresh,notice}){
+export function reportFeedbackUI({$,api,esc,getCurrent,savedVersion,openLearning,refresh,notice,scheduleLearning=()=>{}}){
  let sequence=0,busy=false;
  const result=$('agreement-result'),list=$('writing-agreements'),button=$('comment-submit');
  function status(text,error=false){result.textContent=text;result.hidden=!text;result.classList.toggle('error',error)}
@@ -31,26 +31,31 @@ export function reportFeedbackUI({$,api,esc,getCurrent,savedVersion,openLearning
     try{await api('writing-agreements/revoke',{id:node.dataset.revokeAgreement});status('已撤销，后续新任务不再沿用。');await render()}
     catch(e){status(e.message,true)}finally{busy=false;node.disabled=false}
    };
-   const message=[learningMessage(data.learning),data.pending_feedback?`${data.pending_feedback} 条改稿反馈已保存，尚未开始方法验证。`:''].filter(Boolean).join(' '),next=$('feedback-next-step');next.hidden=!message;
+   const message=[learningMessage(data.learning),data.pending_feedback?`${data.pending_feedback} 条反馈已保存，尚未开始方法验证。`:''].filter(Boolean).join(' '),next=$('feedback-next-step');next.hidden=!message;
    next.innerHTML=message?`<span>${esc(message)}</span> <button type="button" class="outline" data-feedback-open>查看依据与详情</button>`:'';
    next.querySelector('[data-feedback-open]')?.addEventListener('click',openLearning);
   }catch(e){if(seq===sequence)status('约定暂未读取：'+e.message,true)}
  }
- async function save(){
+ async function save(kind='agreement'){
   if(busy)return;
+  const feedback=kind==='feedback',activeButton=feedback?$('feedback-submit'):button;
   const input=$('assistant-input'),text=input.value.trim(),original=getCurrent()?.id,run=getCurrent()?.run_id,scope=$('agreement-scope').value;
-  if(!text){status('先在上方写明下期要沿用的要求。',true);input.focus();return}
-  busy=true;button.disabled=true;button.textContent='正在记住…';status('');
+  if(!text){status(feedback?'先在上方写明要留下的经验。':'先在上方写明下期要沿用的要求。',true);input.focus();return}
+  busy=true;activeButton.disabled=true;activeButton.textContent='正在保存…';status('');
   try{
    const version=await savedVersion();
    if(getCurrent()?.id!==version||getCurrent()?.run_id!==run)throw Error('报告已切换，请在目标报告中保存约定');
-   await api('writing-agreements',{version_id:version,text,scope});
+   if(feedback)await api('comment',{version_id:version,text,learning_intent:'feedback'});
+   else await api('writing-agreements',{version_id:version,text,scope});
    if(getCurrent()?.id!==version)return;
    if(input.value.trim()===text)input.value='';
-   status('已记住，下次生成时沿用。');list.open=true;await render();await refresh();
+   status(feedback?'经验已保存，尚未验证为写作方法。':'已记住，下次生成时沿用。');
+   if(!feedback)list.open=true;await render();await refresh();
+   if(feedback)scheduleLearning();
   }catch(e){if(getCurrent()?.id===original)status(e.message,true);else notice(e.message,true)}
-  finally{busy=false;button.disabled=false;button.textContent='下期沿用'}
+  finally{busy=false;activeButton.disabled=false;activeButton.textContent=feedback?'留下经验':'下期沿用'}
  }
- button.onclick=save;
+ button.onclick=()=>save();
+ $('feedback-submit').onclick=()=>save('feedback');
  return {render,save};
 }

@@ -13,8 +13,11 @@ CONTRACT_FIELDS = (
 
 def prepare(store, version_id):
     """Read-only preview; opening it creates no source, run, job or authorization."""
-    brief = store.one('briefs', version_id)
+    from .writing_agreements import report_version
+    brief = report_version(store, version_id)
+    if not brief:raise ValueError('报告版本不存在，请重新选择报告')
     run = store.one('runs', brief['run_id'])
+    if not run:raise ValueError('报告任务不存在，请重新选择报告')
     previous = json.loads(run['requirements'])
     requirements = {key: previous[key] for key in CONTRACT_FIELDS if key in previous}
     reader = None
@@ -73,8 +76,56 @@ def conversation_request(store, text, context):
     return (text + '\n\n下一期报告上下文（用户选择的已保存版本；以下仅为待沿用约定，不是本期事实或授权）：\n'
             + contract + '\n请沿用仍适用的约定，只询问本期时间范围和影响报告的缺失信息。'
             'writing_agreements是用户明确保存的写作约定，不是事实来源或新权限；请遵守，当前明确要求优先。'
-            '生成时完整传入writing_agreement_exclusions；不把约定文字再复制到writing_preferences，以便后续撤销能够生效。'
+            '生成时带上当前session_id；本期跳过项由服务端绑定，不把约定文字再复制到writing_preferences，以便后续撤销能够生效。'
             '标题可由本期目的和期间拟定，不要求用户重新填完整表单。'
             '明确期间后，将 previous_report_version_id 和 previous_report_hash 连同其余适用约定传给 generate.requirements。'
             '旧资料不自动充当本期证据；本次 sources、联网、模型和费用权限以当前回合实际选择为准，'
             '不得从上期恢复。用户只讨论或未明确要求开始时不要提交生成。')
+
+
+def bind_message_context(store, session_id, message_id, context):
+    """UI selection is attached to a message before dispatch, including an explicit clear.
+
+    This is state propagation, not proof of the identity of a shell caller.
+    Failed sends have no message and cannot affect a later execution.
+    """
+    from .chat_store import ChatStore
+    from .store import dump
+    ChatStore(store).session(session_id)
+    saved=None
+    if context is not None:
+        conversation_request(store,'',context)  # Validate version/hash and exclusions.
+        saved={key:context.get(key) for key in ('version_id','hash')}
+        saved['writing_agreement_exclusions']=context.get('writing_agreement_exclusions') or []
+    with store.tx() as c:
+        rows=c.execute("SELECT data FROM chat_events WHERE session_id=? AND kind='report/nextContext' AND json_extract(data,'$.message_id')=?",(session_id,message_id)).fetchall()
+        value={'message_id':message_id,'context':saved}
+        if rows:
+            if json.loads(rows[-1]['data'])!=value:raise ValueError('同一消息的下一期选择已变化，请重新发送')
+            return
+        from .store import now
+        c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',
+                  (session_id,'report/nextContext',dump(value),now()))
+
+
+def generation_requirements(store, requirements, session_id):
+    """Resolve the UI's selection for the currently executing message, never a queued successor."""
+    if not store.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_messages'"):
+        return requirements
+    rows=store.rows("""SELECT m.session_id,e.data FROM chat_messages m
+        LEFT JOIN chat_events e ON e.session_id=m.session_id AND e.kind='report/nextContext'
+            AND json_extract(e.data,'$.message_id')=m.id
+        WHERE m.role='user' AND m.status IN ('sending','delivered')
+        ORDER BY m.rowid DESC,e.seq DESC""")
+    latest={}
+    for row in rows:latest.setdefault(row['session_id'],json.loads(row['data'])['context'] if row['data'] else None)
+    context=latest.get(session_id)
+    selected_origin=requirements.get('previous_report_version_id')
+    if context is None:
+        if any(value and (not session_id or selected_origin==value['version_id']) for value in latest.values()):
+            raise ValueError('下一期选择未绑定到当前执行会话，请使用发起消息的 session_id；未提交生成')
+        return requirements
+    conversation_request(store,'',context)  # Stale selections fail visibly.
+    return {**requirements,'previous_report_version_id':context['version_id'],
+            'previous_report_hash':context['hash'],
+            'writing_agreement_exclusions':context['writing_agreement_exclusions']}

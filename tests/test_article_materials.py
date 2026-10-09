@@ -57,6 +57,7 @@ def test_json_without_images_stays_explicitly_incomplete_and_unsafe_archive_keep
     store=Store(tmp_path);_,context=package()
     sid=admit(store,'context.json',json.dumps(context).encode())
     assert all(r['status']=='missing' for r in source_attachment(store,sid)['article']['images'])
+    assert not source_attachment(store,sid)['needs_visual']
     data,_=package(unsafe=True)
     with pytest.raises(ValueError,match='越界'):admit(store,'unsafe.zip',data)
     assert any(p.read_bytes()==data for p in (tmp_path/'sources').glob('*.original.zip'))
@@ -75,3 +76,17 @@ def test_plain_article_export_uses_relative_image_links_without_a_manifest(tmp_p
     assert rows[0]['status']=='available' and rows[0]['member_path']=='report/images/table one.png'
     assert rows[1]['status']=='missing'
     assert source_attachment(store,sid)['article']['title']=='合成正文'
+    assert store.source_text(sid).count('# 合成正文')==1
+
+
+def test_standalone_documents_with_logos_remain_text(tmp_path):
+    store=Store(tmp_path)
+    for name,data in [('article.md',b'# Title\n\nBody\n![logo](https://example.org/logo.png)'),
+                      ('article.html',b'<html><title>Title</title><body><h1>Title</h1><p>Body</p><img src="https://example.org/pixel"></body></html>'),
+                      ('local.md',b'# Local\nBody\n![chart](neighbor.png)')]:
+        sid=admit(store,name,data)
+        attachment=source_attachment(store,sid)
+        assert attachment.get('media_type')!=ARTICLE_MIME and not attachment.get('needs_visual')
+        assert 'Body' in store.source_text(sid)
+        assert store.source_text(sid).count('# Title')<=1
+        assert '缺少原图' not in store.source_text(sid)

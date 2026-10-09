@@ -38,15 +38,8 @@ test('home loads tokens.css and keeps composer progressive disclosure markers',(
   assert.match(html,/id="new-report"[^>]*class="[^"]*primary/);
   assert.match(html,/id="home-block-schedule"[^>]*hidden/);
   assert.match(html,/id="home-block-recent"[^>]*hidden/);
-  assert.match(html,/cat-business/);
-  assert.match(html,/cat-markets/);
-  assert.match(html,/cat-academic/);
-  assert.match(html,/data-home-icon="briefcase"/);
-  assert.match(html,/data-home-icon="buildingsSlash"/);
-  assert.match(html,/cat-collab/);
-  assert.match(html,/data-home-icon="chart"/);
-  assert.match(html,/data-home-icon="buildingsSlash"/);
-  assert.match(html,/cat-collab/);
+  for(const id of ['home-start-report','home-import-previous','home-report-form'])
+    assert.match(html,new RegExp('id="'+id+'"'));
   assert.match(html,/id="home-rail"/);
   assert.match(html,/id="home-rail-jobs"/);
   assert.match(html,/id="home-rail-recent"/);

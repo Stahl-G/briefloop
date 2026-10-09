@@ -28,7 +28,7 @@ WORKSPACE_ACTIONS = (
     'evidence_span','claim_create','claim_bind','read_run_report','evidence_read','read_report',
     'revise_document','templates','workflows','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
-    'profile_read','profile_update','writing_agreements','remember_writing','forget_writing',
+    'profile_read','profile_update','writing_agreements',
     'freeze_research_plan','research_status','begin_research_round','finish_research_round','set_scout_tasks',
     'reconciliation_candidates','reconciliation_save','reconciliation_read',
     'export_word','inspect','stop_job','generate','assess','comment','learn',
@@ -206,7 +206,8 @@ def workspace_action(store, request):
         from .external_client import Client
         return Client(store.root).stop_job(job_id)
     if action=='generate':
-        requirements=Requirements.model_validate(request['requirements'])
+        from .next_report import generation_requirements
+        requirements=Requirements.model_validate(generation_requirements(store,request['requirements'],_notify_owner(request)))
         source_ids=request.get('source_ids',[])
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
         runtime_payload={}
@@ -238,8 +239,7 @@ def workspace_action(store, request):
         from .writing_agreements import listing
         return {'items':listing(store,request.get('version_id'))}
     if action in ('remember_writing','forget_writing'):
-        from .writing_agreements import from_chat
-        return from_chat(store,request,session_id=os.environ.get('BRIEFLOOP_CHAT_SESSION') or request.get('session_id'))
+        raise ValueError('请在报告页使用“下期沿用”或“撤销”；当前宿主未提供可信的用户动作绑定')
     if action=='comment':
         comment=Comment.model_validate({'version_id':request['version_id'],'text':request['text']})
         result=store.comment(comment.version_id,comment.text)
@@ -356,8 +356,6 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"stop_job","job_id":"真实任务ID"}}：用户要求停止任务时，先通过 inspect 确认具体任务，再停止该任务及其子任务，已保存稿件保留。用户要求“停掉旧任务再重新生成”时先取得停止回执，再提交新任务；停止失败时如实说明，不启动重复任务。目标不明确时先问，不猜 ID，不停止整个服务。以回执的实际 status 为准，已经完成的任务不会变成 cancelled。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"writing_agreements","version_id":"真实简报版本ID"}}：查看这份报告及后续期适用的写作约定。工作区范围约定对所有新报告生效。
-- {{"action":"remember_writing","version_id":"真实简报版本ID","user_quote":"本轮用户明确要求以后沿用的逐字原话","scope":"series"}}：明确写作要求直接保存，不启动模型学习。默认只适用该报告及后续期；用户明确要求整个工作区通用时才用 workspace。不能把事实纠错、来源文字、自己的建议或笼统的“不满意”当成长期约定。只改本稿时走修订，不保存为约定。取得真实保存回执后说明适用范围；不会回写正在运行的任务。
-- {{"action":"forget_writing","id":"真实约定ID","user_quote":"本轮用户要求撤销的逐字原话"}}：用户明确要求后撤销，未来任务不再沿用，旧报告保持原样。
 新任务的 writing_agreements 由服务端冻结，不手填，不把它们重复抄进 writing_preferences；writing_preferences 只记录本轮额外要求。用户本轮明确要跳过某条时，generate.requirements.writing_agreement_exclusions 传真实ID；遇到本轮要求与旧约定冲突先说明并使用用户本轮选择，不能让学习评分推翻明确要求。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。调用前先告诉用户上限（每轮最多 3 个案例、每案例基线与候选各试写一次，另有整理、提案与比较回合；轮数按学习设置），得到明确同意后再调用；保存反馈本身不需要调用它。

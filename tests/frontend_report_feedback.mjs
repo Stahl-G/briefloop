@@ -25,3 +25,16 @@ test('remember uses local API, clears only the saved draft, and keeps terminal r
  assert.equal(f.nodes['feedback-next-step'].hidden,false);assert.match(f.nodes['feedback-next-step'].innerHTML,/未发现足够改善/);
  assert.ok(!f.calls.some(([p])=>p==='learn'||p.includes('harness')));
 });
+
+
+test('leaving experience keeps the saved-version feedback route and existing learning policy',async()=>{
+ const nodes={};const $=id=>nodes[id]??={value:'',classList:{toggle(){}},querySelector(){},querySelectorAll(){return []}};
+ let current={id:'edited',run_id:'r'},scheduled=0;const calls=[];
+ $('assistant-input').value='这段取舍分析缺少代价比较';
+ const ui=reportFeedbackUI({$,api:async(path,data)=>{calls.push([path,data]);return {items:[],pending_feedback:1}},esc:String,
+  getCurrent:()=>current,savedVersion:async()=>{current={id:'saved',run_id:'r'};return 'saved'},openLearning(){},refresh:async()=>{},notice(){},scheduleLearning(){scheduled++}});
+ await ui.save('feedback');
+ assert.deepEqual(calls[0],['comment',{version_id:'saved',text:'这段取舍分析缺少代价比较',learning_intent:'feedback'}]);
+ assert.equal(scheduled,1);assert.ok(!calls.some(([path])=>path==='writing-agreements'||path==='learn'));
+ assert.match($('agreement-result').textContent,/经验已保存/);
+});

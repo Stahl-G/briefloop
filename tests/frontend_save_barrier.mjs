@@ -11,18 +11,18 @@ import {reportExportUI} from '../frontend/report-export.js';
 import {excelExportUI} from '../frontend/excel-export.js';
 import {section} from './source_section.mjs';
 import {esc} from '../frontend/dom.js';
+import {reportFeedbackUI} from '../frontend/report-feedback.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const saveCode=section(source,'let savePromise=','\nfunction scheduleLearning','frontend/app.js');
-const commentCode=source.split('\n').find(l=>l.startsWith("$('comment-submit').onclick="));
 const progressCode=section(source,'function effectiveReportJobs','let progressRequest=','frontend/app.js');
 const elements=new Map();
-const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:''});return elements.get(id)};
+const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:'',classList:{toggle(){}},querySelector(){return null},querySelectorAll(){return []},focus(){}});return elements.get(id)};
 let pending=[],calls=[],downloads=[],timers=[];
 const c=vm.createContext({console,Promise,esc,withoutSupersededRetries,syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
  state:{workspace_id:"test"},dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
  updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},setReportView:()=>{},
  window:{location:{assign:url=>downloads.push(url)}},
- api:(route,payload)=>{calls.push({route,payload});if(route==='save')return new Promise((resolve,reject)=>pending.push({resolve,reject}));return Promise.resolve({})},
+ api:(route,payload)=>{calls.push({route,payload});if(route==='save')return new Promise((resolve,reject)=>pending.push({resolve,reject}));return Promise.resolve({items:[],learning:null,pending_feedback:0})},
  action:async fn=>fn(),parse:s=>JSON.parse(s||'{}'),pendingRun:null,tryOpenPending:()=>{}});
 // The download links loop now reaches the export module; the sliced instantiation
 // line receives the real factory product, with init left inert in this context.
@@ -32,9 +32,10 @@ const excelExport=excelExportUI({api:c.api,notice:c.notice,refresh:async()=>{},s
 c.excelExportUI=()=>({init(){},downloadXlsx:excelExport.downloadXlsx});
 c.toEditor=x=>x;
 globalThis.document={getElementById:el,createElement:()=>({click(){}})};
-vm.runInContext(saveCode+'\n'+commentCode+'\n'+progressCode,c);
-el('markdown-source').value='Revenue 12';el('comment').value='Comment about 12';
-const comment=el('comment-submit').onclick();
+vm.runInContext(saveCode+'\n'+progressCode,c);
+reportFeedbackUI({$:el,api:c.api,esc,getCurrent:()=>c.current,savedVersion:()=>c.savedVersion(),openLearning(){},refresh:async()=>{},notice(){}});
+el('markdown-source').value='Revenue 12';el('assistant-input').value='Comment about 12';
+const comment=el('feedback-submit').onclick();
 assert.equal(calls.length,1);assert.equal(calls[0].route,'save');
 // A second edit while first save is running must also be persisted.
 el('markdown-source').value='Revenue 14';c.dirty=true;
@@ -42,7 +43,7 @@ pending.shift().resolve({id:'v12',run_id:'r'});
 for(let n=0;n<10;n++)await Promise.resolve();
 assert.equal(calls.length,2);assert.equal(calls[1].payload.base_version,'v12');
 pending.shift().resolve({id:'v14',run_id:'r'});await comment;
-assert.equal(calls.at(-1).route,'comment');assert.equal(calls.at(-1).payload.version_id,'v14');
+assert.equal(calls.find(x=>x.route==='comment').payload.version_id,'v14');
 // Downloads wait for save and use the resulting version.
 c.dirty=true;el('markdown-source').value='Revenue 16';
 let prevented=false;const download=el('download-docx').onclick({preventDefault(){prevented=true}});
@@ -50,9 +51,9 @@ assert.equal(downloads.length,0);pending.shift().resolve({id:'v16',run_id:'r'});
 assert.ok(prevented);assert.equal(downloads.length,0);
 assert.equal(calls.at(-1).route,'export');assert.equal(calls.at(-1).payload.version_id,'v16');
 // Save conflict leaves comment input intact and never submits it.
-c.dirty=true;el('comment').value='Keep this';
-const failure=el('comment-submit').onclick();pending.shift().reject(Error('conflict'));
-await assert.rejects(failure,/conflict/);assert.equal(el('comment').value,'Keep this');
+c.dirty=true;el('assistant-input').value='Keep this';
+const failure=el('feedback-submit').onclick();pending.shift().reject(Error('conflict'));
+await failure;assert.match(el('agreement-result').textContent,/conflict/);assert.equal(el('assistant-input').value,'Keep this');
 assert.equal(calls.at(-1).route,'save');
 c.state={jobs:[{id:'new',status:'complete',payload:JSON.stringify({run_id:'r',previous_job_id:'old'})},{id:'old',status:'failed',payload:JSON.stringify({run_id:'r'})},{id:'other',status:'failed',payload:JSON.stringify({run_id:'other'})}],briefs:[]};
 assert.equal(vm.runInContext('effectiveReportJobs().map(j=>j.id).join(",")',c),'new');
@@ -120,12 +121,12 @@ c.pendingRun='new-run';c.saving=true;c.dirty=false;
 assert.equal(vm.runInContext('tryOpenPending()',c),false);
 assert.equal(c.pendingRun,'new-run');assert.equal(c.current.id,'saved-old');
 // Reproduce arrival during the real save refresh and let waiting action finish first.
-c.saving=false;c.dirty=true;el('markdown-source').value='Revenue 18';el('comment').value='About old report edit';
+c.saving=false;c.dirty=true;el('markdown-source').value='Revenue 18';el('assistant-input').value='About old report edit';
 c.refresh=async()=>{vm.runInContext('tryOpenPending()',c)};
-const withArrival=el('comment-submit').onclick();
+const withArrival=el('feedback-submit').onclick();
 pending.shift().resolve({id:'saved-18',run_id:'r',detail:'{}',markdown:'Revenue 18'});
 await withArrival;
-assert.equal(calls.at(-1).payload.version_id,'saved-18');
+assert.equal(calls.filter(x=>x.route==='comment').at(-1).payload.version_id,'saved-18');
 assert.equal(c.pendingRun,'new-run');
 for(const timer of timers.splice(0))timer();
 assert.equal(c.current.id,'new-report');assert.equal(c.pendingRun,null);assert.equal(editorContent,'New report');

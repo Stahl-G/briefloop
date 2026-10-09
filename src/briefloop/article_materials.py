@@ -124,9 +124,9 @@ def extract_article(store, name, data):
         finally:
             archive.close()
     if not name.lower().endswith('.json'):
-        context=_document_context(name,data)
-        # Preserve legacy plain document extraction when there are no pictures.
-        if not context or not context['media']['images']:return None
+        # Standalone uploads contain no admitted local image bytes. Relative paths
+        # are not permission to read neighboring files; remote images are not fetched.
+        return None
     else:context = _context(data)
     return _extract(store, data, context, None, [], base, {}) if context else None
 
@@ -203,7 +203,8 @@ def _extract(store, data, context, archive, names, base, mapping):
         raise ValueError('图文材料清单过大')
     path = media._cache_directory(store, digest) / 'article.json'
     media._atomic_bytes(path, payload)
-    text = '# ' + title + '\n\n' + text
+    if not re.match(r'^\s*#\s+'+re.escape(title)+r'\s*(?:\n|$)',text):
+        text = '# ' + title + '\n\n' + text
     text += '\n\n[图片清单；状态不是内容核实结果]\n'
     for row in rows:
         text += f"图像 {row['number']}（原图号 {row['original_index']}，{row['role']}）：{row['status']}；{row['note']}"
@@ -211,7 +212,7 @@ def _extract(store, data, context, archive, names, base, mapping):
             text += f"；与图像 {row['same_bytes_as']} 字节相同，不能据此认定是不同业务图"
         text += '\n'
     return text, 'local article admission (no OCR/network)', {
-        'media_type': ARTICLE_MIME, 'needs_visual': bool(rows), 'pages': None,
+        'media_type': ARTICLE_MIME, 'needs_visual': any(r['status']=='available' for r in rows), 'pages': None,
         'article_manifest_path': str(path.relative_to(store.root)),
         'article_manifest_sha256': hashlib.sha256(payload).hexdigest(),
         'image_count': len(rows), 'image_available': sum(r['status'] == 'available' for r in rows),

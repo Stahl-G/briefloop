@@ -747,6 +747,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         body.setdefault('display_text',body.get('text',''))
                         body['text']=conversation_request(store,body.get('text',''),body['next_report'])
                     choose_runtime(store,body.get('runtime'))
+                    from .next_report import bind_message_context
+                    from .store import uid
+                    body['message_id']=body.get('message_id') or uid('msg')
+                    bind_message_context(store,body['session_id'],body['message_id'],body.get('next_report'))
+                    if body.get('next_report') is not None:
+                        body['text']+='\n当前发起会话 session_id='+body['session_id']+'；generate 使用该会话绑定本期选择。'
                     result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',store.settings().get('chat_allow_web',True))))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
