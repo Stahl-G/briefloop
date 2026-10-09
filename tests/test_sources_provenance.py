@@ -151,6 +151,7 @@ def test_real_http_interstitial_is_retained_but_not_marked_ready(tmp_path,monkey
         def do_GET(self):
             pages={
                 '/challenge':b'<html><title>Just a moment...</title><body><div id="challenge-platform">Checking your browser before accessing the site.</div></body></html>',
+                '/request-access':b'<html><title>Federal Register :: Request Access</title><body>Please complete the CAPTCHA and click Request Access.</body></html>',
                 '/notice':b'<html><title>Maintenance notice</title><body>Brief scheduled maintenance.</body></html>',
                 '/article':b'<html><title>How anti-bot checks work</title><body>This article discusses CAPTCHA and checking your browser techniques.</body></html>',
             }
@@ -170,6 +171,7 @@ def test_real_http_interstitial_is_retained_but_not_marked_ready(tmp_path,monkey
         metadata=json.loads((store.root/'sources'/(blocked['id']+'.provenance.json')).read_text(encoding='utf-8'))
         assert (store.root/metadata['original_path']).read_bytes().startswith(b'<html><title>Just a moment')
         assert metadata['extraction_status']=='failed' and store.source_text(blocked['id'])==''
+        assert sources.fetch(store,base+'/request-access',allow_private=True)['status']=='failed'
         assert sources.fetch(store,base+'/notice',allow_private=True)['status']=='ready'
         assert sources.fetch(store,base+'/article',allow_private=True)['status']=='ready'
     finally:

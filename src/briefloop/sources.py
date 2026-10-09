@@ -86,7 +86,8 @@ def _html_block_reason(data, content_type='', encoding=''):
     body=re.sub(r'<head\b[^>]*>.*?</head\s*>|<title\b[^>]*>.*?</title\s*>','',page,flags=re.I|re.S).lower()
     challenge_markers=('checking your browser','verify you are human','enable javascript and cookies',
                        'cf-chl-','challenge-platform','captcha')
-    if _ACCESS_TITLE_RE.fullmatch(title) and any(marker in body for marker in challenge_markers):
+    access_title=_ACCESS_TITLE_RE.fullmatch(title) or re.fullmatch(r'(?:Federal Register\s*::\s*)?request access[.!?…]*',title,re.I)
+    if access_title and any(marker in body for marker in challenge_markers):
         return '网页返回访问拦截页，未保存为可用正文'
     has_password=bool(re.search(r'<input\b[^>]*\btype\s*=\s*["\']?password\b',body,re.I))
     has_form='<form' in body
