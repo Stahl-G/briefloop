@@ -16,7 +16,7 @@ _DEFAULT_SKILL = object()
 
 
 WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报告，不再派发研究或评分角色。
-先读 input.json、writing.md、plan.json、research.json，按需要核对 source-index.json 中的原文。source-context.json 给出各来源的条件/更新候选行段与短逐字原文；先核对所用来源的这些原文，再写采用建议，必要时回读完整相关段落。它是导航，不是条件已满足的判断；truncated 或 omitted 表示尚未完整展示，无匹配仍须自行检查相关章节。
+先读 input.json.task_context 的目的与证据导航，再读 writing.md、plan.json、research.json，按需要核对 source-index.json 中的原文。source-context.json 给出各来源的条件/更新候选行段与短逐字原文；先核对所用来源的这些原文，再写采用建议，必要时回读完整相关段落。它是导航，不是条件已满足的判断；truncated 或 omitted 表示尚未完整展示，无匹配仍须自行检查相关章节。
 本阶段不联网、不新增研究来源；研究摘要是线索，不代替原文。不同口径、预测与实际、期内与期后不能混写。
 结论须由所引段落支持；分析与行动建议可由你提出，但交代有依据的业务联系，不伪装成来源已经说过的话。
 遵循读者用途、重点、篇幅和人工填写章节。正文直接面向读者，具体缺口和核查过程放 research_notes/gaps，不反复写免责声明。
@@ -151,7 +151,10 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
     elif writer_protocol != 'rich_json_v1':
         raise ValueError('未知写稿协议')
     from .market_convention import chart_presentation
-    save('input.json', {'run_id': run_id, 'requirements': req, 'reader_contract': contract,
+    from .task_context import project
+    save('input.json', {'task_context': project(req, 'analyst', evidence='source-index.json / source-context.json / sources/',
+                           uncertainty='research.json 当前缺口及历史；修订时另核对 research_context 的保存时与当前视图'),
+                       'run_id': run_id, 'requirements': req, 'reader_contract': contract,
                        'chart_presentation': chart_presentation(req),
                        'mode': 'revision' if base else 'draft', 'base_version': base_version,
                        'base_hash': base['hash'] if base else None,

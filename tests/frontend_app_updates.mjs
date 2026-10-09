@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {appUpdatesUI} from '../frontend/app-updates.js';
 
 const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
-const version=JSON.parse(fs.readFileSync(new URL('../desktop/electron/package.json',import.meta.url))).version;
+// Python/Web use PEP 440, while Electron uses SemVer for prereleases.
+const version=fs.readFileSync(new URL('../VERSION',import.meta.url),'utf8').trim();
 assert.ok(html.includes(`data-web-version="${version}"`));
 assert.match(html,/data-settings-view="updates"/);
 function fixture(desktop,notesAPI=async version=>({version,state:'loaded',notes:`Official changes for ${version}`})){

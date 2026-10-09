@@ -456,7 +456,7 @@ def scout_packet(store, task, folder):
     dump = lambda value: json.dumps(value, ensure_ascii=False, indent=1)
     (packet / 'task.json').write_text(dump({key: task[key] for key in (
         'slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web',
-        'search_channels', 'budget', 'research_handoff') if key in task}), encoding='utf-8')
+        'search_channels', 'budget', 'research_handoff', 'task_context') if key in task}), encoding='utf-8')
     (packet / 'scout-contract.md').write_text(task['contract'], encoding='utf-8')
     (packet / 'reader-contract.json').write_text(dump(task.get('reader_contract')), encoding='utf-8')
     (packet / 'search-policy.md').write_text(task['search_note'], encoding='utf-8')

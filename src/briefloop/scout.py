@@ -52,7 +52,10 @@ def task(store, run_id, assignment, *, plan_path=None, research_handoff=None, sk
     channels = [c for c in allowed(policy) if c in MANAGED_PROVIDERS] if allow_web else []
     skill = (store.one('skills', run['skill_id']) if run.get('skill_id') else None) if skill_override is _DEFAULT_SKILL else skill_override
     binding = bind_context(store, skill).get('scout') or {}
+    from .task_context import project
     return {
+        'task_context': project(req, 'scout', evidence='source-index.json；已登记来源用 source_read/read-source',
+            uncertainty='task.json.research_handoff 与当前 assignment', assignment=assignment),
         'run_id': run_id, 'slot_id': assignment.get('slot_id'), 'assignment': assignment,
         'period': req.get('period'), 'time_context': req.get('time_context'), 'created': run['created'],
         'allow_web': allow_web, 'search_channels': channels, 'policy': policy,
@@ -71,7 +74,7 @@ def native_prompt(scout):
            else ('本轮允许联网但没有受控搜索渠道：只能用 add_url 保存任务里给出的 URL。' if scout['allow_web']
                  else '本轮未允许联网，只读取已登记的来源。'))
     packet = {
-        'task.json': dump({key: scout[key] for key in ('slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web', 'budget', 'research_handoff')}),
+        'task.json': dump({key: scout[key] for key in ('slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web', 'budget', 'research_handoff', 'task_context')}),
         'scout-contract.md': scout['contract'], 'reader-contract.json': dump(scout['reader_contract']),
         'search-policy.md': scout['search_note'], 'skill.md': scout['skill'],
         'source-index.json': dump(scout['sources']),
@@ -104,7 +107,7 @@ def host_prompt(store, scout, folder, backend):
     (folder / 'scout-contract.md').write_text(scout['contract'], encoding='utf-8')
     (folder / 'reader-contract.json').write_text(dump(scout['reader_contract']), encoding='utf-8')
     (folder / 'task.json').write_text(dump({key: scout[key] for key in (
-        'slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web', 'budget', 'research_handoff')}), encoding='utf-8')
+        'slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web', 'budget', 'research_handoff', 'task_context')}), encoding='utf-8')
     (folder / 'source-index.json').write_text(dump(scout['sources']), encoding='utf-8')
     from .models import ScoutResult
     (folder / 'scout.schema.json').write_text(dump(ScoutResult.model_json_schema()), encoding='utf-8')

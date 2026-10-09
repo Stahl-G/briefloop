@@ -136,6 +136,7 @@ class Requirements(Model):
     # Research tier chosen at task creation; stored on the run so pause/resume and
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
     research_tier: Literal["quick", "standard", "deep"] = "standard"
+    research_strategy: Literal["guided", "goal_driven"] = Field(default="guided", description="guided 沿用分轮建议；goal_driven 按重要问题与证据缺口选择研究步骤，不扩大权限或预算。")
     # Explicit lifecycle choice; the historical quick research preset is unchanged.
     completion_mode: Literal["standard", "draft_first", "fast", "fast_web"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)

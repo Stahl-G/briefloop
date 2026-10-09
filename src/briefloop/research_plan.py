@@ -157,6 +157,9 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
         'preset_id': preset or DEFAULT_PRESET,
         'frozen_runtime': _runtime_snapshot(store, job),
     }
+    # Do not change fingerprints of historical plans without this field.
+    if 'research_strategy' in requirements:
+        snapshot['research_strategy'] = requirements['research_strategy']
     fingerprint = _fingerprint(snapshot)
     with store.tx() as connection:
         existing = _read_plan(connection, run_id)
@@ -166,7 +169,7 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
             raise ValueError('该任务已冻结了不同的研究计划，不能改写')
         # The deep preset pre-creates its whole round structure at freeze time;
         # other presets keep the single round created on demand.
-        expanded = preset == 'deep'
+        expanded = preset == 'deep' and requirements.get('research_strategy') != 'goal_driven'
         snapshot['plan_fingerprint'] = fingerprint
         rounds = {}
         for index in range(1, (chosen['depth'] if expanded else 1) + 1):
@@ -473,6 +476,8 @@ EARLY_STOP_MIN_BUDGET = 10
 
 def _early_stop(store, run_id, info, plan, continue_research, early_stop_reason):
     """Return the refusal for an unexplained early stop, or None."""
+    if plan.get('research_strategy') == 'goal_driven':
+        return None  # Search utilization is not a proxy for evidence sufficiency.
     if continue_research or (early_stop_reason or '').strip():
         return None
     depth = int((plan.get('structure') or {}).get('depth') or 1)
@@ -543,6 +548,8 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
                     'gap_updates': previous, 'idempotent': True}
         from .scout_coverage import closeout as scout_closeout, required as scout_required
         scout_record = scout_closeout(store, run_id, connection, round_id, outcomes=scout_outcomes, enforce=scout_required(store, run_id))
+        if plan.get('research_strategy') == 'goal_driven' and not str(summary or early_stop_reason or '').strip():
+            raise AdmissionError('按目标补证收轮时请在 summary 说明继续或停止的依据及剩余限制；不要求新增检索。', code='research_rationale_missing')
         refusal = _early_stop(store, run_id, info, plan, continue_research, early_stop_reason)
         if refusal:
             raise AdmissionError(refusal, code='research_stopped_early')
