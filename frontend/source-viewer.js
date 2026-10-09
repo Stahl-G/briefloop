@@ -2,6 +2,7 @@
 // media (PDF pages, images, OfficeCLI previews) shared with the source drawer.
 import {$ as lookup,esc} from './dom.js';
 import {moment} from './time.js';
+import {showArticleMedia} from './article-media.js';
 export function sourceViewerUI({api,action,office,$=lookup}){
  function sourceOriginalLink(result){
   const provenance=result.provenance||{};
@@ -43,6 +44,7 @@ export function sourceViewerUI({api,action,office,$=lookup}){
   view=view||dialogSourceMediaView();
   const media=result.attachment;
   if(!media||result.source?.status!=='ready'){resetSourceMedia(view);return}
+  if(media.article){resetSourceMedia(view);showArticleMedia(result,view);return}
   const isPDF=media.media_type==='application/pdf',isImage=media.media_type?.startsWith('image/');
   // OfficeCLI page preview is an optional enhancement: without the switch an
   // Office original renders exactly like today, with no extra controls.

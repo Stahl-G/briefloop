@@ -47,3 +47,23 @@ def validate_origin(store, requirements):
         raise ValueError('往期报告内容已变化，请重新选择复用版本')
     if not (requirements.period.strip() or (requirements.period_start and requirements.period_end)):
         raise ValueError('开始下一期前请确认本期时间范围')
+
+
+def conversation_request(store, text, context):
+    """Bind an unsent next-period draft to one saved version for any runtime.
+
+    Only the reusable contract is exposed, never previous sources or a prior
+    permission snapshot. Opening the UI cannot enqueue work.
+    """
+    if not isinstance(context, dict) or not isinstance(context.get('version_id'), str):
+        raise ValueError('请选择要沿用的往期报告')
+    data = prepare(store, context['version_id'])
+    if context.get('hash') != data['previous']['hash']:
+        raise ValueError('往期报告内容已变化，请重新选择复用版本')
+    contract = json.dumps(data['requirements'], ensure_ascii=False)
+    return (text + '\n\n下一期报告上下文（用户选择的已保存版本；以下仅为待沿用约定，不是本期事实或授权）：\n'
+            + contract + '\n请沿用仍适用的约定，只询问本期时间范围和影响报告的缺失信息。'
+            '标题可由本期目的和期间拟定，不要求用户重新填完整表单。'
+            '明确期间后，将 previous_report_version_id 和 previous_report_hash 连同其余适用约定传给 generate.requirements。'
+            '旧资料不自动充当本期证据；本次 sources、联网、模型和费用权限以当前回合实际选择为准，'
+            '不得从上期恢复。用户只讨论或未明确要求开始时不要提交生成。')

@@ -215,7 +215,7 @@ def read_source(store,source_id,*,start_line=None,end_line=None,max_chars=None):
     from .media import source_attachment
     attachment=source_attachment(store,source_id)
     media_header=''
-    if attachment['media_type'].startswith('image/') or attachment['media_type']=='application/pdf':
+    if attachment.get('article') or attachment['media_type'].startswith('image/') or attachment['media_type']=='application/pdf':
         media_header='[本地视觉来源附件；以下元信息不是 OCR 或图表识别结果]\n'+json.dumps(attachment,ensure_ascii=False)+'\n'
     if start_line is None and end_line is None and max_chars is None:return media_header+text
     for name,value in (('start-line',start_line),('end-line',end_line),('max-chars',max_chars)):

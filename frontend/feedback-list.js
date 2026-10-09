@@ -1,6 +1,6 @@
 // Saved feedback is a learning input of its own. Show its bounded recent history
 // with persisted learning status and workspace-wide counts next to the save box.
-export function createFeedbackList({$,esc,getState,openLearning}){
+export function createFeedbackList({$,esc,getState,openLearning,startLearning}){
  const parse=value=>{try{return typeof value==='string'?JSON.parse(value):value||{}}catch{return {}}};
  const jobStatus={queued:'排队整理',running:'正在整理',complete:'已整理',failed:'整理失败',interrupted:'整理中断',cancelled:'整理已停止'};
  function rows(){
@@ -24,6 +24,14 @@ export function createFeedbackList({$,esc,getState,openLearning}){
   if(list){
    list.innerHTML=`<h2>已保存的反馈</h2><p class="help">${total?countText:'还没有保存的反馈。'}${limited?`仅显示最近 ${items.length} 条。`:''}待整理的反馈在你点“现在整理成经验”或开启自动学习后，由 Wiki 维护者整理；事实纠错只记录，不写进写作技巧。</p>`
     +(items.length?`<ul class="feedback-items">${items.map(item=>`<li><span class="chip">${esc(item.status)}</span> <span class="help">${esc(item.kind)} · ${esc((item.created||'').slice(0,16).replace('T',' '))}</span><p>${esc(item.text)}</p></li>`).join('')}</ul>`:'');
+  }
+  const next=$('feedback-next-step');
+  if(next){
+   const running=(getState()?.jobs||[]).some(job=>job.kind==='learn'&&['queued','running'].includes(job.status));
+   next.hidden=!pending;
+   next.innerHTML=pending?`<span>本工作区有 ${pending} 条反馈待整理。保存改动后，还需要整理和验证才会形成新的写作方法。</span> <button type="button" class="outline" data-feedback-open>查看状态</button>${startLearning&&!running?' <button type="button" class="outline" data-feedback-start>整理反馈</button>':''}`:'';
+   next.querySelector('[data-feedback-open]')?.addEventListener('click',openLearning);
+   next.querySelector('[data-feedback-start]')?.addEventListener('click',startLearning);
   }
   const hint=$('feedback-saved-hint');
   if(hint){

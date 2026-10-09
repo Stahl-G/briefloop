@@ -1,5 +1,5 @@
 // Reuse the saved contract, not old facts, reviews or runtime authorizations.
-export function nextReportUI({$,api,savedVersion,getCurrent,applyRequirements,clearSources,notice,getTemplate,refreshTime=()=>{}}){
+export function nextReportUI({$,api,savedVersion,getCurrent,applyRequirements,clearSources,notice,getTemplate,refreshTime=()=>{},openConversation,isBusy=()=>false}){
  let pending=false,contract=null;
  const form=()=>$('requirements');
  function set(name,value){const field=form()?.elements?.[name];if(!field)return;
@@ -12,6 +12,7 @@ export function nextReportUI({$,api,savedVersion,getCurrent,applyRequirements,cl
  function requirementsForTemplate(id){return contract&&form()?.elements?.previous_report_version_id?.value&&contract.template_id===id?contract:null}
  async function start(){
   if(pending||!getCurrent())return;
+  if(isBusy()){notice('请等待当前发送或上传完成');return}
   pending=true;
   try{
    const version=await savedVersion();
@@ -25,6 +26,7 @@ export function nextReportUI({$,api,savedVersion,getCurrent,applyRequirements,cl
     if((candidate.sections||[]).some(section=>!sections.some(item=>item.section_id===section.section_id)))
      throw Error('往期模板章节已变化，请核对模板后再复用，避免遗漏人工保留的章节');
    }
+   if(openConversation){await openConversation(data);return}
    contract=candidate;
    set('completion_mode','standard');
    set('template_id',contract.template_id||'');

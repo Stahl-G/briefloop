@@ -319,7 +319,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     sid=q['id'][0];attachment=source_attachment(store,sid)
                     if attachment.get('status')!='ready':raise ValueError(attachment.get('error') or '来源不可读取')
                     page=int(q['page'][0]) if q.get('page') else None
-                    path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
+                    if q.get('image'):
+                        from .article_materials import image_path
+                        path=image_path(store,sid,int(q['image'][0]))
+                    else:path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
                     if not path:raise ValueError('尚无图片页面，请先选择 PDF 页码并点击查看页面')
                     self.send(200,filesystem_path(path).read_bytes(),'image/png')
                 elif u.path=='/api/source-original':
@@ -734,6 +737,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .external_requests import dispatch
                     result=dispatch(store,body)
                 elif path=='/api/harness/message':
+                    if body.get('next_report') is not None:
+                        from .next_report import conversation_request
+                        body.setdefault('display_text',body.get('text',''))
+                        body['text']=conversation_request(store,body.get('text',''),body['next_report'])
                     choose_runtime(store,body.get('runtime'))
                     result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',store.settings().get('chat_allow_web',True))))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])

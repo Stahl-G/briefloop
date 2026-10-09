@@ -44,3 +44,12 @@ test('missing or changed templates leave the unsent form intact',async()=>{
   assert.equal(f.elements.previous_report_version_id.value,'old');
  }
 });
+
+test('conversation path carries the saved version without overwriting the full form',async()=>{
+ let opened=null,applied=false;
+ const result={requirements:{objective:'Business review'},previous:{version_id:'v1',hash:'abc',title:'September'}};
+ const ui=nextReportUI({$:()=>null,api:async()=>result,savedVersion:async()=>'v1',getCurrent:()=>({id:'v1'}),
+  applyRequirements:()=>{applied=true},notice:()=>{},clearSources:()=>{throw Error('must not clear the existing form')},
+  openConversation:async data=>{opened=data}});
+ await ui.start();assert.equal(opened,result);assert.equal(applied,false);
+});

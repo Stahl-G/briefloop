@@ -71,3 +71,19 @@ def test_archived_reader_is_not_reactivated_and_legacy_shape_stays_clean(tmp_pat
     assert result['reader'] is None and 'reader_id' not in result['requirements']
     legacy = json.loads(store.one('runs', run['id'])['requirements'])
     assert 'previous_report_version_id' not in legacy and 'previous_report_hash' not in legacy
+
+
+def test_conversation_context_is_bound_to_saved_contract_and_excludes_old_facts(tmp_path):
+    from briefloop.next_report import conversation_request
+    store = Store(tmp_path)
+    source, run, brief = prior(store)
+    prompt = conversation_request(store, '本期十月，关注交付变化',
+                                  {'version_id': brief['id'], 'hash': brief['hash'],
+                                   'requirements': {'allow_web': True}, 'title': 'ignored browser title'})
+    assert brief['id'] in prompt and brief['hash'] in prompt
+    assert 'Review delivery risks' in prompt
+    assert 'Last period: 12 deliveries.' not in prompt and source['id'] not in prompt
+    assert 'ignored browser title' not in prompt
+    assert not store.rows('SELECT * FROM jobs')
+    with pytest.raises(ValueError, match='往期报告内容已变化'):
+        conversation_request(store, 'next', {'version_id': brief['id'], 'hash': 'wrong'})

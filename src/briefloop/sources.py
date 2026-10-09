@@ -169,6 +169,9 @@ def _source_content(store, name, data, *, content_type='', encoding='utf-8'):
         text,extractor=extract('source.pdf',data,with_extractor=True)
         metadata['needs_visual']=text==media.PDF_NOTICE
         return text,extractor,metadata
+    from .article_materials import extract_article
+    article=extract_article(store,name,data) if not content_type else None
+    if article is not None:return article
     office=_office_suffix(name,data,content_type)
     if office:
         text,extractor=extract('source'+office,data,with_extractor=True)
