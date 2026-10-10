@@ -552,7 +552,10 @@ def prepare(store, job, folder, prompt):
     config = {'role': 'orchestrator', 'task_kind': job['kind'], 'job_id': job['id'], 'run_id': run_id,
               'allow_web': bool(job.get('allow_web')), 'search_channels': [p for p in allowed(for_run(store, run_id)) if p in MANAGED_PROVIDERS]}
     root = folder / 'packet'; root.mkdir(exist_ok=True)
-    if job['kind'] in ('generate', 'revise') and data.get('brief'):
+    # Fast/direct drafts revise inside the background assess job; that stage is
+    # the same Analyst revision, not an orchestrator turn needing a research plan.
+    revising = job['kind'] in ('generate', 'revise') or (job['kind'] == 'assess' and folder.name == 'revision')
+    if revising and data.get('brief'):
         from .analyst import packet, WRITING_GUIDE
         plan_path = folder.parent / 'plan.json'
         research_path = folder.parent / 'research.json'
