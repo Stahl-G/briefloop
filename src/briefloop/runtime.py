@@ -1680,24 +1680,24 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
         basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
         def admit(value):self.store.assess(brief['id'],value,basis=basis,expected_checks=expected)
         def load():return json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig'))
+        anchor_error=lambda exc:'report_quote' in str(exc) or 'block_ids' in str(exc)
         try:admit(load())
         except ValueError as exc:
-            if 'report_quote' not in str(exc):raise
+            if not anchor_error(exc):raise
             # A paraphrased quote is the evaluator's slip, not a reason to lose the
             # whole evaluation: one repair turn in the same session, then admit the
             # findings without the unlocatable quotes and say so.
-            repair=('assessment.json 未通过接纳：'+str(exc)+'\n只修正无法定位的 report_quote：从正文或 reader-preview.md 逐字复制一段连续原文，'
-                    '或删除该 report_quote 并在 problem 中说明位置。评分、结论和其他发现不变，重新保存 assessment.json。')
+            repair=('assessment.json 未通过接纳：'+str(exc)+'\n只修正无法定位的 report_quote 或 block_ids：从正文或 reader-preview.md 逐字复制一段连续原文，'
+                    '只用正文中实际存在的块编号，或删除该定位并在 description 中说明位置。评分、结论和其他发现不变，重新保存 assessment.json。')
             result=self.runtime.execute(job,repair,folder,resume_on_complete=True)
             try:admit(load())
             except ValueError as again:
-                if 'report_quote' not in str(again):raise
-                from .finding_anchors import unlocated_quotes
+                if not anchor_error(again):raise
+                from .finding_anchors import drop_unlocatable
                 from .document_model import brief_document
                 from .exports import reader_markdown
                 value=load();findings=value.get('findings') or []
-                dropped=unlocated_quotes(brief_document(brief),findings,reader_preview=reader_markdown(self.store,brief))
-                for index in dropped:findings[index]={**findings[index],'report_quote':''}
+                dropped=drop_unlocatable(brief_document(brief),findings,reader_preview=reader_markdown(self.store,brief))
                 admit(value)
                 self.store.event(job['id'],'assessment_quotes_dropped',{'version_id':brief['id'],'findings':dropped})
         return result

@@ -62,3 +62,17 @@ def validate_findings(document,findings,*,reader_preview=''):
     if missing:
         raise ValueError(f'findings[{missing[0]}].report_quote 无法在本版指定正文位置连续定位；'
                          '请复制实际原文，不拼接省略片段；缺失内容可省略 report_quote 并说明要求')
+
+
+def drop_unlocatable(document,findings,*,reader_preview=''):
+    """Last resort after a repair turn: keep each finding, drop only the anchors
+    (unknown block_ids, non-continuous quotes) that cannot be located."""
+    known=set(blocks(document));changed=set()
+    for index,finding in enumerate(findings):
+        if finding.get('response_to'):continue
+        ids=finding.get('block_ids') or []
+        if any(i not in known for i in ids):
+            finding['block_ids']=[i for i in ids if i in known];changed.add(index)
+    for index in unlocated_quotes(document,findings,reader_preview=reader_preview):
+        findings[index]['report_quote']='';changed.add(index)
+    return sorted(changed)
