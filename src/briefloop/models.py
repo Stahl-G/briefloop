@@ -23,6 +23,10 @@ INDUSTRY_LENGTH = {'zh':(5000,5500),'en':(3200,3600)}
 # A periodic industry report covering about a month carries several times a
 # weekly's events; 5,000 characters left most of them out (2026-10 AI monthly).
 INDUSTRY_MONTHLY_LENGTH = {'zh':(9000,10000),'en':(5800,6500)}
+# Analysis with several must-answer questions needs room per question; a
+# 2,000-character "detailed" brief left eight questions ~300 characters each
+# (2026-10 Manus valuation). The room is a soft ceiling, not a quota.
+QUESTION_ROOM = {'zh': (600, 450, 6000), 'en': (400, 300, 4000)}  # base, per question, cap
 MONTHLY_MIN_DAYS = 25
 MONTHLY_SCOUTS = 8
 
@@ -189,7 +193,7 @@ class Requirements(Model):
             from .report_time import freeze
             window = freeze({'period': self.period, 'period_start': self.period_start,
                              'period_end': self.period_end, 'report_timezone': self.report_timezone})
-            if (datetime.fromisoformat(window['end_exclusive']).date() - datetime.fromisoformat(window['start']).date()).days >= MONTHLY_MIN_DAYS:
+            if window['start'] and (datetime.fromisoformat(window['end_exclusive']).date() - datetime.fromisoformat(window['start']).date()).days >= MONTHLY_MIN_DAYS:
                 return True
         except ValueError:
             pass
@@ -210,6 +214,13 @@ class Requirements(Model):
         target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else
                         (INDUSTRY_MONTHLY_LENGTH if monthly else INDUSTRY_LENGTH)[self.language]
                         if self.report_profile=="industry_periodic" else length_presets(self.language)[self.extent])
+        questions = len([q for q in self.key_questions if q.strip()])
+        if (questions >= 3 and self.research_tier != "deep" and self.report_profile != "industry_periodic"
+                and self.extent in ("balanced", "detailed")):
+            base, per, cap = QUESTION_ROOM[self.language]
+            room = min(cap, base + per * questions)
+            if room > target:
+                target, maximum = room, max(maximum, round(room * 1.3))
         if monthly and self.scout_limit is None:
             self.scout_limit=MONTHLY_SCOUTS
         if monthly and 'research_budget' not in self.model_fields_set:

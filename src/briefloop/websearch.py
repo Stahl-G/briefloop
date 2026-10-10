@@ -135,7 +135,7 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
         from datetime import datetime, timedelta
         window = json.loads(store.one('runs', run_id)['requirements']).get('time_context')
         if window:
-            start_date = datetime.fromisoformat(window['start']).date().isoformat()
+            start_date = datetime.fromisoformat(window['start']).date().isoformat() if window.get('start') else None
             # Tavily ends before end_date and accepts dates, not timestamps.
             # Round a partial last day up, then review exact event times separately.
             end = datetime.fromisoformat(window['end_exclusive'])
