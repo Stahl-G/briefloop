@@ -1541,7 +1541,9 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
             self.runtime.execute(job,prompt,stage,resume_on_complete=(stage/'admission-error.json').exists())
             value=json.loads((stage/'draft.json').read_text(encoding='utf-8-sig'))
-            if contract is not None:value['reader_contract']=contract
+            # The program binds the frozen contract; a run without one (direct/fast)
+            # must not admit a contract the revision writer made up.
+            value['reader_contract']=contract
             if not value.get('editor_document') and value.get('markdown'):
                 from .document_model import markdown_document
                 value['editor_document']=markdown_document(value['markdown'])
