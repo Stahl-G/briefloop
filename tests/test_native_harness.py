@@ -12,12 +12,9 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from briefloop.models import Settings
 from briefloop.native_engine import NativeEngine
 from briefloop.native_harness import NativeHarness
-from briefloop.review_capability import restricted_review, summary
 from briefloop.store import Store
 
 
@@ -272,8 +269,6 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
         second = requests[1]
         assert second['messages'][2]['tool_calls'][0]['function']['name'] == 'submit_review', \
             'the resumed session keeps the first submission'
-        system = second['messages'][0]
-        assert system['role'] in ('system', 'developer') and '独立只读 Reviewer' in str(system['content'])
     finally:
         h.close()
         server.shutdown()

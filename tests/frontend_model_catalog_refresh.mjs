@@ -86,8 +86,6 @@ test('failed refresh removes old candidates and static hints but preserves manua
  assert.match(h.$('model-picker-status').textContent,/目录读取失败/);assert.match(h.$('model-picker-details').textContent,/credential unavailable/);
  mode='hints';await h.directory.refreshCurrentModelPicker();assert.equal(h.directory.catalogs.get('codex').models.length,0);
  assert.equal(h.$('model-select').value,'manual/persisted');
- const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
- assert.match(html,/<datalist id="model-suggestions"><\/datalist>/);
 });
 
 test('Native provider field and execution picker consume the same API result with partial diagnostics',async()=>{

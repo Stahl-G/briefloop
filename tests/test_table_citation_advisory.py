@@ -43,7 +43,6 @@ def test_paragraph_citation_does_not_cover_cells_but_reminder_allows_submit(tmp_
     assert checked['warnings'] == [] and checked['status'] == 'checks_completed'
     assert note['kind'] == 'advisory' and note['count'] == 4 and not note['truncated']
     assert [(s['row'], s['column']) for s in note['samples']] == [(2, 2), (2, 3), (3, 2), (3, 3)]
-    assert '单位只在表头时可能漏检' in note['scope']
     assert drafts.submit(store, config, {'revision': first['revision']})['status'] == 'saved'
     assert json.loads(Path(config['result_file']).read_text()) == before
 

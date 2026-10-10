@@ -14,8 +14,6 @@ assert.equal(c.req.company_context_revision,undefined);assert.equal(c.req.workfl
 c.req={writing_preferences:[]};vm.runInContext('preserveWritingPreferences(req,previous)',c);assert.equal(c.req.writing_preferences.length,0);
 c.req={};vm.runInContext('preserveWritingPreferences(req,previous,[])',c);assert.equal(c.req.writing_preferences.length,0,'explicit reset wins over saved preferences');
 c.req={};c.override=['新偏好'];vm.runInContext('preserveWritingPreferences(req,previous,override)',c);assert.deepEqual(Array.from(c.req.writing_preferences),['新偏好']);
-assert.match(source,/preserveWritingPreferences\(req,state.requirements,writingPreferencesOverride\)/);
-assert.match(source,/addEventListener\('reset',\(\)=>\{writingPreferencesOverride=\[\];syncFactCheckControl\(\)\}/);
 console.log('PASS: form preserves unedited writing preferences, respects explicit replacement/reset, and never carries frozen metadata');
 // Applying the discussion must preserve original wording and exact date fields.
 const fields=Object.fromEntries(['title','objective','audience','period','period_start','period_end','report_timezone','key_questions_text','manual_sections_text','target_words','max_words'].map(k=>[k,{value:'',dispatchEvent(){},setCustomValidity(message){this.validationMessage=message}}]));

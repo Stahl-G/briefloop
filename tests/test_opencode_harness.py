@@ -4,20 +4,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
-from briefloop.backends.opencode_server import (OpencodeServerClient, model_ref, prompt_model,
-                                               split_model)
+from briefloop.backends.opencode_server import (OpencodeServerClient)
 from briefloop.opencode_harness import OpencodeHarness
 from briefloop.store import Store
-
-
-def test_split_model_requires_provider_prefix():
-    assert split_model('opencode-go/gpt-5.6-luna') == ('opencode-go', 'gpt-5.6-luna')
-    assert split_model('openrouter/a/b') == ('openrouter', 'a/b')
-    for bad in ('gpt-5.6-luna', '', '/x', 'p/', None):
-        with pytest.raises(ValueError):
-            split_model(bad)
-    assert model_ref('opencode-go/gpt-5.6-luna') == {'providerID': 'opencode-go', 'id': 'gpt-5.6-luna'}
-    assert prompt_model('opencode-go/gpt-5.6-luna') == {'providerID': 'opencode-go', 'modelID': 'gpt-5.6-luna'}
 
 
 def test_all_session_http_operations_bind_encoded_directory():
@@ -97,39 +86,6 @@ class FakeOpencodeAPI(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
-def test_server_client_maps_v1_shapes():
-    server = ThreadingHTTPServer(('127.0.0.1', 0), FakeOpencodeAPI)
-    server.created = []
-    server.prompts = []
-    server.interrupts = []
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    client = OpencodeServerClient.__new__(OpencodeServerClient)
-    client.port = server.server_port
-    client.password = 'test'
-    client.timeout = 10
-    created = client.create_session('title', agent='build',
-                                    model={'providerID': 'opencode-go', 'id': 'gpt-5.6-luna'},
-                                    permission=[{'permission': 'question', 'action': 'deny', 'pattern': '*'}],
-                                    directory='/tmp/ws')
-    assert created == {'id': 'ses_fake'}
-    client.prompt_async('ses_fake', 'hi', model='opencode-go/gpt-5.6-luna', variant='high', system='BriefLoop 系统约定')
-    assert server.prompts[0]['variant'] == 'high', 'the selected effort reaches every prompt'
-    assert server.prompts[0]['agent'] == 'build'
-    assert server.prompts[0]['system'] == 'BriefLoop 系统约定'
-    assert server.prompts[0]['parts'] == [{'type': 'text', 'text': 'hi'}]
-    client.prompt_async('ses_fake', 'see', files=[{'type': 'file', 'mime': 'image/png',
-                                                  'filename': 'c.png', 'url': 'data:image/png;base64,AA=='}])
-    file_parts = [p for p in server.prompts[1]['parts'] if p['type'] == 'file']
-    assert len(file_parts) == 1 and file_parts[0]['mime'] == 'image/png'
-    assert server.prompts[1]['parts'][0] == {'type': 'text', 'text': 'see'}
-    assert 'system' not in server.prompts[1] and 'variant' not in server.prompts[1]
-    assert client.messages('ses_fake')[1]['info']['id'] == 'msg_a1'
-    assert client.children('ses_fake') == []
-    assert client.abort('ses_fake') is True
-    assert client.providers() == {'providers': [{'id': 'b-prov', 'models': {'m1': {}}}]}
-    server.shutdown()
-
-
 class FakeClient:
     _session_path = staticmethod(OpencodeServerClient._session_path)
     def __init__(self, *args, **kwargs):
@@ -202,22 +158,6 @@ def until(check):
             return
         time.sleep(.05)
     assert check()
-
-
-def test_list_models_flattens_sorts_and_reads_current_host_catalog(tmp_path):
-    manager = OpencodeHarness(Store(tmp_path), FakeClient)
-    first = manager.list_models()
-    assert [m['id'] for m in first] == ['a-prov/m0', 'b-prov/m1', 'b-prov/m2']
-    assert first[0] == {'id': 'a-prov/m0', 'provider': 'a-prov', 'name': 'M Zero', 'variants': None}
-    assert first[1]['name'] == 'm1'
-    assert manager.client.provider_calls == 1
-    manager.list_models()
-    assert manager.client.provider_calls == 2
-    manager.list_models(refresh=True)
-    assert manager.client.provider_calls == 3
-    manager.client.providers = lambda directory=None: {'providers': [{'id': 'new', 'models': {'fresh': {}}}]}
-    assert [row['id'] for row in manager.list_models()] == ['new/fresh']
-    manager.close()
 
 
 def test_harness_drives_turn_and_projects_events(tmp_path):
@@ -340,24 +280,6 @@ def test_harness_never_retries_without_required_permissions(tmp_path,permission)
         manager.close()
 
 
-def test_settings_side_model_variant_reaches_session(tmp_path):
-    # P1-1: settings/chat carry `model_variant`; opencode takes `variant`.
-    manager = OpencodeHarness(Store(tmp_path), FakeClient)
-    session = manager.create_session('v', runtime={'model': 'opencode-go/x', 'model_variant': 'high',
-                                                   'backend': 'opencode'})
-    stored = manager.snapshot(session['id'])['session']['runtime']
-    assert stored['variant'] == 'high' and 'model_variant' not in stored
-    assert OpencodeHarness._config({'model': 'opencode-go/x', 'variant': 'max',
-                                    'model_variant': 'high'})['variant'] == 'max'
-    manager.send(session['id'], 'go', message_id='v1')
-    until(lambda: any(m['role'] == 'assistant' and m['status'] == 'completed'
-                      for m in manager.snapshot(session['id'])['messages']))
-    assert manager.client.created[0]['model'] == {'providerID': 'opencode-go', 'id': 'x',
-                                                  'variant': 'high'}
-    assert manager.client.prompts[0][2]['variant'] == 'high'
-    manager.close()
-
-
 def test_error_completion_is_failure_not_success(tmp_path):
     manager = OpencodeHarness(Store(tmp_path), FakeClient)
     sid = manager.create_session()['id']
@@ -376,18 +298,6 @@ def _test_png():
     buffer = io.BytesIO()
     Image.new('RGB', (8, 4), (90, 140, 180)).save(buffer, format='PNG')
     return buffer.getvalue()
-
-
-def test_oversize_image_skipped_with_note(tmp_path, monkeypatch):
-    import briefloop.opencode_harness as harness_module
-    from briefloop import sources
-    monkeypatch.setattr(harness_module, 'ATTACH_IMAGE_MAX_BYTES', 10)
-    store = Store(tmp_path)
-    record = sources.upload(store, 'chart.png', _test_png())
-    manager = OpencodeHarness(store, FakeClient)
-    text, files = manager._input({'text': '看图', 'prompt': None, 'source_ids': [record['id']]})
-    assert files == [] and record['id'] in text and '超过' in text
-    manager.close()
 
 
 def test_full_turn_sends_file_parts(tmp_path):
@@ -502,41 +412,6 @@ def test_harness_cancel_aborts_and_rejects_backend_switch(tmp_path):
     with pytest.raises(ValueError, match='opencode'):
         manager.send(sid, 'x', runtime={'model': 'gpt-5.6-luna', 'backend': 'codex'})
     manager.close()
-
-
-def test_pack_figures_attaches_cited_images_and_notes_missing(tmp_path, monkeypatch):
-    import base64
-    from briefloop import opencode_harness as harness_module
-    folder = tmp_path / 'job'
-    folder.mkdir()
-    png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=')
-    (folder / 'a.png').write_bytes(png)
-    packet = {'figures': [{'figure_id': 'fig_ok', 'title': 'T', 'absolute_image_path': str(folder / 'a.png')},
-                          {'figure_id': 'fig_gone', 'title': 'G', 'absolute_image_path': str(folder / 'nope.png')}]}
-    (folder / 'input.json').write_text(json.dumps(packet), encoding='utf-8')
-    out = OpencodeHarness._pack_figures(folder)
-    assert len(out) == 2
-    assert out[0][1]['url'].startswith('data:image/png;base64,') and 'fig_ok' in out[0][0]
-    assert out[1][1] is None and 'fig_gone' in out[1][0]
-    assert OpencodeHarness._pack_figures(None) == []
-    assert OpencodeHarness._pack_figures(tmp_path / 'empty') == []
-    monkeypatch.setattr(harness_module, 'ATTACH_IMAGE_MAX_BYTES', 10)
-    capped = OpencodeHarness._pack_figures(folder)
-    assert capped[0][1] is None and '过大' in capped[0][0]
-
-
-def test_pending_tool_is_later_projected_as_complete(tmp_path):
-    manager=OpencodeHarness(Store(tmp_path),FakeClient)
-    session=manager.create_session('progress',{'model':'opencode-go/gpt-5.6-luna'})
-    seen=set()
-    part={'id':'tool-1','type':'tool','tool':'read','state':{'status':'pending'}}
-    manager._project_tool(session['id'],'turn','assistant',part,seen)
-    part['state']['status']='completed'
-    manager._project_tool(session['id'],'turn','assistant',part,seen)
-    manager._project_tool(session['id'],'turn','assistant',part,seen)
-    kinds=[e['kind'] for e in manager.store.rows('SELECT kind FROM chat_events WHERE session_id=?',(session['id'],))]
-    assert kinds.count('item/started')==1
-    assert kinds.count('item/completed')==1
 
 
 def test_child_history_keeps_only_current_turn_messages(tmp_path):

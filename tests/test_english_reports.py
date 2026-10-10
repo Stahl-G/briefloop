@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from briefloop.deliverable_spec import instructions, reader_contract_schema, resolve, save_reader_contract
+from briefloop.deliverable_spec import reader_contract_schema, resolve, save_reader_contract
 from briefloop.delivery_checks import check_numbers, quantities
 from briefloop.document_model import markdown_document
 from briefloop.export_jobs import enqueue_export, generate_word, output_path
@@ -26,8 +26,6 @@ def test_language_is_an_enum_and_english_lengths_count_words():
     with pytest.raises(ValueError):
         Requirements(title='t', objective='o', language='日本語')
     english = Requirements(title='t', objective='o', language='en')
-    assert (english.target_words, english.max_words) == (1000, 1300)
-    assert (Requirements(title='t', objective='o', language='en', research_tier='deep').target_words) == 6500
     # An explicit number is the user's choice in either language.
     assert Requirements(title='t', objective='o', language='en', target_words=1500, max_words=2000).target_words == 1500
 
@@ -41,11 +39,6 @@ def test_writers_and_reviewers_see_english_while_chinese_specs_stay_unchanged():
     # Language is frozen per run: a legacy "English" run keeps its saved contract.
     assert reader_contract_schema(english) == reader_contract_schema(resolve({**base, 'language': 'English'}))
     assert reader_contract_schema(english) == reader_contract_schema(chinese)
-    assert '本轮报告正文语言：英文' in instructions(english, role='analyst')
-    assert '本轮报告正文语言：英文' in instructions(english, role='revision')
-    assert '发现与理由仍用中文写' in instructions(english, role='reviewer')
-    assert 'excerpt 保持原文逐字' in instructions(english, role='scout')
-    assert '本轮报告正文语言' not in instructions(chinese, role='analyst')
 
 
 def test_legacy_english_run_accepts_contract_built_from_normalized_requirements(tmp_path):

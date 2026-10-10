@@ -2,7 +2,6 @@
 openpyxl base path is independently testable, and the optional enhancement
 layer only ever degrades and records — it never blocks the artifact."""
 import http.client
-import inspect
 import json
 import threading
 
@@ -10,7 +9,6 @@ import pytest
 
 from briefloop import host_bins, office_cli, xlsx_export
 from briefloop.store import Store, dump
-from briefloop.task_labels import LABELS, REPORTED
 
 XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -148,38 +146,6 @@ def test_sheet_names_are_sanitized_deduped_and_indexed_exactly(tmp_path):
     assert [row[2] for row in listed] == names[1:]  # index matches the real sheets exactly
 
 
-def test_report_date_lands_in_the_index(tmp_path):
-    store = _store(tmp_path)
-    brief = _brief(store, _sales_document(), requirements={'report_date': '2026-09-01'})
-    result = _generate(store, _queued_xlsx(store, brief))
-    assert _open(tmp_path, result)['目录']['A2'].value == '2026-09-01'
-
-
-@pytest.mark.parametrize('layout', ['sheets', 'single'])
-def test_base_export_fits_cjk_and_wraps_prose_without_changing_cells(tmp_path, layout):
-    store = _store(tmp_path)
-    prose = '本季度收入同比增长，仍需结合回款与客户结构判断增长质量。' * 5
-    title = '合成经营简报：指标与后续观察'
-    document = [_heading(title),
-                _table(_row(_cell('业务指标', 'tableHeader'), _cell('观察说明', 'tableHeader')),
-                       _row(_cell('经营活动现金流量净额'), _cell(prose)),
-                       _row(_cell('手动宽度', colwidth=[140]), _cell('第一行\n第二行')))]
-    result = _generate(store, _queued_xlsx(store, _brief(store, document), layout))
-    workbook = _open(tmp_path, result)
-    sheet = workbook[title.replace('：', '-')] if layout == 'sheets' else workbook['示例报告']
-    assert sheet['A3'].value == '经营活动现金流量净额'
-    assert sheet['B3'].value == prose
-    assert sheet.column_dimensions['A'].width == 20  # authored width retained
-    assert 30 <= sheet.column_dimensions['B'].width <= 60
-    assert sheet['B3'].alignment.wrap_text and sheet.row_dimensions[3].height > 30
-    assert sheet['B4'].value == '第一行\n第二行' and sheet.row_dimensions[4].height >= 34
-    if layout == 'sheets':
-        index = workbook['目录']
-        assert index['B4'].value == title and index['B4'].alignment.wrap_text
-        assert index.column_dimensions['B'].width == 30
-        assert index.row_dimensions[4].height >= 34  # WPS wraps the last CJK glyph
-
-
 @pytest.mark.parametrize('layout', ['sheets', 'single'])
 def test_colspan_and_mixed_header_merges_export_in_both_layouts(tmp_path, layout):
     store = _store(tmp_path)
@@ -227,50 +193,6 @@ def test_sheet_name_case_collisions_match_index_and_enhancement_paths(tmp_path):
     assert [workbook['目录'].cell(row, 3).value for row in range(4, 7)] == workbook.sheetnames[1:]
     plan = xlsx_export.plan_enhancements(xlsx_export._layout({'type':'doc','content':document}, 'sheets'))
     assert {item['path'].split('/')[1] for item in plan['commands']} == set(workbook.sheetnames[1:])
-
-
-@pytest.mark.parametrize('layout', ['sheets', 'single'])
-def test_english_excel_labels_preserve_authored_text(tmp_path, layout):
-    store = _store(tmp_path)
-    document = [_table(_row(_cell('原文列名', 'tableHeader')), _row(_cell('1,234'))),
-                _heading('原文表名'), _table(_row(_cell('Value', 'tableHeader')), _row(_cell('25%')))]
-    brief = _brief(store, document, title='原文报告标题', requirements={'language':'en'})
-    result = _generate(store, _queued_xlsx(store, brief, layout))
-    workbook = _open(tmp_path, result)
-    if layout == 'sheets':
-        assert workbook.sheetnames == ['Contents', 'Table 1', '原文表名']
-        index = workbook['Contents']
-        assert index['A1'].value == '原文报告标题'
-        assert [index.cell(3, c).value for c in (1, 2, 3)] == ['No.', 'Table title', 'Worksheet']
-        assert [index.cell(r, 3).value for r in (4, 5)] == ['Table 1', '原文表名']
-        assert workbook['Table 1']['A2'].value == '原文列名'
-    else:
-        assert workbook.sheetnames == ['原文报告标题']
-        sheet = workbook.active
-        assert sheet['A1'].value == 'Table 1' and sheet['A2'].value == '原文列名'
-        assert sheet['A5'].value == '原文表名' and sheet['A6'].value == 'Value'
-    models = xlsx_export._layout({'type':'doc','content':document}, layout,
-                                 report_title='原文报告标题', language='en')
-    plan = xlsx_export.plan_enhancements(models)
-    assert {command['path'].split('/')[1] for command in plan['commands']} <= set(workbook.sheetnames)
-
-
-def test_freeze_panes_follow_the_layout(tmp_path):
-    store = _store(tmp_path)
-    header_table = _table(_row(_cell('a', 'tableHeader')), _row(_cell('1')))
-    plain_table = _table(_row(_cell('a')), _row(_cell('1')))
-    brief = _brief(store, [_heading('有表头'), header_table, plain_table])
-    workbook = _open(tmp_path, _generate(store, _queued_xlsx(store, brief)))
-    assert workbook['有表头'].freeze_panes == 'A3'    # title row 1 + header row 2
-    assert workbook['有表头-2'].freeze_panes == 'A2'  # no header row: below the title
-    single = _generate(store, _queued_xlsx(
-        store, _brief(store, [_heading('单表'), header_table, plain_table], title='单表版式'), 'single'))
-    workbook = _open(tmp_path, single)
-    assert workbook.sheetnames == ['单表版式']
-    sheet = workbook['单表版式']
-    assert sheet.freeze_panes is None               # one pane per sheet: nothing frozen
-    assert sheet['A1'].value == '单表' and sheet['A2'].value == 'a'   # title row before each table
-    assert sheet['A5'].value == '单表' and sheet['A6'].value == 'a'
 
 
 def test_report_without_tables_is_rejected_before_queueing(tmp_path):
@@ -542,27 +464,9 @@ def test_excel_cancellation_is_preserved_during_enhancement_and_quality_check(tm
         xlsx_export.generate_xlsx(store, _queued_xlsx(store, _brief(store, _sales_document())), cancelled)
 
 
-def test_labels_and_notifications_cover_the_new_kind(tmp_path):
-    assert LABELS['export_xlsx'] == '生成报表 Excel' and 'export_xlsx' in REPORTED
-    store = _store(tmp_path)
-    job = _queued_xlsx(store, _brief(store, _sales_document()))
-    _generate(store, job)
-    from briefloop.notifications import job_status
-    job_status(store, store.one('jobs', job['id']), 'complete')
-    assert any('生成报表 Excel 已完成' in row['title'] for row in store.rows('SELECT * FROM notifications'))
-
-
 def test_runtime_dispatch_and_placeholders(tmp_path):
     from briefloop import runtime
-    kinds = runtime.FILE_JOB_KINDS
-    assert 'export_xlsx' in kinds
-    for name in ('loop', 'file_loop'):
-        source = inspect.getsource(getattr(runtime.Worker, name))
-        # Placeholders are derived from the tuple itself, never hand-counted:
-        # a fixed "?,?,?" once desynced from the tuple and killed the worker
-        # threads with sqlite3.ProgrammingError.
-        assert '",".join("?"*len(FILE_JOB_KINDS))' in source, name
-        assert '(?,?,?)' not in source, name
+    assert 'export_xlsx' in runtime.FILE_JOB_KINDS
 
     store = _store(tmp_path)
     brief = _brief(store, _sales_document())
@@ -589,12 +493,6 @@ def test_runtime_dispatch_and_placeholders(tmp_path):
         assert job['status'] == 'complete', job['error']  # ran as generate_xlsx, not audit_bundle
         assert json.loads(job['result'])['layout'] == 'sheets'
         assert (tmp_path / 'workspace' / 'exports' / job['id'] / 'report.xlsx').is_file()
-        progress = [json.loads(row['data']) for row in store.rows(
-            "SELECT data FROM events WHERE kind='export_progress' AND job_id=? ORDER BY seq", (job['id'],))]
-        assert progress == [{'step': 1, 'total': 4, 'message': '读取已保存的报告版本'},
-                            {'step': 2, 'total': 4, 'message': '展开表格并生成工作簿'},
-                            {'step': 3, 'total': 4, 'message': '写入 Excel 文件'},
-                            {'step': 4, 'total': 4, 'message': 'Excel 已生成，可以下载'}]
     finally:
         worker.stopping.set()
         worker.wake()

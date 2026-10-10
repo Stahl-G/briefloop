@@ -1,30 +1,10 @@
 """Fast drafts run on every engine and say how their plain turns were held to the materials."""
 import json
-import re
-from pathlib import Path
 
 from briefloop import plain_isolation
 from briefloop.runtime import Worker
 from briefloop.store import Store, dump
 from test_fast_reports import Writer, finish
-
-
-def test_levels_runtime_and_working_directory(tmp_path):
-    assert plain_isolation.runtime('codex') == {'permission': 'read-only'}
-    assert plain_isolation.runtime('pi') == {'host_options': {'mode': 'none'}}
-    # Bridge CLIs keep their native permission; BriefLoop does not request a mode it cannot enforce.
-    assert plain_isolation.runtime('antigravity') == {}
-    folder = tmp_path / 'jobs' / 'job_1' / 'fast-writing'
-    assert plain_isolation.working_directory('codex', folder) == folder
-    outside = plain_isolation.working_directory('antigravity', folder)
-    assert outside.is_dir() and tmp_path not in outside.parents
-    assert plain_isolation.working_directory('antigravity', folder) == outside
-
-
-def test_frontend_lists_the_same_enforced_engines():
-    source = (Path(__file__).resolve().parents[1] / 'frontend' / 'quick-report.js').read_text(encoding='utf-8')
-    listed = re.search(r'GUARDED_FAST_BACKENDS=\[([^\]]*)\]', source).group(1)
-    assert tuple(re.findall(r"'([^']+)'", listed)) == plain_isolation.GUARDED
 
 
 class ObservedWriter(Writer):

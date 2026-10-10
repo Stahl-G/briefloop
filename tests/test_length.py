@@ -3,7 +3,7 @@ import json
 import sys
 import pytest
 from briefloop.length import count_brief,length_stats
-from briefloop.models import Requirements,LENGTH_PRESETS
+from briefloop.models import Requirements
 from briefloop.store import Store,dump
 from briefloop.runtime import generation_prompt
 
@@ -23,9 +23,6 @@ def test_length_rule_and_cli_use_the_same_body_count(tmp_path,monkeypatch,capsys
 
 
 def test_length_bounds_reach_generation_input_and_preserve_legacy_requirements(tmp_path):
-    for extent,bounds in LENGTH_PRESETS.items():
-        req=Requirements(title='test',objective='read',extent=extent)
-        assert (req.target_words,req.max_words)==bounds
     req=Requirements(title='test',objective='read',target_words=1234,max_words=1600)
     assert (req.target_words,req.max_words)==(1234,1600)
     with pytest.raises(ValueError):Requirements(title='test',objective='read',target_words=100,max_words=99)

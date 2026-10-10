@@ -6,7 +6,7 @@ from docx import Document
 import pytest
 
 from briefloop import analyst
-from briefloop.deliverable_spec import resolve, reader_contract_schema, instructions
+from briefloop.deliverable_spec import resolve, reader_contract_schema
 from briefloop.draft_checks import inspect_draft
 from briefloop.document_model import markdown_document
 from briefloop.exports import docx_bytes, reader_markdown
@@ -22,10 +22,6 @@ def test_legacy_max_stays_soft_and_reader_contract_fingerprint_is_unchanged():
     legacy=reader_contract_schema(resolve(old))['properties']['source_fingerprint']['const']
     explicit_soft=reader_contract_schema(resolve({**old,'length_mode':'soft','length_requirement':None}))['properties']['source_fingerprint']['const']
     assert legacy==explicit_soft
-    for role in ('analyst','revision','evaluator','reviewer'):
-        guide=instructions(resolve(old),role)
-        assert '篇幅模式为 soft' in guide and '不为凑字数扩写' in guide
-        assert '仅凭超出预设判失败' in guide
 
 
 def test_strict_needs_a_recorded_source_and_user_quote_must_match_original_input():

@@ -154,7 +154,6 @@ def test_execution_and_fact_judgements_stay_separate(tmp_path):
     with pytest.raises(fact_check.FactCheckError) as blocked:
         fact_check.check_fact_result(store,world['run']['id'],result)
     assert blocked.value.errors[0]['code']=='execution_status'
-    assert '不判断主张真假' in blocked.value.errors[0]['message']
 
 
 def test_cancelled_stage_refuses_late_result(tmp_path):

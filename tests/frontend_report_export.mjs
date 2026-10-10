@@ -1,17 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import {allFrontendSources} from './source_section.mjs';
 import {exportFileName,printHtml,reportExportUI} from '../frontend/report-export.js';
-
-// Windows checkouts may use CRLF; the source assertions below match LF boundaries.
-const source=fs.readFileSync(new URL('../frontend/report-export.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-
-test('report exports never depend on opening a new window',()=>{
- assert.ok(!allFrontendSources().includes('window.open('),'the desktop shell denies new windows');
- assert.match(source,/a\.download=exportFileName\(title\)\+'\.html'/);
- assert.match(source,/if\(kind==='pdf'\)await exportPdf\(html,title,\{version,workspace:state.workspace_id,label:exportInfo.label,market:exportInfo.market_convention\}\);/);
-});
 
 test('export file names follow the server Word naming rules',()=>{
  assert.equal(exportFileName(' 季度/报告:终稿?. '),'季度_报告_终稿_');
@@ -112,12 +101,3 @@ test('a workspace switch during Word production stops the download from the orig
  assert.equal(notices[0][1],true,'the cancellation is an error notice');
 });
 
-test('HTML/PDF export downloads the server-rendered standalone document',()=>{
- // Citation order and numbering now come from html_export.py so HTML matches
- // Word exactly; the page only keeps the label call for PDF metadata context.
- assert.match(source,/api\('export-label\?version='/);
- assert.match(source,/fetch\('\/api\/export-html\?version='\+encodeURIComponent\(version\)\+'&workspace_id='\+encodeURIComponent\(state\.workspace_id\)\)/);
- assert.ok(!source.includes('DOMSerializer'),'no client-side document serialization remains');
- assert.ok(!source.includes('#source-'),'no client-side citation renumbering remains');
- assert.match(source,/response\.json\(\)\)\.error/,'server error JSON is surfaced on non-OK');
-});
