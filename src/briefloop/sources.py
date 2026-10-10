@@ -300,7 +300,23 @@ class _PublicRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 
-def _fetch_bytes(url,*,allow_private=False):
+SEC_HOSTS=('sec.gov',)
+
+
+def _agent(host,contact):
+    # SEC fair access requires a declared contact; other hosts never receive it.
+    if contact and any(host==h or host.endswith('.'+h) for h in SEC_HOSTS):
+        return f'BriefLoop/{__version__} local research reader {contact}'
+    return f'BriefLoop/{__version__} (local research reader)'
+
+
+def _sec_hint(host,contact,message):
+    if not contact and any(host==h or host.endswith('.'+h) for h in SEC_HOSTS) and '403' in message:
+        return message+'；SEC 要求声明联系邮箱，请在 设置 › 搜索 填写“网页读取联系邮箱”后重试'
+    return message
+
+
+def _fetch_bytes(url,*,allow_private=False,contact=''):
     host,port,addresses=_public_target(url,allow_private)
     curl=find_host_bin('curl')
     if curl:
@@ -311,20 +327,20 @@ def _fetch_bytes(url,*,allow_private=False):
             path=Path(tmp)/'response'
             for hop in range(MAX_REDIRECTS+1):
                 if hop:host,port,addresses=_public_target(url,allow_private)
-                command=[curl,'--fail','--silent','--show-error','--max-redirs','0','--proto','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{http_code}\\n%{redirect_url}\\n%{content_type}']
+                command=[curl,'--fail','--silent','--show-error','--max-redirs','0','--proto','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',_agent(host,contact),'-o',str(path),'-w','%{http_code}\\n%{redirect_url}\\n%{content_type}']
                 try:ipaddress.ip_address(host)
                 except ValueError:
                     # Connect to the addresses just checked, not a second DNS answer.
                     command+=['--resolve',f'{host}:{port}:'+','.join(f'[{a}]' if ':' in a else a for a in addresses)]
                 proc=subprocess.run(command+[url],stdin=subprocess.DEVNULL,capture_output=True,text=True,env=env,timeout=45)
-                if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
+                if proc.returncode:raise ValueError(_sec_hint(host,contact,proc.stderr.strip() or '网页读取失败'))
                 status,location,content_type=(proc.stdout.split('\n',2)+['',''])[:3]
                 if not (status.startswith('3') and location):break
                 url=location
             else:raise ValueError('网页重定向次数过多')
             data=path.read_bytes() if path.exists() else b'';encoding='utf-8'
     else:
-        req=urllib.request.Request(url,headers={'User-Agent':f'BriefLoop/{__version__} (local research reader)'})
+        req=urllib.request.Request(url,headers={'User-Agent':_agent(host,contact)})
         from .websearch import ssl_context
         opener=urllib.request.build_opener(_PublicRedirects(allow_private),_CheckedHTTPHandler(allow_private),_CheckedHTTPSHandler(allow_private,context=ssl_context()))
         with opener.open(req,timeout=40) as response:
@@ -365,7 +381,7 @@ def _fetch(store, url, *, allow_private=False):
     from .store import uid,now,content_hash,dump
     from .media import detect_media_type,safe_source_path
     from urllib.parse import urlsplit,unquote
-    data,content_type,encoding=_fetch_bytes(url,allow_private=allow_private)
+    data,content_type,encoding=_fetch_bytes(url,allow_private=allow_private,contact=store.settings().get('fetch_contact_email') or '')
     sid=uid('src');raw_name=Path(unquote(urlsplit(url).path)).name or '网页'
     title=html_title(data,content_type,encoding)
     name=title or raw_name
@@ -548,6 +564,24 @@ def fetch_for_run(store,run_id,url):
         error=AdmissionError(message,code='response_rejected')
         error.request_record_path=path
         raise error
-    return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
+    result={**source,'reused':False,'budget':budget.snapshot(store,run_id),
             'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id'),
             'request_record_path':path}
+    return _read_fallback(store,run_id,request_url,result) if source.get('status')!='ready' else result
+
+
+def _read_fallback(store,run_id,url,failed):
+    """Local reads fail on bot walls, SEC policy and local network paths; Tavily
+    reads server-side. The failed local record stays; a ready provider copy is
+    returned instead and labelled as provider-extracted text."""
+    from . import tavily
+    try:
+        if not tavily._read_key()[0]:return failed
+        result=tavily.extract(store,[url],run_id=run_id,fallback=True)
+    except Exception as exc:
+        return {**failed,'fallback':{'provider':'tavily','error':str(exc)[:300]}}
+    ready=[s for s in (result.get('sources') or []) if s.get('status')=='ready']
+    if not ready:
+        return {**failed,'fallback':{'provider':'tavily','error':'提供方也未能提取正文'}}
+    return {**ready[0],'reused':False,'budget':result.get('budget') or failed['budget'],
+            'fallback':{'provider':'tavily','local_source_id':failed['id'],'local_error':failed.get('error')}}

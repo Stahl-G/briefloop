@@ -364,12 +364,11 @@ def check_draft(store, config, args):
 def prepare_data(store, config, args):
     from .report_tools import prepare_for_run
     from .native_roles import _json_result
-    from .industry_data import IndustryData
+    from .industry_data import IndustryData, source_ids
     data = IndustryData.model_validate(args.get('data'))
     index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text(encoding='utf-8'))['sources']
     allowed = {s['source_id'] for s in index if not s['reference_only']}
-    ids = {r.source_id for r in data.records} | {r.previous_source_id for r in data.records if r.previous_source_id}
-    if not ids <= allowed:
+    if not set(source_ids(data)) <= allowed:
         raise ValueError('计算数据超出本次写作包事实来源')
     return _json_result(prepare_for_run(store, config['run_id'], args.get('data')))
 

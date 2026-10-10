@@ -425,8 +425,10 @@ def assessment_prompt(store, brief, folder, backend='codex', *, analysis_checkli
     detail=json.loads(brief.get('detail') or '{}')
     citations=detail.get('citations',[])
     report_profile=profile_context(json.loads(run['requirements']))
-    report_data=prepare_report_data(detail['report_data']) if detail.get('report_data') else None
-    data_ids=[row[key] for row in (report_data or {}).get('records',[]) for key in ('source_id','previous_source_id') if row.get(key)]
+    from .report_tools import run_window
+    from .industry_data import IndustryData, source_ids
+    report_data=prepare_report_data(detail['report_data'],run_window(json.loads(run['requirements']))) if detail.get('report_data') else None
+    data_ids=source_ids(IndustryData.model_validate({k:report_data[k] for k in ('schema_version','records','state_changes')})) if report_data else []
     cited_ids=list(dict.fromkeys([ref['source_id'] for ref in citations]+data_ids))
     records={sid:source_context(store,sid) for sid in store.source_ids(run['id'])}
     # The initial pack follows actual citations; the full run remains discoverable.
@@ -1232,6 +1234,9 @@ class Worker:
         if json.loads(run['requirements']).get('completion_mode') in ('fast','fast_web'):
             from .fast_reports import generate
             return generate(self,job)
+        if json.loads(run['requirements']).get('completion_mode')=='direct':
+            from .direct_reports import generate
+            return generate(self,job)
         from .backends import validate_backend
         from .models import normalize_search_provider
         backend=validate_backend(payload.get('agent_backend','codex'))
@@ -1256,7 +1261,7 @@ class Worker:
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
         latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None];publication_hold=[None]
-        def publish():
+        def publish(final=False):
             from .store import Conflict
             from .document_model import markdown_document,document_hash
             p=folder/'draft.json'
@@ -1316,6 +1321,10 @@ class Worker:
                 newest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]['id']
                 if newest!=latest[0]:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
+                # While the author is still writing, a same-body metadata rewrite
+                # (citations, number bindings) waits for the turn to end: one
+                # child version instead of one per save (2026-10 Manus: 6 copies).
+                if not final and self.store.one('briefs',latest[0])['hash']==sha:return
                 try:record=self.store.publish(run['id'],data,parent_id=latest[0],writer=writer)
                 except Conflict:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
@@ -1338,7 +1347,7 @@ class Worker:
         with generation_access(self,job) as connector_instructions:
             prompt=generation_prompt(self.store,run,folder,backend,scout_budget=self._scout_budget(job))+connector_instructions
             result=self.runtime.execute(job,prompt,folder,publish)
-            publish()
+            publish(final=True)
             if not self.store.rows('SELECT id FROM briefs WHERE id=?',(latest[0],)):
                 if self.runtime.cancelled.is_set():
                     raise InterruptedError('任务已停止，已生成内容保留')
@@ -1351,7 +1360,7 @@ class Worker:
                 continuation=('\n草稿文件已保留，但研究收尾尚未接纳：'+str(publication_hold[0])
                               if publication_hold[0] is not None else '\n上轮只返回了研究进度，没有保存 draft.json。')
                 result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：'+continuation+'读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成研究收尾、正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
-        publish()
+        publish(final=True)
         if publication_hold[0] is not None:raise publication_hold[0]
         current=latest[0]
         if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
@@ -1534,7 +1543,9 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
             self.runtime.execute(job,prompt,stage,resume_on_complete=(stage/'admission-error.json').exists())
             value=json.loads((stage/'draft.json').read_text(encoding='utf-8-sig'))
-            if contract is not None:value['reader_contract']=contract
+            # The program binds the frozen contract; a run without one (direct/fast)
+            # must not admit a contract the revision writer made up.
+            value['reader_contract']=contract
             if not value.get('editor_document') and value.get('markdown'):
                 from .document_model import markdown_document
                 value['editor_document']=markdown_document(value['markdown'])
@@ -1669,7 +1680,28 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
             prompt+='\n用户已明确恢复本次未完成评价。继续原会话中尚未核对的部分，保留已完成的证据判断；仍无法完成时如实标为 incomplete。'
         result=self.runtime.execute(job,prompt,folder,**({'resume_on_complete':True} if resume_incomplete else {}))
         basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
-        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis,expected_checks=expected)
+        def admit(value):self.store.assess(brief['id'],value,basis=basis,expected_checks=expected)
+        def load():return json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig'))
+        anchor_error=lambda exc:'report_quote' in str(exc) or 'block_ids' in str(exc)
+        try:admit(load())
+        except ValueError as exc:
+            if not anchor_error(exc):raise
+            # A paraphrased quote is the evaluator's slip, not a reason to lose the
+            # whole evaluation: one repair turn in the same session, then admit the
+            # findings without the unlocatable quotes and say so.
+            repair=('assessment.json 未通过接纳：'+str(exc)+'\n只修正无法定位的 report_quote 或 block_ids：从正文或 reader-preview.md 逐字复制一段连续原文，'
+                    '只用正文中实际存在的块编号，或删除该定位并在 description 中说明位置。评分、结论和其他发现不变，重新保存 assessment.json。')
+            result=self.runtime.execute(job,repair,folder,resume_on_complete=True)
+            try:admit(load())
+            except ValueError as again:
+                if not anchor_error(again):raise
+                from .finding_anchors import drop_unlocatable
+                from .document_model import brief_document
+                from .exports import reader_markdown
+                value=load();findings=value.get('findings') or []
+                dropped=drop_unlocatable(brief_document(brief),findings,reader_preview=reader_markdown(self.store,brief))
+                admit(value)
+                self.store.event(job['id'],'assessment_quotes_dropped',{'version_id':brief['id'],'findings':dropped})
         return result
 
     def _review_child(self,parent,brief):

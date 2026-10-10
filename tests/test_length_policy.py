@@ -92,3 +92,20 @@ def test_under_target_does_not_become_an_error_or_hide_real_citation_error():
     assert result['status']=='needs_attention'
     assert [item['code'] for item in result['warnings']]==['citation_location_missing']
     assert result['notes'][0]['code']=='over_limit'
+
+
+def test_many_key_questions_get_room_without_overriding_explicit_or_compact_choices():
+    from briefloop.models import Requirements
+    questions = [f'问题{i}' for i in range(8)]
+    room = Requirements(title='t', objective='o', extent='detailed', key_questions=questions)
+    assert (room.target_words, room.max_words) == (4200, 5460)
+    assert Requirements(title='t', objective='o', extent='compact', key_questions=questions).target_words == 800
+    assert Requirements(title='t', objective='o', extent='detailed', key_questions=questions, max_words=3000).target_words == 3000
+
+
+def test_padding_advisories_point_at_repetition_and_process_narration():
+    from briefloop.draft_checks import _padding_notes
+    text = ('## 判断\n融资完成有报道但最终四十亿美元估值没有得到公司确认。\n'
+            '## 资本\n融资完成有报道，但最终四十亿美元估值没有得到公司确认。\n本次检索没有发现当日新增的融资报道和公告。\n')
+    codes = {note['code'] for note in _padding_notes(text)}
+    assert codes == {'repeated_statements', 'process_narration'}

@@ -37,10 +37,10 @@ def _passages(document):
     return list(walk(document,set()))
 
 
-def validate_findings(document,findings,*,reader_preview=''):
-    """Check only new, supplied anchors; omitted text and history stay valid."""
+def unlocated_quotes(document,findings,*,reader_preview=''):
+    """Indices of new findings whose report_quote is not continuous body text."""
     passages=_passages(document);known=set(blocks(document))
-    preview=None
+    preview=None;missing=[]
     for index,finding in enumerate(findings):
         value=finding.model_dump() if hasattr(finding,'model_dump') else finding
         if value.get('response_to'):continue  # A corrected historical quote may be gone.
@@ -52,5 +52,27 @@ def validate_findings(document,findings,*,reader_preview=''):
         if not selected and reader_preview:
             if preview is None:preview=_passages(markdown_document(reader_preview))
             if any(quote in text for _,text in preview):continue
-        raise ValueError(f'findings[{index}].report_quote 无法在本版指定正文位置连续定位；'
+        missing.append(index)
+    return missing
+
+
+def validate_findings(document,findings,*,reader_preview=''):
+    """Check only new, supplied anchors; omitted text and history stay valid."""
+    missing=unlocated_quotes(document,findings,reader_preview=reader_preview)
+    if missing:
+        raise ValueError(f'findings[{missing[0]}].report_quote 无法在本版指定正文位置连续定位；'
                          '请复制实际原文，不拼接省略片段；缺失内容可省略 report_quote 并说明要求')
+
+
+def drop_unlocatable(document,findings,*,reader_preview=''):
+    """Last resort after a repair turn: keep each finding, drop only the anchors
+    (unknown block_ids, non-continuous quotes) that cannot be located."""
+    known=set(blocks(document));changed=set()
+    for index,finding in enumerate(findings):
+        if finding.get('response_to'):continue
+        ids=finding.get('block_ids') or []
+        if any(i not in known for i in ids):
+            finding['block_ids']=[i for i in ids if i in known];changed.add(index)
+    for index in unlocated_quotes(document,findings,reader_preview=reader_preview):
+        findings[index]['report_quote']='';changed.add(index)
+    return sorted(changed)

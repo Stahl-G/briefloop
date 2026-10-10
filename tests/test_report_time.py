@@ -122,3 +122,26 @@ def test_writer_retains_disclosure_basis_and_returns_date_diagnostics(tmp_path):
     assert any(note['code'] == 'iso_week_mismatch' for note in diagnostics['notes'])
     assert diagnostics['review_status'] == 'not_reviewed'
     assert analyst_drafts.submit(store, config, {'revision': saved['revision']})['status'] == 'saved'
+
+
+def test_as_of_analysis_has_no_news_window_and_does_not_filter_search(tmp_path, monkeypatch):
+    # A company/event analysis "as of now" once inherited a today-only window,
+    # which limited every Tavily search to one day (2026-10 Manus run).
+    clock = datetime(2026, 10, 10, 2, 20, tzinfo=ZoneInfo('UTC'))
+    window = freeze({'period': '截至提交时刻', 'report_timezone': 'Asia/Shanghai'}, clock)
+    assert window['start'] is None and window['mode'] == 'as_of'
+    assert '不设“本期”起点' in instructions(window)
+    result = check(window, [{'statement': '此前融资', 'event_date': '2026-10-08'},
+                            {'statement': '提交后的事', 'event_date': '2026-10-11'}])
+    assert [c['temporal_status'] for c in result['items']] == ['as_of_unverified', 'out_of_range']
+    from briefloop import tavily
+    from io import BytesIO
+    store = Store(tmp_path)
+    store.set_meta('settings', {**store.settings(), 'search_provider': 'tavily'})
+    run = store.create_run({'title': '估值分析', 'objective': '解释估值', 'allow_web': True, 'period': '截至提交时刻'}, [])
+    key = tmp_path/'key';tavily.save_key('test', key_file=key)
+    seen = []
+    monkeypatch.setattr(tavily.urllib.request.OpenerDirector, 'open',
+                        lambda opener, request, **kwargs: seen.append(json.loads(request.data)) or BytesIO(b'{"results":[]}'))
+    tavily.search('funding', store=store, run_id=run['id'], key_file=key)
+    assert seen[0].get('start_date') is None and seen[0]['end_date']

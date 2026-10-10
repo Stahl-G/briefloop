@@ -243,6 +243,21 @@ def test_native_revision_retains_original_and_rechecks_only_once(tmp_path):
     assert len([c for c in engine.calls if c[0]=='turn_start'])==turns
 
 
+def test_revision_inside_background_assess_uses_analyst_revision_role(tmp_path):
+    # Direct drafts get their one automatic revision in the assess job; without
+    # this the orchestrator role looped on save_plan/write_report until timeout.
+    from briefloop.native_orchestrator import prepare
+    store,source,run,job=setup(tmp_path)
+    engine=FlowEngine(store,run,source);harness=NativeHarness(store,engine)
+    worker=Worker(store);worker.runtime=InteractiveRuntime(store,backends={'briefloop-native':harness})
+    brief=store.one('briefs',worker.generate(job,score=False)['version_id'])
+    assess=store.enqueue('assess',{'version_id':brief['id'],'runtime':{'model':'fixture/model'}})
+    stage=store.root/'jobs'/assess['id']/'revision';stage.mkdir(parents=True)
+    (stage/'input.json').write_text(dump({'brief':{'id':brief['id'],'markdown':brief['markdown']},'review_findings':[]}))
+    cfg,_=prepare(store,store.one('jobs',assess['id']),stage,'修订')
+    assert cfg['role']=='analyst' and cfg['revision'] is True
+
+
 def test_submission_and_receipt_roll_back_together(tmp_path,monkeypatch):
     from briefloop.external_requests import _RequestStore
     store=Store(tmp_path);source=store.add_source('S','Synthetic')

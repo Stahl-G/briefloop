@@ -90,3 +90,38 @@ def finish(store,job,worker):
     result=worker.assess(job)
     store.update_job(job['id'],'complete',result=result)
     return result
+
+
+
+def test_unlocatable_evaluator_quote_gets_one_repair_then_is_dropped_not_fatal(tmp_path,monkeypatch):
+    # A paraphrased report_quote used to fail the whole check job (two real
+    # direct-mode samples); now one repair turn, then the quote is dropped.
+    from briefloop.runtime import stage_job
+    monkeypatch.setattr('briefloop.review_capability.review_available',lambda *a,**k:False)
+    store=Store(tmp_path)
+    store.set_meta('settings',{**store.settings(),'auto_learn':False,'company_context_enabled':False,
+                               'model':'fixture-model','model_selection_required':False})
+    source=store.add_source('Synthetic source','Public synthetic material only.')
+    run=store.create_run({'title':'Synthetic','objective':'Explain the source','completion_mode':'draft_first',
+                          'writing_mode':'general','fact_check':False},[source['id']])
+    job=store.enqueue('generate',{'run_id':run['id'],'agent_backend':'codex','auto_revision':False})
+    runtime=ControlledRuntime(store);worker=Worker(store,runtime)
+    brief=store.one('briefs',generate(store,job,worker)['version_id'])
+    original=runtime.execute;prompts=[]
+    def paraphrasing(job, prompt, folder, on_tick=lambda:None, **kwargs):
+        result=original(job,prompt,folder,on_tick,**kwargs)
+        prompts.append(prompt);value=json.loads((folder/'assessment.json').read_text())
+        value['findings']=[{'dimension':'evidence','severity':'minor','description':'Needs a date',
+                            'report_quote':'A paraphrase that is not in the report'},
+                           {'dimension':'expression','severity':'minor','description':'Wrong block','block_ids':['blk_missing']}]
+        (folder/'assessment.json').write_text(dump(value))
+        return result
+    runtime.execute=paraphrasing
+    folder=tmp_path/'evaluation';folder.mkdir()
+    assess=store.enqueue('assess',{'version_id':brief['id'],'agent_backend':'codex'})
+    worker.assess_version(stage_job(store,store.one('jobs',assess['id']),'evaluator',mode='single'),brief,folder,'codex')
+    assert len(prompts)==2 and 'report_quote' in prompts[1]
+    saved=json.loads(store.rows('SELECT data FROM assessments WHERE version_id=?',(brief['id'],))[0]['data'])
+    assert saved['findings'][0]['description']=='Needs a date' and not saved['findings'][0].get('report_quote')
+    assert saved['findings'][1]['description']=='Wrong block' and not saved['findings'][1].get('block_ids')
+    assert store.rows("SELECT * FROM events WHERE kind='assessment_quotes_dropped'")

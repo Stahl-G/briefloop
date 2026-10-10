@@ -5,6 +5,39 @@ from .length import count_brief, length_stats
 
 
 _TABLE_CITATION_SAMPLE_LIMIT = 12
+# Room is not a quota: a generous soft length needs cheap signals for padding.
+_SENTENCE = re.compile(r'[^。！？；!?\n]+')
+_HEDGE = re.compile(r'不等于|不代表|不能据此|不能证明|不足以证明|尚不能|尚未证明|不构成|不自动|仍需核对|有待核实|未经审计|无法确认|不能当作|不能视为')
+_PROCESS = re.compile(r'本次检索|本轮检索|检索结果|搜索结果|搜索摘要|抓取|提交时可得|本次未发现|未发现当日|研究轮次|任务包|Scout')
+
+
+def _padding_notes(markdown):
+    """Repetition, stacked caveats and process narration; never a length rule."""
+    text = re.sub(r'\[@[^\]\n]+\]', '', markdown)
+    sentences = [s.strip(' #>*-|') for s in _SENTENCE.findall(text)]
+    sentences = [s for s in sentences if len(re.sub(r'\W', '', s)) >= 16]
+    grams = [{s[i:i+3] for i in range(len(s)-2)} for s in sentences]
+    repeated = []
+    for i in range(len(sentences)):
+        for j in range(i+1, len(sentences)):
+            union = grams[i] | grams[j]
+            if union and len(grams[i] & grams[j]) / len(union) >= 0.55:
+                repeated.append([sentences[i][:60], sentences[j][:60]])
+    notes = []
+    if repeated:
+        notes.append({'code': 'repeated_statements', 'kind': 'advisory', 'count': len(repeated), 'samples': repeated[:5],
+                      'message': '这些句子与前文几乎重复；保留信息最完整的一处，删除或合并其余，不要换说法再讲一遍。'})
+    units = max(1, count_brief(markdown))
+    hedges = [s[:60] for s in sentences if _HEDGE.search(s)]
+    if len(hedges) >= 8 and len(hedges) * 1000 / units > 4:
+        notes.append({'code': 'stacked_caveats', 'kind': 'advisory', 'count': len(hedges),
+                      'per_thousand_units': round(len(hedges) * 1000 / units, 1), 'samples': hedges[:5],
+                      'message': '限定句密度偏高。每个限制只在受影响的结论旁写一次，或集中到证据边界；不在每段重复同类免责，必要条件仍须保留。'})
+    process = [s[:60] for s in sentences if _PROCESS.search(s)]
+    if process:
+        notes.append({'code': 'process_narration', 'kind': 'advisory', 'count': len(process), 'samples': process[:5],
+                      'message': '正文在叙述检索或任务过程；读者只需要会影响判断的限制，过程记录放 research_notes。'})
+    return notes
 
 
 def _table_citation_notes(draft):
@@ -131,6 +164,7 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
                       'message': '正文中还有带明确单位的数值出现位置，未找到唯一对应的成功数值绑定；请判断是否需要核对来源或说明计算依据。候选不是事实错误。',
                       'scope': occurrence_review['scope']})
     notes.extend(_table_citation_notes(draft))
+    notes.extend(_padding_notes(draft.markdown))
     return {'status': 'needs_attention' if warnings else 'checks_completed',
             'review_status': 'not_reviewed', 'length': length, 'sections': sections,
             'temporal': temporal,

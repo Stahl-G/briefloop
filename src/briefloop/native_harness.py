@@ -244,7 +244,7 @@ class NativeHarness:
         from .agent_prompts import system_prompt
         from .native_roles import role_of, runner_tool_specs
         role = role_of(config)
-        prompt = system_prompt(role, 'interactive' if role == 'chat' else 'background')
+        prompt = system_prompt(role, 'interactive' if role == 'chat' else 'background', direct=bool(config.get('direct')))
         params = {
             'system_prompt': prompt['text'],
             'session_id': sid,
