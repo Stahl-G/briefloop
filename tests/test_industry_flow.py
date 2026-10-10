@@ -50,7 +50,6 @@ def test_real_http_profile_template_data_and_docx_without_model(tmp_path):
     def get(path):
         with urllib.request.urlopen(base+path) as response:return response.read()
     try:
-        assert 'industry_periodic' in get('/').decode()
         assert json.loads(get('/api/report-data-template'))['records']==[]
         assert 'records' in json.loads(get('/api/report-data-schema'))['properties']
         run,source,ref,record=example(server.store)

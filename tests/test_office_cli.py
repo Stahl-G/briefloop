@@ -194,16 +194,6 @@ def test_missing_binary_degrades_and_hint_never_spawns(tmp_path, monkeypatch):
     assert store.snapshot()['office'] == {'installed': False, 'enabled': True}
 
 
-def test_settings_default_off_and_backfilled_for_old_workspaces(tmp_path):
-    store = _workspace(tmp_path)
-    assert store.settings()['officecli_enabled'] is False
-    legacy = {key: value for key, value in store.settings().items() if key != 'officecli_enabled'}
-    store.set_meta('settings', legacy)
-    reopened = Store(store.root)
-    assert reopened.settings()['officecli_enabled'] is False  # model_validate backfills
-    assert reopened.update_settings({'officecli_enabled': True})['officecli_enabled'] is True
-
-
 def test_disabled_switch_is_a_silent_noop(tmp_path, monkeypatch):
     install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)

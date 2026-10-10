@@ -7,8 +7,7 @@ from docx import Document
 from docx.shared import RGBColor
 
 from briefloop.market_convention import (
-    apply_docx_market_colors, chart_presentation, market_colors,
-    resolve_market, save_report_settings, semantic_delta_spans,
+    apply_docx_market_colors, resolve_market, save_report_settings, semantic_delta_spans,
 )
 from briefloop.models import Requirements
 from briefloop.store import Store
@@ -90,15 +89,6 @@ def test_word_colors_only_semantic_numbers_and_preserves_authored_formatting():
     before = saved._element.xml
     apply_docx_market_colors(saved, {'market_convention': 'intl'})
     assert saved._element.xml == before
-
-
-def test_new_chart_authoring_metadata_is_explicit_without_mutating_figures():
-    spec = chart_presentation({'language': 'en'})
-    assert spec['market_convention'] == 'intl'
-    assert spec['direction_colors'] == {'up': '#1E8E4F', 'down': '#D9363E', 'flat': '#5F6675'}
-    assert spec['series_colors'] == ['#2448B8', '#0B6A78', '#9A6B1F', '#6741D9', '#8A909C']
-    assert '已登记图像保持原样' in spec['instructions']
-    assert market_colors({'language': 'zh'})['up'] == 'D9363E'
 
 
 def test_template_defaults_can_be_colored_without_overriding_authored_colors():

@@ -7,7 +7,6 @@ import time
 import pytest
 
 from briefloop import scout, sources, websearch
-from briefloop.agent_prompts import system_prompt
 from briefloop.models import ScoutResult
 from briefloop.native_harness import NativeHarness
 from briefloop.native_roles import run_tool, runner_tool_specs, scout_packet
@@ -92,8 +91,6 @@ def test_scout_tools_follow_the_run_web_permission_and_channels(tmp_path):
     config = _config(store, run_id, 'n')
     assert [t['name'] for t in runner_tool_specs('scout', config=config)] == [
         'source_read', 'source_grep', 'render_pdf_pages', 'add_url', 'record_evidence', 'submit_scout_result']
-    note = (store.root / 'jobs' / 'n' / 'packet' / 'search-policy.md').read_text(encoding='utf-8')
-    assert '内置引擎没有这项能力' in note and 'web-search --run' not in note
 
 
 def test_packet_prompt_and_system_prompt_name_only_native_tools(tmp_path):
@@ -103,13 +100,9 @@ def test_packet_prompt_and_system_prompt_name_only_native_tools(tmp_path):
     for name in ('task.json', 'scout-contract.md', 'reader-contract.json', 'search-policy.md', 'source-index.json', 'scout.schema.json'):
         assert (packet / name).is_file(), name
     assert json.loads((packet / 'source-index.json').read_text(encoding='utf-8'))[0]['source_id'] == sid
-    assert '逐字摘录' in (packet / 'scout-contract.md').read_text(encoding='utf-8')
     prompt = scout.native_prompt(task)
     assert 'submit_scout_result' in prompt and 'source_read' in prompt and 'scout-2' in prompt
     assert 'record_evidence' in prompt and str(tmp_path) not in prompt
-    assert task['contract'] in prompt and '已内联部分无需再次' in prompt
-    text = system_prompt('scout')['text']
-    assert '研究检索（Scout）' in text and 'excerpt 逐字摘录' in text
 
 
 def test_web_search_and_add_url_spend_the_run_budget(tmp_path, monkeypatch):

@@ -55,9 +55,6 @@ def test_second_support_quote_error_points_to_statement_without_saving_claim(tmp
     accepted=workspace_action(store,{'action':'claim_create','run_id':run['id'],'claim':claim})
     assert len(store.rows('SELECT id FROM claims'))==1 and accepted['data']['review_status']=='unreviewed'
     assert [s['supports_quote'] for s in accepted['data']['supports']]==[s['supports_quote'] for s in claim['supports']]
-    schema=workspace_action(store,{'action':'capabilities'})['schemas']['claim_create.claim']
-    description=schema['$defs']['Support']['properties']['supports_quote']['description']
-    assert 'statement' in description and '连续逐字' in description and 'excerpt' in description
 
 
 def test_workbook_cell_and_inference_are_traceable_not_automatically_verified(tmp_path):

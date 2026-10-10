@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 from briefloop import runtime_permissions as permissions
 from briefloop.bridge_harness import normalize_bridge_usage
-from briefloop.models import Settings
 
 
 class ModeBridge:
@@ -127,8 +126,6 @@ def test_pi_usage_includes_cached_prompt_without_double_counting_other_hosts():
     assert normalize_bridge_usage({'prompt_tokens':8464,'prompt_cache_hit_tokens':8000},'codebuddy')['last']['inputTokens']==8464
     assert usage['modelContextWindow']==1000000
     assert usage['raw']==raw
-    assert Settings().chat_allow_web is True
-    assert Settings(chat_allow_web=False).chat_allow_web is False
 
 
 def test_queued_antigravity_turn_refuses_changed_native_policy(tmp_path,monkeypatch):

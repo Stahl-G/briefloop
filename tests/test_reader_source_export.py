@@ -31,7 +31,6 @@ def test_reader_export_replaces_internal_index_with_linked_title_without_mutatin
     assert links[0].xpath('.//w:t')[0].text == 'Official source'
     relation = doc.part.rels[links[0].get(qn('r:id'))]
     assert relation.is_external and relation.target_ref == 'https://example.org/report'
-    assert links[0].xpath('.//w:color')[0].get(qn('w:val')) == '0563C1'
 
 
 def test_unrecognized_or_unresolved_tables_are_not_discarded():

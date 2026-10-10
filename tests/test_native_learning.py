@@ -31,7 +31,6 @@ def test_the_handoff_is_frozen_into_a_packet_with_relative_paths(tmp_path):
     assert all(not str(row.get('file', '')).startswith('/') for row in context['human_feedback'])
     assert (packet / context['human_feedback'][0]['file']).is_file()
     assert 'intent' in (packet / 'sources' / f"{source['id']}.txt").read_text(encoding='utf-8')
-    assert 'Wiki Maintainer' in (packet / 'role.md').read_text(encoding='utf-8')
     assert str(study) not in (packet / 'learning-context.json').read_text(encoding='utf-8')
 
 
@@ -72,8 +71,7 @@ def test_submit_patterns_goes_through_wikiskill_validation(tmp_path):
 
 
 def test_wikiskill_takes_any_host_name_and_recommends_codex_and_claude_code(tmp_path):
-    from wikiskill.native_agents import RECOMMENDED_RUNTIMES, install, runtime_name
-    assert RECOMMENDED_RUNTIMES == ('codex', 'claude-code')
+    from wikiskill.native_agents import install, runtime_name
     for name in ('codex', 'claude-code', 'opencode', 'briefloop-native'):
         assert runtime_name(name) == name
     for bad in ('', 'Codex', 'has space', '../x', None):

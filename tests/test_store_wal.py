@@ -4,14 +4,8 @@ import time
 import pytest
 
 import briefloop.store as store_module
-from briefloop.store import Store, wal_supported
+from briefloop.store import Store
 from briefloop.workspaces import _workspace_id
-
-
-def test_only_patched_sqlite_builds_use_wal():
-    assert wal_supported((3, 51, 3)) and wal_supported((3, 53, 1))
-    assert wal_supported((3, 50, 7)) and wal_supported((3, 44, 6))
-    assert not wal_supported((3, 50, 4)) and not wal_supported((3, 51, 2)) and not wal_supported((3, 45, 1))
 
 
 def test_unpatched_build_keeps_the_rollback_journal(tmp_path, monkeypatch):

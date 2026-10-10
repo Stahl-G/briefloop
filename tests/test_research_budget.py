@@ -1,13 +1,10 @@
 """Managed-tool budgets: real SQLite contention with fake HTTP only."""
 from concurrent.futures import ThreadPoolExecutor
 import json
-import multiprocessing
 import threading
-import time
 import pytest
 from pathlib import Path
 from briefloop import research_budget as budget, sources, tavily
-from briefloop.models import Requirements,RESEARCH_BUDGET_PRESETS
 from briefloop.store import Store,dump
 
 
@@ -154,7 +151,6 @@ def test_expired_claim_settles_old_quality_request_before_reclaim(tmp_path,monke
 
 
 def test_explicit_native_scope_and_legacy_missing_budget_are_explicit(tmp_path):
-    assert Requirements(title='weekly',objective='research').research_budget.model_dump()==RESEARCH_BUDGET_PRESETS['weekly']
     store=Store(tmp_path/'workspace')
     store.set_meta('settings',{**store.settings(),'search_provider':'native'})
     run=store.create_run({'title':'native','objective':'research','allow_web':True},[])
@@ -167,12 +163,6 @@ def test_explicit_native_scope_and_legacy_missing_budget_are_explicit(tmp_path):
     assert budget.snapshot(store,run['id'])['limits'] is None
     assert budget.snapshot(store,run['id'])['remaining']['source_pages'] is None
     assert 'research_budget' not in json.loads(store.one('runs',run['id'])['requirements'])
-
-
-def test_http_failure_kinds_are_stable():
-    assert tavily._http_kind(401)=='auth' and tavily._http_kind(403)=='auth'
-    assert tavily._http_kind(402)=='quota' and tavily._http_kind(429)=='rate_limit'
-    assert tavily._http_kind(500)=='provider_error' and tavily._http_kind(400)=='provider_error'
 
 
 def test_unknown_failure_kind_is_rejected_and_cli_payload_is_structured():

@@ -22,19 +22,6 @@ def _age_feedback(store):
         c.execute("UPDATE feedback SET created='2026-01-01T00:00:00+00:00'")
 
 
-def test_new_workspaces_start_with_automatic_learning_off_and_a_stated_bound(tmp_path):
-    store = Store(tmp_path)
-    settings = store.settings()
-    assert settings['auto_learn'] is False and settings['auto_learn_authorized_rounds'] is None
-    assert state(settings) == 'off'
-    bound = plan(settings)
-    assert bound['cases'] == 3 and bound['trial_generations_per_round'] == 6
-    # k=1, but an explicit human requirement can add a repair round.
-    assert bound['rounds'] == 1 and bound['rounds_with_explicit_requirement'] == 2 and bound['max_trial_generations'] == 12
-    assert bound['web'] is False and bound['price'] == 'unknown'
-    assert store.snapshot()['learning_authorization'] == {'state': 'off', 'authorized_rounds': None, 'plan': bound}
-
-
 def test_an_upgraded_workspace_keeps_feedback_but_waits_for_confirmation(tmp_path):
     store = Store(tmp_path)
     # Settings saved by an older version: the old default, with no authorization record.

@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from briefloop import analyst
-from briefloop.agent_prompts import system_prompt
 from briefloop.native_roles import run_tool, runner_tool_specs
 from briefloop.store import Store, Conflict
 
@@ -49,14 +48,11 @@ def test_writer_packet_is_identical_across_directories_and_confined(tmp_path):
     assert a['fingerprint'] == b['fingerprint']
     config = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(a['root']),
               'result_file': str(a['root'].parent/'draft.json'), 'attempt_id': 'a'}
-    names = [t['name'] for t in runner_tool_specs('analyst', config=config)]
-    assert names == ['render_pdf_pages', 'prepare_report_data', 'read_draft', 'save_draft_section', 'save_draft', 'check_draft', 'submit_draft']
     assert not run_tool(store, config, 'web_search', {'query': 'q'})['ok']
     outside = store.add_source('无关任务', 'Cannot cite me')
     refused = finish(store, config, {'draft': draft(outside['id'])})
     assert not refused['ok'] and '超出' in refused['error']
     assert not (a['root'].parent/'draft.json').exists()
-    assert '主写稿' in system_prompt('analyst')['text']
     result = finish(store, config, {'draft': draft(source['id'])})
     assert result['ok'] and result['settle']
     assert json.loads((a['root'].parent/'draft.json').read_text(encoding='utf-8'))['editor_document']

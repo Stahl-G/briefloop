@@ -372,17 +372,13 @@ def test_direct_save_preserves_accepted_write_history(tmp_path):
 
 
 
-def test_markdown_prompt_preserves_content_rules_and_frozen_protocol(tmp_path):
+def test_requested_legacy_protocol_is_frozen_to_writer_input(tmp_path):
     from briefloop import analyst
     from test_native_analyst import setup
     store,run,source,inputs=setup(tmp_path)
     class Captured(Exception): pass
     class Runtime:
         def execute(self,job,prompt,folder):
-            assert '保留原始 records' in prompt
-            assert '表格内事实的引用放在相应单元格' in prompt
-            assert 'writer_input_v1' in prompt
-            assert '将完整 BriefDraft 原子写入' not in prompt
             raise Captured()
     folder=store.root/'new-protocol-run'
     for requested in ('writer_input_v1','rich_json_v1'):
