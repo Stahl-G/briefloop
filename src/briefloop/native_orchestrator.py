@@ -517,11 +517,19 @@ def tools(role, config):
         from .native_roles import _scout_web_tools
         common += _scout_web_tools(config.get('search_channels') or []) if config.get('allow_web') else []
     else:
+        if (config['task_kind'] == 'generate' and config.get('research_strategy') == 'goal_driven'
+                and config.get('allow_web')):
+            from .native_roles import _scout_web_tools
+            channels = config.get('search_channels') or []
+            web = _scout_web_tools(channels)
+            # Match Scout: without a managed search provider, known public URLs
+            # may still be fetched; do not advertise an empty provider enum.
+            common += web if channels else [tool for tool in web if tool['name'] == 'add_url']
         common += [
             spec('save_plan', save_plan, '保存研究计划 summary、reader_contract 和完整 scout_tasks（slot_id、assignment）；无 Scout 时明确写 []；先读取 reader_contract.schema.json。', {'plan': OBJ}, ('plan',), sequential=True),
             spec('run_scouts', run_scouts, '按当前研究轮次并行执行 Scout；tasks 各含 slot_id 和具体 assignment，冻结模型、搜索策略及共享预算。等待实际结果，可停止；相同槽位恢复原任务。',
                  {'tasks': {'type': 'array', 'items': OBJ}}, ('tasks',), sequential=True, long_running=True),
-            spec('save_research_handoff', save_handoff, '保存轮间交接：handoff 含 learnings（summary、可选 source_id/locator）、follow_ups、covered、open_questions 数组；可选 gap_updates 明确更新已有缺口（gap_id/status/reason/evidence，partial 另给 remaining_question），详见研究交接说明；缺少引用保留待证，预算由运行器记录。', {'handoff': OBJ}, ('handoff',), sequential=True),
+            spec('save_research_handoff', save_handoff, '保存轮间交接：目标驱动须提供 question_coverage，逐项覆盖 research_status.plan.goal_contract.questions：question_id、status=answered|partial|open、reason、remaining_question、evidence=[{source_id,locator,excerpt}]；answered/partial 需原文，open/partial 须写未答范围。handoff 另含 learnings（summary、可选 source_id/locator）、follow_ups、covered、open_questions 数组；可选 gap_updates 明确更新已有缺口（gap_id/status/reason/evidence，partial 另给 remaining_question），详见研究交接说明；缺少引用保留待证，预算由运行器记录。', {'handoff': OBJ}, ('handoff',), sequential=True),
             spec('write_report', write_report, '将已保存计划、全部研究结果和来源交给独立 Analyst 写稿；quality_v1 须先 finish_research_round 明确收轮，可保留未决缺口；沿用冻结主链模型，不自行评分。',
                  {'instructions': TEXT}, sequential=True, long_running=True),
             spec('connector_material', connector, '读取本报告明确授权的 MCP 材料；request 使用既有 read/call/status/receipt 协议。', {'request': OBJ}, ('request',)),
@@ -550,6 +558,7 @@ def prepare(store, job, folder, prompt):
     data = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
     run_id = payload.get('run_id') or store.one('briefs', payload['version_id'])['run_id']
     config = {'role': 'orchestrator', 'task_kind': job['kind'], 'job_id': job['id'], 'run_id': run_id,
+              'research_strategy': json.loads(store.one('runs', run_id)['requirements']).get('research_strategy', 'guided'),
               'allow_web': bool(job.get('allow_web')), 'search_channels': [p for p in allowed(for_run(store, run_id)) if p in MANAGED_PROVIDERS]}
     root = folder / 'packet'; root.mkdir(exist_ok=True)
     if job['kind'] in ('generate', 'revise') and data.get('brief'):
@@ -585,6 +594,10 @@ def prepare(store, job, folder, prompt):
                   + '\n' + PLANNING_GUIDE + '\n' + GAP_UPDATE_GUIDE)
     else:
         prompt += '\n本次没有 shell；工作区操作使用 workspace_action 直接提交 JSON request。所有路径读取用 packet_read 相对任务包。完成后调用 finish_task（元数据修复用 submit_metadata）。'
+    if job['kind'] == 'generate' and config.get('research_strategy') == 'goal_driven':
+        prompt += ('\n直接研究只用当前实际工具：允许联网时可用 web_search（如已配置受控渠道）搜索、add_url 保存原文、source_read 回读；'
+                   '与 Scout 共享同一报告预算，搜索摘要不能作为正文证据。没有搜索渠道时不能声称已经检索，可读取明确 URL 或保留具体限制。'
+                   '本轮未记录受控检索且没有新增可用来源而要停止时，finish_research_round 须单独给 early_stop_reason，说明已有材料为何足够或无法继续的具体原因。')
     from .chat_tools import chat_instructions
     guide = chat_instructions(store, {'backend': 'briefloop-native', **payload['runtime']}, allow_web=config['allow_web'], backend='briefloop-native')
     (root / 'action-guide.md').write_text(guide, encoding='utf-8')

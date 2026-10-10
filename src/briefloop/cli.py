@@ -69,7 +69,7 @@ def main():
     fact.add_argument('--run',required=True)
     fact.add_argument('--file',required=True,help='UTF-8 JSON 结果文件（version_id/selection/candidates/execution）')
     fact.add_argument('--job',help='本次核查任务 job id，用于记录事件')
-    join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
+    join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',default=[])
     join.add_argument('--run');join.add_argument('--round');join.add_argument('--slots',nargs='+')
     join.add_argument('--output',help='保存合并结果为 UTF-8 JSON，避免 shell 重定向改变编码')
     document=ts.add_parser('normalize-document',help='检查富文档 JSON 并生成兼容 Markdown，用于导入与字数检查')

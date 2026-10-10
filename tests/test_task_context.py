@@ -54,7 +54,8 @@ def test_goal_stop_is_evidence_based_and_keeps_budget_admission(tmp_path):
     # Actual reservation is still capped. Simulate one counted, completed query
     # through the existing budget metadata without making an external request.
     store.set_meta('research_budget:' + run['id'], {'search_requests': 1, 'candidate_urls': [], 'source_pages': []})
-    closed = close_round(store, run['id'], summary='已有原文足够回答必答问题，无需消耗剩余额度。')
+    closed = close_round(store, run['id'], summary='已有原文足够回答必答问题，无需消耗剩余额度。',
+                         early_stop_reason='已有本期原文，增长可持续性缺客户数据，限定结论即可。')
     assert closed['index'] == 1
     with pytest.raises(research_plan.AdmissionError):
         research_budget.reserve_search(store, run['id'], 1)
@@ -84,7 +85,7 @@ def test_role_projection_excludes_other_roles_and_does_not_summarize_sources(tmp
     assert '研究取舍只是待核对' in evaluation['method']['guidance']
 
 
-@pytest.mark.parametrize('backend', ['codex', 'opencode', 'briefloop-native', 'pi'])
+@pytest.mark.parametrize('backend', ['codex', 'opencode', 'briefloop-native', 'claude'])
 def test_host_and_native_receive_same_strategy_without_fixed_waves(tmp_path, backend):
     store, run, _ = setup(tmp_path, allow_web=True)
     research_plan.freeze(store, run['id'])
@@ -95,6 +96,9 @@ def test_host_and_native_receive_same_strategy_without_fixed_waves(tmp_path, bac
     assert '按目标补证' in prompt and '第一轮侦察：整批' not in prompt
     assert '月报通常 6–8' not in prompt and '上限' in prompt
     assert '至少安排一个 Scout' not in prompt
+    assert '每个检索方向都要实际派发 Scout' not in prompt
+    assert '保存 research.json' not in prompt
+    assert '省略 --files' in prompt and 'joined-scouts.json' in prompt
     if backend == 'briefloop-native':
         from briefloop.native_orchestrator import prepare
         job = {'id': 'synthetic', 'kind': 'generate', 'allow_web': True,
