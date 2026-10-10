@@ -173,6 +173,10 @@ def enrich(worker, job, brief, folder):
         return saved[0]
     origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
     materials = json.loads(origin.read_text(encoding='utf-8'))
+    if not materials:
+        # A direct draft that cited no saved source has nothing to locate.
+        store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '正文没有引用已保存来源，跳过原文定位。'})
+        return brief
     if selected_packet(store,brief['run_id'],[r['source_id'] for r in materials]) != materials:
         raise Conflict('材料与快速写作时的原文不同，请使用当前材料新建任务。')
     phase = folder / 'evidence'

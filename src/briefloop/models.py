@@ -142,7 +142,7 @@ class Requirements(Model):
     research_tier: Literal["quick", "standard", "deep"] = "standard"
     research_strategy: Literal["guided", "goal_driven"] = Field(default="guided", description="guided 沿用分轮建议；goal_driven 按重要问题与证据缺口选择研究步骤，不扩大权限或预算。")
     # Explicit lifecycle choice; the historical quick research preset is unchanged.
-    completion_mode: Literal["standard", "draft_first", "fast", "fast_web"] = "standard"
+    completion_mode: Literal["standard", "draft_first", "fast", "fast_web", "direct"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
     scout_limit: int | None = Field(default=None, ge=1, le=16, description=(
         '本报告最多可同时派发的 Scout 数（1–16）。按期间与覆盖面在开始前决定：一周左右的报告约 4；'

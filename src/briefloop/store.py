@@ -384,10 +384,10 @@ class Store:
             from .report_time import freeze
             req.time_context = freeze(req.model_dump())
         selected = None
-        if clone is None and req.completion_mode not in ('fast','fast_web') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
+        if clone is None and req.completion_mode not in ('fast','fast_web','direct') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
-        if clone is None:req.company_context_required=req.completion_mode not in ('fast','fast_web') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
-        if clone is None and req.completion_mode not in ('fast','fast_web') and self.settings().get('company_context_enabled') and not req.company_context_revision:
+        if clone is None:req.company_context_required=req.completion_mode not in ('fast','fast_web','direct') and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
+        if clone is None and req.completion_mode not in ('fast','fast_web','direct') and self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
         # The task choice overrides the workspace default; the resolved bool is what
@@ -443,6 +443,8 @@ class Store:
                 raise ValueError('来源尚未读取完成，请等待或重新读取：'+source['name'])
         from .fast_reports import validate_request
         validate_request(self,req,source_ids)
+        from .direct_reports import validate_request as validate_direct
+        validate_direct(self,req,source_ids)
         if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
         from .readers import skill_for as reader_skill
@@ -466,7 +468,7 @@ class Store:
                 remembered={key:value for key,value in stored.items()
                             if key not in ('previous_report_version_id','previous_report_hash')}
                 c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(remembered),))
-            if options.get("research_protocol") == 'quality_v1' and req.completion_mode not in ('fast', 'fast_web'):
+            if options.get("research_protocol") == 'quality_v1' and req.completion_mode not in ('fast', 'fast_web', 'direct'):
                 c.execute("INSERT INTO meta VALUES(?,?)", ('scout_coverage_version:'+rid, dump(1)))
             if options.get("research_protocol"):
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
@@ -680,7 +682,7 @@ class Store:
             {'id': 'inference_support', 'name': '影响和建议保留来源条件'},
         ]}
         requirements = json.loads(self.one('runs', brief['run_id'])['requirements'])
-        if requirements.get('completion_mode') in ('fast', 'fast_web'):
+        if requirements.get('completion_mode') in ('fast', 'fast_web', 'direct'):
             # Reuse the existing background assessment; these are explicit model
             # checks, not evidence-location success or another generation stage.
             context['assessment_checks'].extend([

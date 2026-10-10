@@ -68,13 +68,13 @@ def record_copy(store, job, draft, folder):
                 'message_id':binding.get('message_id'),'accepted_revision':accepted.get('revision'),'configuration':config})
 
 
-def publication(store, job, *, draft=None, role=None, revision=False, plain_output=None):
+def publication(store, job, *, draft=None, role=None, revision=False, plain_output=None, stage='fast-writing'):
     """Internal runner input for atomic publication, never accepted from tool JSON."""
     payload=_object(job['payload'])
     receipt={'job_id':job['id'], 'configuration':configuration(payload,role)}
     if plain_output is not None:
         from .store import content_hash
-        rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='writer_output' AND json_extract(data,'$.stage')='fast-writing' AND json_extract(data,'$.output_hash')=?",(job['id'],content_hash(plain_output)))
+        rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='writer_output' AND json_extract(data,'$.stage')=? AND json_extract(data,'$.output_hash')=?",(job['id'],stage,content_hash(plain_output)))
         values={json.dumps(_object(r['data']),sort_keys=True) for r in rows}
         value=_object(next(iter(values))) if len(values)==1 else {}
         return {**receipt, **{k:value[k] for k in ('session_id','message_id') if k in value}, 'configuration':value.get('configuration')}
