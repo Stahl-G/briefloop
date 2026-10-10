@@ -1259,7 +1259,7 @@ class Worker:
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
         latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None];publication_hold=[None]
-        def publish():
+        def publish(final=False):
             from .store import Conflict
             from .document_model import markdown_document,document_hash
             p=folder/'draft.json'
@@ -1319,6 +1319,10 @@ class Worker:
                 newest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]['id']
                 if newest!=latest[0]:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
+                # While the author is still writing, a same-body metadata rewrite
+                # (citations, number bindings) waits for the turn to end: one
+                # child version instead of one per save (2026-10 Manus: 6 copies).
+                if not final and self.store.one('briefs',latest[0])['hash']==sha:return
                 try:record=self.store.publish(run['id'],data,parent_id=latest[0],writer=writer)
                 except Conflict:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
@@ -1341,7 +1345,7 @@ class Worker:
         with generation_access(self,job) as connector_instructions:
             prompt=generation_prompt(self.store,run,folder,backend,scout_budget=self._scout_budget(job))+connector_instructions
             result=self.runtime.execute(job,prompt,folder,publish)
-            publish()
+            publish(final=True)
             if not self.store.rows('SELECT id FROM briefs WHERE id=?',(latest[0],)):
                 if self.runtime.cancelled.is_set():
                     raise InterruptedError('任务已停止，已生成内容保留')
@@ -1354,7 +1358,7 @@ class Worker:
                 continuation=('\n草稿文件已保留，但研究收尾尚未接纳：'+str(publication_hold[0])
                               if publication_hold[0] is not None else '\n上轮只返回了研究进度，没有保存 draft.json。')
                 result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：'+continuation+'读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成研究收尾、正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
-        publish()
+        publish(final=True)
         if publication_hold[0] is not None:raise publication_hold[0]
         current=latest[0]
         if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
