@@ -67,3 +67,36 @@ def test_second_round_uses_committed_path_and_reclaims_free_parallel_slots(tmp_p
         if layout=='research':assert not (folder/'round-2').exists()
     finally:
         harness.close()
+
+
+def test_missing_second_round_tasks_can_be_registered_without_rewriting_previous_round(tmp_path):
+    store,source,run,job=setup(tmp_path)
+    research_plan.freeze(store,run['id'],structure={'breadth':4,'parallel':4,'depth':3})
+    scout_coverage.declare(store,run['id'],[])
+    research_plan.finish_round(store,run['id'])
+    research_plan.begin_round(store,run['id'])
+    folder=store.root/'jobs'/job['id'];folder.mkdir(parents=True,exist_ok=True)
+    prompt=generation_prompt(store,run,folder,'briefloop-native')
+    config,_=native_orchestrator.prepare(store,job,folder,prompt)
+    harness=NativeHarness(store,FlowEngine(store,run,source))
+    parent=harness.create_session(runtime={'model':'fixture/model'})['id']
+    config={**config,'native_role':'orchestrator','packet_root':str(folder/'packet'),'session_id':parent,'_harness':harness}
+    saved=run_tool(store,config,'save_plan',{'plan':{'summary':'Second round','reader_contract':contract(store,run['id']),'scout_tasks':[]}})
+    assert saved['ok'],saved
+    task={'slot_id':'scout-1','assignment':'Read the existing source'}
+    rejected=run_tool(store,config,'run_scouts',{'tasks':[task]})
+    assert not rejected['ok']
+    message=rejected['error']
+    assert 'set_scout_tasks' in message and 'scout_outcomes' in message
+    path=str(folder/'round-2/scout-1/result.json')
+    assert path in message
+    assert not scout_coverage.view(store,run['id'])['scout_execution']
+    registered=run_tool(store,config,'workspace_action',{'request':{'action':'set_scout_tasks','scout_tasks':[{**task,'result_file':path}]}})
+    assert registered['ok'],registered
+    records=scout_coverage.view(store,run['id'])['scout_execution']
+    assert len(records)==1 and records[0]['status']=='planned' and records[0]['assignment']==task['assignment']
+    assert json.loads((folder/'plan.json').read_text())['scout_tasks'][0]['result_file']==path
+    altered=run_tool(store,config,'run_scouts',{'tasks':[{**task,'assignment':'Different work'}]})
+    assert not altered['ok'] and task['assignment'] in altered['error']
+    assert scout_coverage.view(store,run['id'])['scout_execution']==records
+    harness.close()

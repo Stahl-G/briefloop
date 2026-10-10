@@ -247,8 +247,17 @@ def run_scouts(store, config, args):
                   store.root / 'research' / config['run_id'] / 'rounds' / round_id / task['slot_id'] / 'result.json'}
         if round_id == '1':
             scoped.add(folder / task['slot_id'] / 'result.json')
-        if not expected or expected['assignment'] != str(task.get('assignment') or '').strip():
-            raise ToolError('实际 Scout 任务必须匹配已保存 scout_tasks 的分工；先读取 research_status')
+        if not expected:
+            result_path = folder / ('round-' + round_id) / task['slot_id'] / 'result.json'
+            raise ToolError(
+                f'第 {round_id} 轮尚未登记 {task["slot_id"]} 分工。先调用 workspace_action：'
+                'request.action="set_scout_tasks"，request.scout_tasks 为完整本轮分工数组'
+                '（slot_id、assignment、result_file）；scout_outcomes 只更新已登记状态，不能代替分工登记。'
+                f'本轮可用 scout-1…scout-{breadth}，该槽位 result_file={result_path}。'
+                '登记成功后，按返回的原文 assignment 调用 run_scouts；不得沿用上一轮的登记或结果路径。')
+        if expected['assignment'] != str(task.get('assignment') or '').strip():
+            raise ToolError(f'{task["slot_id"]} 的 assignment 与本轮已登记分工不同；不得改写。'
+                            '请读取 research_status 并原样使用已登记 assignment：' + expected['assignment'])
         result_file = Path(expected['result_file'])
         if result_file not in scoped or result_file.resolve() != result_file:
             raise ToolError('已登记 Scout 结果路径不属于本任务、本轮与槽位')
@@ -587,7 +596,7 @@ def prepare(store, job, folder, prompt):
         from .task_context import READING_GUIDE
         prompt = (READING_GUIDE + '你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
                   '来源索引里的 source_id 用 source_read 读取；packet_read 只读取本包实际文件，不存在 packet/sources 目录，不猜原文路径。'
-                  '开始时用 save_plan 保存 reader_contract 与完整 scout_tasks 分工（slot_id、assignment），确无 Scout 时明确写 []；用 run_scouts 执行，可分批派发但不能静默丢掉已承诺方向。新轮先登记本轮 scout_tasks；不能继续的分工在 finish_research_round 的 scout_outcomes 中以 failed/skipped 和 reason 说明，保留未检范围。'
+                  '开始时用 save_plan 保存 reader_contract 与完整 scout_tasks 分工（slot_id、assignment），确无 Scout 时明确写 []；用 run_scouts 执行，可分批派发但不能静默丢掉已承诺方向。新轮先通过 workspace_action 的 set_scout_tasks 登记完整本轮 scout_tasks（不是 scout_outcomes），result_file 使用本轮与槽位对应的绝对路径；登记成功后沿用返回的原文 assignment 和路径。不能继续的分工在 finish_research_round 的 scout_outcomes 中以 failed/skipped 和 reason 说明，保留未检范围。'
                   'workspace_action 提供 research_status/finish_research_round/begin_research_round 及写前 reconciliation_candidates/reconciliation_save；'
                   '其请求结构见 action-guide.md。后续轮次必须针对上一轮真实 gap_id，不重复搜索。'
                   'quality_v1 任务写稿前必须结束当前已开启轮次：用 save_research_handoff 保留有引用的结论和待证问题，再 finish_research_round 明确收尾；单轮或仅本地材料也遵循此顺序。可保留未决缺口，不要求花完预算或完成尚未开启的轮次；确需下一轮时按真实 gap_id 继续。研究完成后写前对照来源陈述，保留真实关系和未查问题；write_report 调用 Analyst，finish_task 只确认保存。'
