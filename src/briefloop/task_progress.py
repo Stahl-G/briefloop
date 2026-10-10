@@ -190,6 +190,17 @@ def summary(store, job_id):
                 'locator': public_text(ref['locator']), 'excerpt': public_text(ref['excerpt'], 1200),
                 'source_hash': ref['source_hash'], 'source_changed': source_hashes.get(ref['source_id']) != ref['source_hash']} for ref in item['evidence']]
         } for item in goal_progress['questions']]}
+    elif brief:
+        # Direct drafts carry a coverage record checked against tool receipts.
+        from .coverage_record import progress as coverage_progress
+        record = next((n for n in json.loads(brief['detail']).get('research_notes', []) if n.get('kind') == 'coverage'), None)
+        goal_progress = coverage_progress(record)
+        if goal_progress:
+            names = {s['id']: s['name'] for s in sources}
+            for item in goal_progress['questions']:
+                item['question'] = public_text(item['question']); item['reason'] = public_text(item['reason'])
+                item['remaining_question'] = public_text(item['remaining_question'])
+                for ref in item['evidence']:ref['source_name'] = names.get(ref['source_id'], '来源')
     return {'goal_progress': goal_progress, 'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
             'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,

@@ -59,10 +59,24 @@ def test_direct_draft_is_saved_with_known_citations_and_checks_keep_revision(tmp
     assert [name for name,_ in runtime.calls]==['direct-writing','evidence','evaluation']
 
 
-def test_direct_needs_a_tool_capable_host_and_offline_material(tmp_path):
+def test_direct_needs_offline_material_and_native_writer_gets_only_metered_tools(tmp_path):
     store=Store(tmp_path)
     with pytest.raises(ValueError,match='离线时需要已有材料'):
         store.create_run({'title':'T','objective':'O','allow_web':False,'completion_mode':'direct'},[])
-    store,source,run,job,runtime,worker=setup(tmp_path/'native')
-    native=store.enqueue('generate',{'run_id':run['id'],'agent_backend':'briefloop-native','runtime':{'model':'p/synthetic'}})
-    with pytest.raises(ValueError,match='CLI'):worker.generate(native)
+    from briefloop.native_roles import runner_tool_specs
+    from briefloop.agent_prompts import system_prompt
+    names=lambda config:[t['name'] for t in runner_tool_specs('quick_writer',None,config)]
+    assert names({}) == []  # Ordinary quick writing stays tool-free.
+    assert names({'direct':True,'allow_web':True,'search_channels':['tavily']})[:2]==['source_read','source_grep']
+    assert {'web_search','add_url'} <= set(names({'direct':True,'allow_web':True,'search_channels':['tavily']}))
+    assert 'web_search' not in names({'direct':True,'allow_web':True,'search_channels':[]})
+    assert not {'web_search','add_url'} & set(names({'direct':True,'allow_web':False}))
+    assert '直写' in system_prompt('quick_writer',direct=True)['text'] and '直写' not in system_prompt('quick_writer')['text']
+
+
+def test_evidence_windows_keep_cited_lines_of_large_pages_within_bounds():
+    from briefloop.direct_reports import evidence_windows, WINDOW_SOURCE
+    page='\n'.join(['无关导航文字'*20]*3000+['First Solar 第二季度销售额 10.6 亿美元']+['页脚'*30]*3000)
+    rows=evidence_windows([{'alias':'S1','source_id':'src_a','name':'page','hash':'h','text':page}],
+                          '销售额为 10.6 亿美元。[@src_a]')
+    assert rows[0]['windowed'] and '10.6 亿美元' in rows[0]['text'] and len(rows[0]['text'])<=WINDOW_SOURCE+500
