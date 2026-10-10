@@ -38,11 +38,16 @@ def _prompt(store, run, req, tool, backend):
     task['writing_preferences'] = preferences(req)
     if (req.get('reader_profile') or {}).get('decisions'):
         task['reader_decisions'] = req['reader_profile']['decisions']
+    from .search_policy import for_run, allowed
+    from .websearch import MANAGED_PROVIDERS
+    managed = [p for p in allowed(for_run(store, run['id'])) if p in MANAGED_PROVIDERS]
+    search = (f'检索：`{tool} web-search --run {run["id"]} --query "关键词"` 发现候选网页，摘要只是线索；' if managed
+              else '检索：用宿主自带的网页搜索发现候选网页，摘要只是线索；')
     research = (
-        f'检索：`{tool} web-search --run {run["id"]} --query "关键词"` 发现候选网页，摘要只是线索；'
+        search +
         f'`{tool} add-url --run {run["id"]} --url URL` 保存原文并返回 source_id；'
         f'`{tool} read-source --id SOURCE_ID --start-line 1 --end-line 120` 按行读取，再按需扩展。'
-        '检索计入本任务共享预算，用尽时停止并说明。宿主自带搜索也可用于发现，但支撑事实的页面必须用 add-url 保存后引用。'
+        '受控检索和保存计入本任务共享预算，用尽时停止并说明。支撑事实的页面必须用 add-url 保存后引用。'
         if req.get('allow_web') else '本任务未允许联网：只读取下列已登记材料，不检索、不访问网页。')
     return (
         '你是这份报告的研究者和作者，在本回合内自己完成检索、阅读和写作；不派发子 agent，不调用 BriefLoop 的 generate、assess 或 learn。\n'
