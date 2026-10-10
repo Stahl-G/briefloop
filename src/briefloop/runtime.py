@@ -1676,7 +1676,28 @@ responses 必须符合 {stage/'responses.schema.json'}：文件顶层直接是�
             prompt+='\n用户已明确恢复本次未完成评价。继续原会话中尚未核对的部分，保留已完成的证据判断；仍无法完成时如实标为 incomplete。'
         result=self.runtime.execute(job,prompt,folder,**({'resume_on_complete':True} if resume_incomplete else {}))
         basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
-        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis,expected_checks=expected)
+        def admit(value):self.store.assess(brief['id'],value,basis=basis,expected_checks=expected)
+        def load():return json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig'))
+        try:admit(load())
+        except ValueError as exc:
+            if 'report_quote' not in str(exc):raise
+            # A paraphrased quote is the evaluator's slip, not a reason to lose the
+            # whole evaluation: one repair turn in the same session, then admit the
+            # findings without the unlocatable quotes and say so.
+            repair=('assessment.json 未通过接纳：'+str(exc)+'\n只修正无法定位的 report_quote：从正文或 reader-preview.md 逐字复制一段连续原文，'
+                    '或删除该 report_quote 并在 problem 中说明位置。评分、结论和其他发现不变，重新保存 assessment.json。')
+            result=self.runtime.execute(job,repair,folder,resume_on_complete=True)
+            try:admit(load())
+            except ValueError as again:
+                if 'report_quote' not in str(again):raise
+                from .finding_anchors import unlocated_quotes
+                from .document_model import brief_document
+                from .exports import reader_markdown
+                value=load();findings=value.get('findings') or []
+                dropped=unlocated_quotes(brief_document(brief),findings,reader_preview=reader_markdown(self.store,brief))
+                for index in dropped:findings[index]={**findings[index],'report_quote':''}
+                admit(value)
+                self.store.event(job['id'],'assessment_quotes_dropped',{'version_id':brief['id'],'findings':dropped})
         return result
 
     def _review_child(self,parent,brief):

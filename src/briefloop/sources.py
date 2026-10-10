@@ -564,6 +564,24 @@ def fetch_for_run(store,run_id,url):
         error=AdmissionError(message,code='response_rejected')
         error.request_record_path=path
         raise error
-    return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
+    result={**source,'reused':False,'budget':budget.snapshot(store,run_id),
             'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id'),
             'request_record_path':path}
+    return _read_fallback(store,run_id,request_url,result) if source.get('status')!='ready' else result
+
+
+def _read_fallback(store,run_id,url,failed):
+    """Local reads fail on bot walls, SEC policy and local network paths; Tavily
+    reads server-side. The failed local record stays; a ready provider copy is
+    returned instead and labelled as provider-extracted text."""
+    from . import tavily
+    try:
+        if not tavily._read_key()[0]:return failed
+        result=tavily.extract(store,[url],run_id=run_id,fallback=True)
+    except Exception as exc:
+        return {**failed,'fallback':{'provider':'tavily','error':str(exc)[:300]}}
+    ready=[s for s in (result.get('sources') or []) if s.get('status')=='ready']
+    if not ready:
+        return {**failed,'fallback':{'provider':'tavily','error':'提供方也未能提取正文'}}
+    return {**ready[0],'reused':False,'budget':result.get('budget') or failed['budget'],
+            'fallback':{'provider':'tavily','local_source_id':failed['id'],'local_error':failed.get('error')}}

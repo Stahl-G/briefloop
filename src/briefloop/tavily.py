@@ -198,13 +198,16 @@ def _waited_status(rows,unprocessed):
             'outcome':'partial' if available else 'failed','partial':available}
 
 
-def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
+def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None,fallback=False):
     if isinstance(urls,str):urls=[urls]
     if not isinstance(urls,list) or not urls or len(urls)>10 or not all(isinstance(url,str) and url.startswith(('https://','http://')) for url in urls):raise TavilyError('请提供 1–10 个 HTTP(S) 来源地址')
     if extract_depth not in ('basic','advanced'):raise TavilyError('无效提取深度')
     cached=[];local_id=None;round_id=None;reservation=None;claim=None;waiting={}
     if run_id:
-        check_run(store,run_id)
+        # A read fallback is a transport for a URL the author already chose, not a
+        # search-channel choice; it still needs web access and the shared page budget.
+        if not fallback:check_run(store,run_id)
+        elif not json.loads(store.one('runs',run_id)['requirements']).get('allow_web'):raise TavilyError('本轮未允许联网')
         from . import research_budget as budget
         original_by_key={}
         for original in urls:
