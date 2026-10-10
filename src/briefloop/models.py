@@ -1,4 +1,5 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
+import re
 from typing import Literal, get_args
 from datetime import date, datetime
 from .industry_data import IndustryData
@@ -27,8 +28,17 @@ INDUSTRY_MONTHLY_LENGTH = {'zh':(9000,10000),'en':(5800,6500)}
 # 2,000-character "detailed" brief left eight questions ~300 characters each
 # (2026-10 Manus valuation). The room is a soft ceiling, not a quota.
 QUESTION_ROOM = {'zh': (600, 450, 6000), 'en': (400, 300, 4000)}  # base, per question, cap
+# A quarter is read for its slope: each subject's state at the start against the
+# end. It covers about three months of events, so it gets its own budget and
+# Scout room; the body stays near a monthly's length: selected subjects, not every one.
+INDUSTRY_QUARTERLY_LENGTH = {'zh':(8000,10000),'en':(5200,6500)}
 MONTHLY_MIN_DAYS = 25
 MONTHLY_SCOUTS = 8
+QUARTERLY_MIN_DAYS = 80
+QUARTERLY_SCOUTS = 12
+QUARTERLY_WORDS = ('季报','季度','quarterly','quarter')
+# business_report variants that carry the industry data tools and exports.
+INDUSTRY_VARIANTS = ('industry_periodic','industry_quarterly')
 
 
 def report_language(value):
@@ -54,6 +64,7 @@ def length_presets(language='zh'):
 RESEARCH_BUDGET_PRESETS = {
     'weekly':{'search_requests':30,'candidate_urls':150,'source_pages':60},
     'monthly':{'search_requests':80,'candidate_urls':400,'source_pages':150},
+    'quarterly':{'search_requests':200,'candidate_urls':1000,'source_pages':400},
 }
 
 
@@ -167,7 +178,7 @@ class Requirements(Model):
                 value[key] = None
         if value.get('workflow_id'):
             value['report_profile'] = ('industry_periodic' if value['workflow_id'] == 'business_report'
-                                       and value.get('workflow_variant') == 'industry_periodic' else 'brief')
+                                       and value.get('workflow_variant') in INDUSTRY_VARIANTS else 'brief')
         return value
 
     @field_validator('language', mode='before')
@@ -185,18 +196,31 @@ class Requirements(Model):
             raise ValueError('报告日期应为 YYYY-MM-DD')
         return value
 
-    def covers_month(self):
-        """A report whose stated period spans about a month, or that names itself a monthly."""
+    def period_days(self):
+        """Days in the stated coverage window, or None when it has no start."""
         try:
             # Use the same period parser as admission: chat and the report form
             # may submit "2026-09" or a date range in period, without date fields.
             from .report_time import freeze
             window = freeze({'period': self.period, 'period_start': self.period_start,
                              'period_end': self.period_end, 'report_timezone': self.report_timezone})
-            if window['start'] and (datetime.fromisoformat(window['end_exclusive']).date() - datetime.fromisoformat(window['start']).date()).days >= MONTHLY_MIN_DAYS:
-                return True
+            if window['start']:
+                return (datetime.fromisoformat(window['end_exclusive']).date() - datetime.fromisoformat(window['start']).date()).days
         except ValueError:
             pass
+        return None
+
+    def covers_quarter(self):
+        """A quarterly: the quarterly method was chosen, the period spans about three months, or it names itself one."""
+        if self.workflow_variant == 'industry_quarterly' or (self.period_days() or 0) >= QUARTERLY_MIN_DAYS:
+            return True
+        title = (self.title or '').casefold()
+        return any(word in title for word in QUARTERLY_WORDS) or re.search(r'\bq[1-4]\b', title) is not None
+
+    def covers_month(self):
+        """A report whose stated period spans about a month, or that names itself a monthly."""
+        if (self.period_days() or 0) >= MONTHLY_MIN_DAYS:
+            return True
         return any(word in (self.title or '').casefold() for word in ('月报','月度','monthly'))
 
     @model_validator(mode='after')
@@ -210,9 +234,10 @@ class Requirements(Model):
                 originals = [self.objective, self.raw_input, *self.writing_preferences]
                 if not any(self.length_requirement.text in original for original in originals):
                     raise ValueError('严格篇幅的 user_quote 必须逐字出现在 objective、raw_input 或 writing_preferences 中')
-        monthly = self.covers_month()
+        quarterly = self.covers_quarter()
+        monthly = quarterly or self.covers_month()
         target,maximum=(DEEP_LENGTH[self.language] if self.research_tier=="deep" else
-                        (INDUSTRY_MONTHLY_LENGTH if monthly else INDUSTRY_LENGTH)[self.language]
+                        (INDUSTRY_QUARTERLY_LENGTH if quarterly else INDUSTRY_MONTHLY_LENGTH if monthly else INDUSTRY_LENGTH)[self.language]
                         if self.report_profile=="industry_periodic" else length_presets(self.language)[self.extent])
         questions = len([q for q in self.key_questions if q.strip()])
         if (questions >= 3 and self.research_tier != "deep" and self.report_profile != "industry_periodic"
@@ -222,10 +247,10 @@ class Requirements(Model):
             if room > target:
                 target, maximum = room, max(maximum, round(room * 1.3))
         if monthly and self.scout_limit is None:
-            self.scout_limit=MONTHLY_SCOUTS
+            self.scout_limit=QUARTERLY_SCOUTS if quarterly else MONTHLY_SCOUTS
         if monthly and 'research_budget' not in self.model_fields_set:
             # Only the unset default follows the period; an explicit budget is kept.
-            self.research_budget=ResearchBudget(**RESEARCH_BUDGET_PRESETS['monthly'])
+            self.research_budget=ResearchBudget(**RESEARCH_BUDGET_PRESETS['quarterly' if quarterly else 'monthly'])
         # An auto-selected target must fit an explicit maximum, including a soft
         # length preference. Explicitly contradictory target/max values still fail.
         if self.max_words is not None:target=min(target,self.max_words)

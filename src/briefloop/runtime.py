@@ -425,8 +425,10 @@ def assessment_prompt(store, brief, folder, backend='codex', *, analysis_checkli
     detail=json.loads(brief.get('detail') or '{}')
     citations=detail.get('citations',[])
     report_profile=profile_context(json.loads(run['requirements']))
-    report_data=prepare_report_data(detail['report_data']) if detail.get('report_data') else None
-    data_ids=[row[key] for row in (report_data or {}).get('records',[]) for key in ('source_id','previous_source_id') if row.get(key)]
+    from .report_tools import run_window
+    from .industry_data import IndustryData, source_ids
+    report_data=prepare_report_data(detail['report_data'],run_window(json.loads(run['requirements']))) if detail.get('report_data') else None
+    data_ids=source_ids(IndustryData.model_validate({k:report_data[k] for k in ('schema_version','records','state_changes')})) if report_data else []
     cited_ids=list(dict.fromkeys([ref['source_id'] for ref in citations]+data_ids))
     records={sid:source_context(store,sid) for sid in store.source_ids(run['id'])}
     # The initial pack follows actual citations; the full run remains discoverable.
