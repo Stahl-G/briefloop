@@ -33,6 +33,24 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
     allocated slot and that every referenced source/claim is allowed for the run.
     """
     paths = list(paths)
+    if not paths:
+        from .research_plan import frozen
+        plan = frozen(store, run_id) if run_id else None
+        rounds = (plan or {}).get('rounds', {})
+        identity = round_id or (plan or {}).get('current_round_id')
+        if identity is None:
+            closed = [rid for rid, info in rounds.items() if info.get('status') == 'closed']
+            identity = max(closed, key=lambda rid: rounds[rid]['index']) if closed else None
+        committed = (store.meta('scout_coverage:' + run_id) or {}).get('rounds', {}) if run_id else {}
+        current = committed.get(identity, {})
+        if identity not in rounds or not current.get('declared') or current.get('tasks'):
+            raise ValueError('省略 --files 需要 --run 和本轮已明确登记的 scout_tasks=[]；不能用空汇总跳过已承诺的 Scout')
+        # Empty current work must not silently discard earlier Scout receipts.
+        # Failed/skipped tasks without a result survive in execution_gaps.
+        for record in committed.values():
+            for task in record.get('tasks', {}).values():
+                if task.get('status') in ('planned', 'dispatched', 'complete') or Path(task['result_file']).is_file():
+                    raise ValueError('本报告已有 Scout 分工或结果；请保留实际结果的 --files，并先完成或说明未完成分工')
     if round_id:
         from .research_plan import frozen
         plan = frozen(store, run_id) if run_id else None

@@ -65,10 +65,12 @@ def summary(store, job_id):
         stage = '正文已生成，正在保存稿件'
     title = req.get('title') or (json.loads(brief['detail']).get('title') if brief else '') or task_label(job['kind'], '报告任务')
     sources = []
+    source_hashes = {}
     if run:
         for sid in store.source_ids(run_id):
             s = store.one('sources', sid)
             sources.append({'id': sid, 'name': public_text(s['name']), 'status': s['status']})
+            source_hashes[sid] = s['hash']
     plan = frozen(store, run_id) or {} if run else {}
     rounds = sorted((plan.get('rounds') or {}).values(), key=lambda r: r.get('index', 0))
     opened = [r for r in rounds if r.get('status') in ('active', 'closed')]
@@ -179,7 +181,6 @@ def summary(store, job_id):
     goal_progress = goal_view(plan)
     if goal_progress:
         names = {s['id']: s['name'] for s in sources}
-        source_hashes = {sid: store.one('sources', sid)['hash'] for sid in names}
         goal_progress = {'questions': [{
             'id': item['id'], 'question': public_text(item['question']),
             'status': item['status'], 'recorded': item['recorded'],

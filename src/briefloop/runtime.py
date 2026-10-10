@@ -300,7 +300,8 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         discovery = ('初始来源为 0，这是正常的公开信息研究任务。先围绕关键问题发现公开原文；'
                      '问题集中时主 Agent 可直接用已授权检索和来源工具完成，存在可独立并行的问题时再派 Scout。'
                      '不因初始材料为空强制委派，也不把没有派 Scout 写成没有开展研究。'
-                     '自行研究同样保存 research.json 的来源定位与缺口，写入本轮 handoff，登记 scout_tasks=[] 并收轮。')
+                     '自行研究同样把来源定位、未答问题和 question_coverage 写入本轮 handoff，登记 scout_tasks=[] 并收轮；'
+                     '收轮后用 join-scouts --run 当前run --output joined-scouts.json 刷新交接；没有 Scout 原件时省略 --files，已有原件仍须全部提供。')
     common = _opencode_common(opencode_tool) if backend == 'opencode' else COMMON
     if backend != 'codex' and backend != 'opencode':
         common = common.replace(
@@ -314,6 +315,9 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         retrieval_strategy = GOAL_GUIDE
     scout_count_note = ('按尚未回答的重要问题选择 Scout 数量，可为 0；不按期间凑数。' if strategy(req) == 'goal_driven' else
         '按报告期间与覆盖面决定 Scout 数量：一周左右通常 3–4 个；月报通常 6–8 个；跨多个行业或市场时可接近上限。')
+    dispatch_commitment = ('已登记的每个 Scout 任务都须有实际结果或 failed/skipped 原因；主 Agent 直接研究的问题不登记为 Scout 分工。'
+                           if strategy(req) == 'goal_driven' else
+                           '计划里列出的每个检索方向都要实际派发 Scout，不能只派一部分就收轮。')
     if backend == 'briefloop-native':
         payload.update(retrieval_strategy=retrieval_strategy, orchestrator_instructions=instructions(deliverable,role='orchestrator')+'\n'+temporal_note)
         (folder/'input.json').write_text(dump(payload),encoding='utf-8')
@@ -375,7 +379,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
 1. 读取需求与初始来源目录，写 plan.json（包含reader_contract，遵守 {folder/'reader_contract.schema.json'}，把内容目标、研究方法、写作偏好和人工分工分开解释并绑定逐字来源及requirement_id）。写作交接前调用 `{tool} workspace-action --request REQUEST_JSON`，action=set_reader_contract、run_id={run['id']}、reader_contract为同一对象；工具校验通过后才进入写作。计划还包含原始用户要求、目标时间窗口、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。公开市场或行业周报按主题、主体、时间窗口安排 discovery Scout；计划应列需要查找的官方发布者、公开披露或统计来源，不能只按已有文件数分工。计划还应说明来源政策（何时优先一手、是否允许二手）；重点主体只是检索线索，不是必须写入的报道名单。
-2. {scout_count_note} 同时派发上限 {max_parallel}。不要无条件开满，但计划里列出的每个检索方向都要实际派发 Scout，不能只派一部分就收轮。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。派发前在 plan.json.scout_tasks 写完整数组（每项 slot_id、assignment、result_file 绝对路径），并用 workspace-action action=set_scout_tasks、run_id、scout_tasks 登记同一数组；本地材料无需 Scout 时明确登记 []。每轮单独登记；后续轮用新结果路径，不覆盖前轮。没有结果的承诺分工必须继续完成，或收轮时在 scout_outcomes 中明确 slot_id、status=failed|skipped、reason，保留未检范围。
+2. {scout_count_note} 同时派发上限 {max_parallel}。不要无条件开满。{dispatch_commitment} input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。派发前在 plan.json.scout_tasks 写完整数组（每项 slot_id、assignment、result_file 绝对路径），并用 workspace-action action=set_scout_tasks、run_id、scout_tasks 登记同一数组；直接研究或本地材料无需 Scout 时明确登记 []。每轮单独登记；后续轮用新结果路径，不覆盖前轮。没有结果的承诺分工必须继续完成，或收轮时在 scout_outcomes 中明确 slot_id、status=failed|skipped、reason，保留未检范围。
    {retrieval_strategy}
    同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
    为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。每批派发成功后立即调用 workspace-action action=set_scout_tasks、run_id，并提交 scout_outcomes=[{{"slot_id":"实际槽位","status":"dispatched","reason":"真实子任务句柄"}}]；不要等结果返回或收轮时才补登记。派发失败时登记 failed 与具体原因；后续每轮也遵循同一回执流程。
@@ -387,8 +391,8 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
    已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
-3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS --output {quote_path(folder/'joined-scouts.json',backend)}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
-   收轮/更新缺口后再次调用同一 join-scouts，刷新 joined-scouts.json 的当前 gaps/gap_records 与历史 gap_history，再交给写作；不要手改 Scout 原件或仅凭 covered 关闭缺口。
+3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS --output {quote_path(folder/'joined-scouts.json',backend)}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；本轮已登记 scout_tasks=[] 且没有需要保留的 Scout 原件时，省略 --files 仍须生成 joined-scouts.json，不能手造 Scout 文件。确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
+   收轮/更新缺口后再次调用同一 join-scouts，刷新 joined-scouts.json 的当前 gaps/gap_records、历史 gap_history、未完成分工和 question_coverage，再交给写作；不要手改 Scout 原件或仅凭 covered 关闭缺口。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-context.json'} 与 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
     Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
     动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：

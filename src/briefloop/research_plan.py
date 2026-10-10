@@ -169,7 +169,7 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
                 and requirements.get('completion_mode') not in ('fast', 'fast_web')
                 and (not existing or existing.get('goal_contract'))):
             from .research_goals import contract
-            snapshot['goal_contract'] = contract(requirements)
+            snapshot['goal_contract'] = contract(requirements, version=(existing['goal_contract'].get('version', 1) if existing else 2))
         fingerprint = _fingerprint(snapshot)
         if existing:
             if existing.get('plan_fingerprint') == fingerprint:
@@ -185,6 +185,9 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
                                     'created': now() if index == 1 else None, 'target_gap_ids': [],
                                     'tasks': _allocated_slots(store, run_id, index, chosen['breadth']) if expanded else [],
                                     'gaps': [], 'outcome': None}
+        if (snapshot.get('goal_contract') or {}).get('version', 1) >= 2:
+            for info in rounds.values():
+                info['source_ids_at_start'] = store.source_ids(run_id)
         snapshot['current_round_id'] = next(identity for identity, info in rounds.items() if info['index'] == 1)
         snapshot['rounds'] = rounds
         snapshot['created'] = now()
@@ -450,6 +453,8 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
                 allocated.append({'task_id': uid('task'), 'slot_id': directory, 'directory': str(path)})
             rounds[round_id] = {'status': 'active', 'index': index, 'created': now(),
                                 'target_gap_ids': target, 'tasks': allocated, 'gaps': [], 'outcome': None}
+            if (plan.get('goal_contract') or {}).get('version', 1) >= 2:
+                rounds[round_id]['source_ids_at_start'] = store.source_ids(run_id)
             plan['rounds'] = rounds
             plan['current_round_id'] = round_id
             _save_plan(connection, run_id, plan)
@@ -480,6 +485,32 @@ def _validate_gap(store, run_id, gap):
 EARLY_STOP_USED_FRACTION = 0.5
 # Small hand-set budgets are spent at the user's discretion; weekly and monthly presets are 30 and 80.
 EARLY_STOP_MIN_BUDGET = 10
+
+
+def _goal_stop_reason(store, connection, run_id, round_id, info, plan, continue_research, reason):
+    """Require a separate reason for an empty web round, never force busywork.
+
+    Only new goal contracts acquire this rule. Unmetered host searches cannot
+    be inferred absent; the error explicitly describes our recorded evidence.
+    """
+    if ((plan.get('goal_contract') or {}).get('version', 1) < 2
+            or continue_research or (reason or '').strip()):
+        return
+    run = connection.execute('SELECT requirements FROM runs WHERE id=?', (run_id,)).fetchone()
+    if not json.loads(run['requirements']).get('allow_web'):
+        return
+    row = connection.execute('SELECT value FROM meta WHERE key=?', (_requests_key(run_id),)).fetchone()
+    requests = json.loads(row['value']) if row else {}
+    if any(r.get('round_id') == round_id and r.get('operation') == 'search' for r in requests.values()):
+        return  # A failed search is still an actual attempt, not proof of coverage.
+    initial = set(info.get('source_ids_at_start') or [])
+    added = set(store.source_ids(run_id)) - initial
+    if any(connection.execute('SELECT 1 FROM sources WHERE id=? AND status=?', (sid, 'ready')).fetchone()
+           for sid in added):
+        return  # Direct URL reading is valid research without a search query.
+    raise AdmissionError('本轮未记录受控检索，也没有新增可用来源。若要停止，请单独提供 early_stop_reason，'
+                         '说明已有材料为何足够或无法继续的具体限制；宿主自行检索未被计量时也请说明。'
+                         '不能只写已完成，也不要求为了过关派 Scout 或花完预算。', code='research_no_activity_reason')
 
 
 def _early_stop(store, run_id, info, plan, continue_research, early_stop_reason):
@@ -558,6 +589,7 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', gap_upd
         scout_record = scout_closeout(store, run_id, connection, round_id, outcomes=scout_outcomes, enforce=scout_required(store, run_id))
         if plan.get('research_strategy') == 'goal_driven' and not str(summary or early_stop_reason or '').strip():
             raise AdmissionError('按目标补证收轮时请在 summary 说明继续或停止的依据及剩余限制；不要求新增检索。', code='research_rationale_missing')
+        _goal_stop_reason(store, connection, run_id, round_id, info, plan, continue_research, early_stop_reason)
         refusal = _early_stop(store, run_id, info, plan, continue_research, early_stop_reason)
         if refusal:
             raise AdmissionError(refusal, code='research_stopped_early')
