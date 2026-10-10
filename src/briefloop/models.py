@@ -359,6 +359,8 @@ class Settings(RoleModel):
     chat_allow_web: bool = True
     search_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'tavily'
     search_policy: SearchPolicy | None = None
+    # SEC EDGAR rejects readers without a declared contact; sent only to sec.gov.
+    fetch_contact_email: str = Field(default='', max_length=200, pattern=r'^$|^[^@\s]+@[^@\s]+\.[^@\s]+$')
     k: int = Field(default=1, ge=1, le=20)
     # Saving feedback is free; automatic learning starts paid validation and needs
     # a recorded confirmation of its upper bound (learning_budget, #727).
