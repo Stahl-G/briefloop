@@ -44,9 +44,8 @@ class Grants:
         if active and row['status'] != 'active':
             raise ConnectorError('本轮连接授权已撤销。', code='revoked')
         data = json.loads(row['data'])
-        snapshot = {key: value for key, value in data.items() if key != 'snapshot_hash'}
-        if data.get('run_id') != run_id or data.get('snapshot_hash') != digest(snapshot):
-            raise ConnectorError('冻结授权快照校验失败。', code='grant_integrity')
+        if data.get('run_id') != run_id:
+            raise ConnectorError('冻结授权快照不属于本轮报告。', code='invalid_grant')
         return {**row, 'data': data}
 
     def freeze(self, run_id, snapshots, *, max_calls, max_total_bytes, grant_id=None):

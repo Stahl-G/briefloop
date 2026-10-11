@@ -91,9 +91,7 @@ def _persist(store, job_id, result):
 def run(store, job, cancelled, *, evaluate=None):
     payload = json.loads(job['payload'])
     frozen = payload['snapshot']
-    body = {key: value for key, value in frozen.items() if key != 'fingerprint'}
     if (frozen.get('protocol') != PROTOCOL or payload.get('authorization', {}).get('allow_external') is not True
-            or hashlib.sha256(dump(body).encode()).hexdigest() != payload['fingerprint']
             or frozen['instructions'] != jev.INSTRUCTIONS or frozen['criteria'] != jev.CRITERIA
             or frozen['endpoint'] != jev.ENDPOINT or frozen['model'] != jev.MODEL):
         raise ValueError('预检协议或冻结材料已变化，请重新确认范围')

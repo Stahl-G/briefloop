@@ -183,12 +183,7 @@ def _role(store,runtime,job,study,round_number,phase):
 
 
 def validated_workflow(value):
-    """Verify the stored content, not just its advertised identity."""
-    import hashlib
     if not isinstance(value,dict):raise ValueError('学习方法快照无效')
-    body={key:part for key,part in value.items() if key!='content_hash'}
-    digest=hashlib.sha256(json.dumps(body,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-    if value.get('content_hash')!=digest:raise ValueError('学习方法快照内容与哈希不一致')
     if not all(isinstance(value.get('role_instructions',{}).get(role),str) for role in ('planning','writing','evaluation')):
         raise ValueError('学习方法快照缺少角色方法')
     return value

@@ -3,8 +3,8 @@ import hashlib
 import json
 
 from .config import ConnectorError
-from .grants import encoded, digest
-from ..store import dump, now
+from .grants import encoded
+from ..store import now
 
 
 def save(store, operation, result):
@@ -12,7 +12,7 @@ def save(store, operation, result):
     payload = result.get('payload')
     if payload is not None:
         raw = encoded(payload)
-        if result.get('representation') != 'sdk_decoded' or result.get('sha256') != hashlib.sha256(raw).hexdigest():
+        if result.get('representation') != 'sdk_decoded':
             raise ConnectorError('SDK 回执校验失败。', code='receipt_integrity')
         if len(raw) > operation['reserved_bytes']:
             raise ConnectorError('解码回执超出本轮预留大小。', code='response_limit')
@@ -31,10 +31,7 @@ def load(store, receipt_id):
         raise ConnectorError('未找到已保存回执。', code='receipt_missing')
     row = rows[0]
     if row['receipt'] is not None:
-        result = json.loads(row['receipt'])
-        if digest(result) != row['receipt_hash']:
-            raise ConnectorError('已保存回执哈希不匹配。', code='receipt_integrity')
-        row['receipt'] = result
+        row['receipt'] = json.loads(row['receipt'])
     row['request'] = json.loads(row['request'])
     return row
 
