@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {deliveryUI} from '../frontend/delivery.js';
-import {section as sectionOf} from './source_section.mjs';
+import {section as sectionOf,statement} from './source_section.mjs';
 import {esc} from '../frontend/dom.js';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const line=name=>source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
+const line=name=>(source.includes(`\nasync function ${name}(`)?statement(source,`async function ${name}(`):statement(source,`function ${name}(`));
 const section=(start,end)=>sectionOf(source,start,end,'frontend/app.js');
 
 function fixture(){
@@ -40,7 +40,7 @@ function fixture(){
  context.delivery=delivery;
  context.rows=context.state.briefs;context.openRelease=b=>context.action(()=>delivery.openReleaseDialog(b));
  const browsing=fs.readFileSync(new URL('../frontend/report-browsing.js',import.meta.url),'utf8');
- vm.runInContext(browsing.split('\n').find(row=>row.trim().startsWith("box.querySelectorAll('[data-report-release]')")),context);
+ vm.runInContext(statement(browsing,"box.querySelectorAll('[data-report-release]')",{trim:true}),context);
  const resolve=id=>pending.get(id).resolve({...context.state.briefs.find(b=>b.id===id),markdown:'Report '+id});
  return {context,delivery,$,calls,notices,saved,pages,buttons,resolve,reject:(id)=>pending.get(id).reject(Error('Body unavailable'))};
 }

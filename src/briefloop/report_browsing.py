@@ -95,7 +95,15 @@ def hot_state(store, jobs, *, run_id='', version_id='', pending_run=''):
     run_ids=pinned_runs|{b['run_id'] for b in briefs}
     runs=[]
     if run_ids:
-        runs=store.rows("SELECT r.id,r.created,r.mode,"+_SOURCE_COUNT+" AS source_count,json_array_length(r.source_ids) AS initial_source_count,json_object('title',substr(json_extract(r.requirements,'$.title'),1,300),'objective',substr(json_extract(r.requirements,'$.objective'),1,400),'workflow_id',json_extract(r.requirements,'$.workflow_id'),'workflow_variant',json_extract(r.requirements,'$.workflow_variant'),'template_id',json_extract(r.requirements,'$.template_id'),'target_minutes',json_extract(r.requirements,'$.target_minutes'),'hard_timeout_minutes',json_extract(r.requirements,'$.hard_timeout_minutes'),'allow_web',json_extract(r.requirements,'$.allow_web')) AS requirements FROM runs r WHERE "+_VISIBLE+' AND r.id IN ('+','.join('?' for _ in run_ids)+') ORDER BY r.rowid DESC',sorted(run_ids))
+        fields=["'title',substr(json_extract(r.requirements,'$.title'),1,300)",
+                "'objective',substr(json_extract(r.requirements,'$.objective'),1,400)"]
+        fields+=[f"'{key}',json_extract(r.requirements,'$.{key}')" for key in
+                 ('workflow_id','workflow_variant','template_id','target_minutes','hard_timeout_minutes','allow_web')]
+        runs=store.rows("SELECT r.id,r.created,r.mode,"+_SOURCE_COUNT+" AS source_count,"
+                        "json_array_length(r.source_ids) AS initial_source_count,"
+                        "json_object("+','.join(fields)+") AS requirements "
+                        "FROM runs r WHERE "+_VISIBLE+' AND r.id IN ('+','.join('?' for _ in run_ids)+') ORDER BY r.rowid DESC',
+                        sorted(run_ids))
     assessments=[{'id':b['assessment_id'],'version_id':b['id'],'summary':True,'data':json.dumps({'status':b['assessment_status'],'overall':b['assessment_overall']})} for b in briefs if b['assessment_id']]
     catalog=store.rows("SELECT (SELECT max(rowid) FROM briefs) AS version_revision,(SELECT max(rowid) FROM assessments) AS assessment_revision,(SELECT max(updated) FROM jobs) AS job_revision,(SELECT count(*) FROM meta WHERE key LIKE 'deleted_report:%') AS deletion_revision,(SELECT count(*) FROM runs r WHERE "+_VISIBLE+" AND EXISTS(SELECT 1 FROM briefs WHERE run_id=r.id)) AS total")[0]
     usage=store.rows("SELECT source_id,count(*) AS report_count FROM (SELECT r.id,value AS source_id FROM runs r,json_each(r.source_ids) WHERE "+_VISIBLE+" AND EXISTS(SELECT 1 FROM briefs WHERE run_id=r.id) UNION SELECT r.id,rs.source_id FROM runs r JOIN run_sources rs ON rs.run_id=r.id WHERE "+_VISIBLE+" AND EXISTS(SELECT 1 FROM briefs WHERE run_id=r.id)) GROUP BY source_id")

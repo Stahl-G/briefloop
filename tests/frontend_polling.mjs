@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {statement} from './source_section.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -25,7 +26,7 @@ test('polling backs off idle/hidden, refreshes on return and never overlaps a sl
 });
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-const line=name=>source.split('\n').find(row=>row.startsWith(`function ${name}(`)||row.startsWith(`async function ${name}(`));
+const line=name=>(source.includes(`\nasync function ${name}(`)?statement(source,`async function ${name}(`):statement(source,`function ${name}(`));
 
 test('a snapshot that differs only by the server clock keeps the page; timed task views still refresh',async()=>{
  let clock='2026-09-25T10:00:00+00:00',jobs=[],renders=0,workspace='one',resets=0;const timed=[];

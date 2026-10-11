@@ -5,10 +5,10 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {reviewPending} from '../frontend/review-status.js';
 import {createReportBrowsing} from '../frontend/report-browsing.js';
-import {section} from './source_section.mjs';
+import {section,statement} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
-const oneLine=name=>source.split('\n').find(line=>line.startsWith(`function ${name}(`)||line.startsWith(`async function ${name}(`));
+const oneLine=name=>(source.includes(`\nasync function ${name}(`)?statement(source,`async function ${name}(`):statement(source,`function ${name}(`));
 const functionBefore=(name,next)=>section(source,`function ${name}(){`,`\nfunction ${next}(`,'frontend/app.js');
 
 test('opening another version immediately refreshes scored and unscored headers with unchanged API state',async()=>{
