@@ -730,7 +730,19 @@ def _scout_tools(config):
 RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS, 'quick_writer': []}
 
 
+def _direct_writer_tools(config):
+    # Same metered reading, search and page tools as a Scout; no evidence
+    # record or submit: the writer returns prose and checks run afterwards.
+    channels = config.get('search_channels') or []
+    web = _scout_web_tools(channels) if config.get('allow_web') else []
+    if config.get('allow_web') and not channels:
+        web = [tool for tool in web if tool['name'] == 'add_url']
+    return [*SCOUT_READ_TOOLS, *web]
+
+
 def _tools(role, mode=None, config=None):
+    if role == 'quick_writer' and (config or {}).get('direct'):
+        return _direct_writer_tools(config)
     if role in ('orchestrator', 'chat', 'fact_checker'):
         from .native_orchestrator import tools
         return tools(role, config or {})

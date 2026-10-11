@@ -89,7 +89,7 @@ def accept_stage_sources(store,job):
 def origin(store, version_id):
     brief = store.one('briefs', version_id)
     run = store.one('runs', brief['run_id'])
-    if json.loads(run['requirements']).get('completion_mode') not in ('draft_first','fast','fast_web'):
+    if json.loads(run['requirements']).get('completion_mode') not in ('draft_first','fast','fast_web','direct'):
         raise ValueError('这份报告未选择先交初稿，请使用现有评分或审阅入口')
     rows = store.rows("SELECT * FROM jobs WHERE kind='generate' AND json_extract(payload,'$.run_id')=? ORDER BY rowid DESC",
                       (run['id'],))
@@ -126,8 +126,9 @@ class ExistingContinuation(Exception):
 def enqueue(store, version_id, *, automatic=False):
     parent = origin(store, version_id)
     brief=store.one('briefs',version_id)
-    fast=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode') in ('fast','fast_web')
-    automatic=bool(automatic and fast)
+    mode=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode')
+    fast=mode in ('fast','fast_web')
+    automatic=bool(automatic and (fast or mode=='direct'))
     if parent['status'] in ('queued', 'running') and not automatic:
         raise ValueError('作者仍在完成初稿，请等本轮写作结束后继续检查')
     # Preserve every execution choice instead of inheriting today's settings.
@@ -138,6 +139,8 @@ def enqueue(store, version_id, *, automatic=False):
     payload = {key: original[key] for key in keys if key in original}
     if fast:
         payload.update(fast_evidence=True,auto_revision=False)
+    elif mode=='direct':
+        payload.update(fast_evidence=True)
     snapshot = binding(store, version_id)
     identity = hashlib.sha256(dump([parent['id'], snapshot, payload]).encode()).hexdigest()
     payload.update(version_id=version_id, continuation_of=parent['id'],
@@ -281,7 +284,7 @@ def execute(worker, job):
 def status(store, version_id):
     brief = store.one('briefs', version_id)
     req = json.loads(store.one('runs', brief['run_id'])['requirements'])
-    if req.get('completion_mode') not in ('draft_first','fast','fast_web'):
+    if req.get('completion_mode') not in ('draft_first','fast','fast_web','direct'):
         return {'mode': 'standard'}
     parent = origin(store, version_id)
     result = {'mode': req['completion_mode'], 'origin_job_id': parent['id'],

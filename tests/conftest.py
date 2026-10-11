@@ -22,3 +22,14 @@ def _scripted_host_can_review(request, monkeypatch):
     # Scripted OpenCode transports model the verified v1 contract, regardless
     # of the developer machine's installed CLI. Version-gate tests opt out.
     monkeypatch.setattr('briefloop.review_capability._opencode_major', lambda: 1)
+
+
+@pytest.fixture(autouse=True)
+def _no_developer_tavily_key(monkeypatch, tmp_path_factory):
+    # Failed page reads fall back to Tavily when a key exists; tests must never
+    # pick up the developer's real key or reach the network that way.
+    from briefloop import tavily
+    original = tavily._key_path
+    missing = tmp_path_factory.getbasetemp() / 'no-tavily.key'
+    monkeypatch.delenv('TAVILY_API_KEY', raising=False)
+    monkeypatch.setattr(tavily, '_key_path', lambda key_file=None: original(key_file) if key_file is not None else missing)

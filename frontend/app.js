@@ -1900,7 +1900,7 @@ function renderAssistantSummary(){
  const run=(state.runs||[]).find(r=>r.id===current.run_id),req=run?parse(run.requirements):{};
  const conflicts=runConflicts(current.run_id).length;
  const tc=req.time_context;
- const kv=[['系统核对日期',tc?`${tc.today} · ${tc.timezone}`:'旧任务未记录'],['时间范围',tc?`${tc.start} 至 ${tc.end_exclusive}（不含结束时刻）`:req.period],['读者',req.audience],['已登记来源',runSourceCount(current.run_id)+' 个']].filter(([,v])=>v);
+ const kv=[['系统核对日期',tc?`${tc.today} · ${tc.timezone}`:'旧任务未记录'],['时间范围',tc?(tc.start?`${tc.start} 至 ${tc.end_exclusive}（不含结束时刻）`:`截至 ${tc.end_exclusive}`):req.period],['读者',req.audience],['已登记来源',runSourceCount(current.run_id)+' 个']].filter(([,v])=>v);
  const cards=[versionInformationHTML(current,{esc})];
  if(kv.length)cards.push(`<dl class="assistant-card">${kv.map(([k,v])=>`<div class="kv"><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl>`);
  // An empty "needs attention" card is a placeholder; show it only when something needs attention.

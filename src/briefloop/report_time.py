@@ -4,6 +4,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import calendar
 import re
 
+# An analysis "as of now" has no news window: history is usable evidence.
+# A today-only window here filtered every Tavily search to one day (2026-10 Manus).
+AS_OF_PERIODS = ('截至提交时刻', '截至目前', '截至今日', '截至今天', '截至当前', 'as of now', 'as of today')
+
 
 def freeze(requirements, instant=None):
     clock = instant or datetime.now().astimezone()
@@ -19,7 +23,10 @@ def freeze(requirements, instant=None):
     def parse(value):
         dt = datetime.fromisoformat(value)
         return dt.replace(tzinfo=local.tzinfo) if dt.tzinfo is None else dt.astimezone(local.tzinfo)
-    if start_text or end_text:
+    if period.casefold() in AS_OF_PERIODS and not (start_text or end_text):
+        start, end = None, local
+        basis = 'as_of'
+    elif start_text or end_text:
         if not start_text or not end_text:
             raise ValueError('请同时填写报告开始和结束日期')
         start, end = parse(start_text), parse(end_text)
@@ -60,13 +67,15 @@ def freeze(requirements, instant=None):
                 raise ValueError('报告时间范围不明确，请填写开始和结束日期；例如 2026-09-01 至 2026-09-14')
             start = month.replace(tzinfo=local.tzinfo)
             end = start+timedelta(days=calendar.monthrange(start.year, start.month)[1])
-    if start >= end:
+    if start is not None and start >= end:
         raise ValueError('报告结束时间必须晚于开始时间')
     window = {'checked_at': clock.isoformat(), 'today': local.date().isoformat(),
-              'timezone': zone, 'start': start.isoformat(), 'end_exclusive': end.isoformat(),
+              'timezone': zone, 'start': start.isoformat() if start else None, 'end_exclusive': end.isoformat(),
               'basis': basis, 'clock_source': 'system_clock'}
+    if start is None:
+        window['mode'] = 'as_of'
     warnings = []
-    for field in ('period', 'title'):
+    for field in ('period', 'title') if start is not None else ():
         label = re.search(r'(?:(\d{4})\s*年\s*)?第\s*(\d{1,2})\s*周', requirements.get(field, ''))
         if not label:
             continue
@@ -91,6 +100,12 @@ def freeze(requirements, instant=None):
 def instructions(window):
     if not window:
         return '旧任务未冻结明确时间范围：不要猜测年份或声称时效已核验；新建明确日期范围的任务。'
+    if window.get('mode') == 'as_of':
+        return (f"系统核对日期：{window['today']}；时区：{window['timezone']}；核对时刻：{window['checked_at']}。"
+                f"本报告是截至 {window['end_exclusive']} 的分析，不设“本期”起点：此前的交易、融资、产品和数据都可作为正文事实，"
+                '须写明事件日期和数据期间，区分历史与现状；不使用晚于核对时刻的信息。检索不按发布日期限定，旧报道仍须核对是否已被后续事件更正。'
+                '关键事件可用 temporal_claims 记录 statement、event_date、source_id、locator 与 usage（current 为现状判断依据，background 为历史背景），不需要证明“本期新增”，正文不写“本期未发现新增”之类的检索过程。'
+                '日期记录仍须回读原文；程序日期比较不等于事实认证。')
     return (f"系统核对日期：{window['today']}；时区：{window['timezone']}；核对时刻：{window['checked_at']}。"
             f"本轮冻结范围：{window['start']} 至 {window['end_exclusive']}（不含结束时刻）。"
             '所有检索、子任务、写作和评分沿用此范围，恢复任务不得移动范围。'
@@ -107,8 +122,24 @@ def check(window, claims):
     if not window: return {'status': 'not_checked', 'reason': 'legacy_window', 'items': []}
     warnings = window.get('warnings', [])
     if not claims: return {'status': 'not_checked', 'reason': 'missing_date_records', 'items': [], 'warnings': warnings}
-    start = datetime.fromisoformat(window['start'])
     end = datetime.fromisoformat(window['end_exclusive'])
+    if window.get('start') is None:
+        # As-of analysis: only information after the cutoff is out of range.
+        items = []
+        for claim in claims:
+            status, value = ('background' if claim.get('usage') == 'background' else 'as_of_unverified'), claim.get('event_date') or ''
+            try:
+                event = datetime.fromisoformat(value) if value else None
+                if event is not None and (event.replace(tzinfo=end.tzinfo) if event.tzinfo is None else event) >= end:
+                    status = 'out_of_range'
+            except ValueError: pass
+            items.append({**claim, 'news_basis': claim.get('news_basis', 'event'), 'basis_date': value,
+                          'temporal_status': status, 'reason': 'after_cutoff' if status == 'out_of_range' else 'as_of_window'})
+        return {'status': 'needs_source_review', 'items': items, 'warnings': warnings,
+                'review_hint': '截至时点分析只检查是否使用了核对时刻之后的信息；日期仍须回读原文核对。',
+                'missing_date_count': sum(not i['basis_date'] for i in items if i['temporal_status'] != 'background'),
+                'out_of_range_count': sum(i['temporal_status'] == 'out_of_range' for i in items)}
+    start = datetime.fromisoformat(window['start'])
     items = []
     for claim in claims:
         status = 'background' if claim.get('usage') == 'background' else 'unverified'

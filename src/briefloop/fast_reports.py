@@ -173,8 +173,16 @@ def enrich(worker, job, brief, folder):
         return saved[0]
     origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
     materials = json.loads(origin.read_text(encoding='utf-8'))
-    if selected_packet(store,brief['run_id'],[r['source_id'] for r in materials]) != materials:
+    if not materials:
+        # A direct draft that cited no saved source has nothing to locate.
+        store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '正文没有引用已保存来源，跳过原文定位。'})
+        return brief
+    # Direct drafts freeze excerpt windows of web pages; compare identity and
+    # bytes by hash, and always locate quotes in the full frozen source text.
+    current = selected_packet(store,brief['run_id'],[r['source_id'] for r in materials])
+    if [(r['source_id'], r['hash']) for r in current] != [(r['source_id'], r['hash']) for r in materials]:
         raise Conflict('材料与快速写作时的原文不同，请使用当前材料新建任务。')
+    full = {r['source_id']: r['text'] for r in current}
     phase = folder / 'evidence'
     prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'
               '只返回一个 JSON 对象，包含 citations、number_bindings 和 unsupported 三个数组；没有可定位依据时留空，不猜测。'
@@ -204,7 +212,7 @@ def enrich(worker, job, brief, folder):
         quote = item.get(field)
         if not source or not isinstance(quote, str) or not quote.strip() or len(quote) > 8000:
             raise ValueError('缺少有效来源与逐字摘录')
-        context = located_context(source['text'], quote, item.get('locator', ''))
+        context = located_context(full[source['source_id']], quote, item.get('locator', ''))
         return {**item, 'source_id': source['source_id'], **context, 'source_title': source['name']}
 
     citations, numbers = [], []

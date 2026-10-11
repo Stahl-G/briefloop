@@ -46,6 +46,8 @@ def summary(store, job_id):
     stage = public_text(p.get('stage')) or ('等待开始' if job['status'] == 'queued' else task_label(job['kind'], '处理任务'))
     if running and req.get('completion_mode') in ('fast','fast_web') and job['kind']=='generate':
         stage='直接阅读材料并写作'
+    if running and req.get('completion_mode')=='direct' and job['kind']=='generate':
+        stage='检索、阅读并写作'
     if running and learning and not progress_event:
         stage={'maintainer':'正在整理反馈经验','proposer':'正在提出技能改进','validation':'正在试写并比较候选'}.get(json.loads(learning['data']).get('phase'),'正在整理和验证反馈')
     if child:
@@ -90,7 +92,7 @@ def summary(store, job_id):
             timeline.append({'label': f"第 {task['round_index']} 轮 {task['slot_id']}：" + label,
                              'detail': public_text(task['assignment'] + ('；' + task['reason'] if task['reason'] else '')),
                              'status': 'error' if task['status'] == 'failed' else 'warn', 'time': ((plan.get('rounds') or {}).get(task['round_id']) or {}).get('closed') or run['created']})
-    event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
+    event_labels = {'fast_search':'规划并检索公开来源', 'fast_sources':'读取选中的网页原文', 'fast_writing':'直接阅读材料并写作', 'direct_writing':'在同一上下文中检索、阅读并写作', 'fast_evidence':'后台补充原文依据', 'fast_evidence_preserved':'原版依据保留，用户修改优先', 'checks_deferred': '初稿已保存，完整核验待继续', 'checks_started': '开始完整检查', 'checks_finished': '检查阶段已结束', 'revision_required': '审阅已返回', 'draft_missing_resume': '继续完成尚未保存的初稿',
                     'assessment_failed': '评分未完成，已有稿件保留'}
     revision_labels = {'writing': '正在按审阅意见修订', 'checking': '修订稿已保存，正在复核',
                        'repairing_metadata': '正在修复依据关联与处理说明', 'metadata_repaired': '依据关联已修复'}
@@ -188,6 +190,17 @@ def summary(store, job_id):
                 'locator': public_text(ref['locator']), 'excerpt': public_text(ref['excerpt'], 1200),
                 'source_hash': ref['source_hash'], 'source_changed': source_hashes.get(ref['source_id']) != ref['source_hash']} for ref in item['evidence']]
         } for item in goal_progress['questions']]}
+    elif brief:
+        # Direct drafts carry a coverage record checked against tool receipts.
+        from .coverage_record import progress as coverage_progress
+        record = next((n for n in json.loads(brief['detail']).get('research_notes', []) if n.get('kind') == 'coverage'), None)
+        goal_progress = coverage_progress(record)
+        if goal_progress:
+            names = {s['id']: s['name'] for s in sources}
+            for item in goal_progress['questions']:
+                item['question'] = public_text(item['question']); item['reason'] = public_text(item['reason'])
+                item['remaining_question'] = public_text(item['remaining_question'])
+                for ref in item['evidence']:ref['source_name'] = names.get(ref['source_id'], '来源')
     return {'goal_progress': goal_progress, 'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
             'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,

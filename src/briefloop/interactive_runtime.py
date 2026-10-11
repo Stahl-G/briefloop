@@ -86,7 +86,7 @@ class InteractiveRuntime:
 
     @staticmethod
     def _cwd(job, backend, folder):
-        if not job.get('plain_output'):
+        if not job.get('plain_output') or job.get('plain_tools'):
             return folder
         from .plain_isolation import working_directory
         return working_directory(backend, folder)
@@ -177,7 +177,7 @@ class InteractiveRuntime:
         configured = payload['runtime'] if 'runtime' in payload else self.store.runtime_config()
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
-        if job.get('plain_output'):
+        if job.get('plain_output') and not job.get('plain_tools'):
             from . import plain_isolation
             runtime.update(plain_isolation.runtime(backend))
         if job.get('readonly_output'):

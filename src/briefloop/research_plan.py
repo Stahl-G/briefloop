@@ -166,7 +166,7 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
         # full-flow strategy choice retained by the form. Never require an
         # agent handoff that this execution path cannot produce.
         if (requirements.get('research_strategy') == 'goal_driven'
-                and requirements.get('completion_mode') not in ('fast', 'fast_web')
+                and requirements.get('completion_mode') not in ('fast', 'fast_web', 'direct')
                 and (not existing or existing.get('goal_contract'))):
             from .research_goals import contract
             snapshot['goal_contract'] = contract(requirements)
