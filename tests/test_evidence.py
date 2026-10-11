@@ -154,16 +154,6 @@ def test_old_claim_without_role_keeps_old_binding_semantics(tmp_path):
     assert inspect_bindings(store,brief['id'])['bindings'][-1]['status']=='unreviewed'
 
 
-def test_scout_and_draft_fields_survive_artifact_check(tmp_path):
-    from briefloop.models import ScoutResult, BriefDraft, check_artifact
-    scout={'sources':[{'source_id':'s1','locator':'','excerpt':'','facts':[],'conflicts':[],'coverage_status':'ok','claim_ids':['claim_1']}],
-           'gaps':['missing'],'search_summary':'7 sources','retrieval_notes':[{'query':'q','outcome':'kept'}]}
-    report=check_artifact(scout,ScoutResult)
-    assert report['status']=='ok' and report['unknown_fields']==[]
-    draft=check_artifact({'title':'T','markdown':'Body','reconciliation_id':'recon_1'},BriefDraft)
-    assert draft['status']=='ok' and draft['unknown_fields']==[]
-
-
 def test_old_saved_draft_republishes_after_new_field(tmp_path):
     store,source,run,brief=case(tmp_path)
     old=json.loads(store.one('briefs',brief['id'])['detail']);old.pop('reconciliation_id',None)

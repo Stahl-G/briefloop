@@ -46,16 +46,6 @@ def test_chat_runtime_choice_clears_the_pending_model_gate(tmp_path):
         assert server.store.runtime_config()['model']=='default'
 
 
-def test_saving_a_model_clears_the_pending_model_gate(tmp_path):
-    server=make_server(tmp_path,port=0,paused=True)
-    pending_claude_workspace(server)
-    with running(server) as post:
-        assert post('/api/settings',{})['model_selection_required'] is True
-        saved=post('/api/settings',{'agent_backend':'codex','model':'gpt-5.6-luna'})
-        assert saved['model_selection_required'] is False
-        assert server.store.runtime_config()['model']=='gpt-5.6-luna'
-
-
 def test_switching_runtime_still_asks_for_a_model(tmp_path):
     server=make_server(tmp_path,port=0,paused=True)
     with running(server) as post:

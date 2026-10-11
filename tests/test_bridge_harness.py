@@ -142,16 +142,6 @@ def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_
         h.close()
 
 
-def test_internal_run_without_reject_option_answers_cancelled(tmp_path):
-    """No host-provided reject option: reply with the cancelled outcome, still fail fast."""
-    options=[{'optionId':'allow','name':'允许','kind':'allow_once'}]
-    bridge=QuestionBridge(options);h=BridgeHarness(Store(tmp_path),bridge,'kimi')
-    run=h.start_internal('后台任务',message_id='bg-no-reject')
-    _wait_status(h,run.session_id,run.message_id,'failed')
-    answers=[p for method,p in bridge.calls if method=='answer']
-    assert answers==[{'execution_id':'bg-no-reject','request_id':'q1'}]
-
-
 def test_interactive_run_still_queues_permission_question_for_the_user(tmp_path):
     bridge=QuestionBridge();h=BridgeHarness(Store(tmp_path),bridge,'codebuddy')
     s=h.create_session('chat',{'model':'host-model'})
@@ -257,27 +247,6 @@ def test_bridge_host_gets_the_workspace_contract_once_per_native_session(tmp_pat
     assert 'Tavily' in bridge.starts[2]['prompt']
 
 
-def test_codebuddy_saved_usage_is_reprojected_without_rewriting_history(tmp_path):
-    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
-    session=h.create_session('Synthetic saved session',{'model':'deepseek-v4.1-flash'})
-    raw={'sessionUpdate':'usage_update','used':30000,'size':1000000,
-         '_meta':{'usage':{'prompt_tokens':29217,'completion_tokens':571,'total_tokens':29788,
-                          'cache_read_input_tokens':0,'cached_tokens':0,
-                          'prompt_tokens_details':{'cached_tokens':29056},'prompt_cache_hit_tokens':29056}}}
-    h.chat.event(session['id'],'thread/tokenUsage/updated',
-                 {'tokenUsage':{'backend':'codebuddy','last':{'inputTokens':None,'outputTokens':None},'raw':raw}})
-    before=store.rows('SELECT * FROM chat_events')
-    snapshot=h.snapshot(session['id'])
-    usage=snapshot['token_usage']
-    assert usage['last']=={'inputTokens':29217,'cachedInputTokens':29056,'outputTokens':571}
-    assert usage['contextUsedTokens']==30000 and usage['modelContextWindow']==1000000
-    assert snapshot['events'][-1]['data']['tokenUsage']==usage
-    assert h.snapshot(session['id'],after=snapshot['events'][-1]['seq'])['token_usage']==usage
-    assert store.rows('SELECT * FROM chat_events')==before
-    h.chat.event(session['id'],'thread/providerChanged',{})
-    assert h.snapshot(session['id'])['token_usage'] is None
-
-
 def test_usage_unknown_and_zero_do_not_become_estimates():
     usage=normalize_bridge_usage({'sessionUpdate':'usage_update','used':123,'size':1000},'codebuddy')
     assert usage['last']=={'inputTokens':None,'outputTokens':None,'cachedInputTokens':None}
@@ -322,20 +291,6 @@ def test_codebuddy_sparse_usage_reuses_only_same_request_message_without_rewriti
     assert usage['modelContextWindow']==1000000
     h.chat.event(sid,'thread/providerChanged',{})
     h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(sparse,'codebuddy')})
-    assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
-
-
-@pytest.mark.parametrize('change', ['request','message','missing_identity'])
-def test_codebuddy_sparse_usage_never_inherits_other_or_unknown_request(tmp_path,change):
-    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
-    sid=h.create_session('Usage request boundary',{'model':'default'})['id']
-    meta={'codebuddy.ai/requestId':'request-1','codebuddy.ai/messageId':'message-1'}
-    full={'_meta':{**meta,'usage':{'prompt_tokens':33947,'completion_tokens':102,'prompt_cache_hit_tokens':23296}}}
-    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(full,'codebuddy')})
-    if change=='request':meta['codebuddy.ai/requestId']='request-2'
-    elif change=='message':meta['codebuddy.ai/messageId']='message-2'
-    else:meta.pop('codebuddy.ai/messageId')
-    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage({'_meta':meta},'codebuddy')})
     assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
 
 

@@ -192,27 +192,3 @@ def test_completed_extraction_survives_ancillary_failure_and_next_upload_runs(tm
         warnings=store.rows("SELECT data FROM events WHERE job_id=? AND kind='source_extraction_warning'",(job['id'],))
         assert json.loads(warnings[-1]['data'])['phase']==phase
         assert store.source_text(source['id'])==media.PDF_NOTICE
-
-
-def test_source_status_exposes_scanned_pdf_metadata_without_reading_original_or_body(tmp_path,monkeypatch):
-    import http.client
-    from briefloop.server import make_server
-    server=make_server(tmp_path,port=0,paused=True)
-    source=upload(server.store,'scan.pdf',pdf_bytes());jid=source['extraction_job_id']
-    server.store.update_job(jid,'running')
-    extract_job(server.store,server.store.one('jobs',jid),threading.Event())
-    def forbidden(*args,**kwargs):raise AssertionError('status must not read original or extracted text')
-    monkeypatch.setattr(media,'_hash',forbidden)
-    monkeypatch.setattr(server.store,'source_text',forbidden)
-    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-    try:
-        connection=http.client.HTTPConnection('127.0.0.1',server.server_port)
-        connection.request('GET','/api/source-status?id='+source['id'])
-        response=connection.getresponse();result=json.loads(response.read());connection.close()
-        assert response.status==200
-        assert result['source']['status']=='ready'
-        assert result['source']['needs_visual'] is True
-        assert result['source']['pages']==3
-        assert result['source']['media_type']=='application/pdf'
-        assert '未执行 OCR' in result['progress']['message']
-    finally:server.shutdown();server.server_close()

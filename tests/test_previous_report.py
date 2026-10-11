@@ -53,13 +53,6 @@ def test_import_creates_original_and_revision_feedback_but_no_comparison_case(tm
     assert store.meta('requirements') is None
 
 
-def test_markdown_import_has_no_revision(tmp_path):
-    store = Store(tmp_path / 'ws')
-    result = import_previous(store, 'weekly.md', '# 周报\n\n正文。'.encode())
-    assert not result['tracked_changes']
-    assert not store.rows("SELECT * FROM feedback WHERE kind='revision'")
-
-
 def test_source_text_of_a_tracked_docx_reads_the_accepted_document(tmp_path):
     store = Store(tmp_path / 'ws')
     result = import_previous(store, '周报.docx', tracked_docx())

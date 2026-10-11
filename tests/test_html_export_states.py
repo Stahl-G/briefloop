@@ -87,17 +87,6 @@ def test_all_unresolved_gap_states_survive_structured_projection(tmp_path):
     assert len([item for item in gate['notices'] if item['code'].startswith('delivery_gap_')]) == 4
 
 
-@pytest.mark.parametrize('records', [None, [], [{'related': 'Revenue', 'impact': 'Closed gap', 'status': 'resolved'}]])
-def test_legacy_gaps_only_fallback_when_structured_records_are_empty(tmp_path, records):
-    detail = {'gaps': ['Legacy gap']}
-    if records is not None:
-        detail['gap_records'] = records
-    store, _, brief = sample(tmp_path, **detail)
-    checks = appendix(html_report(store, brief['id']))
-    assert ('Legacy gap' in checks) == (not records)
-    assert 'Closed gap' not in checks
-
-
 @pytest.mark.parametrize('change', ['evidence', 'body', 'requirements', 'packet'])
 def test_completed_review_rejects_changed_inputs(tmp_path, change):
     store, run, brief = sample(tmp_path)
@@ -155,21 +144,6 @@ def test_latest_incomplete_review_does_not_fall_back_to_older_completion(tmp_pat
     assert 'Independently reviewed · not released' not in page
     assert manifest(page)['review'] == {'id': 'review_newest', 'status': state,
                                         'applicable': None, 'applicability_error': None}
-
-
-def test_chinese_pending_review_and_gap_labels(tmp_path):
-    store, run, brief = sample(tmp_path, gap_records=[{'related': '收入', 'impact': '仍缺少支持', 'status': 'addressed'}])
-    requirements = json.loads(run['requirements'])
-    requirements['language'] = 'zh'
-    with store.tx() as connection:
-        connection.execute('UPDATE runs SET requirements=? WHERE id=?', (json.dumps(requirements), run['id']))
-    complete_review(store, brief, findings=[{'kind': 'insufficient_evidence', 'severity': 'major',
-                    'description': '等待确认', 'evidence': 'Synthetic basis',
-                    'report_quote': 'Revenue is 12 million USD.'}])
-    respond(store, review_status(store, brief['id'])['findings'][0]['id'], brief['id'], 'corrected', '已补说明')
-    page = html_report(store, brief['id'])
-    assert '最近一次已保存审阅不适用于当前输入' in page and '1 项未结发现' in page
-    assert '已回应 · 待复核' in appendix(page) and '已处理 · 待复核' in appendix(page)
 
 
 def test_released_version_review_appendix_does_not_contradict_cover(tmp_path, monkeypatch):

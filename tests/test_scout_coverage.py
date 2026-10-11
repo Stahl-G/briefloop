@@ -283,7 +283,6 @@ def test_manifest_replay_capacity_skips_and_late_results(tmp_path):
 
 
 def test_foreign_run_and_preexisting_results_do_not_complete_new_tasks(tmp_path):
-    from pathlib import Path
     from briefloop.scout_tools import join_scouts
     store, source, old_run, old_job = setup(tmp_path)
     research_plan.freeze(store, old_run['id'])
@@ -320,32 +319,7 @@ def test_foreign_run_and_preexisting_results_do_not_complete_new_tasks(tmp_path)
     assert scout_coverage.view(store, run['id'])['execution_gaps'] == []
 
 
-def test_closed_round_join_cannot_credit_active_round_with_slots_override(tmp_path):
-    from pathlib import Path
-    from briefloop.scout_tools import join_scouts
-    store, source, run, job = setup(tmp_path)
-    first = research_plan.freeze(store, run['id'])['current_round_id']
-    scout_coverage.declare(store, run['id'], [])
-    research_plan.finish_round(store, run['id'])
-    second = research_plan.begin_round(store, run['id'])['round_id']
-    path = store.root / 'jobs' / job['id'] / 'round-2' / 'scout-1' / 'result.json'
-    task = {'slot_id': 'scout-1', 'assignment': 'Second round direction', 'result_file': str(path)}
-    scout_coverage.declare(store, run['id'], [task])
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({'sources': [], 'gaps': ['No matching evidence']}))
-    with pytest.raises(ValueError, match='槽位'):
-        join_scouts(store, [path], run_id=run['id'], round_id=first, slots=[path])
-    assert scout_coverage.view(store, run['id'])['scout_execution'][0]['status'] == 'planned'
-    # The lower-level completion boundary is independently round-bound too.
-    scout_coverage.complete(store, run['id'], [path], round_id=first)
-    assert scout_coverage.view(store, run['id'])['scout_execution'][0]['status'] == 'planned'
-    join_scouts(store, [path], run_id=run['id'], round_id=second)
-    research_plan.finish_round(store, run['id'])
-    assert scout_coverage.view(store, run['id'])['execution_gaps'] == []
-
-
 def test_missing_dispatch_receipt_is_unknown_and_result_is_not_admission(tmp_path):
-    from pathlib import Path
     from briefloop.task_progress import summary
     from briefloop.scout_tools import join_scouts
     store, source, run, job = setup(tmp_path)

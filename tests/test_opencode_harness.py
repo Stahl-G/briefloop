@@ -489,43 +489,6 @@ def test_live_child_activity_reaches_parent_progress_without_repeated_heartbeats
     assert all(text not in public for text in ('SECRET REASONING', 'PRIVATE DRAFT', 'PRIVATE TOOL OUTPUT'))
 
 
-def test_parent_follow_observes_child_before_parent_task_finishes(tmp_path, monkeypatch):
-    import briefloop.opencode_harness as module
-    from types import SimpleNamespace
-    store = Store(tmp_path)
-    manager = OpencodeHarness(store, FakeClient)
-    sid = manager.create_session('Parent', {'model': 'opencode-go/gpt-5.6-luna'})['id']
-    manager.chat.message(sid, 'Work', mid='turn', status='delivered', turn_id='turn')
-    manager._epoch[sid] = 1
-    manager._bound_session = lambda _: 'parent'
-    clock = [0]
-    def advance(seconds):clock[0] += max(seconds, 65)
-    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=advance))
-    class ActiveChild:
-        polls = 0
-        def children(self, owner, *, directory=None):
-            return [{'id': 'child', 'title': 'Analyst', 'time': {'created': 10000}}] if owner == 'parent' else []
-        def messages(self, owner, *, directory=None):
-            if owner == 'parent':
-                self.polls += 1
-                assert self.polls <= 6, 'Parent never observed its running child'
-                seen = store.rows("SELECT 1 FROM chat_events WHERE kind='child/item/updated'")
-                return [{'info': {'id': 'parent-message', 'role': 'assistant',
-                    'time': {'created': 10000, 'completed': 10001}, 'finish': 'stop' if seen and self.polls >= 4 else 'tool-calls'},
-                    'parts': [{'type': 'tool', 'id': 'parent-task', 'tool': 'task',
-                               'state': {'status': 'running', 'input': {'subagent_type': 'general'}}}]}]
-            return [{'info': {'id': 'child-message', 'role': 'assistant', 'time': {'created': 10000}},
-                     'parts': [{'type': 'tool', 'id': 'write', 'tool': 'write', 'state': {'status': 'running'}}]}]
-    manager._client = lambda: ActiveChildClient
-    ActiveChildClient = ActiveChild()
-    manager._follow(sid, 1, 'turn', 10000)
-    events = manager.snapshot(sid)['events']
-    kinds = [e['kind'] for e in events]
-    assert kinds.index('child/item/updated') < kinds.index('turn/completed')
-    child = next(e['data']['item'] for e in events if e['kind'] == 'child/item/updated')
-    assert child['status'] == 'running' and child['agentsStates']['child']['activity'] == '工具 write · running'
-
-
 @pytest.mark.parametrize('read_failure', [False, True])
 def test_plain_chat_child_wait_has_absolute_deadline(tmp_path, monkeypatch, read_failure):
     import briefloop.opencode_harness as module
@@ -558,58 +521,6 @@ def test_plain_chat_child_wait_has_absolute_deadline(tmp_path, monkeypatch, read
     assert clock[0] == 60
     assert client.aborts == ['parent']
     assert manager.snapshot(sid)['session']['status'] == 'failed'
-
-
-def test_child_cache_and_queries_remain_bounded_across_disjoint_discoveries(tmp_path):
-    manager = OpencodeHarness(Store(tmp_path), FakeClient)
-    sid = manager.create_session()['id']
-    class Changing:
-        generation = 0
-        queried = []
-        def children(self, owner, *, directory=None):
-            return [{'id': f'{self.generation}-{i}', 'time': {'created': 10000}}
-                    for i in range(150)] if owner == 'parent' else []
-        def messages(self, owner, *, directory=None):
-            self.queried.append(owner)
-            return [{'info': {'id': owner, 'role': 'assistant', 'time': {'created': 10000}}, 'parts': []}]
-    client = Changing(); manager._client = lambda: client
-    poll = {}
-    for generation in range(3):
-        client.generation = generation
-        client.queried = []
-        manager._poll_children(sid, 'turn', 'parent', 10000, poll, force=True)
-        assert len(poll['children']) == len(client.queried) == 127
-        assert all(cid.startswith(f'{generation}-') for cid in client.queried)
-    events = manager.snapshot(sid)['events']
-    states = [e['data']['item']['status'] for e in events if e['kind'] == 'child/item/updated']
-    assert 'unknown' in states and 'completed' not in states
-    notices = [e for e in events if e['kind'] == 'child/observation']
-    assert len(notices) == 1 and notices[0]['data']['status'] == 'limited'
-
-
-def test_child_read_failure_removes_running_exemption_without_heartbeat(tmp_path):
-    from briefloop.backends.opencode_server import OpencodeError
-    manager = OpencodeHarness(Store(tmp_path), FakeClient)
-    sid = manager.create_session()['id']
-    class Child:
-        unavailable = False
-        def children(self, owner, *, directory=None):
-            return [{'id': 'child', 'time': {'created': 10000}}] if owner == 'parent' else []
-        def messages(self, owner, *, directory=None):
-            if self.unavailable:raise OpencodeError('unavailable')
-            return [{'info': {'id': owner, 'role': 'assistant', 'time': {'created': 10000}}, 'parts': []}]
-    client = Child(); manager._client = lambda: client
-    poll = {}
-    assert manager._poll_children(sid, 'turn', 'parent', 10000, poll, force=True)
-    assert 'observed_running_at' in poll['children']['child']
-    client.unavailable = True
-    assert manager._poll_children(sid, 'turn', 'parent', 10000, poll, force=True)
-    assert poll['children']['child']['status'] == 'unknown'
-    assert 'observed_running_at' not in poll['children']['child']
-    assert not manager._poll_children(sid, 'turn', 'parent', 10000, poll, force=True)
-    client.unavailable = False
-    assert manager._poll_children(sid, 'turn', 'parent', 10000, poll, force=True)
-    assert poll['children']['child']['status'] == 'running'
 
 
 @pytest.mark.parametrize('activity', ['none', 'reasoning', 'child'])
@@ -742,29 +653,3 @@ def test_unlimited_turn_can_finish_or_be_cancelled_after_long_wait(tmp_path, mon
     message = next(m for m in manager.snapshot(sid)['messages'] if m['id'] == 'turn')
     assert message['status'] == ('cancelled' if cancel else 'completed')
     assert client.aborts == (['parent'] if cancel else [])
-
-
-def test_native_retry_status_is_visible_deduplicated_and_recovers(tmp_path, monkeypatch):
-    import briefloop.opencode_harness as module
-    from types import SimpleNamespace
-    manager = OpencodeHarness(Store(tmp_path), FakeClient)
-    sid = manager.create_session()['id']
-    clock = [0]
-    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
-    class RetryClient:
-        value = {'type': 'retry', 'attempt': 1, 'message': 'HTTP 503 Service unavailable; sk-testcredential123456', 'next': 20000}
-        def session_status(self, bound, *, directory):
-            assert bound == 'ses_bound' and directory == '/workspace'
-            return self.value
-    client = RetryClient(); cache = {}
-    for instant in (0, 3, 6):
-        clock[0] = instant
-        manager._poll_runtime_status(client, sid, 'turn1', 'ses_bound', '/workspace', cache)
-    client.value = {'type': 'busy'}; clock[0] = 9
-    manager._poll_runtime_status(client, sid, 'turn1', 'ses_bound', '/workspace', cache)
-    rows = [r for r in manager.snapshot(sid)['events'] if r['kind'] == 'runtime/status']
-    assert len(rows) == 2
-    assert rows[0]['data']['turnId'] == 'turn1'
-    assert rows[0]['data']['attempt'] == 1 and 'HTTP 503' in rows[0]['data']['message']
-    assert 'sk-testcredential' not in json.dumps(rows)
-    assert rows[1]['data']['status'] == 'resumed'

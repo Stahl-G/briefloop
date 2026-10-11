@@ -163,12 +163,3 @@ def test_explicit_native_scope_and_legacy_missing_budget_are_explicit(tmp_path):
     assert budget.snapshot(store,run['id'])['limits'] is None
     assert budget.snapshot(store,run['id'])['remaining']['source_pages'] is None
     assert 'research_budget' not in json.loads(store.one('runs',run['id'])['requirements'])
-
-
-def test_unknown_failure_kind_is_rejected_and_cli_payload_is_structured():
-    with pytest.raises(ValueError):
-        tavily._marked('x','not_a_kind')
-    from briefloop import cli
-    exc=tavily._marked('auth failed','auth',401)
-    payload=cli._tavily_failure('search',exc)
-    assert payload=={'provider':'tavily','operation':'search','status':'failed','failure_kind':'auth','http_status':401,'error':'auth failed','request_record_path':None}

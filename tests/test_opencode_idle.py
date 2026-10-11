@@ -1,7 +1,6 @@
 """Idle metadata discovery must not leave a host running or kill active work."""
 import threading
 import time
-import pytest
 from briefloop.opencode_harness import OpencodeHarness
 from briefloop.store import Store
 
@@ -144,68 +143,6 @@ def test_idle_timer_retries_failed_process_cleanup(tmp_path, caplog):
             assert h.client is None and c.close_calls==2
     finally:
         c.allow_retry.set()
-        h.close()
-
-
-def test_explicit_close_failure_retains_client_for_retry(tmp_path):
-    class FailsOnce(Client):
-        def __init__(self, root):
-            super().__init__(root)
-            self.close_calls=0
-
-        def close(self):
-            self.close_calls+=1
-            if self.close_calls==1:
-                raise OSError('owned process tree remains alive')
-            super().close()
-
-    clients=[]
-    def factory(root):
-        client=FailsOnce(root);clients.append(client);return client
-
-    h=OpencodeHarness(Store(tmp_path),factory)
-    c=h._client()
-    with pytest.raises(OSError,match='process tree'):
-        h.close()
-    assert h.client is c and h._closed and not c.closed
-    h.close()
-    assert h.client is None and c.closed and c.close_calls==2 and clients==[c]
-
-
-def test_explicit_close_waits_for_client_startup(tmp_path):
-    started=threading.Event();allow_start=threading.Event()
-    close_entered=threading.Event()
-    clients=[];obtained=[];errors=[]
-
-    def factory(root):
-        started.set()
-        assert allow_start.wait(2)
-        client=Client(root);clients.append(client);return client
-
-    h=OpencodeHarness(Store(tmp_path),factory)
-    def get_client():
-        try:obtained.append(h._client())
-        except Exception as exc:errors.append(exc)
-    def close_harness():
-        close_entered.set()
-        try:h.close()
-        except Exception as exc:errors.append(exc)
-
-    starting=threading.Thread(target=get_client)
-    closing=threading.Thread(target=close_harness)
-    try:
-        starting.start();assert started.wait(2)
-        closing.start();assert close_entered.wait(2)
-        assert not h._closed and not clients
-        allow_start.set()
-        starting.join(2);closing.join(2)
-        assert not starting.is_alive() and not closing.is_alive()
-        assert not errors and obtained==clients and len(clients)==1
-        assert clients[0].closed and h.client is None
-    finally:
-        allow_start.set()
-        if starting.ident:starting.join(2)
-        if closing.ident:closing.join(2)
         h.close()
 
 

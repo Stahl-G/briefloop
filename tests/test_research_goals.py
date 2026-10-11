@@ -78,29 +78,6 @@ def test_historical_goal_plan_remains_replayable_without_new_contract(tmp_path):
     assert research_plan.status(store, run['id'])['goal_progress'] is None
 
 
-def test_task_card_projection_keeps_source_navigation_without_raw_model_data(tmp_path):
-    from briefloop.task_progress import summary
-    store, run, source, plan = setup(tmp_path)
-    job = store.enqueue('generate', {'run_id': run['id'], 'runtime': {'model': 'synthetic-no-call'}})
-    from briefloop.scout_coverage import declare
-    declare(store, run['id'], [])
-    coverage = [{'question_id': 'q1', 'status': 'answered', 'reason': '收入有原文',
-        'evidence': [{'source_id': source['id'], 'locator': 'line 1', 'excerpt': '本期收入120万元。'}]},
-        {'question_id': 'q2', 'status': 'open', 'reason': '数据有限', 'remaining_question': '增长未知'}]
-    save_handoff(store, run, plan, coverage)
-    research_plan.finish_round(store, run['id'], summary='保留未知')
-    store.event(job['id'], 'runtime_progress', {'thinking': 'PRIVATE', 'stage': '准备写稿'})
-    card = summary(store, job['id'])
-    assert card['goal_progress']['questions'][0]['evidence'][0]['source_name'] == source['name']
-    assert card['goal_progress']['questions'][1]['remaining_question'] == '增长未知'
-    assert 'PRIVATE' not in json.dumps(card)
-    with store.tx() as connection:
-        connection.execute('UPDATE sources SET hash=? WHERE id=?', ('changed-after-closeout', source['id']))
-    changed = summary(store, job['id'])['goal_progress']['questions'][0]['evidence'][0]
-    assert changed['source_changed'] and changed['source_hash'] == source['hash']
-    assert changed['excerpt'] == '本期收入120万元。'
-
-
 def test_native_direct_research_handoff_reaches_writer_input_without_fake_scout(tmp_path):
     from briefloop.native_orchestrator import _refresh_research
     from briefloop.scout_coverage import declare

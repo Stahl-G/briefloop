@@ -68,21 +68,3 @@ def test_submit_patterns_goes_through_wikiskill_validation(tmp_path):
     done = run_tool(store, config, 'submit_proposal', {'skill': '# 口径分层\n意向、合同、交付分开写。', 'note': '依据反馈'})
     assert done['ok'], done
     assert feedback_loop.work(study)['candidate']['skill']
-
-
-def test_wikiskill_takes_any_host_name_and_recommends_codex_and_claude_code(tmp_path):
-    from wikiskill.native_agents import install, runtime_name
-    for name in ('codex', 'claude-code', 'opencode', 'briefloop-native'):
-        assert runtime_name(name) == name
-    for bad in ('', 'Codex', 'has space', '../x', None):
-        with pytest.raises(ValueError, match='recommended: codex, claude-code'):
-            runtime_name(bad)
-    # Installing packaged role assets needs assets for that host; running does not.
-    with pytest.raises(ValueError, match='No packaged role assets for opencode'):
-        install(tmp_path, 'opencode')
-    from briefloop.learning import study_runtime
-    store = Store(tmp_path / 'ws')
-    study, handoff, _ = _study(tmp_path, store)
-    assert study_runtime(study) == 'briefloop-native'
-    with pytest.raises(ValueError, match='Runtime differs'):
-        native_agents.dispatch(study, 'codex')

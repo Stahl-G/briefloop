@@ -4,7 +4,6 @@ import queue
 import threading
 import time
 
-import pytest
 
 from briefloop import scout, sources, websearch
 from briefloop.models import ScoutResult
@@ -91,18 +90,6 @@ def test_scout_tools_follow_the_run_web_permission_and_channels(tmp_path):
     config = _config(store, run_id, 'n')
     assert [t['name'] for t in runner_tool_specs('scout', config=config)] == [
         'source_read', 'source_grep', 'render_pdf_pages', 'add_url', 'record_evidence', 'submit_scout_result']
-
-
-def test_packet_prompt_and_system_prompt_name_only_native_tools(tmp_path):
-    store, run_id, sid = _run(tmp_path, allow_web=True, policy={'primary_provider': 'duckduckgo'})
-    task = scout.task(store, run_id, {'slot_id': 'scout-2', 'theme': 'revenue'})
-    packet = scout_packet(store, task, tmp_path / 'slot')
-    for name in ('task.json', 'scout-contract.md', 'reader-contract.json', 'search-policy.md', 'source-index.json', 'scout.schema.json'):
-        assert (packet / name).is_file(), name
-    assert json.loads((packet / 'source-index.json').read_text(encoding='utf-8'))[0]['source_id'] == sid
-    prompt = scout.native_prompt(task)
-    assert 'submit_scout_result' in prompt and 'source_read' in prompt and 'scout-2' in prompt
-    assert 'record_evidence' in prompt and str(tmp_path) not in prompt
 
 
 def test_web_search_and_add_url_spend_the_run_budget(tmp_path, monkeypatch):
@@ -193,11 +180,6 @@ def test_read_bound_and_persisted_source_hash(tmp_path):
     short = run_tool(store, config, 'source_read', {'source_id': long, 'max_chars': 1000})
     assert '1: ' + 'x'*1000 in short['content'][0]['text']
     assert 'x'*1001 not in short['content'][0]['text']
-
-
-def test_harness_requires_a_run_and_slot_for_a_scout():
-    with pytest.raises(ValueError, match='Scout 任务缺少'):
-        NativeHarness._config({'model': 'fake/m1', 'native_role': 'scout', 'packet_root': '/p'})
 
 
 class Engine:

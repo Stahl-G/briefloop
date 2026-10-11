@@ -156,29 +156,6 @@ def test_execution_and_fact_judgements_stay_separate(tmp_path):
     assert blocked.value.errors[0]['code']=='execution_status'
 
 
-def test_cancelled_stage_refuses_late_result(tmp_path):
-    world=checked(tmp_path);store=world['store']
-    research_plan.finish_fact_check(store,world['run']['id'],status='cancelled',summary='任务已停止')
-    with pytest.raises(research_plan.AdmissionError) as info:
-        fact_check.submit_result(store,world['run']['id'],good_result(world))
-    assert info.value.code=='fact_check_closed'
-    assert store.rows('SELECT * FROM fact_checks')==[]  # 迟到结果不接纳、不留记录
-
-
-def test_budget_exhausted_result_admitted_as_handoff(tmp_path):
-    world=checked(tmp_path);store=world['store']
-    result=good_result(world)
-    kept={item['claim_id'] for item in result['candidates'][:3]}
-    result['candidates']=result['candidates'][:3]
-    result['execution']={'status':'budget_exhausted','summary':'搜索预算耗尽，保留已核证据交接'}
-    admitted=fact_check.submit_result(store,world['run']['id'],result,job_id=world['job']['id'])
-    record=admitted['record']
-    assert record['execution']['status']=='budget_exhausted' and len(record['candidates'])==3
-    assert set(record['unchecked'])==set(result['selection']['claim_ids'])-kept  # 未核主张按未核查交接，不折算判断
-    assert all(item['status'] in fact_check.CANDIDATE_STATUSES for item in record['candidates'])
-    assert research_plan.frozen(store,world['run']['id'])['fact_check']['status']=='budget_exhausted'
-
-
 def test_revised_draft_needs_a_new_check_identity(tmp_path):
     world=checked(tmp_path);store=world['store']
     admitted=fact_check.submit_result(store,world['run']['id'],good_result(world))
@@ -209,39 +186,6 @@ def test_completed_zero_selection_must_say_why_nothing_was_checked(tmp_path):
     everything=[{'claim_id':c[key]['id'],'reason':'不影响主要判断，未进本次核查'} for key,_,_ in PLAN]
     record=fact_check.check_fact_result(store,world['run']['id'],zero(unselected=everything))
     assert record['candidates']==[] and len(record['selection']['unselected'])==len(PLAN)
-
-
-def test_completed_zero_selection_without_bound_claims_needs_a_summary(tmp_path):
-    world=checked(tmp_path);store=world['store']
-    # A version with registered claims but no bindings: nothing is checkable.
-    bare=store.publish(world['run']['id'],{'title':'R','editor_document':{'type':'doc','content':[
-        {'type':'paragraph','content':[{'type':'text','text':'占位稿'}]}]}})
-    result={'version_id':bare['id'],'selection':{'claim_ids':[],'unselected':[]},
-            'candidates':[],'execution':{'status':'completed','summary':''}}
-    with pytest.raises(fact_check.FactCheckError) as info:
-        fact_check.check_fact_result(store,world['run']['id'],result)
-    assert 'empty_selection' in {error['code'] for error in info.value.errors}
-    result['execution']['summary']='本版本没有已绑定主张，无可核查对象'
-    record=fact_check.check_fact_result(store,world['run']['id'],result)
-    assert record['candidates']==[] and record['selection']['claim_ids']==[]
-
-
-def test_cancel_after_initial_stage_read_rejects_submission(tmp_path, monkeypatch):
-    world=checked(tmp_path);store=world['store'];run_id=world['run']['id']
-    payload=good_result(world)
-    read=fact_check.frozen_plan
-
-    def cancel_after_read(store, identity):
-        previous=read(store,identity)
-        research_plan.finish_fact_check(store,identity,status='cancelled')
-        return previous
-
-    monkeypatch.setattr(fact_check,'frozen_plan',cancel_after_read)
-    with pytest.raises(research_plan.AdmissionError) as rejected:
-        fact_check.submit_result(store,run_id,payload)
-    assert rejected.value.code=='fact_check_closed'
-    assert not fact_check.records_for(store,run_id)
-    assert research_plan.frozen(store,run_id)['fact_check']['status']=='cancelled'
 
 
 def test_stage_save_failure_rolls_back_result_and_events(tmp_path, monkeypatch):

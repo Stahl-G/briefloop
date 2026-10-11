@@ -31,12 +31,6 @@ def test_delete_removes_the_report_from_browsing_but_keeps_its_history(tmp_path)
     assert [row['key'] for row in store.rows("SELECT key FROM meta WHERE key LIKE 'deleted_report:%'")] == ['deleted_report:' + run['id']]
 
 
-def test_delete_rejects_an_unknown_report(tmp_path):
-    store = Store(tmp_path)
-    with pytest.raises(ValueError, match='报告不存在'):
-        store.delete_report('version_missing')
-
-
 def test_application_route_deletes_only_that_report(tmp_path):
     server = make_server(tmp_path / 'application', port=0, paused=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

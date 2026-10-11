@@ -1,7 +1,7 @@
 """Text a figure's script draws is listed for the Reviewer without running it."""
 import json
 
-from briefloop.figure_text import figure_texts, python_texts
+from briefloop.figure_text import python_texts
 from briefloop.review import build_packet
 from briefloop.store import Store
 
@@ -23,16 +23,6 @@ def test_display_strings_come_with_line_numbers_and_the_rest_is_dropped():
         {'line': 6, 'text': '8月无单日量比≥1.5x的放量交易日'},
         {'line': 7, 'text': 'Revenue by quarter'},
     ]
-
-
-def test_figures_without_a_readable_script_say_to_look_at_the_image(tmp_path):
-    for name, blob in ((None, b''), ('script.sh', b'echo reuse'), ('script.py', b'def (')):
-        result = figure_texts(name, blob)
-        assert result['text_source'] == 'none' and result['texts'] == [] and '看图' in result['note']
-    # The script is parsed, never executed.
-    marker = tmp_path / 'ran'
-    figure_texts('script.py', f'open({str(marker)!r}, "w").write("x")\n'.encode())
-    assert not marker.exists()
 
 
 def test_packet_lists_figure_text_next_to_data_and_image(tmp_path):

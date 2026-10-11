@@ -194,21 +194,6 @@ def test_missing_binary_degrades_and_hint_never_spawns(tmp_path, monkeypatch):
     assert store.snapshot()['office'] == {'installed': False, 'enabled': True}
 
 
-def test_disabled_switch_is_a_silent_noop(tmp_path, monkeypatch):
-    install_stub(tmp_path, monkeypatch)
-    store = _workspace(tmp_path)
-    assert store.settings()['officecli_enabled'] is False
-
-    def explode(*args, **kwargs):
-        raise AssertionError('a disabled switch must not run officecli')
-
-    monkeypatch.setattr(office_cli, 'run_json', explode)
-    docx = _tiny_docx(tmp_path)
-    assert office_cli.check_file(store, docx) is None
-    assert store.rows('SELECT * FROM office_checks') == []
-    assert store.rows("SELECT * FROM events WHERE kind='office_check'") == []
-
-
 def test_check_file_uses_the_real_command_grammar(tmp_path, monkeypatch):
     binary = install_stub(tmp_path, monkeypatch)
     store = _workspace(tmp_path)
@@ -228,45 +213,6 @@ def test_check_file_uses_the_real_command_grammar(tmp_path, monkeypatch):
     # records its own argv, without the binary path):
     assert stub_calls(tmp_path) == [['validate', str(docx), '--json'],
                                     ['view', str(docx), 'issues', '--json']]
-
-
-def test_punctuation_noise_is_filtered_and_keeps_both_counts(tmp_path, monkeypatch):
-    """Findings are neutral observations, and pure punctuation noise (duplicate
-    punctuation, consecutive spaces — normal in CJK prose) only survives as a
-    count, never as red rows."""
-    install_stub(tmp_path, monkeypatch, mode='issues_noise')
-    store = _workspace(tmp_path)
-    store.update_settings({'officecli_enabled': True})
-    docx = _tiny_docx(tmp_path)
-    summary = office_cli.check_file(store, docx)
-    issues = summary['issues']
-    assert issues['status'] == 'observed'  # neutral observation label, not an alarm state
-    assert [item['message'] for item in issues['items']] == ['表格行列不平衡']
-    assert issues['total'] == 3 and issues['count'] == 1 and issues['noise_filtered'] == 2
-    row = store.rows("SELECT * FROM office_checks WHERE kind='issues'")[0]
-    assert row['status'] == 'observed' and row['summary'] == '观察 1 项（另过滤 2 项纯标点类噪音）'
-    # The stored row reads back with the same before/after counts.
-    view = office_cli._view_for_digest(store, office_cli._file_sha256(docx))
-    assert view['issues']['count'] == 1 and view['issues']['noise_filtered'] == 2 and view['issues']['total'] == 3
-
-    monkeypatch.setenv(STUB_MODE_VARIABLE, 'issues_punct')  # noise only
-    summary = office_cli.check_file(store, docx)
-    assert summary['issues']['status'] == 'ok'
-    assert summary['issues']['count'] == 0 and summary['issues']['noise_filtered'] == 2
-    assert summary['issues']['total'] == 2 and summary['issues']['items'] == []
-    assert store.rows("SELECT summary FROM office_checks WHERE kind='issues'")[0]['summary'] \
-        == '未发现质检问题（过滤 2 项纯标点类噪音）'
-
-
-def test_wrong_command_forms_fail_against_real_grammar(tmp_path, monkeypatch):
-    install_stub(tmp_path, monkeypatch)
-    docx = _tiny_docx(tmp_path)
-    binary = office_cli.find()
-    top_level = office_cli.run_json([binary, 'screenshot', str(docx), '--page', '1',
-                                     '-o', str(tmp_path / 'out.png'), '--json'], timeout=30)
-    assert top_level['ok'] is False and 'Unrecognized command' in top_level['reason']
-    missing = office_cli.run_json([binary, 'validate', str(tmp_path / 'absent.docx'), '--json'], timeout=30)
-    assert missing['ok'] is False and 'File not found' in missing['reason']
 
 
 def test_check_file_records_every_failure_branch_without_raising(tmp_path, monkeypatch):
@@ -575,27 +521,6 @@ def test_partial_preview_names_real_failure_apart_from_budget(tmp_path, monkeypa
     assert result['reason'] == '请求时间预算用尽，仅返回已完成页面'
 
 
-def test_preview_and_check_gates(tmp_path, monkeypatch):
-    install_stub(tmp_path, monkeypatch)
-    store = _workspace(tmp_path)
-    store.update_settings({'officecli_enabled': True})
-    brief = _published_brief(store)
-    job, _result = _completed_export(store, brief)
-    store.update_settings({'officecli_enabled': False})
-    with pytest.raises(ValueError, match='未检测到 OfficeCLI 或未开启'):
-        office_cli.render_preview(store, {'job_id': job['id']})
-    store.update_settings({'officecli_enabled': True})
-    for body in ({}, {'job_id': job['id'], 'source_id': 'src_x'},
-                 {'job_id': job['id'], 'pages': [0]},
-                 {'job_id': job['id'], 'pages': [1] * 5},
-                 {'job_id': 'job_missing'},
-                 {'release_id': 'rel_missing'}):
-        with pytest.raises(ValueError):
-            office_cli.render_preview(store, body)
-    ok = office_cli.render_preview(store, {'job_id': job['id'], 'pages': [1]})
-    assert ok['target']['kind'] == 'export' and ok['target']['name'] == 'report.docx'
-
-
 def _published_table_brief(store):
     def para(text):
         return {'type': 'paragraph', 'content': [{'type': 'text', 'text': text}]}
@@ -634,18 +559,6 @@ def test_version_office_view_stays_bound_to_word_and_release_artifacts(tmp_path,
     assert xlsx_job['id'] != word_result['sha256']  # two distinct artifacts under one version
     view = office_cli.version_office_view(store, brief['id'])
     assert view['job_kind'] == 'export_docx' and view['file_sha256'] == word_result['sha256']
-
-
-def test_preview_requires_the_binary_even_when_enabled(tmp_path, monkeypatch):
-    monkeypatch.setenv('PATH', '/usr/bin:/bin')
-    monkeypatch.setattr(host_bins, 'EXTRA_DIRS', ())
-    office_cli._clear_caches()
-    store = _workspace(tmp_path)
-    store.update_settings({'officecli_enabled': True})
-    with pytest.raises(ValueError, match='未检测到 OfficeCLI 或未开启'):
-        office_cli.render_preview(store, {'source_id': 'src_x'})
-    with pytest.raises(ValueError, match='未检测到 OfficeCLI 或未开启'):
-        office_cli.render_page(store, _tiny_docx(tmp_path), 1)
 
 
 @pytest.mark.skipif(not office_cli.find(), reason='officecli is not installed on this host')

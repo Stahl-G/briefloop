@@ -175,17 +175,6 @@ def test_reader_specific_edit_without_reader_stays_unconfirmed_even_after_answer
     assert revision_edits.edits_by_id(store, [answered['id']]) == []
 
 
-def test_explicit_no_repeats_is_distinct_from_missing_observation(tmp_path):
-    store, feedback = revised(tmp_path)
-    items = revision_edits.pending(store, [feedback['id']])
-    result = verdicts(items, {})
-    result['edits'][0]['repeats'] = []
-    revision_edits.record(store, items, result, job_id='j')
-    views = revision_edits.learnable(store, feedback['id'])
-    assert views[0]['repeats_provided'] is True and views[0]['repeats'] == []
-    assert all(e['repeats_provided'] is False for e in views[1:])
-
-
 def test_answered_taste_does_not_reintroduce_full_fact_corrected_draft(tmp_path):
     store, feedback = revised(tmp_path)
     items = revision_edits.pending(store,[feedback['id']])

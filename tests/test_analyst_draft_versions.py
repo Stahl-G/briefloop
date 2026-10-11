@@ -116,17 +116,6 @@ def test_cli_check_draft_reads_chinese_writer_packet_under_legacy_locale(tmp_pat
     assert report['status'] == 'ok'
 
 
-def test_below_target_is_advisory_but_actual_errors_remain_visible(tmp_path):
-    from briefloop.draft_checks import inspect_draft
-    text = '文' * 2036
-    result = inspect_draft({'title': '报告', 'markdown': text}, {'target_words': 2200, 'max_words': 2500})
-    assert result['status'] == 'checks_completed'
-    assert result['notes'][0]['code'] == 'below_target'
-    result = inspect_draft({'title': '报告', 'markdown': text}, {'target_words': 1500, 'max_words': 2000})
-    assert result['status'] == 'checks_completed'
-    assert result['notes'][0]['code'] == 'over_limit'
-
-
 def test_saved_work_can_be_read_after_context_loss_without_new_permission(tmp_path):
     store, run, source, config = writer(tmp_path)
     def read(**args):

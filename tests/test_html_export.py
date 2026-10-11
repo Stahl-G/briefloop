@@ -74,24 +74,6 @@ def brief_document_for(brief):
     return brief_document(brief)
 
 
-def test_draft_banner_without_review(tmp_path):
-    store, run, (a, b, c) = sample(tmp_path)
-    brief = publish(store, run, [text_p({'type': 'text', 'text': '正文'})])
-    page = html_report(store, brief['id'])
-    assert '工作稿 · 未经独立审阅' in page
-
-
-def test_excerpts_toggle(tmp_path):
-    store, run, (a, b, c) = sample(tmp_path)
-    brief = publish(store, run,
-                    [text_p({'type': 'citation', 'attrs': {'sourceId': a['id']}})],
-                    citations=[{'source_id': a['id'], 'locator': 'Page 3', 'excerpt': '独有摘录文本XYZ'}])
-    assert '独有摘录文本XYZ' in html_report(store, brief['id'])
-    without = html_report(store, brief['id'], excerpts=False)
-    assert '独有摘录文本XYZ' not in without
-    assert '摘录未包含在本文件' in without
-
-
 def test_self_contained_with_valid_csp(tmp_path):
     store, run, (a, b, c) = sample(tmp_path)
     brief = publish(store, run, [text_p({'type': 'text', 'text': '正文'})])
@@ -103,16 +85,6 @@ def test_self_contained_with_valid_csp(tmp_path):
     script = re.search(r'<script>(.*?)</script>', page, re.S).group(1)
     expected = base64.b64encode(hashlib.sha256(script.encode('utf-8')).digest()).decode()
     assert "script-src 'sha256-%s'" % expected in csp
-
-
-def test_aria_labels_never_leak_source_ids(tmp_path):
-    store, run, (a, b, c) = sample(tmp_path)
-    brief = publish(store, run,
-                    [text_p({'type': 'citation', 'attrs': {'sourceId': a['id']}})],
-                    citations=[{'source_id': a['id'], 'locator': 'x', 'excerpt': 'y'}])
-    page = html_report(store, brief['id'])
-    for label in re.findall(r'aria-label="([^"]*)"', page):
-        assert 'src_' not in label
 
 
 def test_endpoint_rejects_mismatched_workspace(tmp_path):

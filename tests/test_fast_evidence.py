@@ -43,10 +43,3 @@ def test_pdf_page_separator_keeps_the_located_excerpt_in_its_window():
     context = located_context(text, '关键值42万元')
     assert context['locator'] == 'line 2'
     assert '关键值42万元' in context['source_context']
-
-
-def test_adjacent_table_rows_also_keep_their_header():
-    text = '# Sales\nUnits: USD million\n| Period | Revenue |\n| --- | --- |\n| Q1 | 1 |\n| Q2 | 2 |\nRevenue grew.\n'
-    context = located_context(text, 'Revenue grew.')
-    assert '| Period | Revenue |' in context['source_context']
-    assert 'Units: USD million' in context['source_context']

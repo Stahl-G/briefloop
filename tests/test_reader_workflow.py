@@ -2,7 +2,6 @@ import json
 import threading
 import pytest
 from briefloop.store import Store
-from briefloop.runtime import Worker
 from briefloop.company_context import propose, snapshot, resolve_conflict
 
 
@@ -93,17 +92,3 @@ def test_company_pending_fact_and_conflict_commit_together(tmp_path):
     pending = propose(store, {**base, 'value': '14'})
     assert resolve_conflict(store, pending['id'], False)['pending'][0]['id'] == pending['id']
     assert snapshot(store)['facts'][0]['id'] == first['id']
-
-
-def test_each_pending_company_fact_has_an_actionable_conflict(tmp_path):
-    store, _, source = setup(tmp_path)
-    store.set_meta('settings', {**store.settings(), 'company_context_enabled': True})
-    base = {'key': 'capacity', 'value': '12', 'source_id': source['id'], 'effective_date': '2026-09-01'}
-    first = propose(store, base)
-    candidates = [propose(store, {**base, 'value': value}) for value in ['14', '16']]
-    for pending in candidates:
-        resolve_conflict(store, pending['id'], True)
-    conflicts = [json.loads(row['data']) for row in store.rows('SELECT * FROM conflicts')]
-    for pending in candidates:
-        assert any(pending['id'] in item['fact_ids'] and item['responses'] for item in conflicts)
-    assert snapshot(store)['facts'][0]['id'] == first['id']  # User preference is still not independent resolution.

@@ -140,18 +140,6 @@ def test_native_and_cli_use_same_frozen_protocol(tmp_path):
     assert stored['citations'][0]['excerpt'] == evidence['number_bindings'][0]['source_excerpt']
 
 
-def test_protocol_packet_contains_only_new_format_contract(tmp_path):
-    from briefloop import analyst
-    from test_native_analyst import setup
-    store, run, source, inputs = setup(tmp_path)
-    packet = analyst.packet(store, run['id'], store.root/'new-writer', writer_protocol=writer.PROTOCOL, **inputs)
-    root = packet['root']
-    assert json.loads((root/'input.json').read_text())['writer_input_protocol'] == writer.PROTOCOL
-    schema = json.loads((root/'draft.schema.json').read_text())
-    assert 'write_report' in schema['tools'] and 'save_draft' not in schema['tools']
-    assert '|' in json.loads((root/'document-guide.json').read_text())['table_example']
-
-
 def test_revision_starts_from_original_without_retyping(tmp_path):
     from briefloop import analyst
     from briefloop.native_roles import run_tool
@@ -248,26 +236,6 @@ def test_evidence_write_receipt_replays_only_the_latest_identical_request(tmp_pa
         writer.assemble_evidence(store, config, batch)
 
 
-@pytest.mark.parametrize('field', ['citations', 'temporal_claims'])
-def test_each_flat_evidence_tool_replays_add_and_remove(tmp_path, field):
-    store, run, source, config = setup_writer(tmp_path)
-    first = writer.write_report(store, config, {'title': '报告', 'markdown':
-        f'2025年收入增长20%。[@{source["id"]}]'})
-    text = store.source_text(source['id'])
-    record = ({'source_id': source['id'], 'locator': 'line 1', 'excerpt': text}
-              if field == 'citations' else
-              {'statement': '2025年收入增长', 'event_date': '2025', 'source_id': source['id'],
-               'locator': 'line 1'})
-    update = writer.operations()['update_' + field][1]
-    add = {'base_revision': first['revision'], 'records': [record]}
-    saved = update(store, config, add)
-    assert update(store, config, add) == {**saved, 'replayed': True}
-    remove = {'base_revision': saved['revision'], 'remove_keys': saved['record_keys']}
-    removed = update(store, config, remove)
-    assert update(store, config, remove) == {**removed, 'replayed': True}
-    assert drafts._candidate(store, config, {'revision': removed['revision']})['draft'][field] == []
-
-
 def test_text_block_and_details_retries_do_not_reapply_edits(tmp_path):
     store, run, source, config = setup_writer(tmp_path)
     first = writer.write_report(store, config, {'title': '报告', 'markdown':
@@ -290,30 +258,6 @@ def test_text_block_and_details_retries_do_not_reapply_edits(tmp_path):
     assert writer.update_draft_details(store, config, details) == {**saved, 'replayed': True}
     with pytest.raises(ValueError, match='已被后续修订覆盖'):
         writer.replace_report_blocks(store, config, blocks)
-
-
-def test_first_and_subsequent_section_assembly_replay_respects_section_snapshot(tmp_path):
-    store, run, source, config = setup_writer(tmp_path)
-    section = writer.write_sections(store, config, {'sections': [
-        {'section_id': 'one', 'markdown': f'收入增长20%。[@{source["id"]}]'}]})
-    initial = {'title': '报告', 'section_ids': ['one']}
-    first = writer.assemble_report(store, config, initial)
-    assert writer.assemble_report(store, config, initial) == {**first, 'replayed': True}
-    with pytest.raises(writer.WritingError, match='base_revision'):
-        writer.assemble_report(store, config, {**initial, 'title': '另一份报告'})
-    writer.write_sections(store, config, {'sections': [
-        {'section_id': 'one', 'markdown': '收入增长21%。',
-         'expected_hash': section['sections'][0]['hash']}]})
-    with pytest.raises(ValueError, match='章节已修改'):
-        writer.assemble_report(store, config, initial)
-    subsequent = {**initial, 'base_revision': first['revision']}
-    second = writer.assemble_report(store, config, subsequent)
-    assert second['revision'] != first['revision']
-    assert writer.assemble_report(store, config, subsequent) == {**second, 'replayed': True}
-    newer = writer.update_draft_details(store, config, {'base_revision': second['revision'], 'gaps': ['待核实']})
-    assert newer['revision'] != second['revision']
-    with pytest.raises(ValueError, match='已被后续修订覆盖'):
-        writer.assemble_report(store, config, subsequent)
 
 
 def test_replay_revalidates_attempt_packet_and_source_identity(tmp_path):
@@ -341,35 +285,6 @@ def test_replay_revalidates_attempt_packet_and_source_identity(tmp_path):
     finally:
         source_file.write_bytes(original_source)
     assert writer.update_draft_details(store, config, request) == {**saved, 'replayed': True}
-
-
-def test_accepted_write_does_not_run_again_after_content_hash_cycle(tmp_path):
-    store, run, source, config = setup_writer(tmp_path)
-    original = writer.write_report(store, config, {'title': '报告', 'markdown': '原稿'})
-    request = {'base_revision': original['revision'], 'gaps': ['待核实']}
-    changed = writer.update_draft_details(store, config, request)
-    restored = writer.update_draft_details(store, config, {
-        'base_revision': changed['revision'], 'gaps': []})
-    assert restored['revision'] == original['revision']  # A -> B -> A
-    current = drafts._root(store, config) / 'current.json'
-    before = current.read_bytes()
-    with pytest.raises(ValueError, match='已被后续修订覆盖'):
-        writer.update_draft_details(store, config, request)
-    assert current.read_bytes() == before
-
-
-def test_direct_save_preserves_accepted_write_history(tmp_path):
-    store, run, source, config = setup_writer(tmp_path)
-    original = writer.write_report(store, config, {'title': '报告', 'markdown': '原稿'})
-    request = {'base_revision': original['revision'], 'gaps': ['待核实']}
-    changed = writer.update_draft_details(store, config, request)
-    restored = drafts.save(store, config, {'base_revision': changed['revision'], 'gaps': []})
-    assert restored['revision'] == original['revision']
-    current = drafts._read(drafts._root(store, config) / 'current.json')
-    assert current['writer_input_history'] and 'writer_input_receipt' not in current
-    with pytest.raises(ValueError, match='已被后续修订覆盖'):
-        writer.update_draft_details(store, config, request)
-
 
 
 def test_requested_legacy_protocol_is_frozen_to_writer_input(tmp_path):

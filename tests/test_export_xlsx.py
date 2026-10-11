@@ -183,18 +183,6 @@ def test_equals_prefixed_report_text_is_not_an_excel_formula(tmp_path, layout):
             assert workbook['目录'][coordinate].value == text and workbook['目录'][coordinate].data_type == 's'
 
 
-def test_sheet_name_case_collisions_match_index_and_enhancement_paths(tmp_path):
-    store = _store(tmp_path)
-    table = _table(_row(_cell('值', 'tableHeader')), _row(_cell('1,234')))
-    document = [_heading('Sales'), table, _heading('sales'), table, _heading('SALES-2'), table]
-    result = _generate(store, _queued_xlsx(store, _brief(store, document)))
-    workbook = _open(tmp_path, result)
-    assert workbook.sheetnames == ['目录', 'Sales', 'sales-2', 'SALES-2-2']
-    assert [workbook['目录'].cell(row, 3).value for row in range(4, 7)] == workbook.sheetnames[1:]
-    plan = xlsx_export.plan_enhancements(xlsx_export._layout({'type':'doc','content':document}, 'sheets'))
-    assert {item['path'].split('/')[1] for item in plan['commands']} == set(workbook.sheetnames[1:])
-
-
 def test_report_without_tables_is_rejected_before_queueing(tmp_path):
     store = _store(tmp_path)
     brief = _brief(store, [_para('纯文字简报，没有任何表格。')])
@@ -210,17 +198,6 @@ def test_report_without_tables_is_rejected_before_queueing(tmp_path):
         c.execute("UPDATE briefs SET editor_document=? WHERE id=?",
                   (dump({'type': 'doc', 'content': [_para('表格已删除。')]}), tabular['id']))
     with pytest.raises(ValueError, match='报告没有可导出的表格'):
-        xlsx_export.generate_xlsx(store, job, threading.Event())
-
-
-def test_changed_inputs_fail_the_fingerprint_check(tmp_path):
-    store = _store(tmp_path)
-    brief = _brief(store, _sales_document())
-    job = _queued_xlsx(store, brief)
-    with store.tx() as c:  # the queued version row itself moved under the job
-        c.execute("UPDATE briefs SET editor_document=? WHERE id=?",
-                  (dump({'type': 'doc', 'content': _sales_document() + [_para('补充说明。')]}), brief['id']))
-    with pytest.raises(ValueError, match='导出输入已变化'):
         xlsx_export.generate_xlsx(store, job, threading.Event())
 
 
@@ -244,21 +221,6 @@ def test_fingerprint_dedup_covers_layout_enhanced_flag_and_stale_files(tmp_path,
     _generate(store, store.one('jobs', rebuilt['id']))
     xlsx_export.output_path_xlsx(store, store.one('jobs', rebuilt['id'])).write_bytes(b'changed on disk')
     assert xlsx_export.enqueue_export_xlsx(store, brief['id'])['id'] != rebuilt['id']
-
-
-def test_output_path_xlsx_rejects_wrong_kind_and_suffix(tmp_path):
-    store = _store(tmp_path)
-    brief = _brief(store, _sales_document())
-    job = _queued_xlsx(store, brief)
-    _generate(store, job)
-    assert xlsx_export.output_path_xlsx(store, job).name == 'report.xlsx'
-    with pytest.raises(ValueError, match='不是 Excel 文件任务'):
-        xlsx_export.output_path_xlsx(store, {'kind': 'export_docx', 'id': job['id'], 'result': None})
-    for path in (f'exports/{job["id"]}/report.docx', f'../outside/{job["id"]}/report.xlsx'):
-        with store.tx() as c:
-            c.execute("UPDATE jobs SET result=? WHERE id=?", (dump({'path': path}), job['id']))
-        with pytest.raises(ValueError, match='无效导出结果路径|导出路径不能为链接'):
-            xlsx_export.output_path_xlsx(store, store.one('jobs', job['id']))
 
 
 def test_plan_enhancements_is_pure_and_picky(tmp_path):

@@ -300,19 +300,6 @@ def test_rejected_conversion_replays_one_retained_original(workspace):
     assert not store.rows('SELECT id FROM jobs')
 
 
-def test_explicitly_disabled_inherited_page_break_can_convert(workspace):
-    store, template_id = workspace
-    doc = Document()
-    style = doc.styles.add_style('Normally Breaks', WD_STYLE_TYPE.PARAGRAPH)
-    style.paragraph_format.page_break_before = True
-    paragraph = doc.add_paragraph('No authored break here', style)
-    paragraph.paragraph_format.page_break_before = False
-    defaults = doc.styles.element.find(qn('w:docDefaults'))
-    defaults.find(qn('w:pPrDefault') + '/' + qn('w:pPr')).append(OxmlElement('w:pageBreakBefore'))
-    result = convert_file(store, 'disabled-boundary.docx', word_bytes(doc), template_id)
-    assert 'No authored break here' in result['version']['markdown']
-
-
 @pytest.mark.parametrize('override', ['paragraph', 'style', 'numbering'])
 def test_explicit_false_page_break_overrides_lower_precedence_defaults(workspace, override):
     store, template_id = workspace

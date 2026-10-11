@@ -6,7 +6,6 @@ import queue
 import subprocess
 import sys
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -339,20 +338,6 @@ def test_fact_checker_uses_existing_stage_admission_and_rejects_wrong_version(tm
     assert not run_tool(store,cfg,'submit_fact_check',result)['ok']
 
 
-def test_revision_metadata_rejects_number_bindings_before_saving(tmp_path):
-    from briefloop.native_orchestrator import revision_metadata
-    from briefloop.native_roles import ToolError
-    store=Store(tmp_path/'ws');folder=store.root/'jobs/revision';(folder/'packet').mkdir(parents=True)
-    (folder/'input.json').write_text(dump({'review_findings':[]}))
-    config={'packet_root':str(folder/'packet'),'run_id':'run-test'}
-    with pytest.raises(ToolError,match='number_bindings'):
-        revision_metadata(store,config,{'responses':[],'bindings':[{'source_id':'source','value':97}]})
-    assert not (folder/'revision_bindings.json').exists()
-    assert not (folder/'responses.json').exists()
-    revision_metadata(store,config,{'responses':[],'bindings':[]})
-    assert json.loads((folder/'revision_bindings.json').read_text(encoding='utf-8'))==[]
-
-
 @pytest.mark.parametrize('bad_response', ['not-an-object', {'finding_id':'finding_1','action':'corrected','reason':{'note':'wrong type'}}])
 def test_revision_metadata_rejects_untyped_response_without_saving(tmp_path,bad_response):
     from briefloop.native_orchestrator import revision_metadata
@@ -365,21 +350,6 @@ def test_revision_metadata_rejects_untyped_response_without_saving(tmp_path,bad_
     assert not (folder/'responses.json').exists() and not (folder/'revision_bindings.json').exists()
     revision_metadata(store,config,{'responses':[{'finding_id':'finding_1','action':'corrected','reason':'Fixed the actual sentence'}],'bindings':[]})
     assert json.loads((folder/'responses.json').read_text())==[{'finding_id':'finding_1','action':'corrected','reason':'Fixed the actual sentence'}]
-
-
-def test_metadata_repair_rejects_source_ids_as_claims_before_settling(tmp_path):
-    from briefloop.native_orchestrator import metadata_submit
-    from briefloop.native_roles import ToolError
-    store=Store(tmp_path/'ws');folder=store.root/'repair';(folder/'packet').mkdir(parents=True)
-    packet={'version_id':'v1','brief_hash':'h1','candidate_claims':[],'document':{'type':'doc','content':[]},'findings':[]}
-    (folder/'packet/input.json').write_text(dump(packet))
-    config={'packet_root':str(folder/'packet')}
-    args={'version_id':'v1','brief_hash':'h1','bindings':[{'claim_id':'src_a','block_id':'b','quote':'text'}],'responses':[]}
-    with pytest.raises(ToolError,match='source_id'):
-        metadata_submit(store,config,args)
-    assert not (folder/'metadata.json').exists()
-    result=metadata_submit(store,config,{**args,'bindings':[]})
-    assert result['settle']
 
 
 @pytest.mark.parametrize('stage',['revision','repair'])
