@@ -32,7 +32,14 @@ npm run dist
 
 `npm run dist` 生成 `dist/BriefLoop-<版本>-arm64.dmg` 和 `dist/BriefLoop-<版本>-arm64-mac.zip`。Electron 核心仍需随 App 分发；首次运行还会从官方 PyPI 下载 Python 依赖，不能将安装包大小作为完整下载量。Python 环境准备契约见 [ENVIRONMENT.md](ENVIRONMENT.md)。生成目录与构建缓存不进 Git。
 
-已有本机 Electron 分发目录时，可在本目录执行 `npm run dist -- --config.electronDist="$PWD/node_modules/electron/dist"` 复用它，只刷新 App 资源和安装包。版本更新后必须重新生成业务 wheel；不能只改安装包文件名或沿用旧版本 wheel。
+已有本机 Electron 分发目录时，在本目录直接把复用参数传给构建器，再生成更新元数据：
+
+```sh
+npx electron-builder --mac dmg zip --arm64 --publish never --config.electronDist="$PWD/node_modules/electron/dist"
+node scripts/prepare-update-blockmaps.cjs
+```
+
+`npm run dist -- 参数` 会将参数附加到最后的 blockmap 命令，不适用于构建器参数。版本更新后必须重新生成业务 wheel；不能只改安装包文件名或沿用旧版本 wheel。
 
 发行验收记录应分别写明源码提交、App 版本、wheel 哈希、安装包哈希和实际启动结果。历史版本的原生链路证据保持原版本归属；每次发行最终包都需重新核对版本及实际启动、导出和更新行为，不把旧记录改称新版本验收。
 

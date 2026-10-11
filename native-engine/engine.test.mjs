@@ -352,7 +352,8 @@ test("a JSON reply completes with one end carrying the object", async () => {
 test("prose then JSON: the correction reply is delivered, not dropped", async () => {
   script(reply.text("Here is my review, everything is fine."), reply.text('{"verdict":"fine"}'));
   const { session_id } = await reviewer();
-  const evts = await turn(session_id, "e-repair");
+  // This case checks correction delivery, not the one-second idle watchdog.
+  const evts = await turn(session_id, "e-repair", { idle_timeout_s: 10 });
   assert.equal(provider.requests.length, 2);
   assert.ok(evts.some((e) => e.kind === "status" && /requesting correction/.test(e.message)));
   assert.equal(ends(evts).length, 1);
