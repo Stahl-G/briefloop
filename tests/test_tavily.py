@@ -108,7 +108,7 @@ def test_fixed_provider_redirect_never_receives_credentials(monkeypatch):
         server.shutdown();server.server_close();thread.join(timeout=2)
 
 
-def test_failed_page_read_falls_back_to_provider_extract_even_without_tavily_search(tmp_path,monkeypatch):
+def test_failed_page_read_fallback_respects_frozen_provider_selection(tmp_path,monkeypatch):
     from briefloop import sources
     store=Store(tmp_path/'workspace')
     run=store.create_run({'title':'T','objective':'O','allow_web':True,'search_policy':{'primary_provider':'native','coverage_mode':'primary_only'}},[])
@@ -117,7 +117,16 @@ def test_failed_page_read_falls_back_to_provider_extract_even_without_tavily_sea
     assert sources.fetch_for_run(store,run['id'],'https://example.test/filing')['status']=='failed'  # no key: no provider call
     monkeypatch.setenv('TAVILY_API_KEY','tvly-test-secret')
     raw=json.dumps({'results':[{'url':'https://example.test/filing2','title':'Filing','raw_content':'收入 120 万元。'}],'failed_results':[],'request_id':'r'}).encode()
-    monkeypatch.setattr(tavily.urllib.request,'build_opener',lambda *handlers:SimpleNamespace(open=lambda request,timeout:BytesIO(raw)))
+    requests=[]
+    def respond(request,timeout):
+        requests.append(request.full_url)
+        return BytesIO(raw)
+    monkeypatch.setattr(tavily.urllib.request,'build_opener',lambda *handlers:SimpleNamespace(open=respond))
+    rejected=sources.fetch_for_run(store,run['id'],'https://example.test/unselected')
+    assert rejected['status']=='failed' and requests==[]
+    selected=store.create_run({'title':'T','objective':'O','allow_web':True,
+        'search_policy':{'primary_provider':'tavily','coverage_mode':'primary_only'}},[])
+    run=selected
     result=sources.fetch_for_run(store,run['id'],'https://example.test/filing2')
     assert result['status']=='ready' and result['fallback']['provider']=='tavily'
     assert store.one('sources',result['fallback']['local_source_id'])['status']=='failed'
