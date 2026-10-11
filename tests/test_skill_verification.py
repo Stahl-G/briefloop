@@ -1,5 +1,4 @@
 """#861: incomplete recurrence coverage never becomes automatic acceptance."""
-import json
 
 import pytest
 
@@ -121,23 +120,6 @@ def test_registration_collision_keeps_original_binding_and_excludes_samples(work
     value = skill_verification.measure(store, 'skill_a')
     assert value['registration_conflict'] and (value['unknown'], value['repeats'], value['rate']) == (1, 0, None)
     assert skill_verification.learned_for_run(store, run['id']) == []
-
-
-@pytest.mark.parametrize('old_status', ['adopted', 'not_improving'])
-def test_legacy_automatic_status_is_corrected_without_skill_or_notification_changes(workspace, old_status):
-    store, _, _ = workspace
-    store.set_meta('active_skill', 'skill_a')
-    original_skill = store.one('skills', 'skill_a')
-    with store.tx() as c:
-        c.execute("UPDATE skill_verifications SET status=? WHERE skill_id='skill_a'", (old_status,))
-    first = skill_verification.refresh(store)['skill_a']
-    second = skill_verification.refresh(store)['skill_a']
-    assert first['status'] == second['status'] == 'pending'
-    assert first['legacy_status_corrected'] and second['legacy_status_corrected']
-    history = store.rows("SELECT data FROM events WHERE kind='skill_verification_status_corrected'")
-    assert len(history) == 1 and json.loads(history[0]['data'])['previous_status'] == old_status
-    assert store.meta('active_skill') == 'skill_a' and store.one('skills', 'skill_a') == original_skill
-    assert not store.rows("SELECT * FROM notifications WHERE event_key='skill-not-improving:skill_a'")
 
 
 def test_repeats_must_name_learned_edits_of_that_report(workspace, tmp_path):

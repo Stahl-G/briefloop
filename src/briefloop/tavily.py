@@ -225,7 +225,11 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None,fallbac
             cached.extend(waited)
             unprocessed=claim['unadmitted']+unfinished
             local_id=uid('extract')
-            envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':None,'provider':NAME,'operation':'extract','query':None,'parameters':{'urls':unprocessed,'extract_depth':extract_depth,'format':'markdown'},'outcome':'budget_exhausted','failure_kind':'budget','raw_response_path':None,'admitted_urls':[],'unadmitted_urls':unprocessed,'budget_after':claim['budget_exhausted'].get('budget',{})}
+            envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':None,
+                      'provider':NAME,'operation':'extract','query':None,
+                      'parameters':{'urls':unprocessed,'extract_depth':extract_depth,'format':'markdown'},'outcome':'budget_exhausted',
+                      'failure_kind':'budget','raw_response_path':None,'admitted_urls':[],'unadmitted_urls':unprocessed,
+                      'budget_after':claim['budget_exhausted'].get('budget',{})}
             envelope['waited_unprocessed_urls']=unfinished
             envelope['waiting_errors']=wait_errors
             envelope['extraction_failed_urls']=_failed_source_urls(cached)
@@ -295,7 +299,10 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None,fallbac
             if not isinstance(text,str):text=''
             error=None if text.strip() else 'Tavily 未能提取可读正文；原始提供方响应已保留'
             sid=uid('src');original=store.root/'sources'/(sid+'.original.tavily.json');original.write_bytes(raw)
-            provenance={'url':source_url,'content_type':'application/json','fetched_at':now(),'raw_sha256':hashlib.sha256(raw).hexdigest(),'text_sha256':content_hash(text),'extractor':'tavily.extract','original_path':str(original.relative_to(store.root)),'extraction_status':'failed' if error else 'ready','original_kind':'provider_response','provider':NAME,'notice':'保存的是 Tavily 提供方响应及提取正文，不是原网站 HTML/PDF 字节。','request_id':response.get('request_id')}
+            provenance={'url':source_url,'content_type':'application/json','fetched_at':now(),'raw_sha256':hashlib.sha256(raw).hexdigest(),
+                        'text_sha256':content_hash(text),'extractor':'tavily.extract','original_path':str(original.relative_to(store.root)),
+                        'extraction_status':'failed' if error else 'ready','original_kind':'provider_response','provider':NAME,
+                        'notice':'保存的是 Tavily 提供方响应及提取正文，不是原网站 HTML/PDF 字节。','request_id':response.get('request_id')}
             if error:provenance['error']=error;failed.append(url)
             if item and item.get('url')!=source_url:provenance['provider_url']=item.get('url')
             (store.root/'sources'/(sid+'.provenance.json')).write_text(dump(provenance),encoding='utf-8')

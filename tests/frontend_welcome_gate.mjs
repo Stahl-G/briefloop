@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {welcomeReady,welcomeAgents,welcomeAgentCard} from '../frontend/welcome.js';
-import {section} from './source_section.mjs';
+import {section,statement} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{hidden:id!=='welcome'});return elements.get(id)};
 // An unconfirmed selection or unavailable CLI must not start a conversation.
@@ -42,7 +42,7 @@ console.log('PASS: explicit model choice, selected mode, available Agent and sam
 const picked=[];
 let focused=0;el('model-picker-list').querySelector=()=>({focus(){focused++}});
 const custom=vm.createContext({$:el,pickModel:id=>picked.push(id),renderModelPicker(){}});
-vm.runInContext(source.split('\n').find(line=>line.startsWith("$('model-picker-search').onkeydown=")),custom);
+vm.runInContext(statement(source,"$('model-picker-search').onkeydown="),custom);
 const input={key:'Enter',target:{value:' vendor/model '},preventDefault(){}};
 el('model-picker-search').onkeydown({...input,isComposing:true});
 assert.equal(picked.length,0);

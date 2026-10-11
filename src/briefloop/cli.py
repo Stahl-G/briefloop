@@ -22,11 +22,6 @@ def _search_failure(operation,exc,provider='tavily'):
             'request_record_path':getattr(exc,'request_record_path',None)}
 
 
-def _tavily_failure(operation,exc):
-    # Compat name for the Tavily-only commands and their tests.
-    return _search_failure(operation,exc)
-
-
 def main():
     from .platform_support import ensure_utf8
     ensure_utf8()

@@ -609,8 +609,19 @@ def learn(store,runtime,job,*,worker=None):
             if baseline is None:
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')
             proposed=_generate_trial(store,{**job,'_runtime':runtime},case,candidate_skill,case_dir/'candidate','candidate')
-            comparisons.append({'case_id':case_id,'requirements':json.loads(case['requirements']),
-                'conditions':case['learning_conditions'],'evaluation_method':__import__('briefloop.document_workflows',fromlist=['workflow_context']).workflow_context(json.loads(case['requirements'])['workflow_snapshot'],'evaluator'),'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的离线阅读与写作；不评估联网检索收益或联网事实核查质量','feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'explicit_requirements':[{'source':x['source'],'text':json.loads(x['text']).get('comment','')} for x in state['feedback'] if x.get('source') in state['explicit_requirement_sources'] and x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human'],'baseline':baseline,'candidate':proposed})
+            from .document_workflows import workflow_context
+            requirements=json.loads(case['requirements'])
+            explicit=[{'source':x['source'],'text':json.loads(x['text']).get('comment','')} for x in state['feedback']
+                      if x.get('source') in state['explicit_requirement_sources']
+                      and x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
+            comparisons.append({'case_id':case_id,'requirements':requirements,
+                'conditions':case['learning_conditions'],
+                'evaluation_method':workflow_context(requirements['workflow_snapshot'],'evaluator'),
+                'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的离线阅读与写作；不评估联网检索收益或联网事实核查质量',
+                'feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback']
+                                        if json.loads(x['text']).get('kind')=='user_comment'],
+                'explicit_requirements':explicit,
+                'baseline':baseline,'candidate':proposed})
         folder=root/f'round-{n}'/'comparison'
         from .backends import validate_backend as _validate
         result=compare(store,runtime,job,comparisons,folder,_validate(payload.get('agent_backend','codex')))

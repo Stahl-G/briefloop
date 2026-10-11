@@ -236,7 +236,11 @@ def generation_prompt(store, run, folder, backend='codex', scout_budget=None):
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
     from .scout_coverage import required as scout_coverage_required
-    payload={'scout_coverage_required':scout_coverage_required(store,run['id']),'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    payload={'scout_coverage_required':scout_coverage_required(store,run['id']),'deliverable_spec':deliverable,
+             'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,
+             'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,
+             'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,
+             'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     if research_handoff is not None:payload['research_handoff']=research_handoff
     from .task_context import project, strategy, GOAL_GUIDE, READING_GUIDE
     payload['task_context'] = project(req, 'orchestrator', evidence='input.json.sources / source_read 或 read-source',

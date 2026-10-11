@@ -5,7 +5,7 @@ edit across a whole report, so an empty repeats list, a delivery, or a saved
 revision cannot establish absence. Full independent report observations and
 calibrated acceptance (two model families, human disagreement review, held-out
 validation and a measured baseline) are not implemented here. Candidates stay
-pending; existing automatic verdicts are corrected without changing skills.
+pending.
 """
 import json
 
@@ -13,7 +13,6 @@ from .store import dump, now
 
 LABELS = {'pending': '待验收', 'untracked': '无可追踪改动'}
 CALIBRATION_NOTE = '仅初步观察；尚未完成完整复发核验、双模型 family 校准、人工分歧处理与留出验收。'
-LEGACY_NOTE = '旧算法的自动状态不证明验收；已恢复待验收，原记录与技能保留。'
 
 
 def _json(value, fallback):
@@ -199,23 +198,16 @@ def measure(store, skill_id):
         flagged_reports += bool(seen)
         repeats += len(seen)
     status = 'pending' if learned or collision or context_error else 'untracked'
-    legacy = (record['status'] in ('adopted', 'not_improving')
-              or any(event.get('original_status') in ('adopted', 'not_improving') for event in conflicts)
-              or any(event.get('previous_status') in ('adopted', 'not_improving')
-                     for event in _events(store, skill_id, 'skill_verification_status_corrected')))
     return {'skill_id': skill_id, 'reader_id': record['reader_id'], 'status': status, 'label': LABELS[status],
             'learned': len(learned), 'reports': len(runs), 'observed': 0, 'unknown': len(runs) - excluded,
             'excluded': excluded, 'repeats': repeats, 'flagged_reports': flagged_reports,
             'rate': None, 'baseline_rate': None, 'evidence_status': 'preliminary', 'calibration_required': True,
             'unknown_reasons': reasons, 'registration_conflict': collision,
-            'legacy_status_corrected': legacy, 'note': CALIBRATION_NOTE, 'legacy_note': LEGACY_NOTE if legacy else None}
+            'note': CALIBRATION_NOTE}
 
 
 def refresh(store):
-    """Correct old automatic verdicts, preserving the raw record in an event.
-
-    Do not change skill contents/bindings or issue lack-of-improvement notices.
-    """
+    """Keep stored statuses in step with measure(); never touches skills or notices."""
     results = {}
     for row in store.rows('SELECT skill_id,status FROM skill_verifications'):
         value = measure(store, row['skill_id'])
@@ -227,5 +219,5 @@ def refresh(store):
                 connection.execute('INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)',
                                    (None, 'skill_verification_status_corrected',
                                     dump({'skill_id': row['skill_id'], 'previous_status': row['status'],
-                                          'status': value['status'], 'reason': LEGACY_NOTE}), now()))
+                                          'status': value['status']}), now()))
     return results

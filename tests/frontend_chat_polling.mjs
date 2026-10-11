@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {section as sectionOf} from './source_section.mjs';
+import {section as sectionOf,statement} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const section=(start,end)=>sectionOf(source,start,end,'frontend/app.js');
@@ -28,7 +28,7 @@ function fixture(){
  vm.runInContext([
   section('async function selectChat(id){','async function openChatHome('),
   section('async function pollChat(force=false){','async function sendChat(event){'),
-  source.split('\n').find(row=>row.startsWith("$('chat-stop').onclick=")),
+  statement(source,"$('chat-stop').onclick="),
  ].join('\n'),context);
  const complete=(index,value)=>{lists[index].resolve({sessions:[value.session]});reads[index].resolve(value)};
  return {context,$,chat,lists,reads,calls,renders,errors,restores,complete,get peak(){return peak},get active(){return active}};

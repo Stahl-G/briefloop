@@ -385,3 +385,15 @@ def test_revision_binding_rejects_source_and_foreign_claims_before_saving(tmp_pa
     handler(store,config,{**args,'bindings':[binding(adopted)]})
     assert (folder/('revision_bindings.json' if stage=='revision' else 'metadata.json')).exists()
     assert not store.rows('SELECT id FROM claim_bindings')  # Final publication still belongs to Worker.
+
+
+def test_revision_responses_without_review_findings_are_told_to_send_none():
+    # Real 2026-10-11 runs: with no Reviewer, the writer answered evaluator comments
+    # and guessed id formats four or five times because the error named no expected ids.
+    from briefloop.revision_metadata import validate_arrays
+    answer = [{'finding_id': 'assessment_finding:0', 'action': 'corrected', 'reason': 'fixed'}]
+    with pytest.raises(ValueError, match=r'responses 写 \[\]'):
+        validate_arrays([], answer, set())
+    with pytest.raises(ValueError, match='"expected": \\["review_1"\\]'):
+        validate_arrays([], answer, {'review_1'})
+    validate_arrays([], [], set())

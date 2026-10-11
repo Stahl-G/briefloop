@@ -70,10 +70,6 @@ def review_choices(review_mode='standard'):
             for name in BACKENDS if supports_review(name, review_mode)]
 
 
-def review_backends(review_mode='standard'):
-    return [name for name in BACKENDS if supports_review(name, review_mode) and name not in REVIEW_ONLY_BACKENDS]
-
-
 def summary():
     choices = review_choices()
     strict = [{'id': c['id'], 'label': c['label']} for c in review_choices('strict')]

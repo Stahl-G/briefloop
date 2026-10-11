@@ -18,3 +18,16 @@ export function allFrontendSources(){
   .filter(name=>name.endsWith('.js')).sort()
   .map(name=>fs.readFileSync(new URL('../frontend/'+name,import.meta.url),'utf8')).join('\n');
 }
+
+// One statement that starts a line (prefix match), plus the more-indented
+// continuation lines below it. Tests use this instead of "the whole line",
+// so splitting a long statement over several lines does not break them.
+export function statement(source,prefix,{trim=false}={}){
+ const lines=source.replace(/\r\n/g,'\n').split('\n');
+ const start=lines.findIndex(line=>(trim?line.trimStart():line).startsWith(prefix));
+ if(start<0)throw Error(`statement not found: ${JSON.stringify(prefix)}`);
+ const indent=lines[start].match(/^\s*/)[0].length;
+ let end=start+1;
+ while(end<lines.length&&lines[end].trim()&&lines[end].match(/^\s*/)[0].length>indent)end++;
+ return lines.slice(start,end).join('\n');
+}
