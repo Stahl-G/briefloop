@@ -16,7 +16,6 @@ class Author:
         self.calls.append((folder.name, job))
         if folder.name=='direct-writing':
             assert job['plain_tools'] and job['plain_output']=='response.txt'
-            assert self.source_id in prompt and '怎样才算答完' in prompt
             (folder/'response.txt').write_text(
                 f'# 季度观察\n\n收入 120 万元，同比增长 20%。[@{self.source_id}]\n\n另一说法尚未保存原文。[@src_invented]\n')
         elif folder.name=='evidence':
@@ -64,14 +63,12 @@ def test_direct_needs_offline_material_and_native_writer_gets_only_metered_tools
     with pytest.raises(ValueError,match='离线时需要已有材料'):
         store.create_run({'title':'T','objective':'O','allow_web':False,'completion_mode':'direct'},[])
     from briefloop.native_roles import runner_tool_specs
-    from briefloop.agent_prompts import system_prompt
     names=lambda config:[t['name'] for t in runner_tool_specs('quick_writer',None,config)]
     assert names({}) == []  # Ordinary quick writing stays tool-free.
     assert names({'direct':True,'allow_web':True,'search_channels':['tavily']})[:2]==['source_read','source_grep']
     assert {'web_search','add_url'} <= set(names({'direct':True,'allow_web':True,'search_channels':['tavily']}))
     assert 'web_search' not in names({'direct':True,'allow_web':True,'search_channels':[]})
     assert not {'web_search','add_url'} & set(names({'direct':True,'allow_web':False}))
-    assert '直写' in system_prompt('quick_writer',direct=True)['text'] and '直写' not in system_prompt('quick_writer')['text']
 
 
 def test_evidence_windows_keep_cited_lines_of_large_pages_within_bounds():

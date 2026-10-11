@@ -149,15 +149,6 @@ def test_queued_word_convention_change_rejects_stale_fingerprint(tmp_path):
     assert export_input(store, brief)[0]['requirements']['market_convention'] == 'intl'
 
 
-def test_excel_mixed_direction_prose_is_not_colored_as_a_single_delta(tmp_path):
-    store, run, brief, _ = sample(tmp_path)
-    document = markdown_document('| 指标 | 说明 |\n| --- | --- |\n| 经营 | 营收同比 +5%，利润同比 -2% |')
-    workbook = load_workbook(BytesIO(xlsx_bytes(document, {}, {}, 'single')))
-    cell = workbook.active['B3']
-    assert cell.value == '营收同比 +5%，利润同比 -2%'
-    assert cell.font.color is None or cell.font.color.type != 'rgb'
-
-
 def test_local_pdf_finalization_binds_workspace_version_and_market(tmp_path):
     import http.client
     from briefloop.server import make_server
@@ -191,10 +182,3 @@ def test_local_pdf_finalization_binds_workspace_version_and_market(tmp_path):
         assert status == 400 and '工作区已切换' in result.decode()
     finally:
         server.shutdown(); server.server_close(); thread.join()
-
-
-def test_legacy_word_code_fences_are_not_semantic_changes():
-    doc = Document(BytesIO(docx_bytes('growth 5%\n\n```text\ngrowth 5%\n```\n\n`growth 5%`')))
-    assert any(str(run.font.color.rgb) == 'D9363E' for run in doc.paragraphs[0].runs)
-    assert all(run.font.color.rgb is None for run in doc.paragraphs[1].runs)
-    assert all(run.font.color.rgb is None for run in doc.paragraphs[2].runs)

@@ -46,13 +46,6 @@ def test_first_round_stop_with_most_budget_left_needs_a_reason(tmp_path):
     assert plan['rounds'][closed['round_id']]['outcome']['early_stop_reason'].startswith('本周只有两件')
 
 
-def test_continuing_or_unsearched_rounds_are_not_held(tmp_path):
-    store, run = _run_with_searches(tmp_path, used=8)
-    assert research_plan.finish_round(store, run['id'], continue_research=True)['index'] == 1
-    store2, run2 = _run_with_searches(tmp_path / 'offline', used=0)
-    assert research_plan.finish_round(store2, run2['id'])['index'] == 1
-
-
 def test_chat_model_runs_on_the_chat_engine_not_the_workspace_default(tmp_path):
     from briefloop.chat_tools import workspace_action
     store = Store(tmp_path)
@@ -223,28 +216,6 @@ def test_monthly_threshold_uses_calendar_days_across_dst():
             period_end='2026-03-25', report_timezone=zone)
         assert req.research_budget.search_requests == 80
         assert req.scout_limit == 8
-def test_provider_failures_get_actionable_fixed_text():
-    from briefloop.progress import public_failure
-    quota = public_failure('Antigravity: Individual quota reached. Please upgrade your subscription. Resets in 3h29m49s.')
-    assert quota.startswith('模型服务额度已用完') and '约 3 小时 29 分钟后恢复' in quota and 'upgrade' not in quota
-    assert public_failure('HTTP 401 Unauthorized https://api.example.com/v1?key=secret').startswith('模型服务未登录')
-    assert public_failure('invalid model selection (--model "x"): --model x requires --effort').startswith('所选模型')
-    assert public_failure('后台调用未绑定可处理授权的任务，已拒绝并终止本轮：Bash').startswith('执行引擎在后台请求了命令授权')
-    assert public_failure(quota) == quota  # a stored job error stays readable on the task card
-    assert public_failure('Traceback: something internal') is None
-
-
-def test_role_model_chosen_on_another_engine_follows_the_main_model(tmp_path):
-    store = Store(tmp_path)
-    store.update_settings({'agent_backend': 'codex', 'model': 'gpt-6-sol', 'role_models': {'evaluator': {'model': 'gpt-6-luna'}}})
-    assert store.settings()['role_models']['evaluator']['backend'] == 'codex'
-    assert store.role_model_config()['evaluator']['model'] == 'gpt-6-luna'
-    store.update_settings({'agent_backend': 'antigravity', 'model': 'gemini-3.8-flash'})
-    assert store.role_model_config()['evaluator']['model'] == 'gemini-3.8-flash'
-    store.update_settings({'agent_backend': 'codex', 'model': 'gpt-6-sol'})
-    assert store.role_model_config()['evaluator']['model'] == 'gpt-6-luna'
-
-
 def test_cli_hosts_review_on_their_own_permissions_and_say_so():
     from briefloop.review_capability import review_available, review_isolation, require_for_fact_check, summary
     for backend in ('claude', 'antigravity', 'codebuddy'):

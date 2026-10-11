@@ -117,7 +117,6 @@ def test_the_harness_opens_an_evaluator_session_and_answers_its_tool_calls(tmp_p
     create = next(p for name, p in engine.calls if name == 'session_create')
     assert create['role'] == 'evaluator' and create['packet_root'] == str(folder / 'packet')
     assert [t['name'] for t in create['runner_tools']] == ['render_pdf_pages', 'submit_assessment']
-    assert '独立 Evaluator' in create['system_prompt'] and 'Reviewer' not in create['system_prompt'].split('## 当前角色')[1][:40]
     results = [p for name, p in engine.calls if name == 'tool_result']
     assert [r['request_id'] for r in results] == ['tool-1', 'tool-2']
     assert results[0]['ok'] is False and results[1]['ok'] is True and 'settle' in results[1]

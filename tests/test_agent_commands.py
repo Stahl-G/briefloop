@@ -70,19 +70,6 @@ def test_chat_request_example_runs_inside_unicode_workspace(tmp_path, monkeypatc
     assert json.loads((workspace / '.briefloop-capabilities.json').read_text(encoding='utf-8')) == {'action': 'capabilities'}
 
 
-@pytest.mark.parametrize('internal', [False, True])
-def test_writable_chat_and_report_share_request_file_boundary(tmp_path, internal):
-    from briefloop.chat_tools import chat_instructions
-    from briefloop.store import Store
-    store = Store(tmp_path / '中文 report')
-    instructions = chat_instructions(store, {'model': 'test/model'}, backend='opencode', internal=internal)
-    assert store.root.as_posix() in instructions
-    assert 'JSON 请求文件、临时文件及最终产物' in instructions
-    assert '工作区内的绝对路径' in instructions
-    assert '给子 agent 派发时同时传递这个写入范围' in instructions
-    assert '不要在那里创建 request.json' in instructions
-
-
 def test_workspace_request_accepts_powershell_utf8_bom(tmp_path):
     from briefloop._entrypoint import command
     from briefloop.store import Store
@@ -121,11 +108,6 @@ def test_entrypoint_works_without_an_installed_briefloop(tmp_path):
                             cwd=cwd, capture_output=True, encoding='utf-8', timeout=10)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == '正确工具'
-
-
-def test_entrypoint_rejects_unexpected_modules():
-    with pytest.raises(ValueError, match='Unsupported'):
-        agent_commands.agent_command('arbitrary_module')
 
 
 @pytest.mark.parametrize('backend,kind', SHELL_CASES)

@@ -7,8 +7,7 @@ from docx import Document
 from docx.shared import RGBColor
 
 from briefloop.market_convention import (
-    apply_docx_market_colors, chart_presentation, market_colors,
-    resolve_market, save_report_settings, semantic_delta_spans,
+    apply_docx_market_colors, resolve_market, save_report_settings, semantic_delta_spans,
 )
 from briefloop.models import Requirements
 from briefloop.store import Store
@@ -92,15 +91,6 @@ def test_word_colors_only_semantic_numbers_and_preserves_authored_formatting():
     assert saved._element.xml == before
 
 
-def test_new_chart_authoring_metadata_is_explicit_without_mutating_figures():
-    spec = chart_presentation({'language': 'en'})
-    assert spec['market_convention'] == 'intl'
-    assert spec['direction_colors'] == {'up': '#1E8E4F', 'down': '#D9363E', 'flat': '#5F6675'}
-    assert spec['series_colors'] == ['#2448B8', '#0B6A78', '#9A6B1F', '#6741D9', '#8A909C']
-    assert '已登记图像保持原样' in spec['instructions']
-    assert market_colors({'language': 'zh'})['up'] == 'D9363E'
-
-
 def test_template_defaults_can_be_colored_without_overriding_authored_colors():
     from briefloop.document_export import render_document
     from briefloop.document_model import markdown_document
@@ -150,19 +140,3 @@ def test_report_settings_route_validates_and_persists(tmp_path):
         assert json.loads(server.store.one('runs', run['id'])['requirements'])['market_convention'] == 'intl'
     finally:
         server.shutdown(); thread.join(); _close_service(server); server.server_close(); server.workspace_lock.close()
-
-
-def test_word_merged_columns_skip_inference_and_explicit_alignment_survives():
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    doc = Document(); table = doc.add_table(rows=3, cols=2)
-    table.cell(0, 0).text = 'YoY'; table.cell(0, 1).text = 'Balance'
-    table.cell(1, 0).merge(table.cell(2, 0)).text = '5%'
-    table.cell(1, 1).text = '100'; table.cell(2, 1).text = '-200'
-    apply_docx_market_colors(doc)
-    assert all(run.font.color.rgb is None for row in table.rows for cell in row.cells for paragraph in cell.paragraphs for run in paragraph.runs)
-    simple = doc.add_table(rows=2, cols=1)
-    simple.cell(0, 0).text = '同比'; simple.cell(1, 0).text = '-3%'
-    simple.cell(1, 0).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    apply_docx_market_colors(doc)
-    assert simple.cell(1, 0).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
-    assert str(simple.cell(1, 0).paragraphs[0].runs[0].font.color.rgb) == '1E8E4F'

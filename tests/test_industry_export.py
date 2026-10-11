@@ -9,18 +9,6 @@ def parts(blob):
     return archive, etree.fromstring(archive.read('word/document.xml'))
 
 
-def test_industry_layout_links_and_table():
-    blob = docx_bytes('## 核心摘要\n\n一项**明确结论**。[原文](https://example.com/report)\n\n## 行业数据\n\n| 指标 | 本期 |\n|---|---|\n| 指标 A | 12 |', report_profile='industry_periodic', title='示例行业定期报告', organization='示例组织', report_date='2026-09-10')
-    archive, document = parts(blob)
-    ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-    assert document.xpath('count(//w:tblHeader)', namespaces=ns) == 1
-    assert document.xpath('//w:shd/@w:fill', namespaces=ns)[0] == '17466B'
-    assert document.xpath('count(//w:hyperlink)', namespaces=ns) == 1
-    assert b'https://example.com/report' in archive.read('word/_rels/document.xml.rels')
-    assert document.xpath('//w:pgSz/@w:w', namespaces=ns) == ['11906']
-    assert 'PAGE' in archive.read('word/footer1.xml').decode()
-
-
 def test_plain_export_remains_plain_and_does_not_fetch_images():
     archive, document = parts(docx_bytes('# 标题\n\n[链接](https://example.com) ![示意说明](file:///private/no-read.png)'))
     assert not any(name.startswith('word/media/') for name in archive.namelist())

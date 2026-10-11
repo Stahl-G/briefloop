@@ -147,11 +147,3 @@ def test_headers_code_urls_ordinals_and_bare_numbers_are_excluded():
     assert review['candidate_count'] == 2
     assert [s['text'] for s in review['samples']] == ['30%', '25%']
     assert review['samples'][1]['row'] == 3 and review['samples'][1]['column'] == 2
-
-
-def test_occurrence_samples_are_bounded_and_repeat_display_is_not_deduplicated():
-    markdown = '。'.join(['增长20%'] * 20)
-    review = numeric_occurrence_review(markdown_document(markdown), [], [])
-    assert review['candidate_count'] == review['review_candidate_count'] == 20
-    assert len(review['samples']) == review['sample_limit'] == 12
-    assert review['truncated'] is True

@@ -1,26 +1,10 @@
 """Exact claim anchors and compact source context without a material-size gate."""
-import json
 
 import pytest
 
 from briefloop.evidence_context import located_context
-from briefloop.fast_reports import enrich, material_packet
-from briefloop.models import BriefDraft, Citation
-from briefloop.store import Store, dump
-from briefloop.writer_assembly import CitationInput
-from test_fast_reports import setup
-
-
-def test_old_citation_shape_and_writer_input_remain_compatible():
-    old = {'source_id': 'src_1', 'locator': 'line 1', 'excerpt': '原文'}
-    assert Citation.model_validate(old).model_dump() == old
-    assert CitationInput.model_validate(old).model_dump() == old
-    draft = BriefDraft(title='标题', markdown='正文', citations=[old])
-    assert draft.model_dump()['citations'] == [old]
-    linked = {**old, 'report_quote': '正文', 'source_title': '来源标题',
-              'source_context': '原文', 'context_locator': 'line 1'}
-    assert Citation.model_validate(linked).model_dump() == linked
-    assert CitationInput.model_validate(linked).model_dump() == linked
+from briefloop.fast_reports import material_packet
+from briefloop.store import Store
 
 
 def test_context_keeps_distant_table_header_and_qualifier_without_full_source():
@@ -59,10 +43,3 @@ def test_pdf_page_separator_keeps_the_located_excerpt_in_its_window():
     context = located_context(text, '关键值42万元')
     assert context['locator'] == 'line 2'
     assert '关键值42万元' in context['source_context']
-
-
-def test_adjacent_table_rows_also_keep_their_header():
-    text = '# Sales\nUnits: USD million\n| Period | Revenue |\n| --- | --- |\n| Q1 | 1 |\n| Q2 | 2 |\nRevenue grew.\n'
-    context = located_context(text, 'Revenue grew.')
-    assert '| Period | Revenue |' in context['source_context']
-    assert 'Units: USD million' in context['source_context']

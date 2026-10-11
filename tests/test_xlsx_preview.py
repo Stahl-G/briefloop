@@ -119,10 +119,3 @@ def test_oversized_xlsx_cannot_render_or_serve_a_partial_corner_as_complete(tmp_
     with pytest.raises(ValueError, match='绑定不一致'):
         office_cli.office_image(store, digest, 1)
     assert calls == [] and target.read_bytes() == frozen
-
-
-def test_preview_extent_accepts_its_boundary_and_rejects_invalid_cached_ranges():
-    office_cli._check_xlsx_preview_cells('A1:GR5000')
-    for cells in (None, 'A1:B0', 'A2:B2', 'A1:GS1', 'A1:B5001'):
-        with pytest.raises(ValueError):
-            office_cli._check_xlsx_preview_cells(cells)

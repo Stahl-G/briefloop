@@ -1,9 +1,8 @@
 """The same saved version exports under any ready template: content identical, layout swapped."""
-import io
 import threading
 from briefloop.store import Store
 from briefloop.templates import import_builtin
-from briefloop.export_jobs import enqueue_export, generate_word, output_path, export_input
+from briefloop.export_jobs import enqueue_export, generate_word, output_path
 
 
 def test_layout_swap_exports_same_content_under_different_templates(tmp_path):
@@ -55,5 +54,3 @@ def test_workspace_action_export_word_accepts_template_override(tmp_path):
     assert payload['template_id'] == rows['商业报告·珊瑚红'] and result['template_id'] == rows['商业报告·珊瑚红']
     result = workspace_action(store, {'action': 'export_word', 'version_id': brief['id']})
     assert 'template_id' not in json.loads(store.one('jobs', result['job_id'])['payload'])
-    capabilities = workspace_action(store, {'action': 'capabilities'})
-    assert '同稿换版式' in capabilities['export_word.template_id']

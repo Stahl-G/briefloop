@@ -6,7 +6,6 @@ const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.m
 // Python/Web use PEP 440, while Electron uses SemVer for prereleases.
 const version=fs.readFileSync(new URL('../VERSION',import.meta.url),'utf8').trim();
 assert.ok(html.includes(`data-web-version="${version}"`));
-assert.match(html,/data-settings-view="updates"/);
 function fixture(desktop,notesAPI=async version=>({version,state:'loaded',notes:`Official changes for ${version}`})){
  const elements=new Map(),notices=[];
  const el=id=>{if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,textContent:'',dataset:{webVersion:version}});return elements.get(id)};

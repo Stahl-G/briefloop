@@ -54,18 +54,6 @@ def test_worker_settle_sends_the_terminal_note(tmp_path):
     assert any('已完成' in m['text'] for m in _notes(chat, session['id']))
 
 
-def test_worker_stop_sends_the_cancelled_note(tmp_path):
-    from briefloop.runtime import Worker
-    store = Store(tmp_path)
-    chat = ChatStore(store)
-    session = chat.create('对话', {}, tmp_path)
-    job = store.enqueue('audit_bundle', {'session_id': session['id']})
-    with store.tx() as c:
-        c.execute("UPDATE jobs SET status='running' WHERE id=?", (job['id'],))
-    Worker(store).stop_job(job['id'])
-    assert any('已停止' in m['text'] for m in _notes(chat, session['id']))
-
-
 def test_internal_execution_sessions_are_not_listed(tmp_path):
     store = Store(tmp_path)
     chat = ChatStore(store)

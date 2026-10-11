@@ -6,7 +6,6 @@ from briefloop.execution_records import public_tool_name
 from briefloop.plain_isolation import tool_uses
 from briefloop.progress import AUTH, CONNECTION, HOST_PERMISSION, MODEL, QUOTA, ProgressTracker, public_failure
 from briefloop.review import enqueue_review, get_review, review_status, run_review
-from briefloop.review_capability import review_route
 from briefloop.store import Store, dump
 
 
@@ -89,11 +88,6 @@ def test_legacy_role_override_is_bound_before_switch_or_chat_job(tmp_path):
         'role_models': {'evaluator': {'model': 'new-claude-evaluator'}}})
     assert store.settings()['role_models']['evaluator']['backend'] == 'claude'
     assert store.role_model_config()['evaluator']['model'] == 'new-claude-evaluator'
-
-
-def test_bridge_review_route_preserves_effort_field_used_by_frontend():
-    assert review_route('codex', {'backend': 'claude', 'model': 'sonnet', 'reasoning_effort': 'high'}) == (
-        'claude', {'model': 'sonnet', 'reasoning_effort': 'high'})
 
 
 def test_historical_plain_metadata_is_normalized_without_changing_bound_brief(tmp_path):

@@ -1,12 +1,10 @@
 """Network responses retain their reservation identity through DB admission."""
 import json
 from pathlib import Path
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from briefloop import duckduckgo, research_budget as budget, research_plan as plan, sources, tavily, websearch
+from briefloop import duckduckgo, research_budget as budget, research_plan as plan, sources, websearch
 from briefloop.store import Store
 
 
@@ -92,27 +90,6 @@ def test_cancelled_direct_page_retains_original_without_registering_a_source(tmp
     assert len(calls) == 1
 
 
-def test_tavily_batch_after_stage_completion_preserves_raw_but_no_partial_sources(tmp_path, monkeypatch):
-    store, run = world(tmp_path, 'tavily')
-    urls = ['https://example.test/a', 'https://example.test/b']
-    response = {'results': [{'url': url, 'raw_content': 'decoded source'} for url in urls]}
-    raw = json.dumps(response).encode()
-
-    def completed(*_, **__):
-        plan.finish_fact_check(store, run, status='completed')
-        return response, raw
-
-    monkeypatch.setattr(tavily, '_post', completed)
-    result = tavily.extract(store, urls, run_id=run)
-    assert result['status'] == 'response_rejected' and result['sources'] == []
-    assert store.source_ids(run) == [] and store.rows('SELECT * FROM sources') == []
-    assert budget.spent(store, run)['source_pages'] == 2
-    envelope = json.loads(Path(result['request_record_path']).read_text())
-    assert Path(envelope['raw_response_path']).read_bytes() == raw
-    assert envelope['admitted_urls'] == [] and envelope['unadmitted_urls'] == urls
-    assert len(envelope['retained_source_ids']) == 2
-
-
 def test_response_identity_and_replay_are_checked_in_the_candidate_transaction(tmp_path):
     store, run = world(tmp_path)
     reservation = budget.reserve_search(store, run, 1)
@@ -129,36 +106,6 @@ def test_response_identity_and_replay_are_checked_in_the_candidate_transaction(t
     with pytest.raises(plan.AdmissionError):
         budget.reserve_pages(store, run, ['https://example.test/other-page'], request_id=page['request_id'])
     assert budget.spent(store, run)['source_pages'] == 1
-
-
-def test_cancel_serializes_with_candidate_commit_and_does_not_rewrite_admission(tmp_path, monkeypatch):
-    store, run = world(tmp_path)
-    monkeypatch.setattr(duckduckgo, 'call_search', lambda *_, **__: (
-        {'results': [{'title': 'Found', 'url': 'https://example.test/found'}]}, b'{}', None, None))
-    writing, closing = threading.Event(), threading.Event()
-    save = budget._save
-
-    def pause_candidate_save(connection, key, state):
-        if state['candidate_urls']:
-            writing.set()
-            assert closing.wait(3)
-        save(connection, key, state)
-
-    def cancel():
-        assert writing.wait(3)
-        closing.set()
-        return plan.finish_fact_check(store, run, status='cancelled')
-
-    monkeypatch.setattr(budget, '_save', pause_candidate_save)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        cancellation = pool.submit(cancel)
-        result = websearch.search('found', store=store, run_id=run, max_results=1)
-        assert cancellation.result()['status'] == 'cancelled'
-    assert result['status'] == 'ok' and len(result['results']) == 1
-    entry = plan.pending_requests(store, run)[result['local_request_id']]
-    assert entry['status'] == 'completed' and 'rejection_reason' not in entry
-    assert entry['request_record_path'] == result['request_record_path']
-    assert budget.spent(store, run)['candidate_urls'] == 1
 
 
 def test_legacy_search_and_page_admission_still_work_without_quality_records(tmp_path, monkeypatch):

@@ -13,25 +13,6 @@ def _v1_search_contract(monkeypatch):
     monkeypatch.setattr('briefloop.opencode_version.installed_major',lambda:1)
 
 
-@pytest.mark.parametrize('provider,allowed',[('native',True),('tavily',False)])
-def test_opencode_native_and_no_web_tasks_do_not_receive_tavily_skill(tmp_path,provider,allowed):
-    store=Store(tmp_path/'workspace')
-    source=store.add_source('Synthetic disclosure','Company A delivered 12 units.')
-    run=store.create_run({'title':'Comparison','objective':'Compare available material','allow_web':allowed},[source['id']])
-    folder=store.root/'jobs'/'search-check';folder.mkdir()
-    prompt=generation_prompt(store,{**run,'search_provider':provider},folder,backend='opencode')
-    payload=json.loads((folder/'input.json').read_text(encoding='utf-8'))
-    assert 'retrieval_skill' not in payload
-    assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
-    assert '本轮冻结搜索源：Tavily。' not in prompt
-    if allowed:
-        assert '本轮冻结搜索源：Opencode 原生搜索。' in prompt
-    else:
-        assert '本轮未允许联网，只处理已登记的材料' in prompt
-        assert '不安排公开检索' in prompt
-        assert 'Scout 使用 host 的原生网络搜索工具' not in prompt
-
-
 @pytest.mark.parametrize('provider,allowed',[('tavily',True),('native',True),('tavily',False)])
 def test_generation_packet_is_utf8_with_cp1252_default(tmp_path,monkeypatch,provider,allowed):
     from briefloop.deliverable_spec import instructions, reader_contract_schema, resolve

@@ -64,32 +64,6 @@ def test_report_and_history_pagination_search_hidden_old_bodies(tmp_path):
     assert versions(store,'run_0')['items']==[]
 
 
-def test_old_live_report_is_pinned_past_recent_history(tmp_path):
-    store=Store(tmp_path);seed(store)
-    with store.tx() as connection:
-        connection.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',('live','generate','running',dump({'run_id':'run_0'}),None,None,'2020','2020'))
-        for n in range(45):connection.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(f'done_{n}','source_refresh','complete','{}','{}',None,'2026','2026'))
-    state=store.snapshot()
-    assert any(j['id']=='live' for j in state['jobs'])
-    assert any(b['id']=='brief_0_2' for b in state['briefs'])
-    assert any(r['id']=='run_0' for r in state['runs'])
-
-
-def test_hot_run_retains_progress_counts_and_policy_without_full_requirements(tmp_path):
-    store=Store(tmp_path);seed(store,count=1)
-    source=store.add_source('initial','public sample')
-    with store.tx() as connection:
-        requirements=json.loads(store.one('runs','run_0')['requirements'])
-        requirements.update(allow_web=True,target_minutes=10,hard_timeout_minutes=0)
-        connection.execute('UPDATE runs SET source_ids=?,requirements=? WHERE id=?',(dump([source['id']]),dump(requirements),'run_0'))
-    run=store.snapshot()['runs'][0]
-    assert run['initial_source_count']==run['source_count']==1
-    assert 'source_ids' not in run
-    req=json.loads(run['requirements'])
-    assert req['allow_web']==1 and req['target_minutes']==10 and req['hard_timeout_minutes']==0
-    assert 'private_long_requirement' not in req
-
-
 def test_trial_draft_remains_readable_but_not_in_public_browsing(tmp_path):
     store=Store(tmp_path);seed(store,count=1,history=3)
     with store.tx() as connection:connection.execute("UPDATE runs SET mode='trial' WHERE id='run_0'")

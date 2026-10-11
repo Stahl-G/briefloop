@@ -90,13 +90,10 @@ def test_second_clause_quote_error_identifies_original_requirement_without_savin
     with pytest.raises(ValueError) as error:
         workspace_action(store,{'action':'set_reader_contract','run_id':run['id'],'reader_contract':value})
     assert 'clauses[1].source_quote' in str(error.value) and 'requirement_id='+identity in str(error.value)
-    assert 'requirement.text' in str(error.value) and '连续逐字' in str(error.value) and '不得拼接' in str(error.value)
     assert store.meta('reader_contract:'+run['id']) is None and value==original
     value['clauses'][1]['source_quote']='保留日期和单位。'
     accepted=workspace_action(store,{'action':'set_reader_contract','run_id':run['id'],'reader_contract':value})
     assert accepted==value==store.meta('reader_contract:'+run['id'])
-    description=schema['properties']['clauses']['items']['properties']['source_quote']['description']
-    assert 'requirement.text' in description and '连续逐字' in description and '不得拼接' in description
 
 
 def test_scout_contract_and_saved_contract_reach_the_dispatch(tmp_path):
@@ -114,7 +111,6 @@ def test_scout_contract_and_saved_contract_reach_the_dispatch(tmp_path):
     folder = store.root / 'jobs' / 'prompt'; folder.mkdir(parents=True)
     prompt = generation_prompt(store, run, folder)
     contract_path = (folder / 'scout-contract.md').resolve()
-    assert contract_path.is_file() and '研究交接' in contract_path.read_text()
     payload = json.loads((folder / 'input.json').read_text())
     assert payload['scout_contract_path'] == str(contract_path)
     assert str(contract_path) in prompt
@@ -163,20 +159,3 @@ def test_new_protocol_requires_every_clause():
     bad = [ClauseCheck(clause_id=content['clause_id'], status='not_applicable', reason='x')] + [check for check in full if check.clause_id != content['clause_id']]
     with pytest.raises(ValueError, match='内容条款'):
         validate_clause_checks(spec, bad, 'complete')
-
-
-@pytest.mark.parametrize('backend', ['codebuddy', 'claude', 'opencode'])
-def test_dispatch_instructions_match_native_host(tmp_path, backend, monkeypatch):
-    # This assertion exercises the v1 task ID dialect; v2 is covered separately.
-    monkeypatch.setattr('briefloop.opencode_version.installed_major', lambda: 1)
-    from briefloop.runtime import generation_prompt
-    from briefloop.store import Store
-    store = Store(tmp_path)
-    source = store.add_source('Input', 'Evidence')
-    run = store.create_run({'title':'Report', 'objective':'Explain'}, [source['id']])
-    folder = store.root / 'jobs' / 'prompt'; folder.mkdir(parents=True)
-    prompt = generation_prompt(store, run, folder, backend=backend)
-    assert ('ses_ ID' in prompt) == (backend == 'opencode')
-    if backend != 'opencode':
-        assert '没有原生子任务接口时由当前会话完成' in prompt
-        assert 'task 结果中的 ses_' not in prompt

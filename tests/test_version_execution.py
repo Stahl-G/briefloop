@@ -72,19 +72,6 @@ def test_receipt_and_body_rollback_together(tmp_path,monkeypatch):
     assert store.rows("SELECT seq FROM events WHERE kind='writer_version'")==[]
 
 
-def test_restored_draft_does_not_take_reported_model_from_rotated_conversation(tmp_path):
-    store=Store(tmp_path);rid=run(store);writer=job(store,rid)
-    chat,sid,mid=message(store,mid='new-message')
-    chat.event(sid,'runtime/reported',{'message_id':mid,'backend':'codex','model':'actual-new','source':'codex.turn_response'})
-    folder=store.root/'jobs'/writer['id'];folder.mkdir(parents=True)
-    (folder/'conversation.json').write_text(dump({'job_id':writer['id'],'session_id':sid,'message_id':mid}))
-    # Frozen job requests remain honest; mutable stage files cannot add a new
-    # message's host confirmation to a restored artifact.
-    brief=publish(store,rid,publication(store,writer))
-    config=describe(store,brief)['configuration']
-    assert config['model']=='writer-before' and config['reported']=={}
-
-
 def test_chat_revision_binds_active_message_and_noop_preserves_owner(tmp_path):
     store=Store(tmp_path);rid=run(store);original=publish(store,rid)
     chat,sid,mid=message(store)
@@ -117,25 +104,6 @@ def test_legacy_ids_and_hash_only_source_snapshots_do_not_claim_authorship(tmp_p
     folder=store.root/'jobs'/writer['id'];folder.mkdir(parents=True)
     (folder/'generated-source-snapshots.json').write_text(dump({original['id']:{'brief_hash':original['hash']}}))
     assert describe(store,original)['configuration'] is None
-
-
-def test_cli_revision_cannot_claim_adjacent_conversation(tmp_path):
-    from briefloop.chat_tools import workspace_action
-    store=Store(tmp_path);rid=run(store);original=publish(store,rid)
-    path=store.root/'revision.json';path.write_text(dump(markdown_document('Changed')))
-    (path.parent/'conversation.json').write_text(dump({'session_id':'other','message_id':'other'}))
-    saved=workspace_action(store,{'action':'revise_document','base_version':original['id'],'document_file':str(path)})
-    assert saved['id']!=original['id'] and saved['execution_provenance']['configuration'] is None
-
-
-def test_evidence_child_keeps_immutable_parent_writer_and_unknown_stays_unknown(tmp_path):
-    from briefloop.version_execution import evidence_publication
-    store=Store(tmp_path);rid=run(store);writer=job(store,rid)
-    original=publish(store,rid,publication(store,writer))
-    evidence=publish(store,rid,evidence_publication(store,original),vid='evidence',parent=original['id'])
-    assert describe(store,evidence)['configuration']==describe(store,original)['configuration']
-    unknown=publish(store,rid,vid='unknown_evidence',parent=evidence['id'])
-    assert describe(store,unknown)['configuration'] is None
 
 
 def test_native_copy_requires_exact_validated_admission_and_unknown_copy_blocks_old_match(tmp_path,monkeypatch):

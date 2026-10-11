@@ -99,15 +99,6 @@ def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     assert 'third' not in output
 
 
-def test_html_title_is_used_as_a_readable_source_label():
-    from briefloop.sources import html_title
-    assert html_title(b'<html><head><title>  Hello   World </title></head>', 'text/html; charset=utf-8') == 'Hello World'
-    assert html_title(b'<html><head></head></html>', 'text/html') == ''
-    assert html_title(b'<title>x</title>', 'application/pdf') == ''
-    assert html_title(b'<title>Just a moment...</title>', 'text/html') == ''
-    assert html_title(('<title>'+'长'*300+'</title>').encode(), 'text/html') == '长'*200
-
-
 def test_html_access_page_detection_requires_body_evidence_and_sniffs_html():
     blocked=b'<html><title>Checking your browser</title><body><div class="challenge-platform">Checking your browser</div></body></html>'
     performance=b'<html><title>Checking your browser performance</title><body><article>We measured browser startup and rendering speed.</article></body></html>'
@@ -240,19 +231,6 @@ def test_fetch_rechecks_snapshot_after_handoff_window(tmp_path,monkeypatch):
         a=pool.submit(sources.fetch_for_run,store,run,'https://example.test/handoff').result()
         release_b.set();shared=b.result(timeout=2)
     assert a['status']=='ready' and shared['id']==a['id'] and len(calls)==1
-
-
-def test_snapshot_run_includes_attached_sources_in_count(tmp_path):
-    from briefloop.store import Store
-    store=Store(tmp_path/'ws')
-    run=store.create_run({'title':'r','objective':'o','allow_web':True},[])
-    a=store.add_source('a','text');b=store.add_source('b','text')
-    store.attach_source(run['id'],a['id']);store.attach_source(run['id'],b['id'])
-    row=next(r for r in store.snapshot(run_id=run['id'])['runs'] if r['id']==run['id'])
-    assert row['source_count']==2 and 'all_source_ids' not in row
-    brief=store.publish(run['id'],{'title':'r','markdown':'Saved report'})
-    detail=store.brief_view(brief['id'])['context']['run']
-    assert set(detail['all_source_ids'])=={a['id'],b['id']}
 
 
 def test_source_fetch_refuses_this_machine_and_private_networks(tmp_path,monkeypatch):

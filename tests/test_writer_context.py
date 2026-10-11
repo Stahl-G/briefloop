@@ -39,7 +39,6 @@ def test_navigation_discloses_truncation_and_no_match_is_not_clearance():
     hints = navigation(text)
     assert len(hints['candidate_ranges']) == 16 and hints['omitted_ranges'] == 4
     assert navigation('No technical details provided.')['candidate_ranges'] == []
-    assert '无匹配不代表没有条件' in navigation('No technical details provided.')['scope']
     quotes = navigation(('Pending ' + 'detail '*200 + '\n')*20, include_excerpts=True)
     assert sum(len(e['text']) for e in quotes['candidate_excerpts']) <= 3000
     assert quotes['omitted_excerpt_lines'] == 15

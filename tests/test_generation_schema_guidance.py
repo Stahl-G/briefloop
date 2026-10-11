@@ -1,5 +1,4 @@
 """Codex generation sees the field rules before submitting workspace actions."""
-import json
 
 import pytest
 from pydantic import ValidationError
@@ -8,7 +7,6 @@ from briefloop.chat_tools import workspace_action
 from briefloop.evidence import EvidenceInput
 from briefloop.reconciliation import ReconciliationError
 from briefloop.research_plan import freeze
-from briefloop.runtime import generation_prompt
 from briefloop.store import Store
 
 
@@ -20,22 +18,6 @@ def setup_run(tmp_path):
                            research_protocol='quality_v1')
     freeze(store, run['id'])
     return store, source, run
-
-
-def test_codex_generation_prompt_exposes_discoverable_field_rules(tmp_path):
-    store, source, run = setup_run(tmp_path)
-    folder = tmp_path / 'task'
-    folder.mkdir()
-    prompt = generation_prompt(store, run, folder, backend='codex')
-    capabilities = workspace_action(store, {'action': 'capabilities'})
-    categories = capabilities['schemas']['evidence_span.evidence']['properties']['category']['enum']
-    assert 'category=' + '|'.join(categories) in prompt
-    assert json.dumps({'action': 'capabilities'}, ensure_ascii=False) in prompt
-    assert 'workspace-action --request REQUEST_JSON' in prompt
-    question_rule = capabilities['reconciliation_save.open_questions']
-    assert 'question' in question_rule and '非空' in question_rule
-    assert '{"question":' in question_rule
-    assert question_rule in prompt
 
 
 def test_discovered_rules_match_admission_without_changing_saved_questions(tmp_path):

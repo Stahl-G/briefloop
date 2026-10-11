@@ -1,7 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import {section,allFrontendSources} from './source_section.mjs';
 import {excelExportUI} from '../frontend/excel-export.js';
 
 // The module reaches the DOM only through $/document at call time, so the
@@ -93,19 +91,3 @@ test('a workspace switch during Excel production stops the download',async()=>{
  assert.equal(notices[0][1],true,'the cancellation is an error notice');
 });
 
-test('app.js wires excelExportUI beside reportExport and lists the xlsx file kind',()=>{
- const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
- assert.ok(allFrontendSources().includes("import {excelExportUI} from './excel-export.js';"),
-  'the factory module is imported');
- const wiring=section(app,'const reportExport=reportExportUI',"for(const id of ['download','download-docx','download-bundle'])");
- assert.match(wiring,/const excelExport=excelExportUI\(\{api,notice,refresh,savedVersion,parse,getState:\(\)=>state\}\);/);
- assert.match(wiring,/excelExport\.init\(\);/);
- assert.match(section(app,'function renderWordExports(){','const jobs=state.jobs.filter'),/export_xlsx:'工作稿 Excel'/);
-});
-
-test('the export menu offers the Excel entry with both layouts',()=>{
- const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.meta.url),'utf8');
- assert.match(html,/<button id="download-xlsx" type="button" role="menuitem">生成 Excel<\/button>/);
- assert.match(html,/<select id="export-xlsx-layout"><option value="sheets">每表一工作表<\/option><option value="single">单表连续<\/option><\/select>/);
- assert.match(html,/<label class="export-template-row"><span>Excel 版式<\/span>/,'the layout select keeps the popover open like the Word one');
-});

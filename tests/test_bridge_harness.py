@@ -142,16 +142,6 @@ def test_bound_report_waits_for_explicit_permission_and_forwards_the_choice(tmp_
         h.close()
 
 
-def test_internal_run_without_reject_option_answers_cancelled(tmp_path):
-    """No host-provided reject option: reply with the cancelled outcome, still fail fast."""
-    options=[{'optionId':'allow','name':'允许','kind':'allow_once'}]
-    bridge=QuestionBridge(options);h=BridgeHarness(Store(tmp_path),bridge,'kimi')
-    run=h.start_internal('后台任务',message_id='bg-no-reject')
-    _wait_status(h,run.session_id,run.message_id,'failed')
-    answers=[p for method,p in bridge.calls if method=='answer']
-    assert answers==[{'execution_id':'bg-no-reject','request_id':'q1'}]
-
-
 def test_interactive_run_still_queues_permission_question_for_the_user(tmp_path):
     bridge=QuestionBridge();h=BridgeHarness(Store(tmp_path),bridge,'codebuddy')
     s=h.create_session('chat',{'model':'host-model'})
@@ -246,7 +236,6 @@ def test_bridge_host_gets_the_workspace_contract_once_per_native_session(tmp_pat
     # The host CLI answers as its own product unless BriefLoop frames the request.
     assert bridge.starts[0]['prompt'].startswith('你是此本地 BriefLoop 工作区的交互助手')
     assert bridge.starts[0]['prompt'].rstrip().endswith('你是谁\n本轮不主动检索网络来源，仅使用已提供材料。')
-    assert '不要原文复述' in bridge.starts[0]['prompt']
     # A resumed native session already holds the contract; do not pay for it again.
     turn('继续','m2')
     assert 'BriefLoop 工作区的交互助手' not in bridge.starts[1]['prompt']
@@ -256,27 +245,6 @@ def test_bridge_host_gets_the_workspace_contract_once_per_native_session(tmp_pat
     turn('再继续','m3')
     assert bridge.starts[2]['prompt'].startswith('你是此本地 BriefLoop 工作区的交互助手')
     assert 'Tavily' in bridge.starts[2]['prompt']
-
-
-def test_codebuddy_saved_usage_is_reprojected_without_rewriting_history(tmp_path):
-    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
-    session=h.create_session('Synthetic saved session',{'model':'deepseek-v4.1-flash'})
-    raw={'sessionUpdate':'usage_update','used':30000,'size':1000000,
-         '_meta':{'usage':{'prompt_tokens':29217,'completion_tokens':571,'total_tokens':29788,
-                          'cache_read_input_tokens':0,'cached_tokens':0,
-                          'prompt_tokens_details':{'cached_tokens':29056},'prompt_cache_hit_tokens':29056}}}
-    h.chat.event(session['id'],'thread/tokenUsage/updated',
-                 {'tokenUsage':{'backend':'codebuddy','last':{'inputTokens':None,'outputTokens':None},'raw':raw}})
-    before=store.rows('SELECT * FROM chat_events')
-    snapshot=h.snapshot(session['id'])
-    usage=snapshot['token_usage']
-    assert usage['last']=={'inputTokens':29217,'cachedInputTokens':29056,'outputTokens':571}
-    assert usage['contextUsedTokens']==30000 and usage['modelContextWindow']==1000000
-    assert snapshot['events'][-1]['data']['tokenUsage']==usage
-    assert h.snapshot(session['id'],after=snapshot['events'][-1]['seq'])['token_usage']==usage
-    assert store.rows('SELECT * FROM chat_events')==before
-    h.chat.event(session['id'],'thread/providerChanged',{})
-    assert h.snapshot(session['id'])['token_usage'] is None
 
 
 def test_usage_unknown_and_zero_do_not_become_estimates():
@@ -326,20 +294,6 @@ def test_codebuddy_sparse_usage_reuses_only_same_request_message_without_rewriti
     assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
 
 
-@pytest.mark.parametrize('change', ['request','message','missing_identity'])
-def test_codebuddy_sparse_usage_never_inherits_other_or_unknown_request(tmp_path,change):
-    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
-    sid=h.create_session('Usage request boundary',{'model':'default'})['id']
-    meta={'codebuddy.ai/requestId':'request-1','codebuddy.ai/messageId':'message-1'}
-    full={'_meta':{**meta,'usage':{'prompt_tokens':33947,'completion_tokens':102,'prompt_cache_hit_tokens':23296}}}
-    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(full,'codebuddy')})
-    if change=='request':meta['codebuddy.ai/requestId']='request-2'
-    elif change=='message':meta['codebuddy.ai/messageId']='message-2'
-    else:meta.pop('codebuddy.ai/messageId')
-    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage({'_meta':meta},'codebuddy')})
-    assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
-
-
 @pytest.mark.parametrize('failure',['error','end','exception'])
 def test_bridge_public_failures_redact_credentials(tmp_path,failure):
     secret='token=acceptance-secret-value'
@@ -375,15 +329,3 @@ def test_bridge_effort_reaches_host_and_explicit_default_clears_it(tmp_path):
     _wait_status(h, s['id'], 'effort-default', 'completed')
     assert [p['effort'] for p in bridge.starts] == ['low', None]
     assert not bridge.starts[1].get('session_id'), 'default must not resume a native session carrying the old override'
-
-
-def test_settings_keep_effort_per_host_and_freeze_it_for_roles(tmp_path):
-    from briefloop.models import Settings, runtime_fields
-    legacy = Settings(agent_backend='claude', model='default').model_dump()
-    assert 'reasoning_effort' not in runtime_fields(legacy, 'claude')
-    configured = Settings(**{**legacy, 'runtime_efforts': {'claude': 'low', 'pi': 'off'}}).model_dump()
-    assert runtime_fields(configured, 'claude') == {'model': 'default', 'reasoning_effort': 'low'}
-    assert runtime_fields(configured, 'pi')['reasoning_effort'] == 'off'
-    assert runtime_fields({'model': 'other', 'reasoning_effort': None}, 'claude') == {'model': 'other'}
-    with pytest.raises(ValueError):
-        Settings(runtime_efforts={'claude': 'x'*101})

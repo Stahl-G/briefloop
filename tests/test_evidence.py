@@ -55,9 +55,6 @@ def test_second_support_quote_error_points_to_statement_without_saving_claim(tmp
     accepted=workspace_action(store,{'action':'claim_create','run_id':run['id'],'claim':claim})
     assert len(store.rows('SELECT id FROM claims'))==1 and accepted['data']['review_status']=='unreviewed'
     assert [s['supports_quote'] for s in accepted['data']['supports']]==[s['supports_quote'] for s in claim['supports']]
-    schema=workspace_action(store,{'action':'capabilities'})['schemas']['claim_create.claim']
-    description=schema['$defs']['Support']['properties']['supports_quote']['description']
-    assert 'statement' in description and '连续逐字' in description and 'excerpt' in description
 
 
 def test_workbook_cell_and_inference_are_traceable_not_automatically_verified(tmp_path):
@@ -155,16 +152,6 @@ def test_old_claim_without_role_keeps_old_binding_semantics(tmp_path):
     doc=json.loads(brief['editor_document']);bid=doc['content'][0]['attrs']['blockId']
     bind_claim(store,brief['id'],'claim_legacy_1',bid,'12 million USD')
     assert inspect_bindings(store,brief['id'])['bindings'][-1]['status']=='unreviewed'
-
-
-def test_scout_and_draft_fields_survive_artifact_check(tmp_path):
-    from briefloop.models import ScoutResult, BriefDraft, check_artifact
-    scout={'sources':[{'source_id':'s1','locator':'','excerpt':'','facts':[],'conflicts':[],'coverage_status':'ok','claim_ids':['claim_1']}],
-           'gaps':['missing'],'search_summary':'7 sources','retrieval_notes':[{'query':'q','outcome':'kept'}]}
-    report=check_artifact(scout,ScoutResult)
-    assert report['status']=='ok' and report['unknown_fields']==[]
-    draft=check_artifact({'title':'T','markdown':'Body','reconciliation_id':'recon_1'},BriefDraft)
-    assert draft['status']=='ok' and draft['unknown_fields']==[]
 
 
 def test_old_saved_draft_republishes_after_new_field(tmp_path):

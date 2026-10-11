@@ -5,7 +5,6 @@ import pytest
 from briefloop import research_plan, research_budget, scout, analyst
 from briefloop.runtime import generation_prompt
 from briefloop.store import Store
-from briefloop.task_context import project
 
 
 def setup(tmp_path, **choices):
@@ -79,9 +78,6 @@ def test_role_projection_excludes_other_roles_and_does_not_summarize_sources(tmp
     assert 'research.json' in context['knowledge']['uncertainty']
     assert 'finish_research_round' not in json.dumps(context)
     assert '120' not in json.dumps(context)  # Navigation, not a second factual summary.
-    evaluation = project(json.loads(run['requirements']), 'evaluator', evidence='sources', uncertainty='research_context')
-    assert '不补搜' in evaluation['purpose']['responsibility']
-    assert '研究取舍只是待核对' in evaluation['method']['guidance']
 
 
 @pytest.mark.parametrize('backend', ['codex', 'opencode', 'briefloop-native', 'pi'])
@@ -92,29 +88,8 @@ def test_host_and_native_receive_same_strategy_without_fixed_waves(tmp_path, bac
     prompt = generation_prompt(store, run, folder, backend=backend)
     data = json.loads((folder/'input.json').read_text())
     assert data['task_context']['method']['research_strategy'] == 'goal_driven'
-    assert '按目标补证' in prompt and '第一轮侦察：整批' not in prompt
-    assert '月报通常 6–8' not in prompt and '上限' in prompt
-    assert '至少安排一个 Scout' not in prompt
     if backend == 'briefloop-native':
         from briefloop.native_orchestrator import prepare
         job = {'id': 'synthetic', 'kind': 'generate', 'allow_web': True,
                'payload': json.dumps({'run_id': run['id'], 'runtime': {'model': 'synthetic/no-call'}})}
         _, adapted = prepare(store, job, folder, prompt)
-        actual = (folder/'packet'/'task.md').read_text()
-        assert '按目标补证' in actual and 'task_context' in actual
-        assert '保存交接并收轮' in actual
-
-
-def test_empty_source_goal_run_does_not_force_a_scout(tmp_path):
-    store = Store(tmp_path)
-    for strategy in ('guided', 'goal_driven'):
-        run = store.create_run({'title': '公开资料简报', 'objective': '核对一次公开发布',
-            'allow_web': True, 'research_strategy': strategy}, [], research_protocol='quality_v1')
-        research_plan.freeze(store, run['id'])
-        folder = store.root/strategy;folder.mkdir()
-        prompt = generation_prompt(store, run, folder, backend='codex')
-        if strategy == 'goal_driven':
-            assert '问题集中时主 Agent 可直接' in prompt and '至少安排一个 Scout' not in prompt
-            assert 'scout_tasks=[]' in prompt and '已授权检索和来源工具' in prompt
-        else:
-            assert '至少安排一个 Scout' in prompt

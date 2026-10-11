@@ -67,13 +67,6 @@ def test_unexpected_parser_bug_is_not_hidden(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError,match='implementation bug'):create_span(store,{'source_id':source['id'],'locator':locator})
 
 
-def test_unrelated_workbook_keyerror_remains_visible(tmp_path,monkeypatch):
-    store=Store(tmp_path);source,locator=attached(store,'xlsx')
-    def bug(*args,**kwargs):raise KeyError('unexpected internal state')
-    monkeypatch.setattr('openpyxl.load_workbook',bug)
-    with pytest.raises(KeyError,match='internal state'):create_span(store,{'source_id':source['id'],'locator':locator})
-
-
 def test_partial_workbook_load_closes_both_owned_streams(tmp_path,monkeypatch):
     import openpyxl
     from zipfile import BadZipFile

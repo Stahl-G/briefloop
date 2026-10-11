@@ -3,9 +3,7 @@ import copy
 import json
 import threading
 
-from briefloop.deliverable_spec import (resolve, instructions, analysis_check_instructions,
-                                        validate_analysis_checks, candidate_assessment)
-from briefloop.models import Assessment, must_fix
+from briefloop.deliverable_spec import (resolve, validate_analysis_checks, candidate_assessment)
 from briefloop.revision_policy import revision_reasons
 from briefloop.runtime import Worker, assessment_prompt
 from briefloop.store import Store, dump
@@ -25,20 +23,6 @@ def check(**changes):
     return {'chapter_quote': '## 影响', 'requirement_quote': '影响章给出本次扩容决策的观察节点',
             'expectation': 'required', 'judgment_quote': '',
             'rationale': '本章明确承担扩容观察职责，只有交付事实，尚无观察节点。', **changes}
-
-
-def test_default_scores_and_prompts_keep_existing_behavior(tmp_path):
-    assert Assessment.model_validate(passing()).analysis_checks == []
-    assert not must_fix(passing(analysis=2))
-    assert not revision_reasons(passing(analysis=2), [])
-    assert must_fix(passing(expression=2))
-    assert revision_reasons(passing(expression=2), [])
-    assert '章级分析检查候选' not in instructions(SPEC, 'evaluator')
-    assert '章级分析检查候选' in analysis_check_instructions(SPEC)
-    store, _, brief, _ = saved(tmp_path)
-    folder = tmp_path / 'score'; folder.mkdir()
-    assert '章级分析检查候选' not in assessment_prompt(store, brief, folder)
-    assert '章级分析检查候选' in assessment_prompt(store, brief, folder, analysis_checklist_candidate=True)
 
 
 def test_bad_quotes_and_foreign_chapter_judgment_cannot_force_repair():

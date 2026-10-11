@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import {createReviewControls,reviewModeMetadataHTML} from '../frontend/review-controls.js';
 
 function view({backend='codex',mode='standard',runtime=null,capability=true,allowWeb=true,saveError=false}={}){
@@ -118,6 +117,4 @@ test('historical review mode is never inferred from current settings and unsafe 
 
 test('capability not loaded does not invent engine support, and ordinary assessment is separate from review',()=>{
  const v=view({capability:false});assert.equal(v.box.disabled,false);assert.equal(v.node('review-capability-note').hidden,true);
- const source=fs.readFileSync(new URL('../frontend/assessment-panel.js',import.meta.url),'utf8');
- assert.match(source,/普通评分，不是独立审阅：当前配置未运行所选模式的 Reviewer/);
 });

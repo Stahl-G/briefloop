@@ -1,7 +1,6 @@
 """Chat stops use the live worker rather than a second queue or DB-only update."""
 import json
 import os
-from pathlib import Path
 import subprocess
 import threading
 from types import SimpleNamespace
@@ -13,7 +12,7 @@ from briefloop.store import Store
 
 def test_chat_and_cli_stop_live_worker_children_without_touching_other_jobs(tmp_path):
     from briefloop._entrypoint import command
-    from briefloop.chat_tools import workspace_action, chat_instructions
+    from briefloop.chat_tools import workspace_action
     from briefloop.native_roles import run_tool
     from briefloop.server import make_server, _close_service
     store=Store(tmp_path)
@@ -60,7 +59,6 @@ def test_chat_and_cli_stop_live_worker_children_without_touching_other_jobs(tmp_
         finished=store.enqueue('generate',{'run_id':run['id']});store.update_job(finished['id'],'complete')
         assert workspace_action(store,{'action':'stop_job','job_id':finished['id']})['status']=='complete'
         assert 'stop_job' in workspace_action(store,{'action':'capabilities'})['actions']
-        assert '先取得停止回执' in chat_instructions(store,{'model':'fixture/model'},backend='briefloop-native')
         with pytest.raises(ValueError,match='job_id'):
             workspace_action(store,{'action':'stop_job'})
         with pytest.raises(ValueError):

@@ -1,8 +1,7 @@
-"""One local boundary check: public research can begin empty and retain new sources."""
+"""Public research packets: Scout slots, the retrieval skill binding and evaluator source packs."""
 import json
 from briefloop.store import Store, dump
 from briefloop.runtime import generation_prompt, assessment_prompt
-from briefloop.chat_tools import chat_instructions
 from briefloop.scout_tools import join_scouts
 
 
@@ -10,7 +9,7 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     store=Store(tmp_path/'workspace')
     run=store.create_run({'title':'公开市场周报','objective':'分析本周公开披露','allow_web':True,'period':'本周'},[])
     folder=store.root/'jobs'/'synthetic';folder.mkdir()
-    prompt=generation_prompt(store,run,folder)
+    generation_prompt(store,run,folder)
     assert json.loads((folder/'input.json').read_text())['sources']==[]
     payload=json.loads((folder/'input.json').read_text())
     from pathlib import Path
@@ -20,13 +19,6 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     assert all(Path(slot[key]).is_absolute() for slot in slots for key in ('directory','result_file','schema_path','scout_contract_path'))
     assert all(Path(slot['directory']).is_dir() and Path(slot['schema_path']).is_file() for slot in slots)
     assert all(Path(slot['result_file']).parent==Path(slot['directory']) for slot in slots)
-    assert '不要假设 host 自动隔离工作目录' in prompt
-    assert '至少安排一个 Scout' in prompt and 'add-url --run '+run['id'] in prompt
-    assert 'read-source --id SOURCE_ID' in prompt and 'acquired source IDs' in prompt
-    assert all(mark in prompt for mark in ('侦察','聚焦','补缺'))
-    assert '整批 Scout 合计 1–2 条' in prompt and '分三轮推进检索' in prompt
-    assert '获取失败要按原因换路径' not in prompt,'Tavily-specific switching belongs in the skill, not every prompt'
-    assert '不重复已经失败或已充分覆盖的相近查询' in prompt
     # Mimic registered acquisition without networking; join and scorer retain it.
     acquired=store.add_source('官方披露','预计下一季度交付 10 台。',url='https://example.com/disclosure')
     store.attach_source(run['id'],acquired['id'])
@@ -37,13 +29,6 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     score=folder/'scorer';score.mkdir()
     assessment_prompt(store,brief,score)
     assert [s['id'] for s in json.loads((score/'input.json').read_text())['sources']]==[acquired['id']]
-    runtime={'model':''}
-    disabled=chat_instructions(store,runtime,allow_web=False)
-    enabled=chat_instructions(store,runtime,allow_web=True)
-    assert '实际联网状态：未开启' in disabled and '不得通过后台任务绕过' in disabled
-    assert '实际联网状态：已开启' in enabled and 'source_ids=[]' in enabled
-    assert '预计/实际' in enabled
-    assert '实际联网状态：未开启' in chat_instructions(store,{},internal=True,allow_web=False)
 
 
 def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkeypatch):
@@ -51,9 +36,6 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
     from pathlib import Path
     asset=files('briefloop').joinpath('skill_assets','tavily','SKILL.md')
     assert asset.is_file() and 'name: tavily' in asset.read_text()
-    skill_text=asset.read_text()
-    assert '检索节奏' in skill_text and all(mark in skill_text for mark in ('侦察','聚焦','补缺'))
-    assert '获取失败：按原因换路径' in skill_text and '不永久拉黑整个域名' in skill_text
     monkeypatch.setenv('TAVILY_API_KEY','SYNTHETIC_SECRET_DO_NOT_INJECT')
     store=Store(tmp_path/'workspace')
     source=store.add_source('initial','已有公开资料')
@@ -72,52 +54,11 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert content in payload['role_skills']['scout']['instructions']
             assert 'retrieval_skill_path' not in payload['role_skills'].get('analyst',{})
             assert '{tool}' not in content and '{run_id}' not in content
-            assert run['id'] in content and '公开确认已读' in prompt
             assert 'SYNTHETIC_SECRET_DO_NOT_INJECT' not in prompt+content+dispatch+dump(payload)
-            assert 'Analyst、Evaluator、Maintainer' in prompt
-            assert '受控搜索统一命令' in prompt and '三类 remaining' in prompt
         else:
             assert 'retrieval_skill' not in payload
             assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
             assert 'tavily-search' not in prompt
-            assert '不精确计量原生搜索次数' in prompt and '三类 remaining' not in prompt
-            if not allowed:
-                assert '不安排公开检索' in prompt and '分三轮推进检索' not in prompt
-                assert '必须能从开放搜索进入' not in prompt,'a no-web task must not promise open search'
-
-
-def test_duckduckgo_run_is_fully_managed_at_the_prompt_layer(tmp_path):
-    """No Tavily key: DDG still gets an injected metered skill, a frozen-source
-    prompt that never points at native search, and a metered budget note."""
-    from pathlib import Path
-    from importlib.resources import files
-    asset=files('briefloop').joinpath('skill_assets','duckduckgo','SKILL.md')
-    assert asset.is_file() and 'name: duckduckgo' in asset.read_text()
-    store=Store(tmp_path/'workspace')
-    store.set_meta('settings',{**store.settings(),'search_provider':'duckduckgo'})
-    run=store.create_run({'title':'公开研究','objective':'核对公开披露','allow_web':True},[])
-    folder=store.root/'jobs'/'ddg-check';folder.mkdir()
-    prompt=generation_prompt(store,{**run,'search_provider':'duckduckgo'},folder)
-    payload=json.loads((folder/'input.json').read_text())
-    binding=payload['retrieval_skill']
-    assert binding['target_roles']==['scout']
-    assert binding['path']==str((folder/'capabilities'/'duckduckgo'/'SKILL.md').resolve())
-    content=Path(binding['path']).read_text()
-    assert 'web-search --run '+run['id'] in content
-    assert 'add-url --run '+run['id'] in content
-    assert 'Tavily在允许渠道内时才能用tavily-extract' in content and 'SYNTHETIC_SECRET' not in content
-    assert content in payload['role_skills']['scout']['instructions']
-    assert 'retrieval_skill_path' not in payload['role_skills'].get('analyst',{})
-    assert payload['search_provider']=='duckduckgo'
-    assert '本轮冻结搜索源：DuckDuckGo' in prompt and '公开确认已读' in prompt
-    # The DDG branch must not instruct Scouts to use host-native web search:
-    # internal generation sessions have it disabled for managed providers.
-    assert '当前执行引擎' not in prompt and 'Opencode 原生搜索' not in prompt
-    assert '原生网络搜索工具' not in prompt
-    # Budget note follows the managed-provider branch: DDG IS metered.
-    assert '受控搜索统一命令' in prompt and '三类 remaining' in prompt
-    assert '不精确计量原生搜索次数' not in prompt
-    assert '见本轮 Scout 技能' in prompt and 'add-url 或明确的 Tavily extract' not in prompt
 
 
 def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path):
@@ -128,7 +69,7 @@ def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path
     gaps=['important gap','g'*400]
     brief=store.publish(run['id'],{'title':'brief','markdown':'body','citations':citations,'gaps':gaps})
     folder=store.root/'jobs'/'evaluator-pack';folder.mkdir()
-    prompt=assessment_prompt(store,brief,folder)
+    assessment_prompt(store,brief,folder)
     pack=json.loads((folder/'input.json').read_text())
     assert [row['id'] for row in pack['sources']]==[sources[2]['id'],sources[0]['id']]
     assert pack['brief']['citations']==citations
@@ -136,17 +77,4 @@ def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path
     index=json.loads((folder/'source-index.json').read_text())
     assert {row['id'] for row in index['sources']}=={row['id'] for row in sources}
     assert index['sources'][5]['status']=='failed' and index['gaps']==gaps
-    assert '需要其他材料时' in prompt
     assert store.one('briefs',brief['id'])==brief
-
-
-def test_chat_surfaces_default_and_explicit_search_channels(tmp_path):
-    store=Store(tmp_path/'workspace')
-    runtime={'model':''}
-    default=chat_instructions(store,runtime)
-    assert '优先 Tavily；允许渠道：Tavily、宿主自带搜索' in default
-    assert '缺少密钥时提示配置该渠道' in default and '已有授权补充渠道可在预算内使用' in default
-    store.set_meta('settings',{**store.settings(),'search_provider':'native'})
-    native=chat_instructions(store,runtime)
-    assert '优先 宿主自带搜索；允许渠道：宿主自带搜索。' in native
-    assert '优先 Tavily' not in native

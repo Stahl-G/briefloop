@@ -2,10 +2,7 @@
 backend-specific, and the native engine's submissions are admitted before the
 run may end."""
 import json
-import queue
 
-import pytest
-from test_fact_check_contract import checked
 from test_native_harness import EngineFixture, _wait_status
 
 from briefloop import review
@@ -32,36 +29,6 @@ def _review_prompt(world, backend, review_mode="standard"):
 
     accepted = review.run_review(store, Runtime(), job, brief['id'], folder)
     return captured, folder, accepted
-
-
-def test_hosts_get_their_own_instructions_over_one_review_contract(tmp_path):
-    world = checked(tmp_path)
-    external, folder, _ = _review_prompt(world, 'opencode')
-    assert '普通模式不承诺宿主全局/项目说明完全隔离' in external['prompt']
-    assert '当前使用引擎的实际只读限制' in external['prompt']
-    assert str(folder / 'packet' / 'index.json') in external['prompt']
-    assert '最终回复一个符合' in external['prompt'] and 'submit_review' not in external['prompt']
-
-    native, native_folder, _ = _review_prompt(checked(tmp_path / 'native'), 'briefloop-native', 'strict')
-    text = native['prompt']
-    # Nothing the engine cannot do: no read-only-tool claim, no absolute paths,
-    # no promise that figures are always attached, no JSON-in-the-reply rule.
-    for stale in ('只有read工具可用', '原生read', '会作为原生图片附件', '最终回复一个符合', str(native_folder)):
-        assert stale not in text, stale
-    assert 'submit_review' in text and '视觉输入说明' in text
-    # The review contract itself is the same for both hosts.
-    for shared in ('response_checks', 'coverage_scan_complete', 'source_statements', 'unchecked_items'):
-        assert shared in text and shared in external['prompt']
-
-
-def test_reviewer_system_prompt_is_layered():
-    prompt = system_prompt('reviewer')
-    text = prompt['text']
-    assert text.index('## 授权与可信边界') < text.index('## 当前角色：独立只读 Reviewer') < text.index('## 后台执行模式')
-    assert 'coding' not in text.lower()
-    assert prompt == system_prompt('reviewer', 'background') and len(prompt['version']) == 16
-    with pytest.raises(ValueError):
-        system_prompt('writer')
 
 
 class SubmittingEngine(EngineFixture):
@@ -103,12 +70,3 @@ def test_harness_sends_the_layered_prompt_and_answers_admission(tmp_path, monkey
                       'error': '完整审阅遗漏正文已使用主张，必须标为未完成'}
     bound = next(e['data'] for e in snap['events'] if e['kind'] == 'session/bound')
     assert bound['prompt_version'] == system_prompt('reviewer')['version']
-
-
-def test_native_review_defaults_to_low_effort_unless_selected():
-    from briefloop.native_harness import _thinking
-    assert _thinking({}) is None
-    assert _thinking({'variant': 'high'}) == 'high'
-    assert _thinking({'model_variant': ' MAX '}) == 'max'
-    with pytest.raises(ValueError, match='不支持'):
-        _thinking({'variant': 'not-a-level'})

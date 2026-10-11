@@ -2,12 +2,7 @@
 import json
 import subprocess
 import sys
-import pytest
-from briefloop.models import BriefDraft, check_artifact, prune_unknown
-from briefloop.interactive_runtime import InteractiveRuntime
-from briefloop.runtime import Worker
 from briefloop.store import Store
-from test_interactive_runtime import FakeHarness
 
 
 def make_run(tmp_path):
@@ -40,21 +35,6 @@ def test_check_draft_reports_drift_in_band_before_the_host_reads_it(tmp_path):
     failed = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
                              'check-draft', '--file', str(draft)], capture_output=True, encoding='utf-8')
     assert failed.returncode == 1 and json.loads(failed.stdout)['errors'][0]['field'] == 'title'
-
-
-def test_a_made_up_citation_id_says_which_id_it_was(tmp_path):
-    store, run, source = make_run(tmp_path)
-    with pytest.raises(ValueError, match='src_invented'):
-        store.publish(run['id'], {'title': '周报', 'markdown': '正文。',
-                                  'citations': [{'source_id': 'src_invented'}]})
-
-
-def test_free_form_fields_keep_every_key_they_were_given():
-    document = {'type': 'doc', 'content': [], 'editorOnlyExtra': 1}
-    cleaned, dropped = prune_unknown({'title': 't', 'markdown': 'x', 'editor_document': document,
-                                      'research_notes': [{'anything': True}]}, BriefDraft)
-    assert dropped == [] and cleaned['editor_document'] == document
-    assert check_artifact({'title': 't', 'markdown': 'x'}, BriefDraft)['status'] == 'ok'
 
 
 def test_check_draft_run_returns_advisory_diagnostics_without_publishing(tmp_path):

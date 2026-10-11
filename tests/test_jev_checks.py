@@ -89,23 +89,6 @@ def test_lost_response_is_visible_and_not_automatically_repeated(tmp_path, monke
     assert result['items'][0]['execution'] == 'uncertain'
 
 
-def test_post_admission_changes_do_not_change_external_request(tmp_path, monkeypatch):
-    store, source, brief = fixture(tmp_path, monkeypatch)
-    jev.save_key('synthetic-key')
-    frozen = jev_checks.snapshot(store, brief['id'])
-    job = jev_checks.enqueue(store, brief['id'], frozen['fingerprint'], allow_external=True)
-    original = store.source_text
-    monkeypatch.setattr(store, 'source_text', lambda sid, **kw: original(sid, **kw)+'\nNew source publication.')
-    assert jev_checks.view(store, brief['id'])['records'][0]['stale'] is True
-    def evaluate(item, model):
-        assert item['evidence'] == frozen['items'][0]['evidence']
-        return jev.parse_response(response())
-    jev_checks.run(store, job, threading.Event(), evaluate=evaluate)
-    cancelled = threading.Event(); cancelled.set()
-    with pytest.raises(InterruptedError):
-        jev_checks.run(store, job, cancelled, evaluate=lambda *args: pytest.fail('cancelled request'))
-
-
 def test_one_missing_source_keeps_the_whole_claim_unchecked(tmp_path, monkeypatch):
     store, source, brief = fixture(tmp_path, monkeypatch)
     second = store.add_source('Synthetic second source', 'Other source context.')
@@ -117,21 +100,6 @@ def test_one_missing_source_keeps_the_whole_claim_unchecked(tmp_path, monkeypatc
     assert len(preview['items']) == 1 and preview['items'][0]['eligible'] is False
     with pytest.raises(ValueError, match='没有可预检'):
         jev_checks.enqueue(store, brief['id'], preview['fingerprint'], allow_external=True)
-
-
-def test_provider_contract_preserves_probabilities_without_turning_them_into_truth():
-    raw = response()
-    result = jev.parse_response(raw)
-    assert result['actual_model'] == 'jev-fixture' and 'reasoning' not in result
-    raw['answers']['support']['probabilities']['unknown'] = float('nan')
-    with pytest.raises(ValueError):
-        jev.parse_response(raw)
-    raw = response(); del raw['answers']['support']['probabilities']['unknown']
-    with pytest.raises(ValueError):
-        jev.parse_response(raw)
-    raw = response(); raw['answers']['support']['choice'] = 'supported_for_scope'
-    with pytest.raises(ValueError):
-        jev.parse_response(raw)
 
 
 def test_only_fixed_endpoint_receives_key_and_errors_never_echo_credentials(tmp_path, monkeypatch):

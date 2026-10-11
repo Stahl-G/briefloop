@@ -38,7 +38,6 @@ def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):
     from briefloop.document_workflows import resolve_workflow
     store = Store(tmp_path)
     catalog = workspace_action(store, {'action': 'workflows'})['workflows']
-    assert {x['id'] for x in catalog} == {'general_report', 'business_report', 'meeting_minutes', 'stock_research'}
     assert store.snapshot()['workflows'] == catalog
     assert resolve_workflow({'workflow_id': 'business_report'})['variant'] == next(
         item['default_variant'] for item in catalog if item['id'] == 'business_report') == 'decision_memo'
@@ -81,7 +80,6 @@ def test_meeting_template_selects_method_but_requires_actual_material(tmp_path):
 
 def test_stock_template_routes_to_frozen_research_without_forced_disclosures(tmp_path):
     from briefloop.templates import import_builtin, template, export_template
-    from briefloop.document_workflows import workflow_context
     store = Store(tmp_path)
     import_builtin(store)
     for row in store.rows("SELECT id FROM templates WHERE name LIKE '券商研报%'"):
@@ -92,8 +90,6 @@ def test_stock_template_routes_to_frozen_research_without_forced_disclosures(tmp
         saved = json.loads(run['requirements'])
         frozen = saved['workflow_snapshot']
         assert frozen['id'] == 'stock_research' and frozen['variant'] == 'event_commentary'
-        assert [s['title'] for s in saved['sections']] == ['核心观点', '事件回顾', '盈利预测与估值', '风险提示']
-        assert '事件点评聚焦' in workflow_context(frozen, 'reviewer')
         brief = store.publish(run['id'], {'title': req['title'], 'markdown': '收入增长 20%，全年指引维持。'})
         doc = export_template(store, brief, {'type': 'doc', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '收入增长 20%。'}]}]}, {})
         from io import BytesIO

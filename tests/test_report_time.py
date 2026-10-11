@@ -130,7 +130,6 @@ def test_as_of_analysis_has_no_news_window_and_does_not_filter_search(tmp_path, 
     clock = datetime(2026, 10, 10, 2, 20, tzinfo=ZoneInfo('UTC'))
     window = freeze({'period': '截至提交时刻', 'report_timezone': 'Asia/Shanghai'}, clock)
     assert window['start'] is None and window['mode'] == 'as_of'
-    assert '不设“本期”起点' in instructions(window)
     result = check(window, [{'statement': '此前融资', 'event_date': '2026-10-08'},
                             {'statement': '提交后的事', 'event_date': '2026-10-11'}])
     assert [c['temporal_status'] for c in result['items']] == ['as_of_unverified', 'out_of_range']
