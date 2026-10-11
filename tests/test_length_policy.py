@@ -105,3 +105,9 @@ def test_padding_advisories_point_at_repetition_and_process_narration():
             '## 资本\n融资完成有报道，但最终四十亿美元估值没有得到公司确认。\n本次检索没有发现当日新增的融资报道和公告。\n')
     codes = {note['code'] for note in _padding_notes(text)}
     assert codes == {'repeated_statements', 'process_narration'}
+    # Reviewer-facing sentences at the share seen in real reports (about 10%) are flagged.
+    facts = ''.join(f'第{i}家公司在第{i}周发布了新的产品版本并调整了价格。' for i in range(40))
+    caveats = ''.join(f'第{i}条报道不能把计划写成已经上线的服务。' for i in range(5))
+    flagged = {note['code']: note for note in _padding_notes('## 正文\n' + facts + caveats)}
+    assert flagged['stacked_caveats']['count'] == 5
+    assert 'stacked_caveats' not in {note['code'] for note in _padding_notes('## 正文\n' + facts + caveats[:40])}
