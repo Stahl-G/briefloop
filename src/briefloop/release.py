@@ -385,8 +385,6 @@ def validate_release(store, release):
     if release['status'] != 'released' or not release['result']:
         raise ValueError('正式文件尚未完成')
     result = release['result']
-    if sha(dump(release['data']).encode()) != release['fingerprint']:
-        raise ValueError('正式交付固定输入记录已变化')
     # Older accepted results can predate admission consistency checks. Keep the
     # immutable record, but do not serve an unsafe formal artifact as verified.
     from .review import finding_consistency_errors

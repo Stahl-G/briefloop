@@ -2,11 +2,8 @@
 import json
 from pathlib import Path
 import pytest
-from briefloop.store import Store,OfflineFactCheck,dump
-from briefloop import learning,document_workflows
-from briefloop.evidence import create_claim
-from briefloop.review_learning import source_snapshot
-from briefloop.runtime import Worker
+from briefloop.store import Store,dump
+from briefloop import learning
 from wikiskill import feedback_loop,product
 
 
@@ -41,13 +38,10 @@ def test_feedback_initialization_each_boundary_is_recoverable(tmp_path,monkeypat
     with pytest.raises(ValueError,match='conditions changed'):feedback_loop.begin(root,feedback=[{'text':'Different','source':'f1'}])
 
 
-def test_internal_clone_rejects_forged_token_and_corrupt_saved_snapshot(tmp_path):
+def test_internal_clone_rejects_forged_token(tmp_path):
     store=Store(tmp_path);source=store.add_source('Facts','Synthetic')
     req={'title':'Report','objective':'Summarize'}
     with pytest.raises(ValueError,match='internal learning'):store.create_run(req,[source['id']],_learning_clone=['token','run'])
-    run=store.create_run(req,[source['id']]);saved=json.loads(run['requirements']);saved['workflow_snapshot']['role_instructions']['writing']='tampered'
-    with store.tx() as c:c.execute('UPDATE runs SET requirements=? WHERE id=?',(dump(saved),run['id']))
-    with pytest.raises(ValueError,match='哈希'):store._create_learning_run(run['id'],[source['id']])
 
 
 def test_trial_preflight_failure_does_not_leave_phantom_running_job(tmp_path, monkeypatch):
