@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import vm from 'node:vm';
 import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
-import {createProviderCatalog} from '../frontend/model-catalog.js';
-import {section} from './source_section.mjs';
+import {providerSettingsUI} from '../frontend/provider-settings.js';
 const elements=new Map();
 const $=id=>{if(!elements.has(id))elements.set(id,{value:'',hidden:false});return elements.get(id)};
 const capabilities=createProviderCapabilities({$});
@@ -28,7 +25,6 @@ assert.deepEqual(capabilities.read('native'),{supports_reasoning:null});
 console.log('PASS: reasoning capability is model-local tristate and excluded from OpenCode saves');
 
 // Exercise the real open/close/select/save handlers, not only the field helper.
-const source=fs.readFileSync('frontend/app.js','utf8');
 for(const declared of [true,false]){
   const fields=new Map();
   const el=id=>{
@@ -42,16 +38,15 @@ for(const declared of [true,false]){
       protocol:'chat-completions',base_url:'https://example.invalid/v1',supports_images:false},
   ];
   const bodies=[];const storage=new Map();
-  const context=vm.createContext({$:el,Event,esc:value=>value,settingsView(){},settingsModelTab(){},
-    welcomeFromProvider:false,providerCapabilities:createProviderCapabilities({$:el}),createProviderCatalog,
+  providerSettingsUI({$:el,settingsView(){},settingsModelTab(){},onClose(){},onUse(){},
+    providerCapabilities:createProviderCapabilities({$:el}),
     modelDirectory:{invalidate(){},fetchModelCatalog:async()=>[],catalogs:new Map([['briefloop-native',{providers:[{provider:'shared',models:['target','other'],status:'reachable',source:'provider_api'}]}]])},
-    localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
+    storage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
     api:async(route,body)=>{
       if(route==='native/providers')return {configurations:configs};
       if(route==='native/provider-catalog')return {models:['target','other'],status:'reachable'};
       assert.equal(route,'native/provider');bodies.push({...body});return {model:'shared/target'};
-    }});
-  vm.runInContext(section(source,'let savedProviderConfigurations=[];',"$('timeout-minutes').onchange=",'frontend/app.js'),context);
+    }}).init();
   el('provider-engine').value='briefloop-native';
   el('custom-provider').value='shared';el('custom-model').value='target';
   await el('provider-open').onclick();

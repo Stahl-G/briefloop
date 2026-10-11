@@ -1,22 +1,23 @@
 import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
-import {createProviderCatalog} from '../frontend/model-catalog.js';
+import {providerSettingsUI} from '../frontend/provider-settings.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {runtimeCard} from '../frontend/runtime-cards.js';
 import {section,allFrontendSources,statement} from './source_section.mjs';
 const source=fs.readFileSync('frontend/app.js','utf8');
-const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',dataset:{}});return elements.get(id)};
+const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',dataset:{},addEventListener(){}});return elements.get(id)};
 const calls=[];
-const ctx=vm.createContext({$:el,createProviderCatalog,modelDirectory:{invalidate(){},fetchModelCatalog:async()=>{calls.push({route:'models?backend=briefloop-native&refresh=1'})},catalogs:new Map([['briefloop-native',{providers:[{provider:'custom',models:[],status:'reachable',source:'provider_api'}]}]])},providerCapabilities:createProviderCapabilities({$:el}),state:{settings:{model_variant:'low'}},chat:{},chatBackendChoice:()=> 'briefloop-native',
+const ctx=vm.createContext({$:el,modelDirectory:{invalidate(){},fetchModelCatalog:async()=>{calls.push({route:'models?backend=briefloop-native&refresh=1'})},catalogs:new Map([['briefloop-native',{providers:[{provider:'custom',models:[],status:'reachable',source:'provider_api'}]}]])},providerCapabilities:createProviderCapabilities({$:el}),state:{settings:{model_variant:'low'}},chat:{},chatBackendChoice:()=> 'briefloop-native',
  api:async(route,body)=>{calls.push({route,body:{...body}});return {model:'custom/model',models:[],status:'reachable'}},
  esc:x=>x,action:fn=>fn(),selectChat:async()=>{},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},backendValue:()=> 'opencode',chatActive:()=>false,renderChatRuntimePermissions:()=>{},rememberDraft:()=>{},updateComposer:()=>{}});
 vm.runInContext(section(source,'function runtimeChoice(){','function messageTime(','frontend/app.js'),ctx);
 el('chat-variant').value='low';el('chat-model').value='custom/model';el('chat-permission').value='read-only';
 assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('runtimeChoice()',ctx))),{backend:'briefloop-native',model:'custom/model',variant:'low',permission:'read-only'});
 el('chat-model').value='default';assert.throws(()=>vm.runInContext('runtimeChoice()',ctx),/provider\/model/);
-vm.runInContext(section(source,'function providerEndpoint(){',"$('provider-engine').onchange=",'frontend/app.js'),ctx);
-vm.runInContext(section(source,"$('provider-form').onsubmit=","$('timeout-minutes').onchange=",'frontend/app.js'),ctx);
+const used=[];
+providerSettingsUI({$:el,api:ctx.api,modelDirectory:ctx.modelDirectory,providerCapabilities:ctx.providerCapabilities,
+ settingsView(){},settingsModelTab(){},onClose(){},onUse:(model,backend)=>used.push([model,backend]),storage:{getItem(){},setItem(){}}}).init();
 el('provider-engine').value='briefloop-native';el('custom-provider').value='custom';el('custom-model').value='model';
 el('custom-base-url').value='https://example.test/v1';el('custom-protocol').value='chat-completions';
 el('custom-api-key').value='test-only-secret';el('custom-supports-images').value='';el('custom-supports-reasoning').value='true';
@@ -24,7 +25,7 @@ await el('provider-form').onsubmit({preventDefault(){}});
 assert.equal(calls[0].route,'native/provider');assert.equal(calls[0].body.api_key,'test-only-secret');
 assert.equal(calls[0].body.supports_reasoning,true);
 assert.equal(el('custom-api-key').value,'');assert.equal(calls[1].route,'models?backend=briefloop-native&refresh=1');
-await el('provider-use').onclick();assert.equal(ctx.chat.nextBackend,'briefloop-native');assert.equal(el('agent-backend').value,'briefloop-native');
+await el('provider-use').onclick();assert.deepEqual(used,[['custom/model','briefloop-native']]);
 assert.ok(!calls.some(call=>['runtime-test','opencode/provider-test'].includes(call.route)),'choosing a model does not launch an independent test');
 assert.doesNotMatch(allFrontendSources(),/provider-test-model|data-runtime-test|settings-runtime-tests/);
 const html=runtimeCard({id:'briefloop-native',name:'BriefLoop Agent',installed:true,available:true,version:'test'},{chosen:'briefloop-native',model:'custom/model',esc:x=>x});
@@ -33,7 +34,6 @@ assert.ok(html.includes('BriefLoop Agent')&&html.includes('data-runtime-select="
 ctx.state.settings.agent_backend='opencode';
 el('provider-engine').value='opencode';el('custom-api-key').value='old-test-key';
 let opened=0;el('provider-open').click=()=>{opened++};
-vm.runInContext(section(source,"$('provider-engine').onchange=","$('provider-open').onclick=",'frontend/app.js'),ctx);
 const nativeTab=statement(source,"$('settings-tab-api').onclick=",{trim:true});
 vm.runInContext(nativeTab,ctx);
 el('settings-tab-api').onclick();

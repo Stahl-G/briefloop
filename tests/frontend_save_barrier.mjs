@@ -1,6 +1,6 @@
 import {researchProcessHTML,processDisclosureKey} from '../frontend/research-process.js';
 import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
-import {createProviderCatalog} from '../frontend/model-catalog.js';
+import {providerSettingsUI} from '../frontend/provider-settings.js';
 // Exercise actual application functions with controlled save completion order.
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -167,10 +167,11 @@ globalThis.document=previousDocument;
 console.log('PASS: formal release waits for saved corrections; audit package uses fixed release and explicit material scope');
 
 // Provider image input declarations retain three distinct values across the real form handler.
-const providerCode=section(source,"$('provider-form').onsubmit=","$('timeout-minutes').onchange=",'frontend/app.js');
 let providerBodies=[];
-const p=vm.createContext({$:el,createProviderCatalog,modelDirectory:{invalidate(){},fetchModelCatalog:async()=>[]},providerCapabilities:createProviderCapabilities({$:el}),providerEndpoint:()=> 'opencode',api:async(route,body)=>{if(route==='opencode/provider')providerBodies.push({...body});return {model:'example/model'}},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},chatActive:()=>true});
-vm.runInContext(providerCode,p);
+el('provider-dialog').addEventListener=()=>{};
+providerSettingsUI({$:el,modelDirectory:{invalidate(){},fetchModelCatalog:async()=>[]},providerCapabilities:createProviderCapabilities({$:el}),
+ settingsView(){},settingsModelTab(){},onClose(){},onUse(){},storage:{getItem(){},setItem(){}},
+ api:async(route,body)=>{if(route==='opencode/provider')providerBodies.push({...body});return {model:'example/model'}}}).init();
 el('custom-provider').value='example';el('custom-base-url').value='https://example.test/v1';el('custom-model').value='model';
 for(const value of ['', 'true', 'false']){el('custom-supports-images').value=value;el('custom-api-key').value='test-only-key';await el('provider-form').onsubmit({preventDefault(){}});assert.equal(el('custom-api-key').value,'')}
 assert.deepEqual(providerBodies.map(body=>body.supports_images),[null,true,false]);

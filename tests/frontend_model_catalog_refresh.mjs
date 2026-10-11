@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {section} from './source_section.mjs';
+import {providerSettingsUI} from '../frontend/provider-settings.js';
 import {createModelCatalog,createProviderCatalog,catalogDescription} from '../frontend/model-catalog.js';
 
 function harness(api,openExecutionPicker=null){
@@ -113,14 +114,13 @@ for(const engine of ['native','opencode'])test(`saving a same-name ${engine} pro
  const h=harness(route=>new Promise((resolve,reject)=>requests.push({route,resolve,reject})));
  h.setBackend(backend);h.$('custom-provider').value='vendor';h.$('custom-model').value='manual-saved';h.$('model-select').value='vendor/manual-saved';
  h.$('provider-engine').value=backend;
- const provider=createProviderCatalog({api:route=>new Promise((resolve,reject)=>requests.push({route,resolve,reject})),$:h.$,getEndpoint:()=>engine,modelDirectory:h.directory});
+ h.$('provider-dialog').addEventListener=()=>{};
+ const ui=providerSettingsUI({$:h.$,modelDirectory:h.directory,providerCapabilities:{read:()=>({}),reset(){},load(){}},
+  settingsView(){},settingsModelTab(){},onClose(){},onUse(){},storage:{getItem(){},setItem(){}},
+  api:route=>route===engine+'/provider'?Promise.resolve({model:'vendor/manual-saved'}):new Promise((resolve,reject)=>requests.push({route,resolve,reject}))});
+ ui.init();const provider=ui.providerDirectory;
  const oldMain=h.directory.fetchModelCatalog(true,backend),oldProvider=provider.load();await tick();
  const beforeSave=requests.length;assert.equal(beforeSave,engine==='native'?1:2);
- const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
- const context=vm.createContext({$:h.$,providerEndpoint:()=>engine,modelDirectory:h.directory,providerDirectory:provider,
-  providerCapabilities:{read:()=>({})},loadProviderCatalog:()=>provider.load(),
-  api:async route=>{assert.equal(route,engine+'/provider');return {model:'vendor/manual-saved'}}});
- vm.runInContext(section(app,"$('provider-form').onsubmit=",'const providerDirectory=', 'frontend/app.js'),context);
  const saved=h.$('provider-form').onsubmit({preventDefault(){}});await tick();
  assert.equal(requests.length,beforeSave*2,'saving must issue new requests before the old ones settle');
  // An old completion cannot remove the current pending entry. Native exercises
