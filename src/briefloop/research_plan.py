@@ -839,19 +839,6 @@ def consume_pending_fact_check_grant(store, run_id, admitted_stage_id):
     return not remaining
 
 
-def search_slots_left(store, connection, run_id, round_id):
-    """Remaining search attempts in the round, or None when no breadth is set."""
-    plan_row = connection.execute('SELECT value FROM meta WHERE key=?', (_plan_key(run_id),)).fetchone()
-    plan = json.loads(plan_row['value']) if plan_row else {}
-    breadth = int((plan.get('structure') or {}).get('breadth') or 0)
-    if not breadth:
-        return None
-    row = connection.execute('SELECT value FROM meta WHERE key=?', (_requests_key(run_id),)).fetchone()
-    data = json.loads(row['value']) if row else {}
-    used = sum(1 for entry in data.values() if entry.get('round_id') == round_id and entry.get('operation') == 'search')
-    return breadth - used
-
-
 def status(store, run_id):
     from .research_handoff import gap_view
     from .scout_coverage import view as scout_view
