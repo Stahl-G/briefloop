@@ -29,7 +29,7 @@ class IndustryMetric(BaseModel):
     comparable: bool = False
     notes: str = ''
 
-CHANGE_TYPES = {'emerged':'新出现','reversed':'反转','accelerated':'加速','stalled':'停滞或放缓',
+CHANGE_TYPES = {'changed':'状态改变','emerged':'新出现','reversed':'反转','accelerated':'加速','stalled':'停滞或放缓',
                 'incident':'事故或挫折','premium_gained':'获得溢价','premium_lost':'失去溢价','unchanged':'确认未变'}
 
 
@@ -38,7 +38,7 @@ class StateChange(BaseModel):
     model_config = ConfigDict(extra='forbid')
     subject: str = Field(min_length=1)
     dimension: str = Field(min_length=1)
-    change_type: Literal['emerged','reversed','accelerated','stalled','incident','premium_gained','premium_lost','unchanged']
+    change_type: Literal['changed','emerged','reversed','accelerated','stalled','incident','premium_gained','premium_lost','unchanged']
     start_state: str = ''
     start_date: date | None = None
     start_source_id: str | None = None
@@ -66,7 +66,7 @@ def source_ids(data):
 
 def _state_gap(change, window):
     if change.change_type != 'emerged' and not (change.start_state and change.start_date and change.start_source_id):
-        return '缺少期初状态、日期或来源；只能记为新出现，不能写成从某状态变为另一状态'
+        return '缺少期初状态、日期或来源；不能核验双端变化，不能把缺失前态当作新出现'
     if change.start_date and change.start_date > change.end_date:
         return '期初日期晚于期末日期'
     if window:
@@ -123,7 +123,7 @@ def prepare_report_data(payload, window=None):
     if data.state_changes:
         lines+=['','| 主体 / 维度 | 期初状态（日期） | 期末状态（日期） | 变化 | 来源 |','| --- | --- | --- | --- | --- |']
         for change,result in zip(data.state_changes,states):
-            start=f'{change.start_state}（{change.start_date}）' if change.start_state else '本期前不存在或未取得'
+            start=f'{change.start_state}（{change.start_date}）' if change.start_state else '期初状态未提供'
             kind=CHANGE_TYPES[change.change_type]+(f'；未核验：{result["gap"]}' if result['gap'] else '')
             refs=f'[@{change.end_source_id}]'+(f' [@{change.start_source_id}]' if change.start_source_id and change.start_source_id!=change.end_source_id else '')
             lines.append('| '+' | '.join(cell(v) for v in (f'{change.subject} / {change.dimension}',start,f'{change.end_state}（{change.end_date}）',kind,refs))+' |')

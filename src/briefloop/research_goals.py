@@ -6,11 +6,11 @@ verification. No scheduler, model call or second mutable task store lives here.
 from .models import ResearchGapEvidence
 
 
-def contract(requirements):
+def contract(requirements, *, version=2):
     questions = list(dict.fromkeys(q.strip() for q in requirements.get('key_questions', []) if q.strip()))
     if not questions:
         questions = [requirements.get('objective', '').strip() or requirements['title']]
-    return {'version': 1, 'questions': [{'id': f'q{index}', 'question': text}
+    return {'version': version, 'questions': [{'id': f'q{index}', 'question': text}
             for index, text in enumerate(questions, 1)]}
 
 

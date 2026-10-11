@@ -82,6 +82,26 @@ def create(c, root):
         {'permission': 'edit', 'action': 'deny', 'pattern': '*'}], require_permissions=True)
 
 
+def test_v2_native_default_variant_preserves_model_and_explicit_effort(tmp_path):
+    from briefloop.backends.opencode_v2 import _same_model
+    expected = {'providerID': 'fixture', 'id': 'tiny'}
+    assert _same_model({**expected, 'variant': 'default'}, expected)
+    assert not _same_model({**expected, 'variant': 'high'}, expected)
+    assert not _same_model({**expected, 'variant': 'default'}, {**expected, 'variant': 'high'})
+    assert not _same_model({'providerID': 'other', 'id': 'tiny', 'variant': 'default'}, expected)
+    c, api = client(tmp_path)
+    native = api.__call__
+    def stored_default(method, path, body=None):
+        value = native(method, path, body)
+        if method == 'POST' and path == '/api/session':
+            api.session['model']['variant'] = 'default'
+        return value
+    c._request = stored_default
+    session = create(c, tmp_path)
+    c.prompt_async(session['id'], '检查', model='fixture/tiny', directory=tmp_path)
+    assert not any(path.endswith('/model') for _, path, _ in api.calls)
+
+
 def test_v2_preserves_frozen_settings_contract_files_and_real_routes(tmp_path):
     c, api = client(tmp_path); value = create(c, tmp_path)
     assert value['location'] == {'directory': str(tmp_path.resolve())}

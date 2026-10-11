@@ -57,3 +57,13 @@ def test_state_change_needs_evidence_at_both_ends_of_the_period(overrides, gap):
     result = prepare_report_data({'state_changes': [_change(**overrides)]}, WINDOW)
     assert gap in result['state_checks'][0]['gap'] if gap else not result['gaps']
     assert '期初状态（日期）' in result['markdown'] and '[@src_b]' in result['markdown']
+
+
+def test_ordinary_state_change_does_not_claim_acceleration_or_missing_prior_existence():
+    change = _change(change_type='changed', start_state='标准输入价5美元', end_state='标准输入价2美元')
+    result = prepare_report_data({'state_changes': [change]}, WINDOW)
+    assert not result['gaps'] and '状态改变' in result['markdown']
+    assert '加速' not in result['markdown']
+    missing = prepare_report_data({'state_changes': [{**change, 'start_state': '', 'start_source_id': None}]}, WINDOW)
+    assert missing['gaps'] and '期初状态未提供' in missing['markdown']
+    assert '只能记为新出现' not in missing['gaps'][0]

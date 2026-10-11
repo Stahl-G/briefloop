@@ -576,8 +576,12 @@ def _read_fallback(store,run_id,url,failed):
     returned instead and labelled as provider-extracted text."""
     from . import tavily
     try:
+        tavily.check_run(store,run_id)
+    except tavily.TavilyError:
+        return failed
+    try:
         if not tavily._read_key()[0]:return failed
-        result=tavily.extract(store,[url],run_id=run_id,fallback=True)
+        result=tavily.extract(store,[url],run_id=run_id)
     except Exception as exc:
         return {**failed,'fallback':{'provider':'tavily','error':str(exc)[:300]}}
     ready=[s for s in (result.get('sources') or []) if s.get('status')=='ready']

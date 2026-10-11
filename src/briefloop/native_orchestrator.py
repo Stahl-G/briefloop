@@ -247,8 +247,17 @@ def run_scouts(store, config, args):
                   store.root / 'research' / config['run_id'] / 'rounds' / round_id / task['slot_id'] / 'result.json'}
         if round_id == '1':
             scoped.add(folder / task['slot_id'] / 'result.json')
-        if not expected or expected['assignment'] != str(task.get('assignment') or '').strip():
-            raise ToolError('实际 Scout 任务必须匹配已保存 scout_tasks 的分工；先读取 research_status')
+        if not expected:
+            result_path = folder / ('round-' + round_id) / task['slot_id'] / 'result.json'
+            raise ToolError(
+                f'第 {round_id} 轮尚未登记 {task["slot_id"]} 分工。先调用 workspace_action：'
+                'request.action="set_scout_tasks"，request.scout_tasks 为完整本轮分工数组'
+                '（slot_id、assignment、result_file）；scout_outcomes 只更新已登记状态，不能代替分工登记。'
+                f'本轮可用 scout-1…scout-{breadth}，该槽位 result_file={result_path}。'
+                '登记成功后，按返回的原文 assignment 调用 run_scouts；不得沿用上一轮的登记或结果路径。')
+        if expected['assignment'] != str(task.get('assignment') or '').strip():
+            raise ToolError(f'{task["slot_id"]} 的 assignment 与本轮已登记分工不同；不得改写。'
+                            '请读取 research_status 并原样使用已登记 assignment：' + expected['assignment'])
         result_file = Path(expected['result_file'])
         if result_file not in scoped or result_file.resolve() != result_file:
             raise ToolError('已登记 Scout 结果路径不属于本任务、本轮与槽位')
@@ -517,11 +526,26 @@ def tools(role, config):
         from .native_roles import _scout_web_tools
         common += _scout_web_tools(config.get('search_channels') or []) if config.get('allow_web') else []
     else:
+        if (config['task_kind'] == 'generate' and config.get('research_strategy') == 'goal_driven'
+                and config.get('allow_web')):
+            from .native_roles import _scout_web_tools
+            channels = config.get('search_channels') or []
+            web = _scout_web_tools(channels)
+            # Match Scout: without a managed search provider, known public URLs
+            # may still be fetched; do not advertise an empty provider enum.
+            common += web if channels else [tool for tool in web if tool['name'] == 'add_url']
         common += [
             spec('save_plan', save_plan, '保存研究计划 summary、reader_contract 和完整 scout_tasks（slot_id、assignment）；无 Scout 时明确写 []；先读取 reader_contract.schema.json。', {'plan': OBJ}, ('plan',), sequential=True),
             spec('run_scouts', run_scouts, '按当前研究轮次并行执行 Scout；tasks 各含 slot_id 和具体 assignment，冻结模型、搜索策略及共享预算。等待实际结果，可停止；相同槽位恢复原任务。',
                  {'tasks': {'type': 'array', 'items': OBJ}}, ('tasks',), sequential=True, long_running=True),
-            spec('save_research_handoff', save_handoff, '保存轮间交接：handoff 含 learnings（summary、可选 source_id/locator）、follow_ups、covered、open_questions 数组；可选 gap_updates 明确更新已有缺口（gap_id/status/reason/evidence，partial 另给 remaining_question），详见研究交接说明；缺少引用保留待证，预算由运行器记录。', {'handoff': OBJ}, ('handoff',), sequential=True),
+            spec(
+                'save_research_handoff', save_handoff,
+                '保存轮间交接：目标驱动须提供 question_coverage，逐项覆盖 research_status.plan.goal_contract.questions：'
+                'question_id、status=answered|partial|open、reason、remaining_question、evidence=[{source_id,locator,excerpt}]；'
+                'answered/partial 需原文，open/partial 须写未答范围。handoff 另含 learnings（summary、可选 source_id/locator）、'
+                'follow_ups、covered、open_questions 数组；可选 gap_updates 明确更新已有缺口（gap_id/status/reason/evidence，'
+                'partial 另给 remaining_question），详见研究交接说明；缺少引用保留待证，预算由运行器记录。',
+                {'handoff': OBJ}, ('handoff',), sequential=True),
             spec('write_report', write_report, '将已保存计划、全部研究结果和来源交给独立 Analyst 写稿；quality_v1 须先 finish_research_round 明确收轮，可保留未决缺口；沿用冻结主链模型，不自行评分。',
                  {'instructions': TEXT}, sequential=True, long_running=True),
             spec('connector_material', connector, '读取本报告明确授权的 MCP 材料；request 使用既有 read/call/status/receipt 协议。', {'request': OBJ}, ('request',)),
@@ -550,6 +574,7 @@ def prepare(store, job, folder, prompt):
     data = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
     run_id = payload.get('run_id') or store.one('briefs', payload['version_id'])['run_id']
     config = {'role': 'orchestrator', 'task_kind': job['kind'], 'job_id': job['id'], 'run_id': run_id,
+              'research_strategy': json.loads(store.one('runs', run_id)['requirements']).get('research_strategy', 'guided'),
               'allow_web': bool(job.get('allow_web')), 'search_channels': [p for p in allowed(for_run(store, run_id)) if p in MANAGED_PROVIDERS]}
     root = folder / 'packet'; root.mkdir(exist_ok=True)
     # Fast/direct drafts revise inside the background assess job; that stage is
@@ -578,7 +603,7 @@ def prepare(store, job, folder, prompt):
         from .task_context import READING_GUIDE
         prompt = (READING_GUIDE + '你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
                   '来源索引里的 source_id 用 source_read 读取；packet_read 只读取本包实际文件，不存在 packet/sources 目录，不猜原文路径。'
-                  '开始时用 save_plan 保存 reader_contract 与完整 scout_tasks 分工（slot_id、assignment），确无 Scout 时明确写 []；用 run_scouts 执行，可分批派发但不能静默丢掉已承诺方向。新轮先登记本轮 scout_tasks；不能继续的分工在 finish_research_round 的 scout_outcomes 中以 failed/skipped 和 reason 说明，保留未检范围。'
+                  '开始时用 save_plan 保存 reader_contract 与完整 scout_tasks 分工（slot_id、assignment），确无 Scout 时明确写 []；用 run_scouts 执行，可分批派发但不能静默丢掉已承诺方向。新轮先通过 workspace_action 的 set_scout_tasks 登记完整本轮 scout_tasks（不是 scout_outcomes），result_file 使用本轮与槽位对应的绝对路径；登记成功后沿用返回的原文 assignment 和路径。不能继续的分工在 finish_research_round 的 scout_outcomes 中以 failed/skipped 和 reason 说明，保留未检范围。'
                   'workspace_action 提供 research_status/finish_research_round/begin_research_round 及写前 reconciliation_candidates/reconciliation_save；'
                   '其请求结构见 action-guide.md。后续轮次必须针对上一轮真实 gap_id，不重复搜索。'
                   'quality_v1 任务写稿前必须结束当前已开启轮次：用 save_research_handoff 保留有引用的结论和待证问题，再 finish_research_round 明确收尾；单轮或仅本地材料也遵循此顺序。可保留未决缺口，不要求花完预算或完成尚未开启的轮次；确需下一轮时按真实 gap_id 继续。研究完成后写前对照来源陈述，保留真实关系和未查问题；write_report 调用 Analyst，finish_task 只确认保存。'
@@ -588,6 +613,10 @@ def prepare(store, job, folder, prompt):
                   + '\n' + PLANNING_GUIDE + '\n' + GAP_UPDATE_GUIDE)
     else:
         prompt += '\n本次没有 shell；工作区操作使用 workspace_action 直接提交 JSON request。所有路径读取用 packet_read 相对任务包。完成后调用 finish_task（元数据修复用 submit_metadata）。'
+    if job['kind'] == 'generate' and config.get('research_strategy') == 'goal_driven':
+        prompt += ('\n直接研究只用当前实际工具：允许联网时可用 web_search（如已配置受控渠道）搜索、add_url 保存原文、source_read 回读；'
+                   '与 Scout 共享同一报告预算，搜索摘要不能作为正文证据。没有搜索渠道时不能声称已经检索，可读取明确 URL 或保留具体限制。'
+                   '本轮未记录受控检索且没有新增可用来源而要停止时，finish_research_round 须单独给 early_stop_reason，说明已有材料为何足够或无法继续的具体原因。')
     from .chat_tools import chat_instructions
     guide = chat_instructions(store, {'backend': 'briefloop-native', **payload['runtime']}, allow_web=config['allow_web'], backend='briefloop-native')
     (root / 'action-guide.md').write_text(guide, encoding='utf-8')

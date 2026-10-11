@@ -54,6 +54,17 @@ def _model(value, variant=None):
     return result
 
 
+def _same_model(actual, expected):
+    """OpenCode stores an omitted variant as its literal 'default' value."""
+    if not isinstance(actual, dict) or not isinstance(expected, dict):
+        return actual == expected
+    actual, expected = dict(actual), dict(expected)
+    for value in (actual, expected):
+        if value.get('variant') == 'default':
+            value.pop('variant')
+    return actual == expected
+
+
 class V2:
     def __init__(self, client):
         self.client = client
@@ -104,7 +115,8 @@ class V2:
         # An accepted HTTP body alone is insufficient proof of preserved settings.
         saved = self.session(value['id'], directory)
         for key in ('model', 'permissions', 'agent'):
-            if key in body and saved.get(key) != body[key]:
+            matches = _same_model(saved.get(key), body.get(key)) if key == 'model' else saved.get(key) == body.get(key)
+            if key in body and not matches:
                 raise _error('OpenCode v2 未保留本轮 ' + key + ' 设置；未发送任务')
         return saved
 
@@ -124,9 +136,9 @@ class V2:
         if model:
             ref = _model(model, variant)
             self.validate_model(ref, directory)
-            if session.get('model') != ref:
+            if not _same_model(session.get('model'), ref):
                 self.request('POST', self.path(sid, '/model'), {'model': ref})
-                if self.session(sid, directory).get('model') != ref:
+                if not _same_model(self.session(sid, directory).get('model'), ref):
                     raise _error('OpenCode v2 未保留所选模型或推理档位；未发送任务')
         elif variant:
             raise _error('OpenCode v2 推理档位必须绑定明确模型；未发送任务')
