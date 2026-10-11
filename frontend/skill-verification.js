@@ -12,6 +12,5 @@ export function verificationBadge(value){
  if(value.excluded)parts.push(`范围不一致，排除 ${value.excluded} 份`);
  if(value.registration_conflict)parts.push('同一技能对应不同读者或批次，绑定待澄清');
  if(!untracked)parts.push(value.note||'尚未完成完整复发核验、双模型 family 校准、人工分歧处理与留出验收');
- if(value.legacy_status_corrected||['adopted','not_improving'].includes(value.status))parts.push(value.legacy_note||'旧自动状态不证明验收，原记录与技能保留');
  return `<span class="skill-verification skill-verification-${esc(status)}"><span class="tag">${esc(label)}</span><small>${esc(parts.join(' · '))}</small></span>`;
 }
