@@ -80,8 +80,11 @@ def validate_arrays(bindings, responses, finding_ids):
             raise ValueError('修订处理说明缺少有效 finding_id/action/reason，均须为字符串')
         response_ids.append(item['finding_id'])
     expected = set(finding_ids)
+    if not expected and response_ids:
+        # Only independent review findings take a response; evaluator comments are handled in the text.
+        raise ValueError('本轮没有需要逐项回应的审阅发现，responses 写 []；评分意见直接在正文里修改')
     if set(response_ids) != expected or len(response_ids) != len(set(response_ids)):
-        raise ValueError('修订处理说明须逐项对应本轮发现：' + dump({
+        raise ValueError('修订处理说明须逐项对应本轮发现：' + dump({'expected': sorted(expected),
             'missing': sorted(expected - set(response_ids)),
             'unexpected': sorted(set(response_ids) - expected),
             'duplicate': sorted({rid for rid in response_ids if response_ids.count(rid) > 1})}))
