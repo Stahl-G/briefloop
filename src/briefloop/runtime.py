@@ -518,7 +518,7 @@ def assessment_prompt(store, brief, folder, backend='codex', *, analysis_checkli
 {report_profile.get('evaluation','')}
 {instructions(deliverable,role='evaluator')}
 {candidate_prompt}
-核对正文是否完成本轮读者需求。准确限定保留在相关句子，内部核查过程留在独立记录；不要要求作者用反复免责声明证明谨慎。研究未完成照常评价覆盖。
+核对正文是否完成本轮读者需求。准确限定保留在相关句子，内部核查过程留在独立记录。正文里对审阅者解释“不能把 A 写成 B”“这不证明……”的句子记为表达问题，建议改成 A 实际是什么；会改变判断的条件不在此列。研究未完成照常评价覆盖。
 本次input.figures若有图表，{figure_view_word}，并按data_path/script_path及source_ids核对图中数值、轴尺度、期间、图注与正文关系。已保存图表不等于内容正确；不要只审正文忽略图表。
 {read_input}初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
 {no_question}{read_sources}按需打开额外原文；没有在初始 sources 中列出不代表来源不存在，不要求默认全量读取。

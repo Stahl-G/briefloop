@@ -7,7 +7,9 @@ from .length import count_brief, length_stats
 _TABLE_CITATION_SAMPLE_LIMIT = 12
 # Room is not a quota: a generous soft length needs cheap signals for padding.
 _SENTENCE = re.compile(r'[^。！？；!?\n]+')
-_HEDGE = re.compile(r'不等于|不代表|不能据此|不能证明|不足以证明|尚不能|尚未证明|不构成|不自动|仍需核对|有待核实|未经审计|无法确认|不能当作|不能视为')
+# Sentences addressed to a reviewer ("A cannot be written as B") rather than the reader.
+_HEDGE = re.compile(r'不能(?:把|将|据此|直接|当作|视为|写成|推断|认定|回填|补造|自动|说成)|不等于|不代表|不意味着|并不意味|不能证明|不足以证明|'
+                    r'不证明|尚不能|尚未证明|不构成|不自动|不能.{0,16}(?:写成|当作|视为|证明|归因)')
 _PROCESS = re.compile(r'本次检索|本轮检索|检索结果|搜索结果|搜索摘要|抓取|提交时可得|本次未发现|未发现当日|研究轮次|任务包|Scout')
 
 
@@ -28,11 +30,15 @@ def _padding_notes(markdown):
         notes.append({'code': 'repeated_statements', 'kind': 'advisory', 'count': len(repeated), 'samples': repeated[:5],
                       'message': '这些句子与前文几乎重复；保留信息最完整的一处，删除或合并其余，不要换说法再讲一遍。'})
     units = max(1, count_brief(markdown))
-    hedges = [s[:60] for s in sentences if _HEDGE.search(s)]
-    if len(hedges) >= 8 and len(hedges) * 1000 / units > 4:
+    hedges = [s[:80] for s in sentences if _HEDGE.search(s)]
+    # Two real Sol reports (2026-10-11) had about 10% of sentences in this form; a
+    # per-thousand-units threshold of 4 never fired on them.
+    if len(hedges) >= 5 and len(hedges) / max(1, len(sentences)) >= 0.04:
         notes.append({'code': 'stacked_caveats', 'kind': 'advisory', 'count': len(hedges),
-                      'per_thousand_units': round(len(hedges) * 1000 / units, 1), 'samples': hedges[:5],
-                      'message': '限定句密度偏高。每个限制只在受影响的结论旁写一次，或集中到证据边界；不在每段重复同类免责，必要条件仍须保留。'})
+                      'share_of_sentences': round(len(hedges) / len(sentences), 3),
+                      'per_thousand_units': round(len(hedges) * 1000 / units, 1), 'samples': hedges[:8],
+                      'message': '这些句子在对审阅者解释“不能怎么写”。改成事实本身，例如把“不能把计划写成停服”改成“计划 7 月 24 日停用，材料中没有执行记录”；'
+                                 '改写后没有新信息的句子删掉。会改变判断的条件保留在受影响的那句里。'})
     process = [s[:60] for s in sentences if _PROCESS.search(s)]
     if process:
         notes.append({'code': 'process_narration', 'kind': 'advisory', 'count': len(process), 'samples': process[:5],
