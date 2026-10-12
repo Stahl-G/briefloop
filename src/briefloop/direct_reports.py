@@ -28,9 +28,10 @@ def validate_request(store, req, source_ids):
 
 
 def _prompt(store, run, req, tool, backend):
-    from .search_policy import for_run, allowed
+    from .search_policy import for_run, allowed, instructions
     from .websearch import MANAGED_PROVIDERS
-    managed = [p for p in allowed(for_run(store, run['id'])) if p in MANAGED_PROVIDERS]
+    policy = for_run(store, run['id'])
+    managed = [p for p in allowed(policy) if p in MANAGED_PROVIDERS]
     if backend == NATIVE:
         research = (('检索：web_search（provider 从已允许渠道中选）发现候选网页，摘要只是线索；' if managed else
                      '本任务没有受控搜索渠道：只能用 add_url 保存已知的公开网址。')
@@ -38,13 +39,9 @@ def _prompt(store, run, req, tool, backend):
                     '受控检索和保存计入本任务共享预算，用尽时停止并说明。'
                     if req.get('allow_web') else '本任务未允许联网：只用 source_read/source_grep 读取下列已登记材料。')
         return _body(store, run, req, research)
-    search = (f'检索：`{tool} web-search --run {run["id"]} --query "关键词"` 发现候选网页，摘要只是线索；' if managed
-              else '检索：用宿主自带的网页搜索发现候选网页，摘要只是线索；')
     research = (
-        search +
-        f'`{tool} add-url --run {run["id"]} --url URL` 保存原文并返回 source_id；'
-        f'`{tool} read-source --id SOURCE_ID --start-line 1 --end-line 120` 按行读取，再按需扩展。'
-        '受控检索和保存计入本任务共享预算，用尽时停止并说明。支撑事实的页面必须用 add-url 保存后引用。'
+        instructions(policy, tool, run['id']) + '\n' +
+        f'`{tool} read-source --id SOURCE_ID --start-line 1 --end-line 120` 按行读取已保存的原文，再按需扩展。'
         if req.get('allow_web') else f'本任务未允许联网：用 `{tool} read-source --id SOURCE_ID` 读取已登记材料，不检索、不访问网页。')
     return _body(store, run, req, research)
 
