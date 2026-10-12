@@ -17,7 +17,7 @@ def setup(tmp_path, **requirements):
     initial = [store.add_source('Local', 'Local original.')['id']] if requirements.get('allow_web') is False else []
     run = store.create_run({'title': 'Release note', 'objective': 'What changed?',
         'key_questions': ['What changed?'], 'research_strategy': 'goal_driven', 'allow_web': True,
-        'fact_check': False, 'research_budget': {'search_requests': 1, 'candidate_urls': 2, 'source_pages': 1},
+        'fact_check': False, 'completion_mode': 'standard', 'research_budget': {'search_requests': 1, 'candidate_urls': 2, 'source_pages': 1},
         'search_policy': policy, **requirements}, initial, research_protocol='quality_v1', agent_backend='briefloop-native')
     job = store.enqueue('generate', {'run_id': run['id'], 'agent_backend': 'briefloop-native', 'runtime': {'model': 'fixture/model'}})
     store.update_job(job['id'], 'running')

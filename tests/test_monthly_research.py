@@ -29,7 +29,7 @@ def test_monthly_period_gets_monthly_length_budget_and_scouts():
 def _run_with_searches(tmp_path, used):
     store = Store(tmp_path)
     run = store.create_run({'title': '周报', 'objective': '本周动态', 'allow_web': True, 'fact_check': False,
-                            'report_date': '2026-09-08'}, [], research_protocol='quality_v1')
+                            'report_date': '2026-09-08', 'completion_mode': 'standard'}, [], research_protocol='quality_v1')
     research_plan.freeze(store, run['id'])
     state = store.meta('research_budget:' + run['id']) or {'search_requests': 0, 'candidate_urls': [], 'source_pages': []}
     store.set_meta('research_budget:' + run['id'], {**state, 'search_requests': used})
@@ -90,7 +90,7 @@ def test_report_scout_limit_reaches_frozen_plan_and_native_packet(tmp_path):
     from briefloop.runtime import generation_prompt
     store = Store(tmp_path)
     store.update_settings({'model': 'test-model', 'model_selection_required': False, 'max_parallel': 12})
-    run = store.create_run({**MONTH, 'scout_limit': 2, 'fact_check': False}, [], research_protocol='quality_v1')
+    run = store.create_run({**MONTH, 'scout_limit': 2, 'fact_check': False, 'completion_mode': 'standard'}, [], research_protocol='quality_v1')
     job = store.enqueue('generate', {'run_id': run['id']})
     plan = research_plan.freeze(store, run['id'])
     assert json.loads(job['payload'])['max_parallel'] == plan['structure']['parallel'] == 2
@@ -170,7 +170,7 @@ def test_host_draft_publication_enforces_research_continuation(tmp_path, monkeyp
     store.update_settings({'model': 'test-model', 'model_selection_required': False})
     source = store.add_source('材料', '本期已有公开材料。')
     controlled = scenario in ('unexplained', 'explained')
-    run = store.create_run({'title': '月报', 'objective': '梳理变化', 'allow_web': controlled, 'fact_check': False},
+    run = store.create_run({'title': '月报', 'objective': '梳理变化', 'allow_web': controlled, 'fact_check': False, 'completion_mode': 'standard'},
         [source['id']], **({'research_protocol': 'quality_v1'} if scenario != 'legacy' else {}))
     job = store.enqueue('generate', {'run_id': run['id']})
     class Host:

@@ -177,7 +177,7 @@ class Requirements(Model):
             value.pop('completion_mode', None)
         req = cls.model_validate(value)
         if not explicit_mode:
-            needs_standard = (backend == 'pi' or bool(req.reference_source_ids)
+            needs_standard = (backend == 'pi' or req.writing_mode == 'internal_report' or bool(req.reference_source_ids)
                               or (req.report_profile == 'industry_periodic' and req.covers_quarter()))
             req.completion_mode = 'standard' if needs_standard else 'direct'
         return req

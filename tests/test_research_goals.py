@@ -10,7 +10,7 @@ def setup(tmp_path):
     source = store.add_source('季度原文', '本期收入120万元。')
     run = store.create_run({'title': '季度复盘', 'objective': '解释收入',
         'key_questions': ['收入多少？', '增长可持续吗？'], 'allow_web': False,
-        'research_strategy': 'goal_driven'}, [source['id']], research_protocol='quality_v1')
+        'research_strategy': 'goal_driven', 'completion_mode': 'standard'}, [source['id']], research_protocol='quality_v1')
     plan = research_plan.freeze(store, run['id'])
     return store, run, source, plan
 

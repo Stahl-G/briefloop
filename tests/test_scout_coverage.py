@@ -179,7 +179,7 @@ def test_host_cli_join_and_worker_share_coverage_boundary(tmp_path, monkeypatch,
     store = Store(tmp_path)
     store.update_settings({'model': 'synthetic', 'model_selection_required': False})
     source = store.add_source('Synthetic filing', 'Known local fact.')
-    run = store.create_run({'title': 'Fixture', 'objective': 'Check material', 'allow_web': False, 'fact_check': False},
+    run = store.create_run({'title': 'Fixture', 'objective': 'Check material', 'allow_web': False, 'fact_check': False, 'completion_mode': 'standard'},
                            [source['id']], research_protocol='quality_v1')
     job = store.enqueue('generate', {'run_id': run['id']})
     assert json.loads(job['payload'])['scout_coverage_version'] == 1
@@ -234,7 +234,7 @@ def test_host_cli_join_and_worker_share_coverage_boundary(tmp_path, monkeypatch,
 def test_capacity_is_not_commitment_and_old_runs_remain_compatible(tmp_path):
     store = Store(tmp_path)
     store.update_settings({'model': 'synthetic', 'model_selection_required': False})
-    run = store.create_run({'title': 'Fixture', 'objective': 'Check sources', 'allow_web': True, 'research_tier': 'deep'}, [], research_protocol='quality_v1')
+    run = store.create_run({'title': 'Fixture', 'objective': 'Check sources', 'allow_web': True, 'research_tier': 'deep', 'completion_mode': 'standard'}, [], research_protocol='quality_v1')
     # Model an existing persisted run that predates deterministic admission metadata.
     with store.tx() as connection:
         connection.execute('DELETE FROM meta WHERE key=?', ('scout_coverage_version:' + run['id'],))
@@ -294,7 +294,7 @@ def test_foreign_run_and_preexisting_results_do_not_complete_new_tasks(tmp_path)
     old_path.write_text(json.dumps(result))
     join_scouts(store, [old_path], run_id=old_run['id'])
     research_plan.finish_round(store, old_run['id'])
-    run = store.create_run({'title': 'New scope', 'objective': 'Read a different subject', 'allow_web': False, 'fact_check': False},
+    run = store.create_run({'title': 'New scope', 'objective': 'Read a different subject', 'allow_web': False, 'fact_check': False, 'completion_mode': 'standard'},
                            [source['id']], research_protocol='quality_v1')
     job = store.enqueue('generate', {'run_id': run['id']})
     research_plan.freeze(store, run['id'])

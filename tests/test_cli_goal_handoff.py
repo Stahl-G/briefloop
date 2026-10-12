@@ -13,7 +13,7 @@ def make_run(tmp_path):
     source = store.add_source('Original', 'Revenue is 12 million. Profit is not disclosed.')
     run = store.create_run({'title': 'Quarter', 'objective': 'Explain revenue and profit',
         'key_questions': ['Revenue?', 'Profit?'], 'allow_web': False, 'fact_check': False,
-        'research_strategy': 'goal_driven'}, [source['id']], research_protocol='quality_v1')
+        'research_strategy': 'goal_driven', 'completion_mode': 'standard'}, [source['id']], research_protocol='quality_v1')
     plan = research_plan.freeze(store, run['id'])
     return store, run['id'], source, plan
 

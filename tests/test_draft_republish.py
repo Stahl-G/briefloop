@@ -29,7 +29,7 @@ def test_metadata_only_rewrites_do_not_spawn_a_version_per_save(tmp_path):
     store=Store(tmp_path)
     store.set_meta('settings',{**store.settings(),'company_context_enabled':False,'auto_learn':False,'model':'synthetic','model_selection_required':False})
     source=store.add_source('Synthetic source','Revenue was USD 12 million.')
-    run=store.create_run({'title':'Synthetic','objective':'Explain revenue','allow_web':False},[source['id']])
+    run=store.create_run({'title':'Synthetic','objective':'Explain revenue','allow_web':False,'completion_mode':'standard'},[source['id']])
     job=store.enqueue('generate',{'run_id':run['id'],'agent_backend':'codex'})
     store.update_job(job['id'],'running')
     Worker(store,Saver(source['id'])).generate(job,score=False)

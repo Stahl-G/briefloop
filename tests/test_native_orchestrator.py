@@ -103,7 +103,7 @@ def setup(tmp_path, *, research_protocol='quality_v1', research_tier='standard')
         'model_selection_required':False,'auto_revision':False,'max_parallel':2})
     source=store.add_source('财报','2025年收入1200万元。')
     run=store.create_run({'title':'经营简报','objective':'解释经营情况','allow_web':False,
-        'research_tier':research_tier},[source['id']],research_protocol=research_protocol)
+        'research_tier':research_tier,'completion_mode':'standard'},[source['id']],research_protocol=research_protocol)
     job=store.enqueue('generate',{'run_id':run['id'],'single_evaluation':False})
     store.update_job(job['id'], status='running')
     return store,source,run,store.one('jobs',job['id'])
