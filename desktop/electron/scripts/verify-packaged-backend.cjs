@@ -28,7 +28,8 @@ async function main() {
     [...launch.args, officeScript, path.join(data, 'office-evidence')], {env: launch.env, timeoutMs: 120000});
   const exported = JSON.parse(office.stdout.trim());
   assert.equal(exported.version, pkg.version);
-  assert.equal(exported.pi, '1.0.0');
+  const nativePackage = require(path.resolve(__dirname, '../../../native-engine/package.json'));
+  assert.equal(exported.pi, nativePackage.dependencies['@earendil-works/pi-coding-agent']);
   let service;
   try {
     service = new WorkspaceService(runtime);
