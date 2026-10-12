@@ -172,10 +172,14 @@ class Requirements(Model):
     def new_request(cls, value):
         """New submissions use direct; saved requirements retain their old default."""
         value = dict(value)
-        if not value.get('completion_mode'):
-            needs_standard = bool(value.get('reference_source_ids')) or value.get('workflow_variant') == 'industry_quarterly'
-            value['completion_mode'] = 'standard' if needs_standard else 'direct'
-        return cls.model_validate(value)
+        explicit_mode = bool(value.get('completion_mode'))
+        if not explicit_mode:
+            value.pop('completion_mode', None)
+        req = cls.model_validate(value)
+        if not explicit_mode:
+            needs_standard = bool(req.reference_source_ids) or (req.report_profile == 'industry_periodic' and req.covers_quarter())
+            req.completion_mode = 'standard' if needs_standard else 'direct'
+        return req
 
     @model_validator(mode='before')
     @classmethod

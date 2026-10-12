@@ -65,5 +65,10 @@ def test_new_request_policy_does_not_reinterpret_saved_runs(tmp_path):
     quarter = store.create_run({**requested, 'workflow_id': 'business_report', 'workflow_variant': 'industry_quarterly'}, [source['id']])
     assert json.loads(with_reference['requirements'])['completion_mode'] == 'standard'
     assert json.loads(quarter['requirements'])['completion_mode'] == 'standard'
+    named_quarter = store.create_run({**requested, 'title': 'AI 季报', 'report_profile': 'industry_periodic'}, [source['id']])
+    dated_quarter = store.create_run({**requested, 'report_profile': 'industry_periodic',
+                                      'period_start': '2026-07-01', 'period_end': '2026-09-30'}, [source['id']])
+    assert json.loads(named_quarter['requirements'])['completion_mode'] == 'standard'
+    assert json.loads(dated_quarter['requirements'])['completion_mode'] == 'standard'
     with pytest.raises(ValueError, match='风格参考'):
         store.create_run({**requested, 'completion_mode': 'direct', 'reference_source_ids': [reference['id']]}, [source['id']])
