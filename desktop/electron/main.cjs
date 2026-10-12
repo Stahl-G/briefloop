@@ -321,6 +321,7 @@ else {
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
       changed: updateChanged});
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
+      show: process.platform !== 'win32',
       ...(process.platform === 'win32' ? {icon: path.join(__dirname, 'assets', 'Win.ico')} : {}),
       webPreferences: {preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false}});
     observeStartup(window, startupTrace);
@@ -366,6 +367,8 @@ else {
     const readiness = environment.startup();
     await window.loadURL(welcomeURL);
     startupTrace('welcome-loaded');
+    // Windows needs the initial navigation before presenting the native window.
+    if (process.platform === 'win32' && !quitting && !window.isDestroyed()) window.show();
     await readiness;
     startupTrace('environment-startup-complete');
   }).catch(error => { dialog.showErrorBox('BriefLoop 启动失败', String(error.message || error)); quitting = true; app.quit(); });
