@@ -122,7 +122,11 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $wheel = @(Get-ChildItem desktop/electron/backend/*.whl)[0].FullName
+          $PSNativeCommandUseErrorActionPreference = $false
           python scripts/check_versions.py --cli (Get-Command briefloop).Source --windows-app desktop/electron/dist/win-unpacked/BriefLoop.exe --wheel $wheel > desktop/electron/dist/windows-versions.json
+          $versionExit = $LASTEXITCODE
+          Get-Content desktop/electron/dist/windows-versions.json
+          if ($versionExit -ne 0) { throw "Packaged version check failed: $versionExit" }
       - name: Start actual packaged backend and verify Office exports
         run: |
           $ErrorActionPreference = 'Stop'
