@@ -194,6 +194,170 @@ class MaterialTests(unittest.TestCase):
         with self.assertRaises(ConnectorError): self.read(grant, 'new-request')
 
 
+    def generation_server(self):
+        import http.client
+        import threading
+        from briefloop.server import make_server, _close_service
+        server = make_server(self.store.root, port=0, paused=True)
+        server.store.update_settings({'model': 'synthetic', 'model_selection_required': False,
+                                      'fact_checker': False, 'auto_revision': False})
+        server.connectors.enable(self.connector)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        def cleanup():
+            server.shutdown()
+            thread.join(timeout=5)
+            _close_service(server)
+        self.addCleanup(cleanup)
+        base = f'http://127.0.0.1:{server.server_port}'
+        def request(body=None):
+            connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
+            headers = {'Content-Type': 'application/json', 'Origin': base}
+            if body is not None:
+                headers['X-BriefLoop-Token'] = token
+            connection.request('POST' if body is not None else 'GET', '/api/generate' if body is not None else '/api/session',
+                               json.dumps(body) if body is not None else None, headers)
+            response = connection.getresponse()
+            result = response.status, json.loads(response.read())
+            connection.close()
+            return result
+        token = request()[1]['token']
+        return server, request
+
+    def selection(self):
+        return {'selections': [{'connector_id': self.connector, 'resources': ['m0://document'], 'tools': []}],
+                'max_calls': 1, 'max_total_bytes': 65536}
+
+    def test_default_http_connector_report_reads_and_cites_selected_material(self):
+        import threading
+        from briefloop import research_plan
+        from briefloop.scout_coverage import declare
+        server, request = self.generation_server()
+        marker = 'SELECTED-CONNECTOR-MATERIAL: eight milestones completed.'
+        (self.directory / 'document.txt').write_text(marker + '\n')
+        status, job = request({'requirements': {'title': 'Connector report', 'objective': 'Read selected material',
+                                               'allow_web': False, 'fact_check': False},
+                               'source_ids': [], 'connector_selection': self.selection()})
+        self.assertEqual(status, 200, job)
+        run_id = json.loads(job['payload'])['run_id']
+        self.assertEqual(json.loads(server.store.one('runs', run_id)['requirements'])['completion_mode'], 'standard')
+        connector_id = self.connector
+        class Author:
+            cancelled = threading.Event()
+            def execute(author, current_job, prompt, folder, on_tick, **kwargs):
+                source_index = json.loads((folder / 'input.json').read_text())['sources']
+                assert len(source_index) == 1, 'The author must receive the selected resource in its ordinary source index'
+                source_id = source_index[0]['source_id']
+                original = Path(source_index[0]['absolute_path']).read_text()
+                # The author cannot use the old loopback client; material must already
+                # be available before this offline turn and any Scout/Analyst handoff.
+                assert marker in original
+                resource_results = json.loads((folder / 'input.json').read_text())['connector_resources']
+                assert resource_results[0]['status'] == 'admitted' and resource_results[0]['source_id'] == source_id
+                assert not list((server.store.root / '.connector-access').glob('*.json'))
+                declare(server.store, run_id, [])
+                research_plan.finish_round(server.store, run_id)
+                schema = json.loads((folder / 'reader_contract.schema.json').read_text())
+                spec = json.loads((folder / 'input.json').read_text())['deliverable_spec']
+                contract = {'source_fingerprint': schema['properties']['source_fingerprint']['const'],
+                            'clauses': [{'requirement_id': row['requirement_id'], 'kind': 'reader_content',
+                                         'source_quote': row['text'], 'instruction': row['text']} for row in spec['requirement_items']]}
+                plan = {'reader_contract': contract, 'scout_tasks': []}
+                from briefloop.analyst import packet
+                writer = packet(server.store, run_id, folder / 'writer', plan=plan, research={'sources': [], 'gaps': []})
+                writer_sources = json.loads((writer['root'] / 'source-index.json').read_text())['sources']
+                assert writer_sources[0]['source_id'] == source_id
+                assert (writer['root'] / writer_sources[0]['text_file']).read_text() == original
+                (folder / 'plan.json').write_text(json.dumps(plan))
+                (folder / 'draft.json').write_text(json.dumps({'title': 'Connector report',
+                    'markdown': original + f'\n[@{source_id}]', 'citations': [{'source_id': source_id, 'locator': 'line 1'}]}))
+                on_tick()
+                return {'status': 'complete', 'returncode': 0}
+        author = Author()
+        server.worker.runtime = author
+        server.store.update_job(job['id'], 'running')
+        result = server.worker.generate(server.store.one('jobs', job['id']), score=False)
+        brief = server.store.one('briefs', result['version_id'])
+        receipts = server.store.rows("SELECT status,source_id FROM connector_operations WHERE status='admitted'")
+        self.assertEqual(len(receipts), 1)
+        source_id = receipts[0]['source_id']
+        self.assertIn(marker, brief['markdown'])
+        self.assertIn(f'[@{source_id}]', brief['markdown'])
+        self.assertEqual(server.store.source_text(source_id), marker + '\n')
+        self.assertIn(source_id, server.store.source_ids(run_id))
+        self.assertFalse(list((server.store.root / '.connector-access').glob('*.json')))
+        replay = server.connector_tasks.prepare_resources(job['id'])
+        self.assertEqual(replay[0]['source_id'], source_id)
+        events = [json.loads(line) for line in (self.directory / 'server.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(row['event'] == 'read_document' for row in events), 1)
+
+    def test_unsupported_connector_requests_fail_before_admitting_a_report(self):
+        from types import SimpleNamespace
+        from briefloop.chat_tools import workspace_action
+        from briefloop.connectors.tasks import TaskMaterials
+        from briefloop.native_orchestrator import action
+        from briefloop.native_roles import ToolError
+        server, request = self.generation_server()
+        req = {'title': 'Connector report', 'objective': 'Read selected material', 'allow_web': True, 'fact_check': False}
+        before = len(server.store.rows('SELECT id FROM runs')), len(server.store.rows('SELECT id FROM jobs'))
+        status, _ = request({'requirements': {**req, 'completion_mode': 'direct'},
+                             'source_ids': [], 'connector_selection': self.selection()})
+        self.assertEqual(status, 400)
+        tool_selection = {'selections': [{'connector_id': self.connector, 'resources': [], 'tools': ['inspect_document']}],
+                          'max_calls': 1, 'max_total_bytes': 65536}
+        status, _ = request({'requirements': {**req, 'allow_web': False}, 'source_ids': [], 'connector_selection': tool_selection})
+        self.assertEqual(status, 400)
+        events = [json.loads(line) for line in (self.directory / 'server.jsonl').read_text().splitlines()]
+        self.assertFalse(any(row['event'] in ('read_document', 'inspect_document') for row in events))
+        with self.assertRaises(ValueError):
+            server.store.create_run({**req, 'completion_mode': 'direct'}, [], connector_selection_validated=True)
+        tasks = TaskMaterials(server.store, server.connectors)
+        with self.assertRaises(ValueError):
+            tasks.enqueue({**req, 'completion_mode': 'direct'}, [], self.selection())
+        unsupported = {'action': 'generate', 'requirements': req, 'source_ids': [], 'connector_selection': self.selection()}
+        with self.assertRaises(ValueError):
+            workspace_action(server.store, unsupported)
+        config = {'native_role': 'chat', 'session_id': 'controlled',
+                  '_harness': SimpleNamespace(cancel_requested=lambda _: False)}
+        with self.assertRaises(ToolError):
+            action(server.store, config, {'request': unsupported})
+        self.assertEqual(before, (len(server.store.rows('SELECT id FROM runs')), len(server.store.rows('SELECT id FROM jobs'))))
+        server.store.update_settings({'agent_backend': 'briefloop-native', 'model': 'fixture/model'})
+        native_job = tasks.enqueue({**req, 'allow_web': False}, [], tool_selection)
+        self.assertFalse(server.store.rows('SELECT id FROM connector_operations'))
+        from briefloop.native_orchestrator import connector
+        broker = {'job_id': native_job['id'], '_harness': SimpleNamespace(connector_tasks=tasks)}
+        response = connector(server.store, broker, {'request': {'action': 'call', 'connector_id': self.connector,
+                                                              'name': 'inspect_document', 'arguments': {}, 'request_id': 'native-read'}})
+        native_receipt = json.loads(response['content'][0]['text'])
+        self.assertEqual(native_receipt['status'], 'admitted')
+        server.store.update_settings({'agent_backend': 'codex', 'model': 'synthetic'})
+        source = server.store.add_source('Imported source', 'The connector material was already imported.')
+        accepted = workspace_action(server.store, {'action': 'generate', 'requirements': {**req, 'allow_web': False},
+                                                   'source_ids': [source['id']]})
+        saved = server.store.one('runs', accepted['run_id'])
+        self.assertEqual(json.loads(saved['requirements'])['completion_mode'], 'direct')
+        self.assertEqual(server.store.source_ids(saved['id']), [source['id']])
+        with self.assertRaises(ConnectorError):
+            tasks.bind(accepted['job_id'], self.selection()['selections'], max_calls=1, max_total_bytes=65536)
+        legacy = tasks.enqueue({**req, 'completion_mode': 'standard'}, [], self.selection())
+        legacy_payload = json.loads(legacy['payload'])
+        legacy_run = server.store.one('runs', legacy_payload['run_id'])
+        legacy_req = json.loads(legacy_run['requirements'])
+        legacy_req['completion_mode'] = 'direct'
+        legacy_payload.pop('connector_materials')
+        # Persist the old defective direct binding shape, not a new authorized request.
+        with server.store.tx() as connection:
+            connection.execute('UPDATE runs SET requirements=? WHERE id=?', (json.dumps(legacy_req), legacy_run['id']))
+            connection.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(legacy_payload), legacy['id']))
+        class NeverExecute:
+            def execute(self, *args, **kwargs):
+                raise AssertionError('An unsupported persisted binding must stop before an author turn')
+        server.worker.runtime = NeverExecute()
+        with self.assertRaises(ValueError):
+            server.worker.generate(server.store.one('jobs', legacy['id']), score=False)
+
+
 class ComposableSourceTests(unittest.TestCase):
     def test_caller_owns_commit_rollback_and_existing_files(self):
         with tempfile.TemporaryDirectory() as root:

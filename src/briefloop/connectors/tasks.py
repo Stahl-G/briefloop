@@ -12,6 +12,12 @@ from .materials import ConnectorMaterials
 from ..store import now
 
 
+def require_tool_access(backend, allow_web, selections):
+    if backend == 'codex' and not allow_web and any(item.get('tools') for item in selections if isinstance(item, dict)):
+        raise ConnectorError('离线 Codex 当前不能按参数调用连接器工具；请只选择资源，或先导入工具结果作为材料。',
+                             code='unsupported_offline_tools')
+
+
 class TaskMaterials:
     def __init__(self, store, service):
         self.store = store
@@ -41,6 +47,13 @@ class TaskMaterials:
 
     def bind(self, job_id, selections, *, max_calls, max_total_bytes):
         run_id = self._job(job_id, queued=True)
+        req = json.loads(self.store.one('runs', run_id)['requirements'])
+        mode = req.get('completion_mode', 'standard')
+        backend = json.loads(self.store.one('jobs', job_id)['payload']).get('agent_backend', 'codex')
+        if isinstance(selections, list):
+            require_tool_access(backend, req.get('allow_web', True), selections)
+        if mode in ('direct', 'fast', 'fast_web'):
+            raise ConnectorError('该生成方式不能读取实时连接器；请新建默认方式报告，或先导入材料。', code='unsupported_completion')
         if self.store.rows('SELECT job_id FROM connector_task_bindings WHERE job_id=?', (job_id,)):
             raise ConnectorError('本任务授权已冻结，不可覆盖或提额。', code='binding_frozen')
         grant = self.materials.freeze(run_id, selections, max_calls=max_calls, max_total_bytes=max_total_bytes)
@@ -62,7 +75,12 @@ class TaskMaterials:
             raise ConnectorError('请明确提供连接器选择和两项预算。', code='invalid_grant')
         if not selection['selections']:
             raise ConnectorError('连接器选择不能为空。', code='invalid_grant')
-        run = self.store.create_run(requirements, source_ids, research_protocol='quality_v1', connector_selection_validated=True)
+        from ..models import Requirements
+        backend = self.store.settings().get('agent_backend', 'codex')
+        req = Requirements.new_request(requirements, backend=backend, connector_selection=True)
+        if isinstance(selection['selections'], list):
+            require_tool_access(backend, req.allow_web, selection['selections'])
+        run = self.store.create_run(req.model_dump(), source_ids, research_protocol='quality_v1', connector_selection_validated=True)
         grant = self.materials.freeze(run['id'], **selection)
         payload = {'run_id': run['id'], 'connector_materials': True}
         if session_id: payload['session_id'] = session_id
@@ -76,6 +94,38 @@ class TaskMaterials:
             raise
         self.store.event(job['id'], 'connector_task_bound', {'run_id': run['id'], 'grant_id': grant['id']})
         return job
+
+    def prepare_resources(self, job_id):
+        """Snapshot explicitly selected resource URIs before compiling author inputs."""
+        run_id = self._job(job_id)
+        grant = self.status(job_id)['grant']['data']
+        payload = json.loads(self.store.one('jobs', job_id)['payload'])
+        req = json.loads(self.store.one('runs', run_id)['requirements'])
+        require_tool_access(payload.get('agent_backend', 'codex'), req.get('allow_web', True), grant['connectors'])
+        access = self.access(job_id)
+        results = []
+        try:
+            binding = self._binding(job_id)
+            for number, item in enumerate(grant['connectors']):
+                for slot, uri in enumerate(item['resources']):
+                    # Reuse any earlier receipt for this exact frozen resource, including
+                    # an uncertain post-send result; never automatically replay a call.
+                    previous = self.store.rows("""SELECT request_id FROM connector_operations
+                        WHERE grant_id=? AND json_extract(request,'$.method')='read'
+                        AND json_extract(request,'$.connector_id')=? AND json_extract(request,'$.target')=?
+                        ORDER BY (status='admitted') DESC,rowid LIMIT 1""", (binding['grant_id'], item['id'], uri))
+                    request_id = previous[0]['request_id'] if previous else f'selected-resource-{number}-{slot}'
+                    try:
+                        receipt = self.dispatch(access['access_token'], {'action': 'read', 'connector_id': item['id'],
+                                                                        'uri': uri, 'request_id': request_id})
+                    except ConnectorError as error:
+                        receipt = {'status': 'not_admitted', 'error': str(error), 'code': error.code}
+                    result = {'connector_id': item['id'], 'uri': uri, **receipt}
+                    results.append(result)
+                    self.store.event(job_id, 'connector_resource_snapshot', result)
+            return results
+        finally:
+            self.release_access(access['access_token'])
 
     def has_binding(self, job_id):
         return bool(self.store.rows('SELECT job_id FROM connector_task_bindings WHERE job_id=?', (job_id,)))

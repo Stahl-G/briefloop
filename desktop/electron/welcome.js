@@ -1,5 +1,7 @@
 const status = document.getElementById('status');
 const api = window.briefloopDesktop;
+const startupTrace = marker => console.debug('[BriefLoop startup] ' + marker);
+startupTrace('renderer-start');
 let environment = {state: 'checking'}, opening = false, recentName = '';
 const phases = {'verify-payload': '正在校验 App 运行组件…', 'detect-python': '正在检测本机 Python…',
   'reuse-windows-dependencies': '正在复用可用的已有依赖…',
@@ -28,6 +30,7 @@ function heading(value) {
   return ['从你的工作区继续', '整理材料、研究和写作，报告与对话都保存在本机。'];
 }
 function renderEnvironment(value) {
+  startupTrace(`render-environment:${value.state}:${value.phase || 'idle'}`);
   environment = value;
   const busy = ['checking', 'installing'].includes(value.state);
   const setup = !['checking', 'ready'].includes(value.state);

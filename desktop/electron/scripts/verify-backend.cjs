@@ -6,11 +6,16 @@ const path = require('node:path');
 const {createHash} = require('node:crypto');
 const {execFileSync} = require('node:child_process');
 
+function desktopVersion(version) {
+  return version.replace(/(rc|a|b)(\d+)$/, (_, kind, n) => `-${{rc:'rc', a:'alpha', b:'beta'}[kind]}.${n}`)
+    .replace(/\.dev(\d+)$/, '-dev.$1');
+}
+
 function verifyBackend(desktop = path.resolve(__dirname, '..')) {
   const pkg = JSON.parse(fs.readFileSync(path.join(desktop, 'package.json'), 'utf8'));
   const backend = path.join(desktop, 'backend');
   const manifest = JSON.parse(fs.readFileSync(path.join(backend, 'manifest.json'), 'utf8'));
-  const appVersion = manifest.version.replace(/(rc|a|b)(\d+)$/, (_, kind, n) => `-${{rc:'rc', a:'alpha', b:'beta'}[kind]}.${n}`).replace(/\.dev(\d+)$/, '-dev.$1');
+  const appVersion = desktopVersion(manifest.version);
   if (pkg.version !== appVersion || !/^briefloop-[a-zA-Z0-9_.-]+\.whl$/.test(manifest.wheel || '')) {
     throw Error('Backend identity differs from the App. Stage the shared release wheel first.');
   }
@@ -39,4 +44,5 @@ function verifyBackend(desktop = path.resolve(__dirname, '..')) {
 
 module.exports = async context => verifyBackend(context?.packager?.projectDir);
 module.exports.verifyBackend = verifyBackend;
+module.exports.desktopVersion = desktopVersion;
 if (require.main === module) { verifyBackend(); console.log('Frozen backend verified.'); }

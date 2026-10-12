@@ -169,7 +169,7 @@ class Requirements(Model):
     length_requirement: LengthRequirement | None = None
 
     @classmethod
-    def new_request(cls, value, *, backend=None):
+    def new_request(cls, value, *, backend=None, connector_selection=False):
         """New submissions use direct; saved requirements retain their old default."""
         value = dict(value)
         explicit_mode = bool(value.get('completion_mode'))
@@ -177,9 +177,12 @@ class Requirements(Model):
             value.pop('completion_mode', None)
         req = cls.model_validate(value)
         if not explicit_mode:
-            needs_standard = (backend == 'pi' or req.writing_mode == 'internal_report' or bool(req.reference_source_ids)
+            needs_standard = (connector_selection or backend == 'pi' or req.writing_mode == 'internal_report'
+                              or bool(req.reference_source_ids)
                               or (req.report_profile == 'industry_periodic' and req.covers_quarter()))
             req.completion_mode = 'standard' if needs_standard else 'direct'
+        if connector_selection and req.completion_mode == 'direct':
+            raise ValueError('直写暂不能读取实时连接器材料；请选择默认生成方式，或先导入材料再直写。')
         return req
 
     @model_validator(mode='before')

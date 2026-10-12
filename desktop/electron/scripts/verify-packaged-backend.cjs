@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const {desktopVersion} = require('./verify-backend.cjs');
 
 async function main() {
   const [resourceArg, dataArg, outputArg] = process.argv.slice(2);
@@ -15,7 +16,7 @@ async function main() {
   const {WorkspaceService, runtimeLaunch} = require(path.join(archive, 'service.cjs'));
   const pkg = require(path.join(archive, 'package.json'));
   const manifest = JSON.parse(await fs.readFile(path.join(resources, 'backend/manifest.json'), 'utf8'));
-  assert.equal(pkg.version, manifest.version);
+  assert.equal(pkg.version, desktopVersion(manifest.version));
   const environment = createEnvironment({app: {getPath: () => data, getVersion: () => pkg.version},
     payloadPath: path.join(resources, 'backend')});
   const prepared = await environment.prepare();
@@ -27,7 +28,7 @@ async function main() {
   const office = await runOwnedProcess(runtime.python,
     [...launch.args, officeScript, path.join(data, 'office-evidence')], {env: launch.env, timeoutMs: 120000});
   const exported = JSON.parse(office.stdout.trim());
-  assert.equal(exported.version, pkg.version);
+  assert.equal(exported.version, manifest.version);
   const nativePackage = require(path.resolve(__dirname, '../../../native-engine/package.json'));
   assert.equal(exported.pi, nativePackage.dependencies['@earendil-works/pi-coding-agent']);
   let service;
@@ -35,15 +36,15 @@ async function main() {
     service = new WorkspaceService(runtime);
     await service.start(path.join(data, 'synthetic-workspace'), {create: true});
     const actual = await service.request('/api/software-version');
-    assert.equal(actual.version, pkg.version);
-    assert.equal(actual.release_notes.version, pkg.version);
+    assert.equal(actual.version, manifest.version);
+    assert.equal(actual.release_notes.version, manifest.version);
     assert.equal(actual.release_notes.state, 'loaded');
     assert.equal((await service.status()).busy, false);
   } finally {if (service) await service.stop();}
   const exited = await service.exited;
   assert.equal(exited.code, 0, JSON.stringify(exited));
   assert.equal(exited.signal, null);
-  await fs.writeFile(output, JSON.stringify({version: pkg.version, source_commit: manifest.source_commit,
+  await fs.writeFile(output, JSON.stringify({version: manifest.version, source_commit: manifest.source_commit,
     release_wheel_sha256: manifest.sha256, platform: process.platform, electron: process.versions.electron,
     packaged_asar_modules: 'passed', environment_preparation: 'ready', owned_service_startup: 'passed',
     owned_service_exit: 'passed', version_notes: 'passed', office_exports: exported,

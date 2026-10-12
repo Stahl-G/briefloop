@@ -241,6 +241,7 @@ def generation_prompt(store, run, folder, backend='codex', scout_budget=None):
              'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,
              'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,
              'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    if 'connector_resources' in run:payload['connector_resources']=run['connector_resources']
     if research_handoff is not None:payload['research_handoff']=research_handoff
     from .task_context import project, strategy, GOAL_GUIDE, READING_GUIDE
     payload['task_context'] = project(req, 'orchestrator', evidence='input.json.sources / source_read 或 read-source',
@@ -1249,8 +1250,14 @@ class Worker:
             from .review_capability import require_for_fact_check
             require_for_fact_check(backend,payload.get('review_runtime'),payload.get('review_mode','standard'))
         if json.loads(run['requirements']).get('completion_mode')=='direct':
+            connector_tasks = getattr(self, 'connector_tasks', None)
+            if payload.get('connector_materials') or (connector_tasks and connector_tasks.has_binding(job['id'])):
+                raise ValueError('该旧直写任务未接入实时连接器；请保留已有稿件并用默认方式重新创建连接器报告。')
             from .direct_reports import generate
             return generate(self,job,score=score)
+        connector_tasks = getattr(self, 'connector_tasks', None)
+        if connector_tasks is not None and connector_tasks.has_binding(job['id']):
+            run['connector_resources'] = connector_tasks.prepare_resources(job['id'])
         from .models import normalize_search_provider
         draft_first=json.loads(run['requirements']).get('completion_mode')=='draft_first'
         run['search_provider']=normalize_search_provider(payload.get('search_provider'))

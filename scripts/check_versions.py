@@ -104,11 +104,21 @@ def check(args):
             if os.name != 'nt':
                 raise ValueError('Windows EXE version must be inspected on Windows')
             exe = args.windows_app.resolve()
-            # Literal path and no executable invocation: inspect PE version metadata.
+            # PE metadata strips prerelease qualifiers; read the packaged JSON as well for candidates.
             literal = str(exe).replace("'", "''")
             command = f"[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Item -LiteralPath '{literal}').VersionInfo.ProductVersion"
             version = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command', command], text=True, encoding='utf-8').strip()
             raw_windows_version = version
+            if expected != re.match(r'\d+\.\d+\.\d+', expected)[0]:
+                env = {key: value for key, value in os.environ.items() if key not in ('NODE_OPTIONS', 'NODE_PATH')}
+                env['ELECTRON_RUN_AS_NODE'] = '1'
+                script = 'process.stdout.write(JSON.stringify(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).version))'
+                package_path = exe.parent / 'resources' / 'app.asar' / 'package.json'
+                packaged = json.loads(subprocess.check_output([str(exe), '-e', script, str(package_path)],
+                                      env=env, text=True, stderr=subprocess.PIPE, timeout=15).strip())
+                if not isinstance(packaged, str) or normalize_windows_version(version) != packaged.split('-')[0]:
+                    raise ValueError('Windows PE identity differs from the packaged application version')
+                version = packaged
             return {'app': normalize_windows_version(version), **backend_versions(exe.parent / 'resources', release_hash)}
         capture('windows', windows)
         if raw_windows_version is not None:results['windows']['raw_product_version']=raw_windows_version

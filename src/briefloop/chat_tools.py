@@ -208,6 +208,8 @@ def workspace_action(store, request):
         from .external_client import Client
         return Client(store.root).stop_job(job_id)
     if action=='generate':
+        if 'connector_selection' in request:
+            raise ValueError('聊天生成工具暂不接纳实时连接器选择；请在新报告入口选择连接器，或先导入材料后用 source_ids 生成。')
         from .next_report import generation_requirements
         raw_requirements=generation_requirements(store,request['requirements'],_notify_owner(request))
         source_ids=request.get('source_ids',[])

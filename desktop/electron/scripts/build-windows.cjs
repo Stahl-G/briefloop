@@ -9,11 +9,7 @@ const repo = path.resolve(desktop, '..', '..');
 const args = process.argv.slice(2);
 if (process.platform !== 'win32' || process.arch !== 'x64') throw Error('Build on native Windows x64.');
 if (args.some(arg => arg !== '--dir')) throw Error('Usage: node scripts/build-windows.cjs [--dir]');
-const backend = path.join(desktop, 'backend');
-const manifest = JSON.parse(fs.readFileSync(path.join(backend, 'manifest.json'), 'utf8'));
-if (!/^briefloop-[a-zA-Z0-9_.-]+\.whl$/.test(manifest.wheel || '') || manifest.version !== require('../package.json').version) throw Error('Prepare the matching backend wheel before packaging.');
-const wheel = fs.readFileSync(path.join(backend, manifest.wheel));
-if (createHash('sha256').update(wheel).digest('hex') !== manifest.sha256) throw Error('Backend wheel hash mismatch.');
+require('./verify-backend.cjs').verifyBackend(desktop);
 if (!fs.existsSync(path.join(desktop, 'assets', 'Win.ico'))) {
   throw Error('The approved shared assets/Win.ico must be present before building.');
 }
