@@ -20,6 +20,8 @@ import {evidenceReviewDialogsUI} from './evidence-review-dialogs.js';
 import {renderVersionDiff} from './version-diff.js';
 import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
+import {createReportStickyLayout} from './report-sticky-layout.js';
+createReportStickyLayout({report:$('report'),header:document.querySelector('.report-topbar'),scroller:document.querySelector('main')});
 import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress,isLocalFileJob} from './job-presentation.js';
 import {taskProgressCard} from './task-progress.js';
 import {researchProcessHTML,processDisclosureKey} from './research-process.js';

@@ -1367,8 +1367,15 @@ h3{font-size:var(--text-lg);line-height:var(--leading-tight);font-weight:var(--f
 /* Report identity gets its own row; long action sets cannot squeeze the title. */
 /* Keep sticky report controls and their menus in the report's stacking context.
    The conversation/source drawers must cover the whole report, including its header. */
-#report{isolation:isolate}
+#report{isolation:isolate;--report-header-height:0px;--report-viewport-height:100dvh}
 .report-topbar{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-3);padding:var(--space-3) 0;min-height:0;z-index:var(--z-sticky)}
+/* The rail shares the report header's sticky viewport, including wrapped actions. */
+@media(min-width:1151px){
+ #report-panel{overflow:clip;top:calc(var(--report-header-height,0px) + var(--space-3));
+  max-height:calc(var(--report-viewport-height) - var(--report-header-height,0px) - var(--space-3) - var(--space-3))}
+ #report-panel .rail-head{flex-shrink:0}
+ #report-panel .rail-pane{min-height:0}
+}
 .report-crumbs{display:flex;flex-wrap:wrap;align-items:baseline;min-width:0;gap:var(--space-2)}
 .report-crumbs h1{flex:1 1 auto;min-width:0;max-width:none;white-space:normal;overflow-wrap:anywhere;font-size:var(--text-xl);line-height:var(--leading-tight);font-weight:var(--fw-semibold)}
 .report-actions>.report-status{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);min-width:0}
