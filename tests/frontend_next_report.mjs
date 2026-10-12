@@ -17,7 +17,7 @@ test('next period prepares only a contract and clears stale authorization/source
  assert.deepEqual(f.calls,['next-report?version_id=v1']);
  assert.equal(f.applied.length,1);assert.equal(f.cleared(),1);
  assert.equal(f.elements.allow_web.checked,false);assert.equal(f.elements.fact_check.checked,false);
- assert.equal(f.elements.completion_mode.value,'standard');
+ assert.equal(f.elements.completion_mode.value,'');
  assert.equal(f.elements.previous_report_version_id.value,'v1');
  assert.equal(f.ui.requirementsForTemplate('t1'),f.payload.requirements);
  assert.equal(f.ui.requirementsForTemplate('another'),null);

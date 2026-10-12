@@ -73,7 +73,12 @@ def validate(store, body):
     if config['frequency']=='custom':
         if type(config.get('every')) is not int or not 1<=config['every']<=10000 or config.get('unit') not in UNITS:
             raise ValueError('自定义频率须为 1–10000 分钟/小时/天/周')
-    req = Requirements.model_validate(config.get('requirements',{})).model_dump()
+    raw_requirements = dict(config.get('requirements', {}))
+    if body.get('id') and not raw_requirements.get('completion_mode'):
+        saved = store.rows('SELECT config FROM report_schedules WHERE id=?', (body['id'],))
+        if saved:
+            raw_requirements['completion_mode'] = json.loads(saved[0]['config'])['requirements'].get('completion_mode', 'standard')
+    req = Requirements.new_request(raw_requirements).model_dump()
     # Freeze the optional paid check when the schedule is saved. A later change
     # of workspace defaults must not silently enable it on recurring reports.
     if req['fact_check'] is None:
@@ -89,7 +94,7 @@ def validate(store, body):
     if not isinstance(ids,list) or not all(isinstance(s,str) for s in ids):raise ValueError('请选择材料')
     for sid in ids:store.one('sources',sid)
     if not ids and not req['allow_web']:raise ValueError('请选择来源，或允许联网研究')
-    if req['writing_mode']=='internal_report' and store.settings().get('company_context_enabled') is None:
+    if req['completion_mode'] not in ('direct','fast','fast_web') and req['writing_mode']=='internal_report' and store.settings().get('company_context_enabled') is None:
         raise ValueError('请先在材料与需求中选择是否维护企业背景知识库')
     config['requirements']=req
     config['source_ids']=list(dict.fromkeys(ids))
@@ -169,6 +174,7 @@ def fire(store, sid, *, at=None, manual=False, request_id=None):
                 view=_RequestStore(store,c)
                 local=at.astimezone(ZoneInfo(config['timezone']))
                 req={**config['requirements'],'report_date':local.date().isoformat(),'company_context_revision':None}
+                req.setdefault('completion_mode', 'standard')  # Published schedules keep their frozen policy.
                 if config['frequency']=='custom':duration=timedelta(seconds=config['every']*UNITS[config['unit']])
                 elif config['frequency']=='monthly':
                     year,month0=divmod(local.year*12+local.month-2,12)

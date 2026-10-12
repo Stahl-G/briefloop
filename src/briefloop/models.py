@@ -152,7 +152,8 @@ class Requirements(Model):
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
     research_tier: Literal["quick", "standard", "deep"] = "standard"
     research_strategy: Literal["guided", "goal_driven"] = Field(default="guided", description="guided 沿用分轮建议；goal_driven 按重要问题与证据缺口选择研究步骤，不扩大权限或预算。")
-    # Explicit lifecycle choice; the historical quick research preset is unchanged.
+    # Saved published requirements omitted this field before direct became the
+    # new-request default. Submission boundaries call new_request instead.
     completion_mode: Literal["standard", "draft_first", "fast", "fast_web", "direct"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
     scout_limit: int | None = Field(default=None, ge=1, le=16, description=(
@@ -166,6 +167,15 @@ class Requirements(Model):
     max_words: int | None = Field(default=None, ge=1)
     length_mode: Literal['soft', 'strict'] = Field(default='soft', description='默认篇幅建议；仅用户明确选择或要求严格上限时用 strict，并提供 max_words 和 length_requirement。')
     length_requirement: LengthRequirement | None = None
+
+    @classmethod
+    def new_request(cls, value):
+        """New submissions use direct; saved requirements retain their old default."""
+        value = dict(value)
+        if not value.get('completion_mode'):
+            needs_standard = bool(value.get('reference_source_ids')) or value.get('workflow_variant') == 'industry_quarterly'
+            value['completion_mode'] = 'standard' if needs_standard else 'direct'
+        return cls.model_validate(value)
 
     @model_validator(mode='before')
     @classmethod

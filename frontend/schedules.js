@@ -14,7 +14,8 @@ export function scheduleUI({api,getState,refresh,notice,openReport}){ const disp
  }
  function open(id){
   const state=getState(),row=(state.schedules||[]).find(s=>s.id===id);editing=row||null;
-  requirements=structuredClone(row?.config.requirements||state.requirements||{});
+  requirements=structuredClone(row?.config.requirements||{...state.requirements,completion_mode:undefined});
+  if(row)requirements.completion_mode??='standard';
   const config=row?.config||{},later=new Date(Date.now()+3600000);later.setSeconds(0,0);
   const local=new Date(later.getTime()-later.getTimezoneOffset()*60000).toISOString().slice(0,16);
   $('schedule-name').value=row?.name||requirements.title||'';$('schedule-title').value=requirements.title||'';$('schedule-objective').value=requirements.objective||'';
