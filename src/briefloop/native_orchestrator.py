@@ -107,7 +107,7 @@ def action(store, config, args):
             else:
                 from .models import Settings, Requirements, runtime_fields
                 settings = Settings.model_validate({**view.settings(), **request['runtime']})
-                run = view.create_run(Requirements.new_request(req).model_dump(), request.get('source_ids', []),
+                run = view.create_run(Requirements.new_request(req, backend='briefloop-native').model_dump(), request.get('source_ids', []),
                                       research_protocol='quality_v1', agent_backend='briefloop-native')
                 job = view.enqueue('generate', {'run_id': run['id'], 'agent_backend': 'briefloop-native',
                                                 'runtime': runtime_fields(settings.model_dump(), 'briefloop-native')})

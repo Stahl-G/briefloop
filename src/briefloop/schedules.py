@@ -74,11 +74,18 @@ def validate(store, body):
         if type(config.get('every')) is not int or not 1<=config['every']<=10000 or config.get('unit') not in UNITS:
             raise ValueError('自定义频率须为 1–10000 分钟/小时/天/周')
     raw_requirements = dict(config.get('requirements', {}))
-    if body.get('id') and not raw_requirements.get('completion_mode'):
-        saved = store.rows('SELECT config FROM report_schedules WHERE id=?', (body['id'],))
-        if saved:
-            raw_requirements['completion_mode'] = json.loads(saved[0]['config'])['requirements'].get('completion_mode', 'standard')
-    req = Requirements.new_request(raw_requirements).model_dump()
+    saved = store.rows('SELECT config FROM report_schedules WHERE id=?', (body['id'],)) if body.get('id') else []
+    automatic = config.get('automatic_completion_mode')
+    if automatic is None:
+        automatic = not body.get('id') and not raw_requirements.get('completion_mode')
+    if type(automatic) is not bool:
+        raise ValueError('自动生成方式必须为布尔值')
+    if automatic:
+        raw_requirements.pop('completion_mode', None)
+    elif saved and not raw_requirements.get('completion_mode'):
+        raw_requirements['completion_mode'] = json.loads(saved[0]['config'])['requirements'].get('completion_mode', 'standard')
+    config['automatic_completion_mode'] = automatic
+    req = Requirements.new_request(raw_requirements, backend=store.settings().get('agent_backend', 'codex')).model_dump()
     # Freeze the optional paid check when the schedule is saved. A later change
     # of workspace defaults must not silently enable it on recurring reports.
     if req['fact_check'] is None:
@@ -174,7 +181,10 @@ def fire(store, sid, *, at=None, manual=False, request_id=None):
                 view=_RequestStore(store,c)
                 local=at.astimezone(ZoneInfo(config['timezone']))
                 req={**config['requirements'],'report_date':local.date().isoformat(),'company_context_revision':None}
-                req.setdefault('completion_mode', 'standard')  # Published schedules keep their frozen policy.
+                if config.get('automatic_completion_mode'):
+                    req.pop('completion_mode', None)
+                else:
+                    req.setdefault('completion_mode', 'standard')  # Published schedules keep their frozen policy.
                 if config['frequency']=='custom':duration=timedelta(seconds=config['every']*UNITS[config['unit']])
                 elif config['frequency']=='monthly':
                     year,month0=divmod(local.year*12+local.month-2,12)

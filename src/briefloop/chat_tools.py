@@ -209,7 +209,7 @@ def workspace_action(store, request):
         return Client(store.root).stop_job(job_id)
     if action=='generate':
         from .next_report import generation_requirements
-        requirements=Requirements.new_request(generation_requirements(store,request['requirements'],_notify_owner(request)))
+        raw_requirements=generation_requirements(store,request['requirements'],_notify_owner(request))
         source_ids=request.get('source_ids',[])
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
         runtime_payload={}
@@ -223,6 +223,8 @@ def workspace_action(store, request):
             backend=validate_backend(backend)
             settings=Settings.model_validate({**store.settings(),**request['runtime'],'agent_backend':backend})
             runtime_payload={'runtime':runtime_fields(settings.model_dump(),backend),'agent_backend':backend}
+        backend=runtime_payload.get('agent_backend') or store.settings().get('agent_backend','codex')
+        requirements=Requirements.new_request(raw_requirements, backend=backend)
         run=store.create_run(requirements.model_dump(),source_ids,research_protocol="quality_v1",
                              **({'agent_backend':runtime_payload['agent_backend']} if runtime_payload else {}))
         payload={'run_id':run['id'],**runtime_payload}

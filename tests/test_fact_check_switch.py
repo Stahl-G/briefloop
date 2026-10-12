@@ -70,5 +70,10 @@ def test_new_request_policy_does_not_reinterpret_saved_runs(tmp_path):
                                       'period_start': '2026-07-01', 'period_end': '2026-09-30'}, [source['id']])
     assert json.loads(named_quarter['requirements'])['completion_mode'] == 'standard'
     assert json.loads(dated_quarter['requirements'])['completion_mode'] == 'standard'
+    pi = store.create_run(requested, [source['id']], agent_backend='pi')
+    native = store.create_run(requested, [source['id']], agent_backend='briefloop-native')
+    assert json.loads(pi['requirements'])['completion_mode'] == 'standard'
+    assert json.loads(native['requirements'])['completion_mode'] == 'direct'
+    assert Requirements.new_request({**requested, 'completion_mode': 'direct'}, backend='pi').completion_mode == 'direct'
     with pytest.raises(ValueError, match='风格参考'):
         store.create_run({**requested, 'completion_mode': 'direct', 'reference_source_ids': [reference['id']]}, [source['id']])

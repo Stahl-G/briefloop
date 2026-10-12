@@ -169,7 +169,7 @@ class Requirements(Model):
     length_requirement: LengthRequirement | None = None
 
     @classmethod
-    def new_request(cls, value):
+    def new_request(cls, value, *, backend=None):
         """New submissions use direct; saved requirements retain their old default."""
         value = dict(value)
         explicit_mode = bool(value.get('completion_mode'))
@@ -177,7 +177,8 @@ class Requirements(Model):
             value.pop('completion_mode', None)
         req = cls.model_validate(value)
         if not explicit_mode:
-            needs_standard = bool(req.reference_source_ids) or (req.report_profile == 'industry_periodic' and req.covers_quarter())
+            needs_standard = (backend == 'pi' or bool(req.reference_source_ids)
+                              or (req.report_profile == 'industry_periodic' and req.covers_quarter()))
             req.completion_mode = 'standard' if needs_standard else 'direct'
         return req
 
