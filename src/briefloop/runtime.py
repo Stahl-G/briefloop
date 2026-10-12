@@ -1242,17 +1242,17 @@ class Worker:
         if json.loads(run['requirements']).get('completion_mode') in ('fast','fast_web'):
             from .fast_reports import generate
             return generate(self,job)
+        from .backends import validate_backend
+        backend=validate_backend(payload.get('agent_backend','codex'))
+        if score and payload.get('single_evaluation') is not False and json.loads(run['requirements']).get('fact_check'):
+            # Recheck queued or resumed tasks before either author path calls a model.
+            from .review_capability import require_for_fact_check
+            require_for_fact_check(backend,payload.get('review_runtime'),payload.get('review_mode','standard'))
         if json.loads(run['requirements']).get('completion_mode')=='direct':
             from .direct_reports import generate
             return generate(self,job,score=score)
-        from .backends import validate_backend
         from .models import normalize_search_provider
-        backend=validate_backend(payload.get('agent_backend','codex'))
         draft_first=json.loads(run['requirements']).get('completion_mode')=='draft_first'
-        if score and payload.get('single_evaluation') is not False and json.loads(run['requirements']).get('fact_check'):
-            # A job queued before this check, or resumed later, stops before any model turn.
-            from .review_capability import require_for_fact_check
-            require_for_fact_check(backend,payload.get('review_runtime'),payload.get('review_mode','standard'))
         run['search_provider']=normalize_search_provider(payload.get('search_provider'))
         if 'max_parallel' in payload:run['max_parallel']=payload['max_parallel']
         if payload.get('previous_job_id'):
