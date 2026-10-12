@@ -71,6 +71,8 @@ def action(store, config, args):
         saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent', writer=writer)
         return _json_result(store.brief_view(saved['id']))
     if name == 'generate':
+        if 'connector_selection' in request:
+            raise ToolError('聊天生成工具暂不接纳实时连接器选择；请在新报告入口选择连接器，或先导入材料后用 source_ids 生成。')
         if config.get('discuss_only'):
             raise ToolError('/discuss 只整理要求，不启动报告')
         req = dict(request.get('requirements') or {})

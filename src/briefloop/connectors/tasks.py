@@ -41,6 +41,9 @@ class TaskMaterials:
 
     def bind(self, job_id, selections, *, max_calls, max_total_bytes):
         run_id = self._job(job_id, queued=True)
+        mode = json.loads(self.store.one('runs', run_id)['requirements']).get('completion_mode', 'standard')
+        if mode in ('direct', 'fast', 'fast_web'):
+            raise ConnectorError('该生成方式不能读取实时连接器；请新建默认方式报告，或先导入材料。', code='unsupported_completion')
         if self.store.rows('SELECT job_id FROM connector_task_bindings WHERE job_id=?', (job_id,)):
             raise ConnectorError('本任务授权已冻结，不可覆盖或提额。', code='binding_frozen')
         grant = self.materials.freeze(run_id, selections, max_calls=max_calls, max_total_bytes=max_total_bytes)

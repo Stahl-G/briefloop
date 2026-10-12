@@ -829,7 +829,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .report_time import freeze
                     result=freeze(Requirements.new_request(body['requirements'], backend=store.settings().get('agent_backend', 'codex')).model_dump())
                 elif path=='/api/generate':
-                    req=Requirements.new_request(body['requirements'], backend=store.settings().get('agent_backend', 'codex'))
+                    req=Requirements.new_request(body['requirements'], backend=store.settings().get('agent_backend', 'codex'),
+                                                 connector_selection='connector_selection' in body)
                     if req.completion_mode in ('fast','fast_web') and body.get('connector_selection'):
                         raise ValueError('快速模式使用已读取的材料；请先导入连接器材料，或选择完整流程。')
                     if 'connector_selection' in body:

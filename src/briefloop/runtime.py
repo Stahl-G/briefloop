@@ -1249,6 +1249,9 @@ class Worker:
             from .review_capability import require_for_fact_check
             require_for_fact_check(backend,payload.get('review_runtime'),payload.get('review_mode','standard'))
         if json.loads(run['requirements']).get('completion_mode')=='direct':
+            connector_tasks = getattr(self, 'connector_tasks', None)
+            if payload.get('connector_materials') or (connector_tasks and connector_tasks.has_binding(job['id'])):
+                raise ValueError('该旧直写任务未接入实时连接器；请保留已有稿件并用默认方式重新创建连接器报告。')
             from .direct_reports import generate
             return generate(self,job,score=score)
         from .models import normalize_search_provider

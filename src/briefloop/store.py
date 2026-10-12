@@ -363,7 +363,8 @@ class Store:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         backend = options.get('agent_backend') or self.settings().get('agent_backend', 'codex')
         req = (Requirements.model_validate(requirements) if clone is not None
-               else Requirements.new_request(requirements, backend=backend))
+               else Requirements.new_request(requirements, backend=backend,
+                                             connector_selection=options.get('connector_selection_validated', False)))
         if clone is None:
             from .next_report import validate_origin
             validate_origin(self, req)
