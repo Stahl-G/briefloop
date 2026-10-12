@@ -165,7 +165,7 @@ def generate(worker, job):
 
 def enrich(worker, job, brief, folder):
     """Assemble evidence in a child version, with no changes to report prose."""
-    from .models import Citation, NumberBinding, BriefDraft
+    from .models import Citation, NumberBinding, TemporalClaim, BriefDraft
     store = worker.store; payload = json.loads(job['payload'])
     version = 'brief_' + job['id'][4:] + '_evidence'
     saved = store.rows('SELECT * FROM briefs WHERE id=?', (version,))
@@ -185,7 +185,7 @@ def enrich(worker, job, brief, folder):
     full = {r['source_id']: r['text'] for r in current}
     phase = folder / 'evidence'
     prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'
-              '只返回一个 JSON 对象，包含 citations、number_bindings 和 unsupported 三个数组；没有可定位依据时留空，不猜测。'
+              '只返回一个 JSON 对象，包含 citations、number_bindings、temporal_claims 和 unsupported 四个数组；没有可定位依据时留空，不猜测。'
               'unsupported 列出正文中在全部来源里找不到依据的重要结论，每条给 report_quote（正文连续原句）和 reason；不要因措辞概括而列入。'
               '每条 citation 使用 source_id（下方来源别名，如 S1）、report_quote（正文连续原句）、excerpt（连续逐字原文）。'
               'report_quote 必须能在报告正文中逐字找到；摘录应包含对应的主体、期间、单位及限定条件，不能用同来源的无关段落充数。'
@@ -195,12 +195,20 @@ def enrich(worker, job, brief, folder):
               'value/unit 保留来源真实数值和量级；单位写标准表达，如 USD million、million USD、万元、%。'
               '不要把 million 写成含糊的 M，不猜缺失的币种，不自行换算或改变来源数值。'
               '正文与来源的数值、主体、期间或单位不一致时保留真实数据供检查，不自动修正文稿。'
-              '最多 30 条重要引用、30 条重要数字；多段计算不要伪造单段原文支持。'
-              '\n报告正文：\n' + brief['markdown'] + '\n全部来源：\n' + _sources_text(materials))
+              'temporal_claims 记录正文重要事件的 statement、event_date、published_at、usage(current/background)、'
+              'news_basis(event/first_disclosure/new_development)、news_date、news_note，并提供 source_id、report_quote、excerpt。'
+              '区分事件发生、首次披露、实质新进展及撤回更正；缺失日期留空，不把披露日代作事件日。'
+              '抓取时间和原文行号由程序补入，不填写。已有时间记录见下方，可补充但不凭猜测覆盖有效记录。'
+              '最多 30 条重要引用、30 条重要数字、30 条重要事件；多段计算不要伪造单段原文支持。'
+              '\n报告日期范围：' + dump(json.loads(store.one('runs', brief['run_id'])['requirements']).get('time_context'))
+              + '\n已有时间记录：' + dump(json.loads(brief['detail']).get('temporal_claims', []))
+              + '\n报告正文：\n' + brief['markdown'] + '\n全部来源：\n' + _sources_text(materials))
     store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '后台补充原文定位，保持正文不变。'})
     _plain_turn(worker, job, phase, prompt)
     data = json.loads(_response(phase))
-    if not isinstance(data, dict) or not isinstance(data.get('citations'), list) or not isinstance(data.get('number_bindings'), list):
+    if (not isinstance(data, dict) or not isinstance(data.get('citations'), list)
+            or not isinstance(data.get('number_bindings'), list)
+            or not isinstance(data.get('temporal_claims', []), list)):
         raise ValueError('依据补全未返回预期记录，初稿保留；可恢复检查。')
     from .evidence_context import located_context
     sources = {r['alias']: r for r in materials}
@@ -215,10 +223,11 @@ def enrich(worker, job, brief, folder):
         context = located_context(full[source['source_id']], quote, item.get('locator', ''))
         return {**item, 'source_id': source['source_id'], **context, 'source_title': source['name']}
 
-    citations, numbers = [], []
+    citations, numbers, temporal = [], [], []
     for name, model, quote_field, target in [('citations', Citation, 'excerpt', citations),
-                                            ('number_bindings', NumberBinding, 'source_excerpt', numbers)]:
-        for index, item in enumerate(data[name][:30]):
+                                            ('number_bindings', NumberBinding, 'source_excerpt', numbers),
+                                            ('temporal_claims', TemporalClaim, 'excerpt', temporal)]:
+        for index, item in enumerate(data.get(name, [])[:30]):
             try:
                 located = locate(item, quote_field)
                 body_quote = item.get('report_quote')
@@ -231,6 +240,10 @@ def enrich(worker, job, brief, folder):
                                                         if key in Citation.model_fields}).model_dump()
                     for key in ('source_title', 'source_context', 'context_locator'):
                         located.pop(key, None)
+                if name == 'temporal_claims':
+                    from .report_time import fetched_at
+                    located = {key: value for key, value in located.items() if key in TemporalClaim.model_fields}
+                    located['fetched_at'] = fetched_at(store, located['source_id'])
                 target.append(model.model_validate(located).model_dump())
                 if name == 'number_bindings' and citation not in citations:
                     citations.append(citation)
@@ -239,6 +252,8 @@ def enrich(worker, job, brief, folder):
     details = {key:value for key,value in json.loads(brief['detail']).items() if key in BriefDraft.model_fields}
     details['citations'] = citations + [c for c in details.get('citations', []) if c['source_id'] not in {r['source_id'] for r in citations}]
     details['number_bindings'] = numbers
+    details['temporal_claims'] = temporal + [item for item in details.get('temporal_claims', [])
+        if not any((item['statement'], item['source_id']) == (new['statement'], new['source_id']) for new in temporal)]
     # Claims the materials do not cover. Mostly a slip in an enforced turn; in an
     # observed turn it is where outside information the CLI brought in shows up.
     unsupported = [{'report_quote': item['report_quote'], 'reason': str(item.get('reason', ''))[:500]}
@@ -250,7 +265,7 @@ def enrich(worker, job, brief, folder):
         details['research_notes'].append({'kind': 'fast_unsupported', 'summary': '以下结论在所选材料中找不到原文依据，需核实或删除。', 'items': unsupported})
         store.event(job['id'], 'fast_unsupported', {'version_id': brief['id'], 'count': len(unsupported),
                                                     'message': f'{len(unsupported)} 条结论在所选材料中找不到原文依据，已单独列出。'})
-    (phase / 'admission.json').write_text(dump({'citations': citations, 'number_bindings': numbers, 'rejected': rejected,
+    (phase / 'admission.json').write_text(dump({'citations': citations, 'number_bindings': numbers, 'temporal_claims': temporal, 'rejected': rejected,
                                                 'unsupported': unsupported}), encoding='utf-8')
     if worker.runtime.cancelled.is_set() or worker.stopping.is_set():
         raise InterruptedError('依据补全已停止，初稿和结果保留。')

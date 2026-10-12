@@ -167,7 +167,29 @@ def markdown_document(markdown):
                 node = {'type': 'citation', 'attrs': {'sourceId': part[2:-1]}}
             else: node = {'type': 'text', 'text': part, **({'marks': copy.deepcopy(marks)} if marks else {})}
             stack[-1].setdefault('content', []).append(node)
-    for token in MarkdownIt('commonmark').enable(['table', 'strikethrough']).parse(markdown):
+    def label_bold(state, silent):
+        if not state.src.startswith('**', state.pos):
+            return False
+        end = state.src.find('**', state.pos + 2, state.posMax)
+        label = state.src[state.pos + 2:end] if end >= 0 else ''
+        if not label.endswith((':', '：')) or any(c in label for c in '*\n'):
+            return False
+        if end + 2 >= state.posMax or not state.src[end + 2].isalnum():
+            return False
+        if not silent:
+            state.push('strong_open', 'strong', 1)
+            children = []
+            state.md.inline.parse(label, state.md, state.env, children)
+            for child in children:
+                token = state.push(child.type, child.tag, child.nesting)
+                token.content, token.attrs, token.markup = child.content, child.attrs, child.markup
+            state.push('strong_close', 'strong', -1)
+        state.pos = end + 2
+        return True
+
+    parser = MarkdownIt('commonmark').enable(['table', 'strikethrough'])
+    parser.inline.ruler.before('emphasis', 'label_bold', label_bold)
+    for token in parser.parse(markdown):
         name = token.type.rsplit('_', 1)[0]
         if token.type.endswith('_open') and name in mapping:
             node = {'type': mapping[name], 'content': []}

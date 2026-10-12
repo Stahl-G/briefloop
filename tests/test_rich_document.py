@@ -100,9 +100,15 @@ def test_rich_edit_survives_reload_and_word_without_markdown_loss(tmp_path):
 
 
 def test_legacy_import_and_complete_publication_identity(tmp_path):
-    md = '# Heading\n\nText **bold** and *italic*.\n\n| A | B |\n|---|---|\n| 1 | 2 |'
+    md = '# Heading\n\nText **bold** and *italic*. **本周发生：**10月7日。`**示例：**代码`\n\n| A | B |\n|---|---|\n| **指标：**收入 | 2 |'
     document = markdown_document(md)
     assert any(node['type'] == 'table' for node in document['content'])
+    from docx import Document
+    word=Document(BytesIO(docx_bytes(document=document)))
+    assert any(run.bold and run.text=='本周发生：' for p in word.paragraphs for run in p.runs)
+    assert '**示例：**代码' in ''.join(p.text for p in word.paragraphs)
+    assert '**本周发生' not in ''.join(p.text for p in word.paragraphs)
+    assert any(run.bold and run.text=='指标：' for p in word.tables[0].cell(1,0).paragraphs for run in p.runs)
     store = Store(tmp_path); source = store.add_source('source', 'text')
     run = store.create_run({'title': 'Test', 'objective': 'Test'}, [source['id']])
     old = store.publish(run['id'], {'title': 'Test', 'markdown': md})

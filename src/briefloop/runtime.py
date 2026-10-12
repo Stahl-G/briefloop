@@ -1244,7 +1244,7 @@ class Worker:
             return generate(self,job)
         if json.loads(run['requirements']).get('completion_mode')=='direct':
             from .direct_reports import generate
-            return generate(self,job)
+            return generate(self,job,score=score)
         from .backends import validate_backend
         from .models import normalize_search_provider
         backend=validate_backend(payload.get('agent_backend','codex'))
