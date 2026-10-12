@@ -187,12 +187,24 @@ binding commit together using Store.enqueue's host-only before_commit callback.
 Its payload records `connector_materials: true`, no credentials. Other creation
 paths retain the existing requirement for sources or allowed web search.
 
-The server attaches TaskMaterials to Worker. Around the main generation execute
-call only, `generation_access` writes a unique 0600 process capability file and
-adds a stdlib tool-client command and frozen selection to generation instructions.
-The token itself is absent from prompts and job payloads. On exit the file is
-removed and access invalidated; assessment/reviewer calls are outside this scope.
-The actual tool still rechecks the generating job and grant on every request.
+A selected connector defaults to the standard generation path when the request
+omits `completion_mode`. Explicit direct/fast modes with live selection are refused
+before generation rather than ignoring the selection.
+
+The server attaches TaskMaterials to Worker. Before compiling the author input,
+`prepare_resources` reads only the explicitly selected resource URIs through the
+frozen grant, budget and admission checks. Admitted sources enter the normal source
+index and Analyst packet; acquisition receipts enter `input.json.connector_resources`.
+Repeated preparation reuses earlier receipts without sending the request again,
+including uncertain results. Parameterized tools are not executed by preparation.
+
+Around the main generation execute call, `generation_access` exposes selected tools.
+The native backend uses its trusted `connector_material` handler. CLI hosts use the
+existing scoped client with a unique 0600 capability file, removed on exit. Offline
+Codex cannot reach that live client and rejects tool selections before enqueue;
+selected resources remain supported through controller preparation. Tokens stay
+out of prompts and job payloads. Assessment/reviewer calls are outside this scope.
+The actual tool rechecks the generating job and grant on every request.
 Worker cancellation revokes the grant before signalling the running transport,
 therefore in-flight material admission is rejected after cancellation. A cancelled
 MCP grant does not silently regain authority on resume; a new user-selected task
@@ -207,10 +219,12 @@ describe use. These states must not be conflated with fact verification. Source
 and citation views use the existing report UI; enabling a connector alone does
 not select or admit its materials.
 
-A real local application HTTP test creates a source-empty/offline task, invokes the
-same scoped CLI client provided to generation, checks source admission, then stops
-the task through Worker and verifies revocation. This proves the HTTP/tool path,
-not that a language model actually chooses the tool or produces a suitable report.
+Real local HTTP/MCP behavior checks create a source-empty/offline task and verify
+that the author reads the selected resource from its normal input, the Analyst
+packet contains the same original, and the saved draft cites its source. Repeating
+preparation causes only one MCP read. The unsupported offline tool combination is
+refused without executing it. These checks use a deterministic author; an installed
+model run is a separate validation of actual writing and citation use.
 
 This boundary constrains these application APIs; it is not OS isolation against a
 host process with arbitrary access to the workspace/database or browser session.
