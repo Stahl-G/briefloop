@@ -252,8 +252,15 @@ def enrich(worker, job, brief, folder):
     details = {key:value for key,value in json.loads(brief['detail']).items() if key in BriefDraft.model_fields}
     details['citations'] = citations + [c for c in details.get('citations', []) if c['source_id'] not in {r['source_id'] for r in citations}]
     details['number_bindings'] = numbers
+    previous_temporal = {(item['statement'], item['source_id']): item for item in details.get('temporal_claims', [])}
+    # Missing evidence fields do not retract saved author data. These remain
+    # claims, not verified dates; fetched_at still comes only from the source.
+    retained_fields = {'event_date', 'published_at', 'news_date', 'locator'}
+    temporal = [{**previous_temporal.get((item['statement'], item['source_id']), {}),
+                 **{key: value for key, value in item.items() if key not in retained_fields or value.strip()}}
+                for item in temporal]
     details['temporal_claims'] = temporal + [item for item in details.get('temporal_claims', [])
-        if not any((item['statement'], item['source_id']) == (new['statement'], new['source_id']) for new in temporal)]
+        if (item['statement'], item['source_id']) not in {(new['statement'], new['source_id']) for new in temporal}]
     # Claims the materials do not cover. Mostly a slip in an enforced turn; in an
     # observed turn it is where outside information the CLI brought in shows up.
     unsupported = [{'report_quote': item['report_quote'], 'reason': str(item.get('reason', ''))[:500]}

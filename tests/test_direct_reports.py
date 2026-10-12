@@ -56,6 +56,24 @@ def setup(tmp_path):
 
 def test_direct_draft_is_saved_with_known_citations_and_checks_keep_revision(tmp_path):
     store,source,run,job,runtime,worker=setup(tmp_path)
+    execute = runtime.execute
+    def partial_dates(job, prompt, folder, *args, **kwargs):
+        result = execute(job, prompt, folder, *args, **kwargs)
+        if folder.name == 'direct-writing':
+            path = folder / 'temporal_claims.json'
+            claims = json.loads(path.read_text())
+            claims[0].update(news_date='2026-10-09', locator='author section')
+            path.write_text(dump(claims))
+        elif folder.name == 'evidence':
+            path = folder / 'response.txt'
+            evidence = json.loads(path.read_text())
+            evidence['temporal_claims'].append({
+                'statement': '原稿已生成的日期', 'source_id': 'S1', 'event_date': '',
+                'published_at': '2026-10-10', 'locator': '',
+                'report_quote': '收入 120 万元，同比增长 20%。', 'excerpt': '收入 120 万元，同比增长 20%'})
+            path.write_text(dump(evidence))
+        return result
+    runtime.execute = partial_dates
     assert not store.meta('scout_coverage_version:'+run['id'])
     result=worker.generate(job)
     brief=store.one('briefs',result['version_id'])
@@ -76,6 +94,9 @@ def test_direct_draft_is_saved_with_known_citations_and_checks_keep_revision(tmp
     claims=json.loads(enriched['detail'])['temporal_claims']
     assert len(claims)==2 and all(c['fetched_at']=='' for c in claims)
     assert claims[0]['news_date']=='2026-10-09' and claims[0]['locator']
+    preserved = next(c for c in claims if c['statement'] == '原稿已生成的日期')
+    assert preserved['event_date'] == '2026-10-06' and preserved['news_date'] == '2026-10-09'
+    assert preserved['published_at'] == '2026-10-10' and preserved['locator'] == 'line 2'
     assert [name for name,_ in runtime.calls]==['direct-writing','evidence','evaluation']
 
 
