@@ -8,6 +8,8 @@ const {WorkspaceService} = require('./service.cjs');
 const {createEnvironment} = require('./environment.cjs');
 const {createUpdater} = require('./updater.cjs');
 const {installNavigation, isWorkspaceDownload} = require('./navigation.cjs');
+const {createStartupTrace, observeStartup} = require('./startup-trace.cjs');
+const startupTrace = createStartupTrace(process.env.BRIEFLOOP_STARTUP_TRACE === '1');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null, environment;
@@ -310,7 +312,10 @@ else {
       const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-macos-1024.png'));
       if (!icon.isEmpty()) app.dock.setIcon(icon);
     }
-    environment = createEnvironment({app, payloadPath, changed: value => { if (window && !window.isDestroyed()) window.webContents.send('environment:changed', value); }});
+    environment = createEnvironment({app, payloadPath, changed: value => {
+      startupTrace('environment-changed', {state: value.state, phase: value.phase});
+      if (window && !window.isDestroyed()) window.webContents.send('environment:changed', value);
+    }});
     updates = createUpdater({app, shell,
       // A packaged application always uses the fixed official source.
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
@@ -318,6 +323,7 @@ else {
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
       ...(process.platform === 'win32' ? {icon: path.join(__dirname, 'assets', 'Win.ico')} : {}),
       webPreferences: {preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false}});
+    observeStartup(window, startupTrace);
     window.on('close', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     window.webContents.session.setPermissionCheckHandler(() => false);
@@ -328,7 +334,12 @@ else {
       item.setSaveDialogOptions({title: '报告另存为', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())), properties: ['showOverwriteConfirmation', 'createDirectory']});
       item.once('done', (_event, state) => { if (state === 'interrupted') reportError(Error('文件下载中断，请重新另存。')); });
     });
-    ipcMain.handle('environment:status', event => { trusted(event); return environment.status(); });
+    ipcMain.handle('environment:status', event => {
+      trusted(event);
+      const value = environment.status();
+      startupTrace('environment-status', {state: value.state, phase: value.phase});
+      return value;
+    });
     ipcMain.handle('environment:inspect', event => { trusted(event); return environmentOperation(() => environment.inspect()); });
     ipcMain.handle('environment:prepare', event => { trusted(event); return environmentOperation(() => environment.prepare()); });
     ipcMain.handle('environment:cancel', event => { trusted(event); return environment.cancel(); });
@@ -354,6 +365,8 @@ else {
     ]));
     const readiness = environment.startup();
     await window.loadURL(welcomeURL);
+    startupTrace('welcome-loaded');
     await readiness;
+    startupTrace('environment-startup-complete');
   }).catch(error => { dialog.showErrorBox('BriefLoop 启动失败', String(error.message || error)); quitting = true; app.quit(); });
 }
