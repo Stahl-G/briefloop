@@ -7,6 +7,7 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
  let ticket=0,busy=false;
  function sync(){
   const mode=$('completion-mode')?.value,enabled=['draft_first','fast','fast_web'].includes(mode),fast=['fast','fast_web'].includes(mode);
+  if($('research-strategy'))$('research-strategy').disabled=!mode||mode==='direct';
   if($('draft-target-label'))$('draft-target-label').hidden=!enabled;
   if($('draft-target'))$('draft-target').disabled=!enabled;
   for(const node of $('requirements')?.querySelectorAll?.('[name="allow_web"], [name="fact_check"], [name="research_tier"], [name="research_strategy"], #auto-revision, #company-mode')||[]){
@@ -30,6 +31,8 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
    ?'一轮聚焦检索，最多 3 次搜索、读取 6 篇原文，随后直接出稿。无需先上传材料；可在搜索设置选择渠道。保存后在后台补依据和评价，不自动改写正文；十分钟是目标，非保证或截止。'
    :mode==='fast'
    ?'已有文本材料直接出稿，保存后自动在后台补充依据和评价；可立即编辑、下载。此模式不联网补搜、不维护企业背景、不自动改写正文。材料较多时可能需要更久，不保证固定时限。'
+   :!mode||mode==='direct'
+   ?'BriefLoop 在同一上下文中完成研究与写作；稿件保存后继续补充依据、独立评价和修订。'
    :'完整流程按所选研究深度检索、写作和检查。先交研究初稿的旧任务仍可手动继续完整检查。';
   if(fast&&$('completion-mode-help')&&!GUARDED_FAST_BACKENDS.includes(getBackend()))$('completion-mode-help').textContent+=' 当前执行引擎的自带工具无法由 BriefLoop 关闭：仍可出稿，任务记录会写明写作期间的工具使用，找不到原文依据的结论会单独列出。';
   if(fast&&$('review-capability-note'))$('review-capability-note').hidden=true;
@@ -44,7 +47,7 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
   const mode=$('completion-mode')?.value;
   return ['draft_first','fast','fast_web'].includes(mode)
    ?{completion_mode:mode,target_minutes:Number($('draft-target').value),...(['fast','fast_web'].includes(mode)?{research_tier:'quick',allow_web:mode==='fast_web',fact_check:false}:{})}
-   :{completion_mode:'standard'};
+   :mode?{completion_mode:mode}:{};
  }
  async function render(){
   sync();

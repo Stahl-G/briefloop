@@ -43,6 +43,12 @@ def test_failed_admission_rolls_back_and_pause(tmp_path,monkeypatch):
     assert not store.rows('SELECT * FROM jobs')
     s.change(store,{'id':sid,'action':'toggle'})
     assert s.listing(store)[0]['next_at']=='2026-09-14T10:02:00+00:00'
+    monkeypatch.setattr(Store,'enqueue',original)
+    store.set_meta('settings', {**store.settings(), 'agent_backend': 'pi', 'model': 'synthetic', 'model_selection_required': False})
+    retry=s.fire(store,sid,at=at('2026-09-14T10:00:30'),manual=True,request_id='current-backend')
+    job=store.one('jobs',retry['job_id'])
+    assert json.loads(job['payload'])['agent_backend']=='pi'
+    assert json.loads(store.one('runs',retry['run_id'])['requirements'])['completion_mode']=='standard'
 
 
 def test_custom_validation_and_company_gate(tmp_path):
@@ -50,4 +56,4 @@ def test_custom_validation_and_company_gate(tmp_path):
     for value in (0,True,10001):
         with pytest.raises(ValueError):s.save(store,{**body,'config':{**body['config'],'every':value}})
     with pytest.raises(ValueError,match='企业背景'):
-        s.save(store,{**body,'config':{**body['config'],'requirements':{**body['config']['requirements'],'writing_mode':'internal_report'}}})
+        s.save(store,{**body,'config':{**body['config'],'requirements':{**body['config']['requirements'],'writing_mode':'internal_report','completion_mode':'standard'}}})

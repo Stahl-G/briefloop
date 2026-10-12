@@ -169,3 +169,48 @@ def check(window, claims):
             'review_hint': '日期范围比较不证明新闻性；首次披露或新进展须回读 source_id/locator，核实 news_note 并保留真实事件日期。',
             'missing_date_count': sum(i['temporal_status']=='unverified' for i in items),
             'out_of_range_count': sum(i['temporal_status']=='out_of_range' for i in items)}
+
+
+def author_context(window):
+    """Semantic date guidance only; structured evidence is assembled after prose."""
+    if not window:
+        return '时间范围未冻结，不猜测年份或声称时效已核验。'
+    scope = (f"截至 {window['end_exclusive']}" if window.get('start') is None else
+             f"{window['start']} 至 {window['end_exclusive']}（不含结束时刻）")
+    return (f"报告范围：{scope}；时区：{window['timezone']}。"
+            '理解事件、披露与生效的先后，旧事件只有本期出现实质新进展或首次披露才作为当期新闻。'
+            '核对后续撤回与更正，不把报道日当事件日。按需要写清重要日期，不必给每段添加状态标签。')
+
+
+def fetched_at(store, source_id):
+    """Use acquisition metadata, never an author estimate or an event date."""
+    from .source_updates import _snapshot
+    return _snapshot(store, source_id).get('fetched_at') or ''
+
+
+def author_records(store, run_id, folder, notes):
+    """Admit an optional generated sidecar without silently dropping records."""
+    import json
+    from .models import TemporalClaim
+    path = folder / 'temporal_claims.json'
+    if not path.exists():
+        return []
+    admitted, rejected = [], []
+    try:
+        rows = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(rows, list):
+            raise ValueError('时间记录需要列表')
+        for index, row in enumerate(rows):
+            try:
+                claim = TemporalClaim.model_validate(row).model_dump()
+                if claim['source_id'] not in store.source_ids(run_id):
+                    raise ValueError('来源不属于本任务')
+                claim['fetched_at'] = fetched_at(store, claim['source_id'])
+                admitted.append(claim)
+            except (ValueError, TypeError) as exc:
+                rejected.append({'index': index, 'reason': str(exc)[:500]})
+    except (OSError, ValueError) as exc:
+        rejected.append({'reason': str(exc)[:500]})
+    if rejected:
+        notes.append({'kind': 'direct_temporal_rejected', 'summary': '作者时间记录部分未接纳，原件保留。', 'items': rejected})
+    return admitted

@@ -361,7 +361,9 @@ class Store:
             requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False,'fact_check':False}
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
-        req = Requirements.model_validate(requirements)
+        backend = options.get('agent_backend') or self.settings().get('agent_backend', 'codex')
+        req = (Requirements.model_validate(requirements) if clone is not None
+               else Requirements.new_request(requirements, backend=backend))
         if clone is None:
             from .next_report import validate_origin
             validate_origin(self, req)

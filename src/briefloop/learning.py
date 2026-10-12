@@ -197,6 +197,8 @@ def _conditions(store,case,payload):
     names=('store.py','runtime.py','deliverable_spec.py','models.py','learning.py','chat_tools.py',
            'document_workflows.py','writing_agreements.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
            'static/runtime-bridge.mjs')
+    if requirements.get('completion_mode') == 'direct':
+        names += ('direct_reports.py', 'skill_delivery.py', 'fast_reports.py', 'report_time.py', 'document_model.py')
     if payload.get('agent_backend') == 'briefloop-native':
         names += ('native_harness.py','native_roles.py','native_orchestrator.py','analyst.py','scout.py','agent_prompts.py','static/native-engine.mjs')
         names += tuple(str(p.relative_to(root)) for p in sorted((root/'prompt_assets').glob('*.md')))
@@ -325,6 +327,8 @@ def _generate_trial(store,job,case,skill,folder,tag):
     if not vid or not store.generated_by(vid,saved['id']):raise RuntimeError('候选执行没有返回其实际生成版本')
     brief=store.one('briefs',vid)
     if brief['run_id']!=info['run_id']:raise RuntimeError('候选返回版本不属于本次学习验证')
+    from .skill_delivery import verify
+    verify(store, brief)
     return brief
 
 
@@ -377,6 +381,10 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
 
 def compare(store,runtime,job,comparisons,folder,backend,*,submission_contract=None):
     """Pairwise Evaluator over trial drafts; returns the saved comparison."""
+    from .skill_delivery import verify
+    for pair in comparisons:
+        verify(store, pair['baseline'])
+        verify(store, pair['candidate'])
     folder.mkdir(parents=True,exist_ok=True)
     (folder/'input.json').write_text(dump(comparisons),encoding='utf-8')
     staged=stage_job(store,job,'evaluator',mode='pairwise')
@@ -522,7 +530,11 @@ def _baseline_for_attempt(store, case, learning_payload):
         if not vid or not store.generated_by(vid,job['id']):continue
         try:brief=store.one('briefs',vid)
         except ValueError:continue
-        if brief['run_id']==case['id'] and brief['author']=='agent':return brief
+        if brief['run_id']==case['id'] and brief['author']=='agent':
+            from .skill_delivery import verify
+            try:verify(store, brief)
+            except ValueError:continue
+            return brief
     return None
 
 
@@ -636,12 +648,19 @@ def apply_accepted(store,job,study,state):
     """Atomic, replayable deployment; a user rollback is never overwritten on resume."""
     accepted=[x for x in state['history'] if x['accepted']]
     if not accepted:return
+    if store.rows("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'", (job['id'],)):
+        return
     decision=accepted[-1];payload=json.loads(job['payload'])
     if payload.get('reader_id'):
         if not store.rows("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'",(job['id'],)):
             store.event(job['id'],'adoption_processed',{'applied':False,'reader_id':payload['reader_id'],
                          'reason':'读者专属学习链暂不启用；反馈与候选原件保留'})
         return
+    from .skill_delivery import verify
+    comparisons = store.root / 'jobs' / job['id'] / f"round-{decision['round']}" / 'comparison' / 'input.json'
+    for pair in json.loads(comparisons.read_text(encoding='utf-8')):
+        verify(store, pair['baseline'])
+        verify(store, pair['candidate'])
     text=(Path(study)/decision['skill']['file']).read_text(encoding='utf-8')
     # A retained version includes its role binding. Keep legacy rows immutable;
     # target order and duplicate roles do not change the effective binding.

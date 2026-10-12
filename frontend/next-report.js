@@ -28,7 +28,7 @@ export function nextReportUI({$,api,savedVersion,getCurrent,applyRequirements,cl
    }
    if(openConversation){await openConversation(data);return}
    contract=candidate;
-   set('completion_mode','standard');
+   set('completion_mode','');
    set('template_id',contract.template_id||'');
    applyRequirements(JSON.stringify(contract));
    for(const key of ['organization','industry','report_date','reader_id','previous_report_version_id','previous_report_hash'])set(key,contract[key]);

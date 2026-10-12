@@ -289,7 +289,8 @@ after(async () => {
 test("ping reports configured entries, separately from live API availability", async () => {
   const ping = await call("ping");
   assert.equal(ping.engine, "briefloop-native/2");
-  assert.equal(ping.pi, "1.0.0");
+  const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+  assert.equal(ping.pi, manifest.dependencies["@earendil-works/pi-coding-agent"]);
   assert.equal(ping.models_configured, 2);
   const catalog = await describeConfiguredModels();
   const model = catalog.models.find(m => m.id === MODEL);

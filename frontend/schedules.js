@@ -14,7 +14,8 @@ export function scheduleUI({api,getState,refresh,notice,openReport}){ const disp
  }
  function open(id){
   const state=getState(),row=(state.schedules||[]).find(s=>s.id===id);editing=row||null;
-  requirements=structuredClone(row?.config.requirements||state.requirements||{});
+  requirements=structuredClone(row?.config.requirements||{...state.requirements,completion_mode:undefined});
+  if(row)requirements.completion_mode??='standard';
   const config=row?.config||{},later=new Date(Date.now()+3600000);later.setSeconds(0,0);
   const local=new Date(later.getTime()-later.getTimezoneOffset()*60000).toISOString().slice(0,16);
   $('schedule-name').value=row?.name||requirements.title||'';$('schedule-title').value=requirements.title||'';$('schedule-objective').value=requirements.objective||'';
@@ -24,7 +25,7 @@ export function scheduleUI({api,getState,refresh,notice,openReport}){ const disp
   $('schedule-preview').textContent='';$('schedule-error').textContent='';custom();$('schedule-dialog').showModal();
  }
  function custom(){$('schedule-custom').hidden=$('schedule-frequency').value!=='custom';}
- function body(){return {id:editing?.id,name:$('schedule-name').value,enabled:editing?.enabled??true,config:{frequency:$('schedule-frequency').value,start:$('schedule-start').value,timezone:$('schedule-timezone').value,every:Number($('schedule-every').value),unit:$('schedule-unit').value,requirements:{...requirements,title:$('schedule-title').value,objective:$('schedule-objective').value,allow_web:$('schedule-web').checked},source_ids:[...$('schedule-sources').querySelectorAll('input:checked')].map(n=>n.value)}};}
+ function body(){return {id:editing?.id,name:$('schedule-name').value,enabled:editing?.enabled??true,config:{automatic_completion_mode:editing?!!editing.config.automatic_completion_mode:!requirements.completion_mode,frequency:$('schedule-frequency').value,start:$('schedule-start').value,timezone:$('schedule-timezone').value,every:Number($('schedule-every').value),unit:$('schedule-unit').value,requirements:{...requirements,title:$('schedule-title').value,objective:$('schedule-objective').value,allow_web:$('schedule-web').checked},source_ids:[...$('schedule-sources').querySelectorAll('input:checked')].map(n=>n.value)}};}
  $('schedule-new').onclick=()=>open();$('schedule-cancel').onclick=()=>$('schedule-dialog').close();$('schedule-frequency').onchange=custom;
  $('schedule-preview-button').onclick=async()=>{try{const data=body(),result=await api('schedules/preview',data);$('schedule-preview').textContent='下次执行：'+display(result.next_at,data.config.timezone);$('schedule-error').textContent='';}catch(e){$('schedule-error').textContent=e.message;}};
  $('schedule-form').onsubmit=async e=>{e.preventDefault();const submit=e.submitter;submit.disabled=true;try{await api('schedules/save',body());$('schedule-dialog').close();await refresh();notice('定时报告已保存');}catch(err){$('schedule-error').textContent=err.message;}finally{submit.disabled=false;}};

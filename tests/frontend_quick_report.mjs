@@ -19,6 +19,7 @@ test('draft-first is opt-in, with an editable soft target independent of researc
  const {$,controls}=view();
  assert.deepEqual(controls.read(),{completion_mode:'standard'});
  assert.equal($('draft-target').disabled,true);
+ $('completion-mode').value='direct';assert.deepEqual(controls.read(),{completion_mode:'direct'});
  $('completion-mode').value='draft_first';$('completion-mode').listeners.change();
  assert.deepEqual(controls.read(),{completion_mode:'draft_first',target_minutes:10});
  $('draft-target').value='17';assert.equal(controls.read().target_minutes,17);

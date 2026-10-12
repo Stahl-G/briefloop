@@ -57,7 +57,8 @@ def main():
     engine = NativeEngine()
     try:
         ping = engine.call('ping')
-        assert ping['pi'] == '1.0.0'
+        package = json.loads((Path(__file__).resolve().parents[1] / 'native-engine' / 'package.json').read_text())
+        assert ping['pi'] == package['dependencies']['@earendil-works/pi-coding-agent']
     finally:
         engine.close()
     print(json.dumps({'version': __version__, 'pi': ping['pi'], 'checks': results, 'model_calls': 0}))
