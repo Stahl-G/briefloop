@@ -245,16 +245,16 @@ class MaterialTests(unittest.TestCase):
         class Author:
             cancelled = threading.Event()
             def execute(author, current_job, prompt, folder, on_tick, **kwargs):
-                access_file = next((server.store.root / '.connector-access').glob('*.json'))
-                query = folder / 'connector-request.json'
-                query.write_text(json.dumps({'action': 'read', 'connector_id': connector_id,
-                                             'uri': 'm0://document', 'request_id': 'author-read'}))
-                from briefloop.connectors import task_client
-                receipt = json.loads(subprocess.check_output([sys.executable, task_client.__file__, '--access-file', str(access_file),
-                                                              '--request', str(query)], text=True))
-                author.receipt = receipt
-                source_id = receipt['source_id']
-                original = server.store.source_text(source_id)
+                source_index = json.loads((folder / 'input.json').read_text())['sources']
+                assert len(source_index) == 1, 'The author must receive the selected resource in its ordinary source index'
+                source_id = source_index[0]['source_id']
+                original = Path(source_index[0]['absolute_path']).read_text()
+                # The author cannot use the old loopback client; material must already
+                # be available before this offline turn and any Scout/Analyst handoff.
+                assert marker in original
+                resource_results = json.loads((folder / 'input.json').read_text())['connector_resources']
+                assert resource_results[0]['status'] == 'admitted' and resource_results[0]['source_id'] == source_id
+                assert not list((server.store.root / '.connector-access').glob('*.json'))
                 declare(server.store, run_id, [])
                 research_plan.finish_round(server.store, run_id)
                 schema = json.loads((folder / 'reader_contract.schema.json').read_text())
@@ -262,7 +262,13 @@ class MaterialTests(unittest.TestCase):
                 contract = {'source_fingerprint': schema['properties']['source_fingerprint']['const'],
                             'clauses': [{'requirement_id': row['requirement_id'], 'kind': 'reader_content',
                                          'source_quote': row['text'], 'instruction': row['text']} for row in spec['requirement_items']]}
-                (folder / 'plan.json').write_text(json.dumps({'reader_contract': contract, 'scout_tasks': []}))
+                plan = {'reader_contract': contract, 'scout_tasks': []}
+                from briefloop.analyst import packet
+                writer = packet(server.store, run_id, folder / 'writer', plan=plan, research={'sources': [], 'gaps': []})
+                writer_sources = json.loads((writer['root'] / 'source-index.json').read_text())['sources']
+                assert writer_sources[0]['source_id'] == source_id
+                assert (writer['root'] / writer_sources[0]['text_file']).read_text() == original
+                (folder / 'plan.json').write_text(json.dumps(plan))
                 (folder / 'draft.json').write_text(json.dumps({'title': 'Connector report',
                     'markdown': original + f'\n[@{source_id}]', 'citations': [{'source_id': source_id, 'locator': 'line 1'}]}))
                 on_tick()
@@ -272,13 +278,16 @@ class MaterialTests(unittest.TestCase):
         server.store.update_job(job['id'], 'running')
         result = server.worker.generate(server.store.one('jobs', job['id']), score=False)
         brief = server.store.one('briefs', result['version_id'])
-        source_id = author.receipt['source_id']
-        self.assertEqual(author.receipt['status'], 'admitted')
+        receipts = server.store.rows("SELECT status,source_id FROM connector_operations WHERE status='admitted'")
+        self.assertEqual(len(receipts), 1)
+        source_id = receipts[0]['source_id']
         self.assertIn(marker, brief['markdown'])
         self.assertIn(f'[@{source_id}]', brief['markdown'])
         self.assertEqual(server.store.source_text(source_id), marker + '\n')
         self.assertIn(source_id, server.store.source_ids(run_id))
         self.assertFalse(list((server.store.root / '.connector-access').glob('*.json')))
+        replay = server.connector_tasks.prepare_resources(job['id'])
+        self.assertEqual(replay[0]['source_id'], source_id)
         events = [json.loads(line) for line in (self.directory / 'server.jsonl').read_text().splitlines()]
         self.assertEqual(sum(row['event'] == 'read_document' for row in events), 1)
 
@@ -294,6 +303,12 @@ class MaterialTests(unittest.TestCase):
         status, _ = request({'requirements': {**req, 'completion_mode': 'direct'},
                              'source_ids': [], 'connector_selection': self.selection()})
         self.assertEqual(status, 400)
+        tool_selection = {'selections': [{'connector_id': self.connector, 'resources': [], 'tools': ['inspect_document']}],
+                          'max_calls': 1, 'max_total_bytes': 65536}
+        status, _ = request({'requirements': {**req, 'allow_web': False}, 'source_ids': [], 'connector_selection': tool_selection})
+        self.assertEqual(status, 400)
+        events = [json.loads(line) for line in (self.directory / 'server.jsonl').read_text().splitlines()]
+        self.assertFalse(any(row['event'] in ('read_document', 'inspect_document') for row in events))
         with self.assertRaises(ValueError):
             server.store.create_run({**req, 'completion_mode': 'direct'}, [], connector_selection_validated=True)
         tasks = TaskMaterials(server.store, server.connectors)
@@ -307,6 +322,16 @@ class MaterialTests(unittest.TestCase):
         with self.assertRaises(ToolError):
             action(server.store, config, {'request': unsupported})
         self.assertEqual(before, (len(server.store.rows('SELECT id FROM runs')), len(server.store.rows('SELECT id FROM jobs'))))
+        server.store.update_settings({'agent_backend': 'briefloop-native', 'model': 'fixture/model'})
+        native_job = tasks.enqueue({**req, 'allow_web': False}, [], tool_selection)
+        self.assertFalse(server.store.rows('SELECT id FROM connector_operations'))
+        from briefloop.native_orchestrator import connector
+        broker = {'job_id': native_job['id'], '_harness': SimpleNamespace(connector_tasks=tasks)}
+        response = connector(server.store, broker, {'request': {'action': 'call', 'connector_id': self.connector,
+                                                              'name': 'inspect_document', 'arguments': {}, 'request_id': 'native-read'}})
+        native_receipt = json.loads(response['content'][0]['text'])
+        self.assertEqual(native_receipt['status'], 'admitted')
+        server.store.update_settings({'agent_backend': 'codex', 'model': 'synthetic'})
         source = server.store.add_source('Imported source', 'The connector material was already imported.')
         accepted = workspace_action(server.store, {'action': 'generate', 'requirements': {**req, 'allow_web': False},
                                                    'source_ids': [source['id']]})
