@@ -5,7 +5,7 @@
 # 共 67 个包版本及声明组合。
 
 ========================================================================
-=== @anthropic-ai/sdk 0.124.0 (MIT)
+=== @anthropic-ai/sdk 0.129.0 (MIT)
 ========================================================================
 --- LICENSE ---
 Copyright 2023 Anthropic, PBC.
@@ -17,7 +17,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-agent-core 1.0.0 (MIT)
+=== @earendil-works/pi-agent-core 1.1.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -43,7 +43,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-ai 1.0.0 (MIT)
+=== @earendil-works/pi-ai 1.1.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -69,7 +69,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-codemode 1.0.0 (MIT)
+=== @earendil-works/pi-codemode 1.1.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -95,7 +95,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-coding-agent 1.0.0 (MIT)
+=== @earendil-works/pi-coding-agent 1.1.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -121,7 +121,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-mcp 1.0.0 (MIT)
+=== @earendil-works/pi-mcp 1.1.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -147,7 +147,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-tui 1.0.0 (MIT)
+=== @earendil-works/pi-tui 1.1.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
