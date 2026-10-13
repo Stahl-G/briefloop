@@ -1,4 +1,5 @@
 import {settingsEffort} from '../frontend/reasoning-controls.js';
+import {createReportChatContext} from '../frontend/report-chat-context.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
@@ -31,6 +32,7 @@ c.localStorage={setItem(){}};c.sessionStorage={setItem(){}};c.crypto={randomUUID
 c.runtimeChoice=()=>({backend:'claude',model:'default',permission:'runtime-native'});
 c.api=async route=>{if(route==='harness/session')return {id:'new-session',runtime:{backend:'claude',model:'default'}};throw Error('send failed')};
 c.chatActive=()=>false;c.chatError=()=>{};c.pollChat=async()=>{};
+c.reportChatContext=createReportChatContext({isOpen:()=>false,getNextReport:()=>null});
 el('chat-input').value='你是谁';el('chat-input').focus=()=>{};el('chat-model').value='default';el('chat-model-provider').value='';
 vm.runInContext(section(source,'const fastCapabilities=','const fastCapabilityRequests=','frontend/app.js'),c);
 vm.runInContext(section(source,'function rememberDraft(){','function restoreDraft(','frontend/app.js'),c);

@@ -66,13 +66,14 @@ test('task completion clears the rail even while an existing conversation is ope
 });
 
 
-test('welcome applies the selected host together with its model and effort',()=>{
+test('welcome applies the selected host together with its model and effort',async()=>{
  const $=elements();$('chat-input').focus=()=>{};
  const context=vm.createContext({welcomeReady,welcomeMode:'cli',welcomeBusy:false,runtimeCatalog:[{id:'zcode',available:true}],settingsEffort,$,state:{settings:{agent_backend:'zcode',model:'default',model_variant:'',reasoning_effort:'high'}},
   chat:{nextBackend:'codex',hostOptions:{mode:'plan'}},notice(){},page(){},updateComposer(){},refreshInlineModelPickers(){},rememberDraft(){},
-  assignEffort:(id,value)=>$(id).value=value,effortValue:(s,k)=>s[k]});
+  assignEffort:(id,value)=>$(id).value=value,effortValue:(s,k)=>s[k],
+  action:async fn=>fn(),learningOnboarding:{confirmStart:async()=>{}}});
  vm.runInContext(section("$('welcome-start').onclick=",'\nfunction render(first)'),context);
- $('welcome-start').onclick();
+ await $('welcome-start').onclick();
  assert.equal(context.chat.nextBackend,'zcode');
  assert.equal($('chat-model').value,'default');
  assert.equal(Object.keys(context.chat.hostOptions).length,0);

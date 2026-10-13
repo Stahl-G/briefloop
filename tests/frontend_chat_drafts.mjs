@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {section} from './source_section.mjs';
+import {createReportChatContext} from '../frontend/report-chat-context.js';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const between=(start,end)=>section(source,start,end,'frontend/app.js');
@@ -26,6 +27,7 @@ function fixture({sendFails=false}={}){
   runtimeChoice:()=>({backend:chat.nextBackend,model:$('chat-model').value,permission:$('chat-permission').value}),
   api:async(route,payload)=>{calls.push({route,payload});if(route==='harness/session')return {id:'created-session',runtime:payload.runtime};if(sendFails)throw Error('send failed');return {}},
  });
+ context.reportChatContext=createReportChatContext({isOpen:()=>false,getNextReport:()=>null});
  vm.runInContext(code,context);
  const setDraft=(text,attachment)=>{
   $('chat-input').value=text;chat.attachments=new Set([attachment]);chat.nextBackend='codex';
