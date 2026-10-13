@@ -319,7 +319,7 @@ class NativeHarness:
                 from .scout_evidence import begin
                 begin(self.store, config)
                 evidence_open = True
-            self.chat.patch_message(mid, status='sending')
+            self.chat.patch_message(mid, status='sending', turn_id=mid)
             text = (coordinator.input(sid, message) if coordinator else message).get('prompt') or message['text']
             text = context + '\n\n' + text if context else text
             if message.get('source_ids'):

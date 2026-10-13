@@ -166,10 +166,21 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
             return super().call(method, params, timeout)
     for host, config in ((NativeHarness(store, InspectEngine()), {'model': 'fake/m1'}),
                          (BridgeHarness(store, InspectBridge(), 'codebuddy'), {'model': 'default'})):
-        ChatDispatcher({host.backend: host})
+        dispatcher = ChatDispatcher({host.backend: host})
         session = host.create_session(runtime=config)['id']
         bind_context(store, session, session, {'version_id': revised['id'], 'hash': revised['hash']})
         host.send(session, 'Check this report.', message_id=session, allow_web=True)
         _wait_status(host, session, session, 'completed')
         assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'completed'
+        prepare = dispatcher.input
+        def broken_input(sid, message):
+            prepare(sid, message)
+            raise PermissionError('Synthetic input preparation failure')
+        monkeypatch.setattr(dispatcher, 'input', broken_input)
+        failed_id = session + '-input-failure'
+        bind_context(store, session, failed_id, {'version_id': revised['id'], 'hash': revised['hash']})
+        host.send(session, 'Prepare report input.', message_id=failed_id, allow_web=True)
+        _wait_status(host, session, failed_id, 'failed')
+        assert not host.chat.session(session)['busy']
+        assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'failed'
         host.close()
