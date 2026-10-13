@@ -155,7 +155,7 @@ class Store:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
                 c.execute("ALTER TABLE templates ADD COLUMN origin TEXT NOT NULL DEFAULT 'upload'")
-            c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
+            c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings(auto_learn=True).model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
             c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))
 

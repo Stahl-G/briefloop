@@ -41,6 +41,7 @@ import {createComposerOptions} from './composer-options.js';
 import {anchoredPopover} from './anchored-popover.js';
 import {createOfficeTools} from './office-tools.js';
 import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
+import {createLearningOnboarding} from './learning-onboarding.js';
 import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
@@ -385,6 +386,7 @@ function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(session
    el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);
   syncWorkflowProfile(false)}
 function renderWelcome(){
+ learningOnboarding.sync();
  const box=$('welcome-runtimes');if(!box)return;
  const settings=state?.settings||{},chosen=settings.agent_backend;
  if(welcomeMode===null||welcomeBackend!==chosen){welcomeMode=chosen==='briefloop-native'?'native':'cli';welcomeBackend=chosen}
@@ -443,9 +445,12 @@ for(const id of ['welcome-effort','welcome-variant'])$(id).onchange=async()=>{
  welcomeBusy=true;renderWelcome();
  try{await action(saveModel,'思考强度已保存')}finally{welcomeBusy=false;renderWelcome()}
 };
-$('welcome-start').onclick=()=>{
+const learningOnboarding=createLearningOnboarding({api,$,getState:()=>state,refresh,describePlan:learningPlanText});
+learningOnboarding.mount($('welcome-start').closest('footer'));
+$('welcome-start').onclick=()=>action(async()=>{
  const settings=state?.settings||{};
  if(!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy)){notice('请先选择 Agent 和模型',true);return}
+ await learningOnboarding.confirmStart();
  const backend=settings.agent_backend||'codex';
  if(chat.nextBackend!==backend)chat.hostOptions={};
  chat.nextBackend=backend;
@@ -454,7 +459,7 @@ $('welcome-start').onclick=()=>{
  $('chat-variant').value=backend==='mimo'?(settings.runtime_efforts?.mimo||''):(settings.model_variant||'');
   $('chat-service-tier').value=settings.service_tier||'';
  $('welcome').hidden=true;page('chat');updateComposer();refreshInlineModelPickers();$('chat-input').focus();rememberDraft();
-};
+});
 function render(first){
  renderTemplates(first);
  renderWorkflowChoices(first);
