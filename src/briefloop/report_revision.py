@@ -40,6 +40,15 @@ def context_for_message(store, session_id, message_id):
     return json.loads(rows[0]['data']) if rows else None
 
 
+def validate_steer(store, session_id, message_id, turn_id):
+    selected = (context_for_message(store, session_id, message_id) or {}).get('base_version_id')
+    active = store.rows("""SELECT id FROM chat_messages WHERE session_id=? AND turn_id=?
+        AND role='user' AND status IN ('sending','delivered','streaming') AND id!=?""",
+        (session_id, turn_id, message_id))
+    if any((context_for_message(store, session_id, row['id']) or {}).get('base_version_id') != selected for row in active):
+        raise ValueError('运行中追加不能切换报告，请排队发送这条消息')
+
+
 def prepare_input(store, session_id, message):
     context = context_for_message(store, session_id, message['id'])
     if not context or not context.get('base_version_id'):
@@ -128,6 +137,8 @@ def finish_message(store, message_id, status):
 
 def recover_terminal_messages(store):
     """Replay only report-message closeouts lost between durable writes."""
+    if not store.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_messages'"):
+        return
     rows = store.rows("""SELECT DISTINCT m.id,m.status FROM chat_messages m JOIN chat_events context
         ON context.session_id=m.session_id AND context.kind='revision/message_context'
         AND json_extract(context.data,'$.message_id')=m.id

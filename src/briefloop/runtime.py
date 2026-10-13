@@ -698,6 +698,12 @@ class Worker:
             if tasks is not None and tasks.has_binding(jid):
                 tasks.finish(jid,int(json.loads(job['payload']).get('attempt',1)))
             _notify_task(self.store,job,job['status'])
+            if job['kind'] in ('generate','assess') and not self.stopping.is_set():
+                try:
+                    from .report_revision import recover_terminal_messages
+                    recover_terminal_messages(self.store)
+                except Exception as exc:
+                    self.store.event(jid,'revision_closeout_failed',{'error':str(exc)})
         return job
 
 

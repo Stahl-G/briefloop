@@ -147,6 +147,9 @@ class HarnessManager:
             if self.chat.session(session_id)['lifecycle']!='active':raise ValueError('会话已归档或删除，请先恢复会话再发送消息；恢复不会重新运行旧消息')
             prior=next((m for m in self.snapshot(session_id)['messages'] if m['id']==mid),None)
             if prior:return prior
+            if mode=='steer' and session.get('turn_id'):
+                from .report_revision import validate_steer
+                validate_steer(self.store,session_id,mid,session['turn_id'])
             message=self.chat.message(session_id,display_text if display_text is not None else text,source_ids=source_ids,mode=mode,mid=mid,runtime=config,prompt=text if display_text is not None else None,allow_web=allow_web)
             self._runtime[mid]=config
             if not coordinator or coordinator.internal(session_id):self.chat.update(session_id,runtime=config)
@@ -310,6 +313,8 @@ class HarnessManager:
             with self._lock:
                 session=self.chat.session(sid);message=next(m for m in self.snapshot(sid)['messages'] if m['id']==mid)
                 if not session['turn_id']:self._schedule(sid);return
+                from .report_revision import validate_steer
+                validate_steer(self.store,sid,mid,session['turn_id'])
                 active=[m for m in self.snapshot(sid)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
                 if active:
                     actual=self._config(active[0]['runtime']);requested=self._config(message['runtime'])
@@ -320,7 +325,9 @@ class HarnessManager:
                 client=self.client
                 if client is None:raise RuntimeError('会话连接已失效')
                 self.chat.patch_message(mid,status='sending',turn_id=session['turn_id'])
-            client.request('turn/steer',{'threadId':session['thread_id'],'expectedTurnId':session['turn_id'],'clientUserMessageId':mid,'input':self._input(message)})
+            coordinator=getattr(self,'coordinator',None)
+            selected=coordinator.input(sid,message) if coordinator else message
+            client.request('turn/steer',{'threadId':session['thread_id'],'expectedTurnId':session['turn_id'],'clientUserMessageId':mid,'input':self._input(selected)})
             with self._lock:
                 current=self.chat.session(sid)
                 status='delivered' if current['turn_id']==session['turn_id'] else 'completed' if current['status']=='idle' else 'interrupted'

@@ -161,6 +161,8 @@ def _enqueue(store, version_id, *, automatic=False, revision=False, runtime=None
             actual={**runtime,'reasoning_effort':runtime.get('reasoning_effort',runtime.get('effort')),
                     'model_variant':runtime.get('model_variant',runtime.get('variant'))}
             payload.update(agent_backend=backend,runtime=runtime_fields(actual,backend))
+            payload['role_models']=store.role_model_config(payload['runtime'],backend)
+            payload['review_runtime']=store.settings().get('review_runtime')
         if session_id is not None:payload['session_id']=session_id
     snapshot = binding(store, version_id)
     identity = hashlib.sha256(dump([parent['id'], snapshot, payload]).encode()).hexdigest()

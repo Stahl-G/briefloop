@@ -111,6 +111,18 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         bind_context(store, sid, 'feedback', None)
     codex.send(sid, 'Find missing developments and revise this report.', message_id='feedback', allow_web=True)
     until(lambda: codex.chat.session(sid)['turn_id'] == 'turn1')
+    from briefloop.draft_completion import binding
+    old_check = store.enqueue('assess', {'version_id': brief['id'], 'run_id': run['id'],
+        'continuation_of': generation['id'], 'checks_input': binding(store, brief['id'])})
+    store.update_job(old_check['id'], 'running')
+    bind_context(store, sid, 'same-report', {'version_id': brief['id'], 'hash': brief['hash']})
+    codex.send(sid, 'Also retain the important comparisons.', message_id='same-report', mode='steer', allow_web=True)
+    until(lambda: any(method == 'turn/steer' for method, _ in codex.client.calls))
+    delivered = next(params for method, params in codex.client.calls if method == 'turn/steer')
+    assert brief['id'] in delivered['input'][0]['text']
+    bind_context(store, sid, 'different-report', None)
+    with pytest.raises(ValueError, match='报告'):
+        codex.send(sid, 'Unrelated message', message_id='different-report', mode='steer', allow_web=True)
     monkeypatch.setattr(sources, '_fetch_bytes', lambda *_args, **_kwargs: (b'Revenue 15 USD.', 'text/plain', 'utf-8'))
     added = sources.fetch_for_run(store, run['id'], 'https://example.test/new')
     # Tool ingestion really passed closed-round admission and retained the new source.
@@ -126,7 +138,10 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
     completion = {'method': 'turn/completed', 'params': {'threadId': 't1', 'turn': {'id': 'turn1', 'status': 'completed'}}}
     codex.handle_notification(completion)
     codex.handle_notification(completion)
-    checks = store.rows("SELECT * FROM jobs WHERE kind='assess'")
+    assert len(store.rows("SELECT * FROM jobs WHERE kind='assess'")) == 1
+    from briefloop.runtime import Worker
+    Worker(store)._settle_job(old_check['id'], 'complete')
+    checks = store.rows("SELECT * FROM jobs WHERE kind='assess' AND id!=?", (old_check['id'],))
     assert len(checks) == 1
     payload = json.loads(checks[0]['payload'])
     assert payload['version_id'] == revised['id'] and payload['auto_revision'] is False
@@ -135,3 +150,26 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
     assert research_plan.frozen(store, run['id'])['rounds'] == closed_rounds
     assert store.one('briefs', brief['id'])['markdown'] == brief['markdown']
     codex.close()
+
+    # Both alternate transports must admit the report before preparing its input.
+    from briefloop.native_harness import NativeHarness
+    from test_native_harness import EngineFixture, _wait_status
+    class InspectEngine(EngineFixture):
+        def call(self, method, params, timeout=None):
+            if method == 'turn_start':
+                assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'active'
+            return super().call(method, params, timeout)
+    class InspectBridge(BridgeFixture):
+        def call(self, method, params, timeout=None):
+            if method == 'start':
+                assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'active'
+            return super().call(method, params, timeout)
+    for host, config in ((NativeHarness(store, InspectEngine()), {'model': 'fake/m1'}),
+                         (BridgeHarness(store, InspectBridge(), 'codebuddy'), {'model': 'default'})):
+        ChatDispatcher({host.backend: host})
+        session = host.create_session(runtime=config)['id']
+        bind_context(store, session, session, {'version_id': revised['id'], 'hash': revised['hash']})
+        host.send(session, 'Check this report.', message_id=session, allow_web=True)
+        _wait_status(host, session, session, 'completed')
+        assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'completed'
+        host.close()

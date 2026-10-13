@@ -49,6 +49,13 @@ def begin(store, run_id, *, base_version_id, session_id, message_id, job_id=None
             if stage and all(stage.get(key) == value for key, value in bound.items()):
                 return {**stage, 'idempotent': True}
         if previous.get('status') == 'active':
+            message = connection.execute('SELECT mode,turn_id FROM chat_messages WHERE id=?', (message_id,)).fetchone()
+            owner = connection.execute('SELECT turn_id,status FROM chat_messages WHERE id=?', (previous.get('message_id'),)).fetchone()
+            if (message['mode'] == 'steer' and previous.get('session_id') == session_id
+                    and previous.get('base_version_id') == base_version_id and owner
+                    and owner['status'] in ('sending','delivered','streaming')
+                    and message['turn_id'] and message['turn_id'] == owner['turn_id']):
+                return {**previous, 'continued': True}
             raise AdmissionError('另一条用户修订仍在补研究，请先结束或恢复它', code='revision_stage_open')
         if any(info.get('status') == 'active' for info in (plan.get('rounds') or {}).values()):
             raise AdmissionError('原研究轮次尚未结束', code='revision_round_open')

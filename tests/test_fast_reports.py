@@ -116,6 +116,7 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     checks=enqueue_revision(store,revised['id'],runtime={'backend':'codex','model':'new-model','effort':'medium'},session_id=session['id'])
     frozen=json.loads(checks['payload'])
     assert frozen['runtime']['model']=='new-model' and frozen['runtime']['reasoning_effort']=='medium'
+    assert frozen['role_models']['evaluator']['model']=='new-model'
     assert frozen['auto_revision'] is False
     assert enqueue_revision(store,revised['id'],runtime={'backend':'codex','model':'new-model','effort':'medium'})['id']==checks['id']
     previous_execute=runtime.execute

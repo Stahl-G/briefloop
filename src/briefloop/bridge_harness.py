@@ -171,12 +171,14 @@ class BridgeHarness(OpencodeHarness):
             if message is None:return
             mid=message['id'];execution=mid
             coordinator=getattr(self,'coordinator',None)
-            config=self._config(message['runtime']);text,files=self._input(coordinator.input(sid,message) if coordinator else message,session['cwd'])
+            config=self._config(message['runtime'])
             if self.backend=='antigravity' and config.get('native_permissions_digest'):
                 from .runtime_permissions import permission_digest
                 if config['native_permissions_digest']!=permission_digest():
                     self.chat.patch_message(mid,status='failed')
                     raise ValueError('Antigravity 原生权限已变化，本条已排队消息未执行；请确认新权限后重新发送')
+            self.chat.patch_message(mid,status='sending')
+            text,files=self._input(coordinator.input(sid,message) if coordinator else message,session['cwd'])
             if not message['allow_web']:text+='\n本轮不主动检索网络来源，仅使用已提供材料。'
             images=[]
             if files:
