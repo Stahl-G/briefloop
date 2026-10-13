@@ -21,7 +21,9 @@ import {renderVersionDiff} from './version-diff.js';
 import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
 import {createReportStickyLayout} from './report-sticky-layout.js';
-createReportStickyLayout({report:$('report'),header:document.querySelector('.report-topbar'),scroller:document.querySelector('main')});
+createReportStickyLayout({report:$('report'),header:document.querySelector('.report-topbar'),scroller:document.querySelector('main'),
+ panel:$('report-panel'),grid:$('report-grid'),column:document.querySelector('.report-main-column'),
+ documentArea:$('document-area'),jobs:$('jobs')});
 import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress,isLocalFileJob} from './job-presentation.js';
 import {taskProgressCard} from './task-progress.js';
 import {researchProcessHTML,processDisclosureKey} from './research-process.js';
