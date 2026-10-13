@@ -166,6 +166,9 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
     # Both alternate transports must admit the report before preparing its input.
     from briefloop.native_harness import NativeHarness
     from test_native_harness import EngineFixture, _wait_status
+    def wait_report_closeout(message_id):
+        until(lambda: store.rows("""SELECT 1 FROM chat_events WHERE kind='revision/message_settled'
+            AND json_extract(data,'$.message_id')=?""", (message_id,)))
     class InspectEngine(EngineFixture):
         def call(self, method, params, timeout=None):
             if method == 'turn_start':
@@ -183,6 +186,7 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         bind_context(store, session, session, {'version_id': revised['id'], 'hash': revised['hash']})
         host.send(session, 'Check this report.', message_id=session, allow_web=True)
         _wait_status(host, session, session, 'completed')
+        wait_report_closeout(session)
         assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'completed'
         prepare = dispatcher.input
         def broken_input(sid, message):
@@ -193,6 +197,7 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         bind_context(store, session, failed_id, {'version_id': revised['id'], 'hash': revised['hash']})
         host.send(session, 'Prepare report input.', message_id=failed_id, allow_web=True)
         _wait_status(host, session, failed_id, 'failed')
+        wait_report_closeout(failed_id)
         assert not host.chat.session(session)['busy']
         assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'failed'
         host.close()
