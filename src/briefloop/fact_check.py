@@ -48,6 +48,25 @@ FACT_CHECKER_CONTEXT = '''你是 BriefLoop 已启动的独立事实核查员会�
 '''
 
 
+
+def eligible_bindings(store, version_id):
+    """Current intact anchors only; unreviewed is the normal candidate state."""
+    bindings = {}
+    for binding in inspect_bindings(store, version_id)['bindings']:
+        if binding['status'] == 'unreviewed':
+            bindings.setdefault(binding['claim_id'], []).append(binding)
+    return bindings
+
+
+def automatic_candidates(store, brief):
+    """Identify the new automatic lane from its existing exact-version event."""
+    requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
+    if requirements.get('completion_mode') not in ('direct', 'fast', 'fast_web'):
+        return False
+    return bool(store.rows("SELECT 1 FROM events WHERE kind='fact_check_candidates' "
+                           "AND json_extract(data,'$.version_id')=? LIMIT 1", (brief['id'],)))
+
+
 def fact_check_prompt(store,job,brief,folder,backend='codex'):
     """Build the fact-checker's task pack: role prompt, claims, budget and tools.
 
@@ -65,9 +84,7 @@ def fact_check_prompt(store,job,brief,folder,backend='codex'):
     requirements=json.loads(run['requirements'])
     stage=(frozen_plan(store,run['id']) or {}).get('fact_check') or {}
     folder=Path(folder)
-    bindings={}
-    for binding in inspect_bindings(store,brief['id'])['bindings']:
-        bindings.setdefault(binding['claim_id'],[]).append(binding)
+    bindings=eligible_bindings(store,brief['id'])
     claims=[]
     for row in store.rows('SELECT id,data FROM claims WHERE run_id=? ORDER BY rowid',(run['id'],)):
         anchors=bindings.get(row['id'])
@@ -189,8 +206,7 @@ def check_fact_result(store,run_id,result,*,snapshot=None):
                 brief=None
     bindings={}
     if brief is not None:
-        for binding in inspect_bindings(store,brief['id'])['bindings']:
-            bindings.setdefault(binding['claim_id'],[]).append(binding)
+        bindings=eligible_bindings(store,brief['id'])
     plan=frozen_plan(store,run_id) or {};stage=plan.get('fact_check') or {};stage_id=stage.get('stage_id')
     if result.get('stage_id') is not None and result.get('stage_id')!=stage_id:
         errors.append({'path':'stage_id','code':'stage_mismatch','message':'stage_id 与本任务接纳的核查阶段不一致'})
@@ -522,7 +538,7 @@ def view(store,version_id):
             if data.get('registered'):
                 break
             candidate_reason=data.get('reason') or None
-        elif event['kind']=='fact_check' and data.get('action')=='not_checked' and not_checked_reason is None:
+        elif event['kind']=='fact_check' and data.get('action') in ('not_checked','admit_refused') and not_checked_reason is None:
             not_checked_reason=data.get('reason') or None
     if any(record['covers_version'] for record in records) or stage and stage.get('status')=='active':
         not_checked_reason=None

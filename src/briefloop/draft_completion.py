@@ -244,7 +244,8 @@ def require_fact_check_settled(store, job):
     if children and children[0]['status']!='complete':
         raise ValueError('联网事实核查未完成，稿件及已取材料保留；请恢复本检查任务。'+str(children[0]['error'] or ''))
     req=json.loads(store.one('runs',payload['run_id'])['requirements'])
-    if req.get('fact_check') and store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(payload['run_id'],)):
+    from .fact_check import eligible_bindings
+    if req.get('fact_check') and eligible_bindings(store,payload['version_id']):
         from .research_plan import frozen
         stage=(frozen(store,payload['run_id']) or {}).get('fact_check') or {}
         if stage.get('status')!='completed':

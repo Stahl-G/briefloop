@@ -93,7 +93,7 @@ def test_grant_is_the_only_ceiling_for_runs_without_authorized_budget(tmp_path):
         budget.reserve_search(store, run['id'], 1)  # the grant itself is the hard ceiling
 
 
-def test_grant_paths_pending_active_reopened_refused(tmp_path):
+def test_grant_paths_pending_active_reopened_refused(tmp_path, monkeypatch):
     store, run, source = _world(tmp_path)
     pending = research_plan.add_fact_check_grant(store, run['id'], SHARE)  # research round still open
     assert pending['status'] == 'pending'
@@ -122,6 +122,45 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as info:  # completed stages never reopen via money
         research_plan.add_fact_check_grant(store, run['id'], SHARE)
     assert info.value.code == 'fact_check_closed'
+    # The new automatic candidate lane rechecks public scope at both boundaries.
+    from briefloop import sources
+    from briefloop.runtime import Worker
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda *a,**k: (b'Public revenue: 12.', 'text/plain', 'utf-8'))
+    monkeypatch.setattr(sources,'_checked_addresses',lambda *a: ['1.1.1.1'])
+    store=Store(tmp_path/'automatic')
+    source=sources.fetch(store,'https://www.python.org/release/')
+    run=store.create_run({'title':'R','objective':'o','allow_web':True,'fact_check':True,
+                         'completion_mode':'direct','research_budget':BUDGET},[source['id']],research_protocol='quality_v1')
+    research_plan.freeze(store,run['id'])
+    brief,claim,_=_claim_version(store,run)
+    store.event(None,'fact_check_candidates',{'version_id':brief['id'],'registered':[claim['id']]})
+    research_plan.finish_round(store,run['id'])
+    parent=store.enqueue('assess',{'version_id':brief['id'],'runtime':{'model':'test'}})
+    worker=Worker(store)
+    assert worker._admit_fact_check(parent,brief)['status']=='active'
+    child=store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
+    assert json.loads(child['payload'])['automatic_candidates_version_id']==brief['id']
+    private=store.add_source('Internal input','Unpublished revenue 99.')
+    store.attach_source(run['id'],private['id'])
+    # _Quiet would raise for an unsettled turn if any model transport were called.
+    result=worker.run_fact_check(child,runtime=_Quiet())
+    assert result['execution']=='failed'
+    assert research_plan.frozen(store,run['id'])['fact_check']['status']=='failed'
+    assert fact_check.view(store,brief['id'])['not_checked_reason']
+    assert worker._admit_fact_check(parent,brief) is None
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'"))==1
+    changed=store.publish(run['id'],{'title':'R','editor_document':{'type':'doc','content':[
+        {'type':'paragraph','content':[{'type':'text','text':'Entirely different report.'}]}]}},parent_id=brief['id'])
+    assert worker._admit_fact_check(parent,changed) is None
+    assert not fact_check.eligible_bindings(store,changed['id'])
+    from briefloop.draft_completion import require_fact_check_settled
+    continuation=store.enqueue('assess',{'run_id':run['id'],'version_id':changed['id'],
+                                        'continuation_of':parent['id'],'runtime':{'model':'test'}})
+    require_fact_check_settled(store,continuation)  # Old run claims do not block this version.
+    valid=store.enqueue('assess',{'run_id':run['id'],'version_id':brief['id'],
+                                 'continuation_of':parent['id'],'runtime':{'model':'test'}})
+    with pytest.raises(ValueError):
+        require_fact_check_settled(store,valid)  # Private-scope rejection is not a completed check.
 
 
 def test_reopened_grant_retains_consumed_credit_without_carrying_unused_budget(tmp_path):

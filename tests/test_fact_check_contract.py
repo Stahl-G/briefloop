@@ -165,12 +165,22 @@ def test_revised_draft_needs_a_new_check_identity(tmp_path):
     doc=json.loads(world['brief']['editor_document'])
     doc['content'][0]['content'][0]['text']='公司2026财年上半年营业收入650万美元，约合人民币3,900万元。'
     revised=store.revise(world['brief']['id'],editor_document=doc)
+    assert world['claims']['unit']['id'] not in fact_check.eligible_bindings(store,revised['id'])
+    folder=tmp_path/'revised-packet'
+    folder.mkdir()
+    fact_check.fact_check_prompt(store,world['job'],revised,folder)
+    packet=json.loads((folder/'input.json').read_text())
+    assert world['claims']['unit']['id'] not in {claim['claim_id'] for claim in packet['claims']}
+    assert world['claims']['fiscal']['id'] in {claim['claim_id'] for claim in packet['claims']}
+    with pytest.raises(fact_check.FactCheckError) as stale:
+        fact_check.check_fact_result(store,world['run']['id'],{**good_result(world),'version_id':revised['id']})
+    assert any(error['code']=='claim_not_in_version' for error in stale.value.errors)
     assert fact_check.covers(store,record,revised['id']) is False  # 改稿后旧核查不算新稿已核查
     assert fact_check.covers(store,record,world['brief']['id']) is True
     assert fact_check.view(store,world['brief']['id'])['not_checked_reason'] is None  # actual result wins
     assert fact_check.view(store,revised['id'])['not_checked_reason'] is None  # old version event stays old
     store.event(None,'fact_check_candidates',{'version_id':revised['id'],'registered':[],'reason':'No public evidence'})
-    store.event(None,'fact_check',{'action':'not_checked','version_id':revised['id'],'reason':'No located candidate'})
+    store.event(None,'fact_check',{'action':'admit_refused','version_id':revised['id'],'reason':'No located candidate'})
     view=fact_check.view(store,revised['id'])
     assert view['candidate_reason']=='No public evidence' and view['not_checked_reason']=='No located candidate'
     assert all(row['covers_version'] is False for row in view['records'])

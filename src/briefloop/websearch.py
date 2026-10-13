@@ -132,16 +132,22 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
     module=provider_module(provider)
     if store is not None and run_id and provider == 'tavily':
         import json
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
+        from .research_plan import frozen
         window = json.loads(store.one('runs', run_id)['requirements']).get('time_context')
-        if window:
-            start_date = datetime.fromisoformat(window['start']).date().isoformat() if window.get('start') else None
-            # Tavily ends before end_date and accepts dates, not timestamps.
-            # Round a partial last day up, then review exact event times separately.
-            end = datetime.fromisoformat(window['end_exclusive'])
+        stage = ((frozen(store, run_id) or {}).get('fact_check') or {}).get('status')
+        if window and stage != 'active':
+            # Tavily documents after/before calendar dates, not a timezone or
+            # inclusive boundary. UTC plus a start-day buffer avoids excluding
+            # the boundary day or sending a local tomorrow as the API start.
+            start = datetime.fromisoformat(window['start']).astimezone(timezone.utc) if window.get('start') else None
+            start_date = (start.date() - timedelta(days=1)).isoformat() if start else None
+            end = datetime.fromisoformat(window['end_exclusive']).astimezone(timezone.utc)
             ceiling = end if (end.hour,end.minute,end.second,end.microsecond)==(0,0,0,0) else end+timedelta(days=1)
             end_date = ceiling.date().isoformat()
             time_range = None
+        # A fact-check query may concern historical/background statements.
+        # Its explicit dates (if any) survive instead of inheriting the news window.
     options={'topic':topic,'time_range':time_range,'start_date':start_date,'end_date':end_date,
              'include_domains':list(include_domains or []),'exclude_domains':list(exclude_domains or []),
              'max_results':max_results,'search_depth':search_depth}
