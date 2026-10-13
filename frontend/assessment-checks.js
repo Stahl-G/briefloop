@@ -17,5 +17,19 @@ export function createAssessmentChecks({esc}){
   });
   return pending?'pending':'stale';
  }
- return {render,evidenceState};
+ function factCheckState(version,data){
+  if(!version||data?.version_id!==version.id)return null;
+  const checked=(data.records||[]).some(record=>record.covers_version===true);
+  const pending=data.stage?.status==='active';
+  const reason=checked||pending?null:data.not_checked_reason;
+  return reason||data.candidate_reason?{not_checked_reason:reason,candidate_reason:data.candidate_reason}:null;
+ }
+ function renderFactCheckState(version,data){
+  const state=factCheckState(version,data);if(!state)return '';
+  return '<section class="issue-card fact-check"><div class="issue-head"><strong>独立事实核查</strong></div>'+
+   (state.not_checked_reason?`<p>本版本尚未核查：${esc(state.not_checked_reason)}</p>`:'')+
+   (state.candidate_reason&&state.candidate_reason!==state.not_checked_reason?`<p class="help">候选筛选：${esc(state.candidate_reason)}</p>`:'')+
+   '</section>';
+ }
+ return {render,evidenceState,factCheckState,renderFactCheckState};
 }

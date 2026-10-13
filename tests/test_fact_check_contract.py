@@ -158,6 +158,8 @@ def test_execution_and_fact_judgements_stay_separate(tmp_path):
 
 def test_revised_draft_needs_a_new_check_identity(tmp_path):
     world=checked(tmp_path);store=world['store']
+    store.event(None,'fact_check',{'action':'not_checked','version_id':world['brief']['id'],'reason':'Earlier missing candidates'})
+    assert fact_check.view(store,world['brief']['id'])['not_checked_reason'] is None  # active stage wins
     admitted=fact_check.submit_result(store,world['run']['id'],good_result(world))
     record=fact_check.get_record(store,admitted['record']['id'])
     doc=json.loads(world['brief']['editor_document'])
@@ -165,6 +167,14 @@ def test_revised_draft_needs_a_new_check_identity(tmp_path):
     revised=store.revise(world['brief']['id'],editor_document=doc)
     assert fact_check.covers(store,record,revised['id']) is False  # 改稿后旧核查不算新稿已核查
     assert fact_check.covers(store,record,world['brief']['id']) is True
+    assert fact_check.view(store,world['brief']['id'])['not_checked_reason'] is None  # actual result wins
+    assert fact_check.view(store,revised['id'])['not_checked_reason'] is None  # old version event stays old
+    store.event(None,'fact_check_candidates',{'version_id':revised['id'],'registered':[],'reason':'No public evidence'})
+    store.event(None,'fact_check',{'action':'not_checked','version_id':revised['id'],'reason':'No located candidate'})
+    view=fact_check.view(store,revised['id'])
+    assert view['candidate_reason']=='No public evidence' and view['not_checked_reason']=='No located candidate'
+    assert all(row['covers_version'] is False for row in view['records'])
+    assert store.one('briefs',revised['id'])['editor_document']==revised['editor_document']
     assert [row['id'] for row in fact_check.records_for(store,world['run']['id'])]==[record['id']]  # 旧核查仍可查
     with pytest.raises(research_plan.AdmissionError) as info:  # v1 一个阶段一次接纳；重查需新阶段
         fact_check.submit_result(store,world['run']['id'],{**good_result(world),'version_id':revised['id']})

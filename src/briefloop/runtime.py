@@ -1165,7 +1165,10 @@ class Worker:
         run_id=brief['run_id']
         requirements=json.loads(self.store.one('runs',run_id)['requirements'])
         if not requirements.get('fact_check'):return None
-        if not self.store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(run_id,)):return None
+        if not self.store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(run_id,)):
+            self.store.event(job['id'], 'fact_check', {'action': 'not_checked', 'version_id': brief['id'],
+                'reason': '没有已登记并定位的核查候选，未启动联网事实核查'})
+            return None
         grant=pending_fact_check_grant(self.store,run_id)
         if grant:
             source={'kind':'user_grant','limits':grant['limits']}

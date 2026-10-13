@@ -508,8 +508,29 @@ def view(store,version_id):
                         'unselected':[{'claim_id':item['claim_id'],'statement':statement(item['claim_id']),
                                        'reason':item['reason']} for item in data['selection'].get('unselected',[])],
                         'created':data['created']})
+    # Reasons can exist before a fact_checks record, but only this exact version's
+    # events belong in its panel. Existing results and an active stage take priority.
+    events=store.rows("SELECT kind,data FROM events WHERE kind IN ('fact_check_candidates','fact_check') "
+                      "AND json_extract(data,'$.version_id')=? ORDER BY seq DESC",(version_id,))
+    candidate_reason=None
+    not_checked_reason=None
+    candidates_seen=False
+    for event in events:
+        data=json.loads(event['data'])
+        if event['kind']=='fact_check_candidates' and not candidates_seen:
+            candidates_seen=True
+            if data.get('registered'):
+                break
+            candidate_reason=data.get('reason') or None
+        elif event['kind']=='fact_check' and data.get('action')=='not_checked' and not_checked_reason is None:
+            not_checked_reason=data.get('reason') or None
+    if any(record['covers_version'] for record in records) or stage and stage.get('status')=='active':
+        not_checked_reason=None
+    from .execution_records import sanitize
+    candidate_reason=sanitize(candidate_reason)[:500] if isinstance(candidate_reason,str) else None
+    not_checked_reason=sanitize(not_checked_reason)[:500] if isinstance(not_checked_reason,str) else None
     from .research_plan import pending_fact_check_grant
     return {'version_id':version_id,
             'enabled':bool(json.loads(run['requirements']).get('fact_check')),
             'stage':stage,'pending_grant':pending_fact_check_grant(store,brief['run_id']),
-            'records':records}
+            'records':records,'candidate_reason':candidate_reason,'not_checked_reason':not_checked_reason}

@@ -260,6 +260,93 @@ def bind_claim(store,version_id,claim_id,block_id,quote):
     return {'id':identity,'version_id':version_id,'claim_id':claim_id,'status':'unreviewed'}
 
 
+def public_fact_check_sources(store, run_id):
+    """Automatic web checking requires captured anonymous public web originals.
+
+    Uploaded/connector text and caller-supplied URLs are not disclosure permission.
+    A mixed-source report stays local rather than exposing its source inventory.
+    """
+    from urllib.parse import urlsplit
+    from .media import source_files
+    from .sources import _checked_addresses
+    sources = store.source_ids(run_id)
+    if not sources:return False, '没有已保存的公开网页原件'
+    checked_hosts, readable = set(), 0
+    for sid in sources:
+        try:
+            source, provenance, original = source_files(store, sid)
+            url = urlsplit(source.get('url') or '')
+            if (url.scheme not in ('http', 'https') or not url.hostname
+                    or url.username or url.password or url.query or url.fragment):
+                return False, '来源缺少可确认的匿名公开网页地址，不自动联网核查'
+            if provenance and provenance.get('original_kind') != 'http_response':
+                return False, '来源含未确认公开的原文类型，不自动联网核查'
+            address = (url.hostname, url.port or (443 if url.scheme == 'https' else 80))
+            if address not in checked_hosts:
+                _checked_addresses(*address)
+                checked_hosts.add(address)
+            text = store.source_text(sid)
+            if source['status'] == 'failed' and not text.strip():
+                continue  # Failed public reads carry no private content or candidate evidence.
+            if source['status'] != 'ready' or not original or not provenance:
+                return False, '来源含未确认公开的材料，不自动联网核查'
+            readable += 1
+        except (ValueError, OSError, KeyError):
+            return False, '公开来源身份或网络范围未确认，不自动联网核查'
+    return (True, '') if readable else (False, '没有可读的公开网页原件')
+
+
+def register_fact_check_candidates(store, version_id, candidates):
+    """Bind located model-selected candidates; never decide factual support."""
+    from .document_model import brief_document
+    from .writer_assembly import locate_excerpt
+    from .external_requests import _RequestStore
+    brief = store.one('briefs', version_id)
+    allowed, reason = public_fact_check_sources(store, brief['run_id'])
+    if not allowed:return {'registered': [], 'rejected': [], 'reason': reason}
+    registered, rejected = [], []
+    with store.tx() as connection:
+        view = _RequestStore(store, connection)
+        nodes = blocks(brief_document(brief))
+        source_ids = set(view.source_ids(brief['run_id']))
+        for index, item in enumerate(candidates[:12]):
+            try:
+                if not isinstance(item, dict) or item.get('kind') not in ('fact', 'source_opinion'):
+                    raise ValueError('候选仅接受公开事实或有归属的公开说法')
+                if item['kind'] == 'source_opinion' and not str(item.get('attribution', '')).strip():
+                    raise ValueError('公开说法候选必须保留归属')
+                quote = item.get('report_quote')
+                matches = [(bid, node) for bid, node in nodes.items()
+                           if node.get('type') in ('paragraph', 'heading') and isinstance(quote, str)
+                           and quote.strip() and node_text(node).count(quote) == 1]
+                if len(matches) != 1:raise ValueError('候选必须唯一定位到原样正文块')
+                sid = item.get('source_id')
+                if sid not in source_ids:raise ValueError('候选出处不属于本报告')
+                excerpt = item.get('excerpt')
+                if not isinstance(excerpt, str):raise ValueError('候选缺少相关原文摘录')
+                locator = locate_excerpt(view.source_text(sid), excerpt, item.get('locator', ''))
+                line = re.fullmatch(r'lines? (\d+)(?:-(\d+))?', locator)
+                if not line:raise ValueError('候选出处未取得有效行范围')
+                # Reuse exact bindings on recovery; no duplicate claim history.
+                existing = view.rows('SELECT c.id,c.data FROM claims c JOIN claim_bindings b ON b.claim_id=c.id '
+                                     'WHERE b.version_id=? AND b.block_id=? AND b.quote=?',
+                                     (version_id, matches[0][0], quote))
+                if existing:
+                    registered.append(existing[0]['id'])
+                    continue
+                span = create_span(view, {'source_id': sid, 'locator': {'kind': 'text',
+                    'start_line': int(line[1]), 'end_line': int(line[2] or line[1])}, 'excerpt': excerpt})
+                claim = create_claim(view, brief['run_id'], {'statement': quote, 'kind': item['kind'],
+                    'importance': item.get('importance', 'core'), 'attribution': item.get('attribution', ''),
+                    'supports': [{'span_id': span['id'], 'supports_quote': quote,
+                                  'rationale': '相关出处，语义支持未核查；候选不是事实判定'}]})
+                bind_claim(view, version_id, claim['id'], matches[0][0], quote)
+                registered.append(claim['id'])
+            except (ValueError, TypeError, KeyError) as exc:
+                rejected.append({'index': index, 'reason': str(exc)[:500]})
+    return {'registered': registered, 'rejected': rejected, 'reason': '' if registered else '没有可定位的公开事实候选'}
+
+
 def claim_closure(store,claim_id,trail=()):
     if claim_id in trail:return {'claim_id':claim_id,'status':'premise_cycle','evidence':[],'premises':[]}
     claim=record(store,'claims',claim_id);evidence=[];state='unreviewed'

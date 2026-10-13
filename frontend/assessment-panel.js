@@ -135,7 +135,11 @@ export function createAssessmentPanel(deps){
   const {box,vid,data}=factCheckView;
   if(getCurrent()?.id!==vid||!box.isConnected)return;
   let pending;try{pending=factGrants.pending(vid)}catch{} // submit reports storage errors before sending
-  updatePanel(box,factCheckHTML({...data,grant_request:pending,grant_request_busy:factGrants.busy(vid)}));if(box.innerHTML)bindSources();
+  const observation=assessmentChecks.factCheckState({id:vid},data);
+  const currentData=observation?.not_checked_reason?{...data,enabled:false,stage:null}:data;
+  updatePanel(box,assessmentChecks.renderFactCheckState({id:vid},data)+
+   factCheckHTML({...currentData,grant_request:pending,grant_request_busy:factGrants.busy(vid)}));
+  if(box.innerHTML)bindSources();
   box.querySelectorAll('[data-fact-grant]').forEach(b=>{
    const version=b.dataset.factGrant;
    // Identical HTML may be retained, including a button disabled by its click.

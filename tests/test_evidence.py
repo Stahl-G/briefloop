@@ -8,6 +8,46 @@ from briefloop.evidence import create_span, create_claim, bind_claim, inspect_bi
 from briefloop.sources import upload
 
 
+def test_fact_check_candidates_reject_caller_marked_public_upload(tmp_path):
+    from briefloop.evidence import register_fact_check_candidates
+    store = Store(tmp_path)
+    source = store.add_source('Private input', 'Internal revenue is 12.', url='https://www.python.org/')
+    run = store.create_run({'title': 'Report', 'objective': 'Revenue changes'}, [source['id']])
+    quote = 'Internal revenue is 12.'
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': quote})
+    result = register_fact_check_candidates(store, brief['id'], [{'report_quote': quote, 'kind': 'fact',
+        'source_id': source['id'], 'excerpt': quote, 'public': True}])
+    assert not result['registered'] and result['reason']
+    assert not store.rows('SELECT id FROM claims WHERE run_id=?', (run['id'],))
+    assert store.one('briefs', brief['id'])['markdown'] == quote
+
+
+def test_fact_check_candidate_registration_survives_empty_failed_public_read(tmp_path, monkeypatch):
+    from briefloop import sources
+    from briefloop.evidence import register_fact_check_candidates
+    # Offline protocol fixture; the separate acceptance retains real Python HTTP originals.
+    monkeypatch.setattr(sources, '_fetch_bytes', lambda *a, **k: (b'Public release date: 2024-10-07.', 'text/plain', 'utf-8'))
+    addresses = []
+    monkeypatch.setattr(sources, '_checked_addresses', lambda host, port: addresses.append((host, port)) or ['1.1.1.1'])
+    store = Store(tmp_path)
+    source = sources.fetch(store, 'https://www.python.org/release/')
+    failed = store.add_source('Unavailable public page', '', url='https://www.python.org/unavailable/', error='HTTP 404')
+    run = store.create_run({'title': 'Report', 'objective': 'Release changes'}, [source['id'], failed['id']])
+    quote = 'The release date was 2024-10-07.'
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': quote})
+    item = {'report_quote': quote, 'kind': 'fact', 'source_id': source['id'], 'excerpt': 'Public release date: 2024-10-07.'}
+    result = register_fact_check_candidates(store, brief['id'], [item, {**item, 'source_id': failed['id']}])
+    assert len(result['registered']) == 1 and len(result['rejected']) == 1
+    assert len(addresses) == 1  # Same-source candidates do not repeat network eligibility checks.
+    assert inspect_bindings(store, brief['id'])['bindings'][0]['quote'] == quote
+    assert register_fact_check_candidates(store, brief['id'], [item])['registered'] == result['registered']
+    assert len(store.rows('SELECT id FROM claims WHERE run_id=?', (run['id'],))) == 1
+    assert store.one('briefs', brief['id'])['markdown'] == quote
+    private = store.add_source('Private input', 'Internal revenue 12.')
+    store.attach_source(run['id'], private['id'])
+    assert not register_fact_check_candidates(store, brief['id'], [item])['registered']
+
+
 def case(tmp_path):
     store=Store(tmp_path);source=store.add_source('Company update','Revenue 12 million USD in H1.\nOther revenue 120 million USD.')
     run=store.create_run({'title':'Report','objective':'Revenue changes'},[source['id']])
