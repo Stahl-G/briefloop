@@ -37,6 +37,8 @@ export function createAssessmentPanel(deps){
   const lines=[],add=(kind,html)=>lines.push({kind,html}),more=html=>{if(lines.length)lines.at(-1).html+=html};
   const tag=(kind,text)=>`<span class="tag${kind==='error'||kind==='warn'?' '+kind:''}">${text}</span>`;
   const line=(kind,text)=>add(kind,tag(kind,text));
+  const evidenceState=assessmentChecks.evidenceState(current,parse(current.detail),getState().jobs);
+  if(evidenceState)line('warn',evidenceState==='pending'?'正文已更新，依据正在补全':'正文已更新，依据待重新检查');
   if(isDirty())line('warn','有未保存修改；仅检查已保存版本');
   if(c.temporal){const t=c.temporal;const kind=t.out_of_range_count?'error':t.status==='not_checked'||t.missing_date_count?'warn':'ok';line(kind,`时效：${t.status==='not_checked'?(t.reason==='legacy_window'?'旧任务未冻结范围':'未提供事件日期记录，待核实'):`范围外当期事件 ${t.out_of_range_count||0}；日期待核实 ${t.missing_date_count||0}；${t.items?.length||0} 条日期记录，仍需核对原文`}`)}
   for(const warning of (c.temporal?.warnings||[]))line('warn',esc(warning.message||'报告期间需要确认'));

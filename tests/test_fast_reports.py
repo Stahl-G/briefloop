@@ -100,3 +100,43 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     brief=store.one('briefs',result['version_id'])
     assert '120' in brief['markdown'] and 'Different later' not in brief['markdown']
     assert describe(store,brief)['configuration']['model']=='old-model'
+
+    # A feedback rewrite acquires another actual source. Its evidence phase
+    # must use the revised materials and current host, never the old packet.
+    store.update_job(job['id'],'complete',result=result)
+    finish(store,worker,result)
+    latest=store.rows('SELECT * FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]
+    old_packet=(store.root/'jobs'/job['id']/'fast-materials.json').read_bytes()
+    added=store.add_source('New disclosure','Actual income 150 USD on 2026-10-09.')
+    store.attach_source(run['id'],added['id'])
+    text=f'Actual income 150 USD on 2026-10-09. [@{added["id"]}]'
+    revised=store.revise(latest['id'],text,allow_markdown_conversion=True,
+                         citations=[{'source_id':added['id']}],author='agent')
+    from briefloop.draft_completion import enqueue_revision
+    checks=enqueue_revision(store,revised['id'],runtime={'backend':'codex','model':'new-model','effort':'medium'},session_id=session['id'])
+    frozen=json.loads(checks['payload'])
+    assert frozen['runtime']['model']=='new-model' and frozen['runtime']['reasoning_effort']=='medium'
+    assert frozen['auto_revision'] is False
+    assert enqueue_revision(store,revised['id'],runtime={'backend':'codex','model':'new-model','effort':'medium'})['id']==checks['id']
+    previous_execute=runtime.execute
+    def revised_evidence(task,prompt,folder,*args,**kwargs):
+        if folder.name!='evidence':return previous_execute(task,prompt,folder,*args,**kwargs)
+        assert 'Actual income 150 USD on 2026-10-09.' in prompt
+        (folder/'response.txt').write_text(dump({'citations':[{'source_id':'S1','report_quote':'Actual income 150 USD on 2026-10-09.',
+            'excerpt':'Actual income 150 USD on 2026-10-09.'}],
+            'number_bindings':[{'source_id':'S1','source_excerpt':'Actual income 150 USD on 2026-10-09.',
+                'report_quote':'Actual income 150 USD on 2026-10-09.','number_text':'150 USD','value':150,'unit':'USD'}],
+            'temporal_claims':[{'source_id':'S1','excerpt':'Actual income 150 USD on 2026-10-09.',
+                'report_quote':'Actual income 150 USD on 2026-10-09.','statement':'Actual income 150 USD on 2026-10-09.',
+                'event_date':'2026-10-09'}]}))
+        return {'status':'complete'}
+    runtime.execute=revised_evidence
+    outcome=finish(store,worker,{'checks_job_id':checks['id']})
+    final=store.one('briefs',outcome['version_id']);detail=json.loads(final['detail'])
+    assert final['markdown']==revised['markdown']
+    assert not detail.get('evidence_needs_review')
+    assert detail['number_bindings'][0]['source_id']==added['id']
+    assert detail['temporal_claims'][0]['event_date']=='2026-10-09'
+    assert (store.root/'jobs'/job['id']/'fast-materials.json').read_bytes()==old_packet
+    snapshot=json.loads((store.root/'jobs'/checks['id']/'revision-materials.json').read_text())
+    assert snapshot['version_id']==revised['id'] and snapshot['materials'][0]['source_id']==added['id']

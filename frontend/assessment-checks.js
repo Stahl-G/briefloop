@@ -7,5 +7,15 @@ export function createAssessmentChecks({esc}){
   const pending=checks.filter(c=>!['passed','n/a'].includes(c.status||c.result)).length;
   return `<details class="help assessment-checks" ${pending?'open':''}><summary>评价检查记录${pending?` · ${pending} 项需查看`:''}</summary><p>这是模型评价的检查记录，不等于独立审阅或联网事实核查完成；具体未解决问题见下方发现。</p>${checks.map(c=>`<div class="finding"><strong>${esc(c.name||'未命名检查')}</strong> <span class="tag">${esc(labels[c.status||c.result]||'状态未明确')}</span>${c.prior_description?`<p>上次问题：${esc(c.prior_description)}</p>`:''}${(c.reason||c.detail)?`<p>${esc(c.reason||c.detail)}</p>`:''}${c.consistency_note?`<p>${esc(c.consistency_note)}</p>`:''}${c.report_quote?`<blockquote>${esc(c.report_quote)}</blockquote>`:''}</div>`).join('')}</details>`;
  }
- return {render};
+ function evidenceState(version,detail,jobs=[]){
+  if(!detail?.evidence_needs_review)return null;
+  const pending=jobs.some(job=>{
+   if(job.kind!=='assess'||!['queued','running'].includes(job.status))return false;
+   let payload=job.payload;
+   if(typeof payload==='string'){try{payload=JSON.parse(payload)}catch{return false}}
+   return payload?.version_id===version.id;
+  });
+  return pending?'pending':'stale';
+ }
+ return {render,evidenceState};
 }

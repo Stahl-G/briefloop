@@ -198,7 +198,7 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
 
 def admission(store, connection, run_id, operation):
     """Return (admitting id, stage) — a round with 'research', the fact-check
-    stage id with 'fact_check' — or (None, None) for a legacy run.
+    stage id with 'fact_check' or 'revision_research' — or (None, None) for a legacy run.
 
     Must run inside the caller's reservation transaction so an admitted request
     cannot race a plan change or a closed stage.
@@ -216,6 +216,11 @@ def admission(store, connection, run_id, operation):
     if row is None:
         raise AdmissionError('本轮尚未冻结研究计划；受控联网前必须先冻结', code='plan_missing')
     plan = json.loads(row['value'])
+    revision = plan.get('revision_research') or {}
+    if revision.get('status') == 'active':
+        from .revision_research import binding
+        binding(connection, run_id, revision['base_version_id'], revision['session_id'], revision['message_id'])
+        return revision['stage_id'], 'revision_research'
     stage = plan.get('fact_check') or {}
     if stage.get('status') == 'active':
         return stage['stage_id'], 'fact_check'
@@ -307,6 +312,15 @@ def admit_response(connection, run_id, reservation, operation, *, status='comple
     elif entry['stage'] == 'fact_check':
         current = plan.get('fact_check') or {}
         accepted = current.get('stage_id') == entry['round_id'] and current.get('status') == 'active'
+    elif entry['stage'] == 'revision_research':
+        current = plan.get('revision_research') or {}
+        accepted = current.get('stage_id') == entry['round_id'] and current.get('status') == 'active'
+        if accepted:
+            from .revision_research import binding
+            try:
+                binding(connection, run_id, current['base_version_id'], current['session_id'], current['message_id'])
+            except AdmissionError:
+                accepted = False
     else:
         current = (plan.get('rounds') or {}).get(entry['round_id']) or {}
         accepted = plan.get('current_round_id') == entry['round_id'] and current.get('status') == 'active'
@@ -410,6 +424,8 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
         plan = _read_plan(connection, run_id)
         if plan is None:
             raise AdmissionError('本轮尚未冻结研究计划；不能开始研究轮次', code='plan_missing')
+        if (plan.get('revision_research') or {}).get('status') == 'active':
+            raise AdmissionError('用户修订补研究尚未结束，不能开启原研究轮次', code='revision_stage_open')
         rounds = plan.get('rounds') or {}
         target = list(target_gap_ids or [])
         active = plan.get('current_round_id')
@@ -715,6 +731,8 @@ def admit_fact_check(store, run_id, budget_source, *, job_id=None):
         plan = _read_plan(connection, run_id)
         if plan is None:
             raise AdmissionError('本轮尚未冻结研究计划；不能接纳核查阶段', code='plan_missing')
+        if (plan.get('revision_research') or {}).get('status') == 'active':
+            raise AdmissionError('用户修订补研究尚未结束，不能开启核查阶段', code='revision_stage_open')
         existing = plan.get('fact_check')
         if existing:
             return {'stage_id': existing['stage_id'], 'status': existing['status'],

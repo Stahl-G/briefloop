@@ -80,3 +80,58 @@ def test_cancel_before_native_dispatch_and_restart_do_not_replay(tmp_path):
     dispatch.recover()
     assert next(m for m in codex.snapshot(sid)['messages'] if m['id'] == 'crash')['status'] == 'interrupted'
     assert not codex.chat.session(sid)['busy']
+
+
+def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path, monkeypatch):
+    import json
+    from briefloop import research_plan, sources
+    from briefloop.chat_tools import workspace_action
+    from briefloop.document_model import markdown_document
+    from briefloop.report_revision import bind_context
+
+    store = Store(tmp_path)
+    store.update_settings({'model': 'a', 'model_selection_required': False, 'auto_revision': False, 'auto_learn': False})
+    original = store.add_source('Original', 'Revenue 12 USD.')
+    run = store.create_run({'title': 'Weekly', 'objective': 'Explain changes', 'allow_web': True,
+                            'fact_check': False, 'completion_mode': 'direct'}, [original['id']], research_protocol='quality_v1')
+    generation = store.enqueue('generate', {'run_id': run['id']})
+    brief = store.publish(run['id'], {'title': 'Weekly', 'markdown': f'Revenue 12 USD. [@{original["id"]}]',
+                                    'citations': [{'source_id': original['id']}]},
+                          version_id='brief_' + generation['id'][4:])
+    store.update_job(generation['id'], 'complete')
+    research_plan.freeze(store, run['id'], structure={'breadth': 1, 'depth': 1, 'parallel': 1})
+    research_plan.finish_round(store, run['id'])
+    closed_rounds = research_plan.frozen(store, run['id'])['rounds']
+    codex = HarnessManager(store, RPC)
+    ChatDispatcher({'codex': codex})
+    runtime = {'model': 'a', 'effort': 'medium', 'permission': 'workspace-write'}
+    sid = codex.create_session(runtime=runtime)['id']
+    bind_context(store, sid, 'feedback', {'version_id': brief['id'], 'hash': brief['hash']})
+    with pytest.raises(ValueError):
+        bind_context(store, sid, 'feedback', None)
+    codex.send(sid, 'Find missing developments and revise this report.', message_id='feedback', allow_web=True)
+    until(lambda: codex.chat.session(sid)['turn_id'] == 'turn1')
+    monkeypatch.setattr(sources, '_fetch_bytes', lambda *_args, **_kwargs: (b'Revenue 15 USD.', 'text/plain', 'utf-8'))
+    added = sources.fetch_for_run(store, run['id'], 'https://example.test/new')
+    # Tool ingestion really passed closed-round admission and retained the new source.
+    assert added['id'] in store.source_ids(run['id'])
+    document = tmp_path / 'revision.json'
+    document.write_text(json.dumps(markdown_document(f'Revenue 15 USD. [@{added["id"]}]')))
+    revised = workspace_action(store, {'action': 'revise_document', 'base_version': brief['id'],
+                                       'document_file': str(document), 'citations': [{'source_id': added['id']}]})
+    assert json.loads(revised['detail'])['evidence_needs_review']
+    codex.handle_notification({'method': 'item/completed', 'params': {'threadId': 't1', 'turnId': 'turn1',
+                              'item': {'type': 'agentMessage', 'id': 'answer', 'text': 'Saved revised report.'}}})
+    assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'active'
+    completion = {'method': 'turn/completed', 'params': {'threadId': 't1', 'turn': {'id': 'turn1', 'status': 'completed'}}}
+    codex.handle_notification(completion)
+    codex.handle_notification(completion)
+    checks = store.rows("SELECT * FROM jobs WHERE kind='assess'")
+    assert len(checks) == 1
+    payload = json.loads(checks[0]['payload'])
+    assert payload['version_id'] == revised['id'] and payload['auto_revision'] is False
+    assert payload['runtime']['model'] == 'a'
+    assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'completed'
+    assert research_plan.frozen(store, run['id'])['rounds'] == closed_rounds
+    assert store.one('briefs', brief['id'])['markdown'] == brief['markdown']
+    codex.close()

@@ -123,7 +123,19 @@ class ExistingContinuation(Exception):
         self.job_id = job_id
 
 
+def enqueue_revision(store, version_id, *, runtime=None, session_id=None):
+    """Continue checks only after an authorized model revision, never auto-rewrite."""
+    brief=store.one('briefs',version_id)
+    if not json.loads(brief['detail']).get('evidence_needs_review'):
+        return None
+    return _enqueue(store,version_id,revision=True,runtime=runtime,session_id=session_id)
+
+
 def enqueue(store, version_id, *, automatic=False):
+    return _enqueue(store,version_id,automatic=automatic)
+
+
+def _enqueue(store, version_id, *, automatic=False, revision=False, runtime=None, session_id=None):
     parent = origin(store, version_id)
     brief=store.one('briefs',version_id)
     mode=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode')
@@ -141,6 +153,15 @@ def enqueue(store, version_id, *, automatic=False):
         payload.update(fast_evidence=True,auto_revision=False)
     elif mode=='direct':
         payload.update(fast_evidence=True)
+    if revision:
+        payload.update(fast_evidence=True,auto_revision=False,revision_evidence=True)
+        if runtime:
+            from .models import runtime_fields
+            backend=runtime.get('backend') or runtime.get('agent_backend') or payload.get('agent_backend','codex')
+            actual={**runtime,'reasoning_effort':runtime.get('reasoning_effort',runtime.get('effort')),
+                    'model_variant':runtime.get('model_variant',runtime.get('variant'))}
+            payload.update(agent_backend=backend,runtime=runtime_fields(actual,backend))
+        if session_id is not None:payload['session_id']=session_id
     snapshot = binding(store, version_id)
     identity = hashlib.sha256(dump([parent['id'], snapshot, payload]).encode()).hexdigest()
     payload.update(version_id=version_id, continuation_of=parent['id'],

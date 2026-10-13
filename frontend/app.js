@@ -5,6 +5,7 @@ import {clock,dateTimeSeconds,moment} from './time.js';
 import {api,uploadSource,setToken,getUploadLimits,setSourceUploadHost} from './api.js';
 import {sourceUploadHost} from './source-upload.js';
 import {createReportBrowsing} from './report-browsing.js';
+import {createReportChatContext} from './report-chat-context.js';
 import {createProviderCapabilities} from './provider-capabilities.js';
 import {createModelCatalog} from './model-catalog.js';
 import {providerSettingsUI} from './provider-settings.js';
@@ -602,6 +603,9 @@ async function savedVersion(){
  if(!current)throw Error('尚无稿件');
  return current.id;
 }
+const reportChatContext=createReportChatContext({getCurrent:()=>current,savedVersion,
+ isOpen:()=>document.body.classList.contains('report-chat-open'),getNextReport:()=>chat.nextReportContext,
+ clearNextReport:()=>{chat.nextReportContext=null;nextReportChat.sync();rememberDraft()}});
 const reportExport=reportExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state,getCurrent:()=>current});
 reportExport.init();
 const excelExport=excelExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state});
@@ -1353,11 +1357,14 @@ async function sendChat(event){
   const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;
   chat.home=false;chat.busy=true;chatError();updateComposer();
  try{
+  const report_context=await reportChatContext.prepare();
   const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});
     chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);
     chat.drafts.delete('new');rememberDraft()}
   const reportOptions=compactReportInstruction();
-  const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked,next_report:chat.nextReportContext||null};
+  const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,
+   mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked,
+   next_report:chat.nextReportContext||null,report_context};
    const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
   await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();
@@ -2118,6 +2125,7 @@ function setReportChatOpen(open){
 }
 function openReportChat(sessionId){
  if(!$('chat'))return;
+ reportChatContext.activate();
  setReportChatOpen(true);
  if(sessionId&&chat.sessions.some(s=>s.id===sessionId)&&chat.id!==sessionId)selectChat(sessionId).catch(()=>{});
  const input=$('chat-input');if(input)setTimeout(()=>input.focus(),0);

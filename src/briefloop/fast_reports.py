@@ -163,6 +163,26 @@ def generate(worker, job):
             **worker._generated_sources(folder, brief['id'])}
 
 
+def revision_materials(store,job,brief,folder):
+    """Freeze this version's actual evidence, without rewriting generation inputs."""
+    from .direct_reports import evidence_windows
+    from .draft_completion import verify_input
+    verify_input(store,job)
+    detail=json.loads(brief['detail'])
+    ids=list(dict.fromkeys([ref['source_id'] for ref in detail.get('citations',[])]
+                          +re.findall(r'\[@(src_[A-Za-z0-9_]+)\]',brief['markdown'])))
+    materials=evidence_windows(selected_packet(store,brief['run_id'],ids),brief['markdown']) if ids else []
+    snapshot={'version_id':brief['id'],'brief_hash':brief['hash'],'materials':materials}
+    path=folder/'revision-materials.json'
+    if path.exists():
+        if json.loads(path.read_text(encoding='utf-8'))!=snapshot:
+            raise Conflict('修订依据与本次冻结版本不同，请对当前版本重新发起检查')
+    else:
+        folder.mkdir(parents=True,exist_ok=True)
+        with path.open('x',encoding='utf-8') as stream:stream.write(dump(snapshot))
+    return materials
+
+
 def enrich(worker, job, brief, folder):
     """Assemble evidence in a child version, with no changes to report prose."""
     from .models import Citation, NumberBinding, TemporalClaim, BriefDraft
@@ -171,8 +191,13 @@ def enrich(worker, job, brief, folder):
     saved = store.rows('SELECT * FROM briefs WHERE id=?', (version,))
     if saved:
         return saved[0]
-    origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
-    materials = json.loads(origin.read_text(encoding='utf-8'))
+    if payload.get('revision_evidence'):
+        materials = revision_materials(store,job,brief,folder)
+        if not materials:
+            raise ValueError('修订正文没有引用已保存原文，证据仍待补全；请添加来源后恢复检查。')
+    else:
+        origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
+        materials = json.loads(origin.read_text(encoding='utf-8'))
     if not materials:
         # A direct draft that cited no saved source has nothing to locate.
         store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '正文没有引用已保存来源，跳过原文定位。'})

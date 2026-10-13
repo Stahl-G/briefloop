@@ -620,6 +620,10 @@ class Store:
                 # Unchanged automatic refs must still disappear with their body/figure.
                 detail['content_citations']=[ref for ref in detail.get('content_citations',[]) if ref in citations]
                 detail['citations']=citations
+            if semantic_signature(markdown)!=semantic_signature(base['markdown']):
+                from .revision_evidence import invalidate_changed_evidence
+                previous_citations=json.loads(base['detail']).get('citations',[]) if citations is not None else None
+                invalidate_changed_evidence(detail,base['markdown'],markdown,base_version,previous_citations=previous_citations)
             if editor_document is not None:
                 detail['document_schema']=1
             else:detail.pop('document_schema',None)
