@@ -151,6 +151,18 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
     assert store.one('briefs', brief['id'])['markdown'] == brief['markdown']
     codex.close()
 
+    # A read-only discussion must not fund checks for another author's concurrent edit.
+    store.update_job(checks[0]['id'], 'cancelled')
+    readonly = codex.chat.create('Read only', {'model': 'a', 'permission': 'read-only'}, tmp_path)['id']
+    question = codex.chat.message(readonly, 'Explain the report.', status='sending', runtime={'permission': 'read-only'})
+    bind_context(store, readonly, question['id'], {'version_id': revised['id'], 'hash': revised['hash']})
+    newer = store.revise(revised['id'], revised['markdown'] + '\n\nAnother author added a conclusion.',
+                         allow_markdown_conversion=True, author='agent')
+    count = len(store.rows("SELECT * FROM jobs WHERE kind='assess'"))
+    codex.chat.patch_message(question['id'], status='completed')
+    assert len(store.rows("SELECT * FROM jobs WHERE kind='assess'")) == count
+    revised = store.brief_view(newer['id'])
+
     # Both alternate transports must admit the report before preparing its input.
     from briefloop.native_harness import NativeHarness
     from test_native_harness import EngineFixture, _wait_status

@@ -99,6 +99,9 @@ def finish_message(store, message_id, status):
     if status != 'completed':
         mark_settled(status=status)
         return
+    if json.loads(message['runtime']).get('permission') == 'read-only':
+        mark_settled(status=status, checks='read_only')
+        return
     base = store.one('briefs', context['base_version_id'])
     latest = store.rows('SELECT * FROM briefs WHERE run_id=? AND created<=? ORDER BY rowid DESC LIMIT 1',
                         (base['run_id'], message['updated']))[0]
