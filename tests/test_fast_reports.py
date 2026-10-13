@@ -74,7 +74,9 @@ def test_fast_admission_does_not_silently_truncate_or_start_web_research(tmp_pat
     assert frozen['company_context_required'] is False
 
 
-def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,monkeypatch):
+@pytest.mark.parametrize(('backend','model','effort'),[('codex','new-model','medium'),
+    ('briefloop-native','synthetic/new-model','low')])
+def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,monkeypatch,backend,model,effort):
     from briefloop import fast_reports
     from briefloop.chat_store import ChatStore
     from briefloop.version_execution import record_plain_output,describe
@@ -113,12 +115,14 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     revised=store.revise(latest['id'],text,allow_markdown_conversion=True,
                          citations=[{'source_id':added['id']}],author='agent')
     from briefloop.draft_completion import enqueue_revision
-    checks=enqueue_revision(store,revised['id'],runtime={'backend':'codex','model':'new-model','effort':'medium'},session_id=session['id'])
+    selected={'backend':backend,'model':model,'effort':effort}
+    checks=enqueue_revision(store,revised['id'],runtime=selected,session_id=session['id'])
     frozen=json.loads(checks['payload'])
-    assert frozen['runtime']['model']=='new-model' and frozen['runtime']['reasoning_effort']=='medium'
-    assert frozen['role_models']['evaluator']['model']=='new-model'
+    field='model_variant' if backend=='briefloop-native' else 'reasoning_effort'
+    assert frozen['runtime']['model']==model and frozen['runtime'][field]==effort
+    assert frozen['role_models']['evaluator'][field]==effort
     assert frozen['auto_revision'] is False
-    assert enqueue_revision(store,revised['id'],runtime={'backend':'codex','model':'new-model','effort':'medium'})['id']==checks['id']
+    assert enqueue_revision(store,revised['id'],runtime=selected)['id']==checks['id']
     previous_execute=runtime.execute
     def revised_evidence(task,prompt,folder,*args,**kwargs):
         if folder.name!='evidence':return previous_execute(task,prompt,folder,*args,**kwargs)
@@ -132,6 +136,47 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
                 'event_date':'2026-10-09'}]}))
         return {'status':'complete'}
     runtime.execute=revised_evidence
+    if backend=='briefloop-native':
+        # A bound check from a writer that allowed revision must retry checks only.
+        store.update_job(checks['id'],'cancelled')
+        checks=store.enqueue('assess',{**frozen,'auto_revision':True})
+        frozen=json.loads(checks['payload'])
+        # The selected Low must survive a new linked retry without rewriting history or the body.
+        failed=checks
+        def failed_evidence(*args,**kwargs):
+            raise RuntimeError('Controlled transport failure')
+        runtime.execute=failed_evidence
+        store.update_job(failed['id'],'running')
+        with pytest.raises(RuntimeError):worker.assess(failed)
+        store.update_job(failed['id'],'failed',error='Controlled transport failure')
+        store.update_settings({'agent_backend':'briefloop-native','model':'synthetic/current-model',
+                               'model_variant':'low','role_models':{}})
+        frozen_failure=store.one('jobs',failed['id'])
+        worker.current=failed['id']
+        with pytest.raises(ValueError):worker.retry_with_current_model(failed['id'])
+        worker.current=None
+        source_file=store.root/source['path']
+        original_bytes=source_file.read_bytes()
+        source_file.write_text('Changed source body')
+        with pytest.raises(Conflict):worker.retry_with_current_model(failed['id'])
+        source_file.write_bytes(original_bytes)
+        active=store.enqueue('assess',{'version_id':revised['id'],'continuation_of':frozen['continuation_of'],
+                                      'checks_input':frozen['checks_input']})
+        with pytest.raises(ValueError):worker.retry_with_current_model(failed['id'])
+        store.update_job(active['id'],'cancelled')
+        checks=worker.retry_with_current_model(failed['id'])
+        retried=json.loads(checks['payload'])
+        assert checks['id']!=failed['id'] and retried['retry_of_job_id']==failed['id']
+        assert retried['checks_input']==frozen['checks_input'] and retried['continuation_of']==frozen['continuation_of']
+        assert retried['fast_evidence'] is True and retried['revision_evidence'] is True
+        assert retried['auto_revision'] is False and retried['checks_identity']!=frozen['checks_identity']
+        assert retried['runtime']=={'model':'synthetic/current-model','model_variant':'low'}
+        assert retried['role_models']['evaluator']==retried['runtime']
+        assert worker.retry_with_current_model(failed['id'])['id']==checks['id']
+        assert store.one('jobs',failed['id'])==frozen_failure
+        assert json.loads(frozen_failure['payload'])['auto_revision'] is True
+        assert store.one('briefs',revised['id'])['markdown']==text
+        runtime.execute=revised_evidence
     outcome=finish(store,worker,{'checks_job_id':checks['id']})
     final=store.one('briefs',outcome['version_id']);detail=json.loads(final['detail'])
     assert final['markdown']==revised['markdown']

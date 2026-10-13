@@ -10,6 +10,9 @@ export function jobExecutionLabel(job,formatModel){
  if(job.kind==='source_refresh')return '来源工具';
  return parse(job.payload).runtime?formatModel(job):'旧任务：沿用当时本机配置';
 }
+export const canRetryCurrentModel=job=>['review','learn'].includes(job?.kind)||
+ (job?.kind==='assess'&&!!parse(job.payload).continuation_of&&!!parse(job.payload).checks_input);
+
 export const jobResumeLabel=job=>isLocalFileJob(job)?'重新制作文件':job.kind==='source_extract'?'重新读取':'沿用原模型恢复';
 
 // File exports have progress events but no model process or model settings.

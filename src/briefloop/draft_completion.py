@@ -160,6 +160,9 @@ def _enqueue(store, version_id, *, automatic=False, revision=False, runtime=None
             backend=runtime.get('backend') or runtime.get('agent_backend') or payload.get('agent_backend','codex')
             actual={**runtime,'reasoning_effort':runtime.get('reasoning_effort',runtime.get('effort')),
                     'model_variant':runtime.get('model_variant',runtime.get('variant'))}
+            if backend=='briefloop-native':
+                from .native_harness import _thinking
+                actual['model_variant']=_thinking(runtime)
             payload.update(agent_backend=backend,runtime=runtime_fields(actual,backend))
             payload['role_models']=store.role_model_config(payload['runtime'],backend)
             payload['review_runtime']=store.settings().get('review_runtime')

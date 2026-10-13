@@ -750,23 +750,33 @@ class Worker:
                 raise ValueError('反馈已移交其他批次或不存在，不能重复学习')
 
     def retry_with_current_model(self,jid,*,confirmed_plan=None):
-        """Start a linked review/learning attempt without rewriting its history."""
+        """Start a linked review, learning or bound-check attempt without rewriting history."""
         class ExistingRetry(Exception):
             pass
 
         with self._claim_lock:
             job=self.store.one('jobs',jid)
-            if job['kind'] not in ('review','learn'):
-                raise ValueError('目前仅支持审阅和学习任务使用当前模型重试')
+            if job['kind'] not in ('review','learn','assess'):
+                raise ValueError('目前仅支持审阅、学习和已绑定稿件的检查任务使用当前模型重试')
             if job['status'] not in ('failed','interrupted','cancelled'):
                 raise ValueError('只有失败、中断或已取消的任务可以新建重试')
+            original=json.loads(job['payload'])
+            if job['kind']=='assess':
+                from .draft_completion import verify_input,check_binding
+                if not original.get('continuation_of') or not original.get('checks_input') or original.get('inline_owner_job_id'):
+                    raise ValueError('请对当前稿件重新发起检查；这个任务没有可恢复的正文与来源绑定')
+                verify_input(self.store,job)
             for row in self.store.rows("SELECT * FROM jobs WHERE kind=? AND status IN ('queued','running') ORDER BY rowid",(job['kind'],)):
                 if json.loads(row['payload']).get('retry_of_job_id')==jid:return row
-            if jid==self.current or jid in self._review_jobs:
+            if jid==self.current or jid in self._review_jobs or jid in getattr(self,'_generation_jobs',{}):
                 raise ValueError('原任务仍在停止，请稍后重试')
-            original=json.loads(job['payload'])
             fields=('version_id',) if job['kind']=='review' else ('feedback_ids','k','targets','skill_id')
-            payload={key:original[key] for key in fields}
+            if job['kind']=='assess':
+                fields=('version_id','run_id','continuation_of','fast_evidence','auto_revision','revision_evidence',
+                        'session_id','search_provider','search_policy','max_parallel','single_evaluation')
+            payload={key:original[key] for key in fields if key in original}
+            if job['kind']=='assess':
+                payload.update(checks_input=check_binding(self.store,job),auto_revision=False)
             # A retry inherits the authorization and bound the user confirmed for
             # this batch; a batch without one still has to be confirmed again.
             payload.update({key:original[key] for key in ('authorization','budget','reader_id') if key in original})
@@ -792,6 +802,28 @@ class Worker:
                 for row in connection.execute("SELECT id,payload FROM jobs WHERE kind=? AND status IN ('queued','running') AND id<>? ORDER BY rowid",(job['kind'],new_id)):
                     if json.loads(row['payload']).get('retry_of_job_id')==jid:
                         raise ExistingRetry(row['id'])
+                if job['kind']=='assess':
+                    from .external_requests import _RequestStore
+                    from .draft_completion import verify_input,check_binding
+                    view=_RequestStore(self.store,connection)
+                    verify_input(view,job)
+                    if check_binding(view,job)!=payload['checks_input']:
+                        raise ValueError('来源检查绑定已变化，请刷新后重试')
+                    active=connection.execute("SELECT id FROM jobs WHERE id<>? AND status IN ('queued','running') "
+                        "AND (json_extract(payload,'$.continuation_of')=? OR json_extract(payload,'$.parent_job_id')=? "
+                        "OR (kind IN ('assess','fact_check') AND (json_extract(payload,'$.run_id')=? "
+                        "OR json_extract(payload,'$.version_id') IN (SELECT id FROM briefs WHERE run_id=?))))",
+                        (new_id,original['continuation_of'],jid,original['run_id'],original['run_id'])).fetchone()
+                    if active:raise ValueError('本报告或关联来源仍有检查任务，请先等待或停止它')
+                    children=connection.execute("SELECT id FROM jobs WHERE json_extract(payload,'$.parent_job_id')=?",(jid,))
+                    if any(child['id'] in self._review_jobs or child['id']==self.current for child in children):
+                        raise ValueError('关联核查仍在停止，请稍后重试')
+                    import hashlib
+                    identity_payload={key:value for key,value in frozen.items() if key!='checks_identity'}
+                    frozen['checks_identity']=hashlib.sha256(dump([
+                        original['continuation_of'],payload['checks_input'],identity_payload]).encode()).hexdigest()
+                    connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(frozen),new_id))
+                    return
                 if job['kind']!='learn':return
                 self._check_feedback_owner(connection,jid,original)
                 if connection.execute("SELECT 1 FROM events WHERE job_id=? AND kind='adoption_processed'",(jid,)).fetchone():
