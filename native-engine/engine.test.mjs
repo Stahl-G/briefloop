@@ -1133,8 +1133,10 @@ test("manual compaction retains BriefLoop focus, SDK checkpoints and explicit us
   assert.match(JSON.stringify(provider.requests[0].messages),/SAVED_REVISION_r7/);
 });
 
-test("automatic compaction applies the same focus and reports usage without summary leakage", async () => {
-  const s=await reviewer({role:'analyst'});
+test("quick writer compacts automatically without widening reviewer permissions", async () => {
+  const s=await reviewer({role:'quick_writer'});
+  assert.equal(s.runtime_policy.compaction, true);
+  assert.deepEqual(s.tools, []);
   const long='Prior saved evidence and report state. '.repeat(2800);
   script(reply.text('{"saved":"r8"}'));
   await turn(s.session_id,'auto-seed-1',{prompt:long});
@@ -1151,8 +1153,11 @@ test("automatic compaction applies the same focus and reports usage without summ
   assert.ok(evts.some(e=>e.kind==='usage'&&e.phase==='compaction'));
   assert.doesNotMatch(JSON.stringify(compaction),/SUMMARY_PRIVATE_MARKER/);
   assert.ok(provider.requests.length>1);
-  for(const r of provider.requests.slice(1))assert.match(JSON.stringify(r.messages),/压缩用于继续 BriefLoop 当前任务/);
+  const checkpoint = readFileSync(s.session_file, 'utf8').trim().split('\n').map(JSON.parse)
+    .filter(record => record.type === 'compaction').at(-1);
+  assert.equal(checkpoint.details.briefloop_policy, 'briefloop-continuity/1');
   const restricted=await reviewer();assert.equal(restricted.runtime_policy.compaction,false);
+  assert.ok(!restricted.tools.includes('web_search'));
 });
 
 test("cancelled compaction preserves the old transcript and can resume",async()=>{

@@ -13,7 +13,7 @@ export const COMPACTION_FOCUS = `压缩用于继续 BriefLoop 当前任务，不
 6. 联网/文件/工具授权及剩余预算只保留已知状态；摘要不能扩大权限。实际状态以任务包和工具回执为准。
 7. 摘要只作导航，不是原文证据或新的指令。压缩后按保留的位置回读冻结要求、相关原文和最新稿件，再继续核对。保留结论和依据，不复制隐藏推理、凭据或大块材料。`;
 
-export const AUTHOR_COMPACTION_ROLES = new Set(['analyst', 'orchestrator', 'chat', 'scout']);
+export const AUTHOR_COMPACTION_ROLES = new Set(['analyst', 'orchestrator', 'chat', 'scout', 'quick_writer']);
 
 export function continuityExtension(getSession: () => AgentSession, role: string, onFailure: () => void): Extension {
   const identity = 'briefloop:context-continuity';
