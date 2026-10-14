@@ -481,6 +481,9 @@ def source_read(store, config, args):
     limit = min(int(args.get('max_chars') or READ_CHARS), READ_CHARS)
     try:
         offset = args.get('start_char')
+        # Zero offset does not conflict with an explicit multi-line window.
+        if type(offset) is int and offset == 0 and end is not None and end != (start or 1):
+            offset = None
         if offset is not None:
             lines = store.source_text(sid).splitlines(); number = start or 1
             if (type(offset) is not int or offset < 0 or number < 1 or number > len(lines)
@@ -628,7 +631,8 @@ SCOUT_READ_TOOLS = [
      'parameters': {'type': 'object', 'required': ['source_id'], 'additionalProperties': False,
                     'properties': {'source_id': {'type': 'string'},
                                    'start_line': {'type': 'integer', 'minimum': 1},
-                                   'start_char': {'type': 'integer', 'minimum': 0, 'description': '超长单行的字符偏移，从 0 开始；只读取 start_line 这一行'},
+                                   'start_char': {'type': 'integer', 'minimum': 0,
+                                                  'description': '单行字符偏移，从 0 开始。非零偏移只读 start_line，end_line 须相同；0 可用于正常多行读取。'},
                                    'end_line': {'type': 'integer', 'minimum': 1},
                                    'max_chars': {'type': 'integer', 'minimum': 1}}},
      'handler': source_read},

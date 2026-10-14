@@ -153,6 +153,8 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
             time_range = None
         # A fact-check query may concern historical/background statements.
         # Its explicit dates (if any) survive instead of inheriting the news window.
+    if provider == 'tavily' and (start_date or end_date):
+        time_range = None
     options={'topic':topic,'time_range':time_range,'start_date':start_date,'end_date':end_date,
              'include_domains':list(include_domains or []),'exclude_domains':list(exclude_domains or []),
              'max_results':max_results,'search_depth':search_depth}

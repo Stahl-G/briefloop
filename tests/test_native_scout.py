@@ -354,3 +354,17 @@ def test_search_argument_failure_recovers_without_spending_provider_budget(tmp_p
     assert upstream['failure_kind'] == 'network'
     assert 'recovery_action' not in upstream
     assert research_budget.snapshot(store, run_id)['used']['search_requests'] == 2
+
+
+def test_source_read_zero_offset_preserves_requested_multiline_window(tmp_path):
+    store, run_id, sid = _run(tmp_path)
+    config = _config(store, run_id, 'zero-offset-read')
+    arguments = {'source_id': sid, 'start_line': 1, 'end_line': 3}
+    ordinary = run_tool(store, config, 'source_read', arguments)
+    zero = run_tool(store, config, 'source_read', {**arguments, 'start_char': 0})
+    assert zero == ordinary
+    assert '2: Revenue rose to USD 12 million' in zero['content'][0]['text']
+    assert '3: up from USD 10 million.' in zero['content'][0]['text']
+    assert not run_tool(store, config, 'source_read', {**arguments, 'start_char': 1})['ok']
+    single = run_tool(store, config, 'source_read', {**arguments, 'end_line': 1, 'start_char': 1})
+    assert single['ok'] and '1: eader' in single['content'][0]['text']
