@@ -81,6 +81,8 @@ class ChatDispatcher:
     def input(self, sid, message):
         if self.internal(sid):
             return message
+        from .report_revision import prepare_input
+        message = prepare_input(self.chat.store, sid, message)
         rows = self.chat.store.rows('''SELECT s.* FROM chat_execution_segments s
             JOIN chat_execution_messages m ON m.segment_id=s.id WHERE m.message_id=?''', (message['id'],))
         if not rows or rows[0]['first_message_id'] != message['id'] or not rows[0]['handoff']:

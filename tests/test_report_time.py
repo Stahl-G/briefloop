@@ -46,7 +46,9 @@ def test_tavily_uses_frozen_dates(tmp_path,monkeypatch):
     from io import BytesIO
     store=Store(tmp_path)
     store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    run=store.create_run({'title':'日报','objective':'核对日期','allow_web':True,'period':'2026-09-14'},[])
+    run=store.create_run({'title':'日报','objective':'核对日期','allow_web':True,'period':'2026-09-14',
+                         'report_timezone':'UTC'},[])
+    original=json.loads(run['requirements'])['time_context']
     key=tmp_path/'key';tavily.save_key('test',key_file=key)
     seen=[]
     def respond(opener,request,**kwargs):
@@ -54,7 +56,46 @@ def test_tavily_uses_frozen_dates(tmp_path,monkeypatch):
         return BytesIO(b'{"results":[]}')
     monkeypatch.setattr(tavily.urllib.request.OpenerDirector,'open',respond)
     tavily.search('news',store=store,run_id=run['id'],start_date='2025-01-01',key_file=key)
-    assert seen[0]['start_date']=='2026-09-14' and seen[0]['end_date']=='2026-09-15'
+    assert seen[0]['start_date']=='2026-09-13' and seen[0]['end_date']=='2026-09-15'
+    assert json.loads(store.one('runs',run['id'])['requirements'])['time_context']==original
+    from briefloop import report_time
+    clock=datetime(2026,10,13,17,30,tzinfo=ZoneInfo('UTC'))
+    monkeypatch.setattr(report_time,'freeze',lambda requirements:freeze(requirements,clock))
+    local=store.create_run({'title':'新一天日报','objective':'核对日期','allow_web':True,'period':'最新动态',
+                           'report_timezone':'Asia/Ho_Chi_Minh'},[])
+    local_window=json.loads(local['requirements'])['time_context']
+    tavily.search('current news',store=store,run_id=local['id'],key_file=key)
+    assert seen[1]['start_date']=='2026-10-12' and seen[1]['end_date']=='2026-10-14'
+    assert local_window['today']=='2026-10-14'
+    assert json.loads(store.one('runs',local['id'])['requirements'])['time_context']==local_window
+
+
+def test_fact_check_queries_keep_explicit_dates_instead_of_news_window(tmp_path,monkeypatch):
+    from briefloop import tavily
+    from briefloop.research_plan import freeze as freeze_plan,finish_round,admit_fact_check
+    from io import BytesIO
+    store=Store(tmp_path)
+    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
+    run=store.create_run({'title':'历史背景核查','objective':'核对Python3.13','allow_web':True,'fact_check':True,
+                         'period':'2026-09-14','research_budget':{'search_requests':4,'candidate_urls':4,'source_pages':4}},
+                        [],research_protocol='quality_v1')
+    original=json.loads(run['requirements'])['time_context']
+    freeze_plan(store,run['id'])
+    finish_round(store,run['id'],summary='受控查询契约检查；尚未调用模型')
+    admit_fact_check(store,run['id'],{'kind':'task_reserve',
+                                   'limits':{'search_requests':2,'candidate_urls':4,'source_pages':4}})
+    key=tmp_path/'key';tavily.save_key('test',key_file=key)
+    seen=[]
+    def respond(opener,request,**kwargs):
+        seen.append(json.loads(request.data))
+        return BytesIO(b'{"results":[]}')
+    monkeypatch.setattr(tavily.urllib.request.OpenerDirector,'open',respond)
+    tavily.search('Python3.13 release date',store=store,run_id=run['id'],key_file=key)
+    assert 'start_date' not in seen[0] and 'end_date' not in seen[0]
+    tavily.search('Python3.13 GIL status',store=store,run_id=run['id'],start_date='2024-10-01',
+                  end_date='2024-11-01',key_file=key)
+    assert seen[1]['start_date']=='2024-10-01' and seen[1]['end_date']=='2024-11-01'
+    assert json.loads(store.one('runs',run['id'])['requirements'])['time_context']==original
 
 
 def test_news_basis_keeps_event_date_and_does_not_promote_republication():

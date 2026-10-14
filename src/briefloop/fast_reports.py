@@ -163,16 +163,99 @@ def generate(worker, job):
             **worker._generated_sources(folder, brief['id'])}
 
 
+def revision_materials(store,job,brief,folder):
+    """Freeze this version's actual evidence, without rewriting generation inputs."""
+    from .direct_reports import evidence_windows
+    from .draft_completion import verify_input
+    verify_input(store,job)
+    detail=json.loads(brief['detail'])
+    ids=list(dict.fromkeys([ref['source_id'] for ref in detail.get('citations',[])]
+                          +re.findall(r'\[@(src_[A-Za-z0-9_]+)\]',brief['markdown'])))
+    materials=evidence_windows(selected_packet(store,brief['run_id'],ids),brief['markdown']) if ids else []
+    snapshot={'version_id':brief['id'],'brief_hash':brief['hash'],'materials':materials}
+    path=folder/'revision-materials.json'
+    if path.exists():
+        if json.loads(path.read_text(encoding='utf-8'))!=snapshot:
+            raise Conflict('修订依据与本次冻结版本不同，请对当前版本重新发起检查')
+    else:
+        folder.mkdir(parents=True,exist_ok=True)
+        with path.open('x',encoding='utf-8') as stream:stream.write(dump(snapshot))
+    return materials
+
+
+def _expand_evidence(data):
+    """Expand shared spans into the published contracts, without judging support."""
+    if not isinstance(data, dict) or not isinstance(data.get('records'), list):
+        raise ValueError('依据补全未返回预期记录，初稿保留；可恢复检查。')
+    expanded = {name: [] for name in ('citations', 'number_bindings', 'temporal_claims', 'fact_check_candidates')}
+    expanded['unsupported'] = data.get('unsupported', [])
+    rejected = []
+    for index, record in enumerate(data['records'][:30]):
+        if not isinstance(record, dict):
+            rejected.append({'field': 'records', 'index': index, 'reason': '依据记录不是对象'})
+            continue
+        shared = {key: record.get(key) for key in ('source_id', 'report_quote', 'excerpt')}
+        if shared not in expanded['citations']:
+            expanded['citations'].append(shared)
+        for field, target, fields in (
+            ('numbers', 'number_bindings', ('label', 'number_text', 'value', 'unit', 'entity', 'period')),
+            ('times', 'temporal_claims', ('statement', 'event_date', 'published_at', 'usage',
+                                         'news_basis', 'news_date', 'news_note')),
+        ):
+            attributes = record.get(field, [])
+            if not isinstance(attributes, list):
+                rejected.append({'field': 'records', 'index': index, 'reason': field+' 必须是数组'})
+                continue
+            for attribute in attributes[:30]:
+                if not isinstance(attribute, dict):
+                    rejected.append({'field': 'records', 'index': index, 'reason': field+' 属性不是对象'})
+                    continue
+                item = {**{key: value for key, value in attribute.items() if key in fields}, **shared}
+                if field == 'numbers':
+                    item['source_excerpt'] = item.pop('excerpt')
+                    token, quote = item.get('number_text'), item.get('report_quote')
+                    if isinstance(token, str) and token and isinstance(quote, str) and token in quote:
+                        from .delivery_checks import _NUM, quantities
+                        spans = list(quantities(token))
+                        # Never choose a value from a range or a multi-number label,
+                        # including ranges whose separator stops quantity parsing.
+                        if len(spans) == 1 and len(re.findall(_NUM, token)) == 1:
+                            start, end, _ = spans[0]
+                            item['number_text'] = token[start:end].strip()
+                else:
+                    item.setdefault('statement', record.get('report_quote'))
+                expanded[target].append(item)
+        if record.get('check') is not None:
+            if isinstance(record['check'], dict):
+                expanded['fact_check_candidates'].append({
+                    **{key: value for key, value in record['check'].items() if key in ('kind', 'importance', 'attribution')}, **shared})
+            else:
+                rejected.append({'field': 'records', 'index': index, 'reason': 'check 属性不是对象'})
+    return expanded, rejected
+
+
 def enrich(worker, job, brief, folder):
     """Assemble evidence in a child version, with no changes to report prose."""
     from .models import Citation, NumberBinding, TemporalClaim, BriefDraft
     store = worker.store; payload = json.loads(job['payload'])
     version = 'brief_' + job['id'][4:] + '_evidence'
-    saved = store.rows('SELECT * FROM briefs WHERE id=?', (version,))
-    if saved:
-        return saved[0]
-    origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
-    materials = json.loads(origin.read_text(encoding='utf-8'))
+    from .draft_completion import _fact_check_versions
+    targets = _fact_check_versions(store, job, {**payload, 'version_id': brief['id'],
+                                              'run_id': brief['run_id'], 'fast_evidence': True})
+    if len(targets) > 1:
+        saved = store.one('briefs', targets[-1])
+        owner = 'job_' + saved['id'][len('brief_'):-len('_evidence')]
+        admission = store.root / 'jobs' / owner / 'evidence' / 'admission.json'
+        if admission.exists():
+            _register_candidates(store, job, saved, json.loads(admission.read_text()).get('fact_check_candidates', []))
+        return saved
+    if payload.get('revision_evidence'):
+        materials = revision_materials(store,job,brief,folder)
+        if not materials:
+            raise ValueError('修订正文没有引用已保存原文，证据仍待补全；请添加来源后恢复检查。')
+    else:
+        origin = store.root / 'jobs' / payload['continuation_of'] / 'fast-materials.json'
+        materials = json.loads(origin.read_text(encoding='utf-8'))
     if not materials:
         # A direct draft that cited no saved source has nothing to locate.
         store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '正文没有引用已保存来源，跳过原文定位。'})
@@ -184,36 +267,42 @@ def enrich(worker, job, brief, folder):
         raise Conflict('材料与快速写作时的原文不同，请使用当前材料新建任务。')
     full = {r['source_id']: r['text'] for r in current}
     phase = folder / 'evidence'
-    prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'
-              '只返回一个 JSON 对象，包含 citations、number_bindings、temporal_claims 和 unsupported 四个数组；没有可定位依据时留空，不猜测。'
-              'unsupported 列出正文中在全部来源里找不到依据的重要结论，每条给 report_quote（正文连续原句）和 reason；不要因措辞概括而列入。'
-              '每条 citation 使用 source_id（下方来源别名，如 S1）、report_quote（正文连续原句）、excerpt（连续逐字原文）。'
-              'report_quote 必须能在报告正文中逐字找到；摘录应包含对应的主体、期间、单位及限定条件，不能用同来源的无关段落充数。'
-              '无需猜行号；同一摘录在来源中重复时提供更长的唯一摘录。来源标题及相邻上下文由程序从冻结原文补入。'
-              '每条 number_binding 使用 label、source_id、report_quote（正文连续原句）、number_text（正文原数值含单位）、'
-              'source_excerpt（连续逐字原文）、value（来源原数值）、unit（来源单位）、entity、period。'
-              'value/unit 保留来源真实数值和量级；单位写标准表达，如 USD million、million USD、万元、%。'
-              '不要把 million 写成含糊的 M，不猜缺失的币种，不自行换算或改变来源数值。'
-              '正文与来源的数值、主体、期间或单位不一致时保留真实数据供检查，不自动修正文稿。'
-              'temporal_claims 记录正文重要事件的 statement、event_date、published_at、usage(current/background)、'
-              'news_basis(event/first_disclosure/new_development)、news_date、news_note，并提供 source_id、report_quote、excerpt。'
-              '区分事件发生、首次披露、实质新进展及撤回更正；缺失日期留空，不把披露日代作事件日。'
-              '抓取时间和原文行号由程序补入，不填写。已有时间记录见下方，可补充但不凭猜测覆盖有效记录。'
-              '最多 30 条重要引用、30 条重要数字、30 条重要事件；多段计算不要伪造单段原文支持。'
-              '\n报告日期范围：' + dump(json.loads(store.one('runs', brief['run_id'])['requirements']).get('time_context'))
+    from .evidence import public_fact_check_sources
+    requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
+    candidate_allowed, candidate_reason = public_fact_check_sources(store, brief['run_id']) if requirements.get('fact_check') else (False, '本任务未开启联网事实核查')
+    contract = {
+        'records': [{
+            'source_id': '来源别名，如 S1', 'report_quote': '单个正文块中的连续原句',
+            'excerpt': '连续逐字原文，含主体、期间、单位和限定条件',
+            'numbers': [{'label': '指标名', 'number_text': '正文中含数值和单位的连续片段（可与来源语言不同）', 'value': 49,
+                         'unit': '来源原单位和量级，如 million USD、万元、%', 'entity': '主体', 'period': '期间'}],
+            'times': [{'statement': '事件名（省略则用正文原句）', 'event_date': '事件日', 'published_at': '披露日',
+                       'usage': 'current/background', 'news_basis': 'event/first_disclosure/new_development',
+                       'news_date': '当期新闻依据日期', 'news_note': '变化依据'}],
+            'check': {'kind': 'fact/source_opinion', 'importance': 'core/supporting', 'attribution': '说法归属（如有）'},
+        }],
+        'unsupported': [{'report_quote': '正文连续原句', 'reason': '全部材料缺少依据的原因'}],
+    }
+    prompt = ('核对已保存报告，为重要结论补原文定位，保持正文不变。返回下方结构的 JSON。'
+              '同一正文原句与来源摘录组合只登记一次，数字、时间和独立核查候选属性附在该记录中；无对应属性可省略。'
+              '无法定位时留空，不猜测；重要结论在全部来源中找不到依据时列入 unsupported，不因措辞概括而列入。'
+              '同一摘录在来源中重复时提供更长的唯一摘录。可定位仅表示原文存在，支持关系仍待独立判断。'
+              'value 用来源原数值的 JSON 数字，未知用 null；量级、单位和币种写入 unit，不换算。正文与来源不一致时保留真实来源数值供检查。'
+              '日期区分发生、首次披露、实质进展及撤回更正；未知日期留空，不用披露日代替事件日。'
+              '已有时间记录可补充但不凭猜测覆盖。原文行号、标题、上下文和抓取时间由程序补入。'
+              'check 选择有公开出处的事实或有归属说法，不选建议、私有信息或无出处推断。原文支持或反驳均可作为待核查出处。'
+              + ('本任务允许选择最多12条独立核查候选。' if candidate_allowed else '本任务省略 check：'+candidate_reason)
+              + '最多30条来源定位、30条数字、30条事件；多段计算不伪造单段原文支持。'
+              + '\n输出结构（可选属性只在相关记录中填写）：' + dump(contract)
+              + '\n报告日期范围：' + dump(requirements.get('time_context'))
               + '\n已有时间记录：' + dump(json.loads(brief['detail']).get('temporal_claims', []))
               + '\n报告正文：\n' + brief['markdown'] + '\n全部来源：\n' + _sources_text(materials))
     store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '后台补充原文定位，保持正文不变。'})
     _plain_turn(worker, job, phase, prompt)
-    data = json.loads(_response(phase))
-    if (not isinstance(data, dict) or not isinstance(data.get('citations'), list)
-            or not isinstance(data.get('number_bindings'), list)
-            or not isinstance(data.get('temporal_claims', []), list)):
-        raise ValueError('依据补全未返回预期记录，初稿保留；可恢复检查。')
+    data, rejected = _expand_evidence(json.loads(_response(phase)))
     from .evidence_context import located_context
     sources = {r['alias']: r for r in materials}
     sources.update({r['source_id']: r for r in materials})
-    rejected = []
 
     def locate(item, field):
         source = sources.get(item.get('source_id'))
@@ -267,13 +356,20 @@ def enrich(worker, job, brief, folder):
                    for item in (data.get('unsupported') if isinstance(data.get('unsupported'), list) else [])[:30]
                    if isinstance(item, dict) and isinstance(item.get('report_quote'), str)
                    and item['report_quote'].strip() and item['report_quote'] in brief['markdown']]
+    candidates = []
+    if candidate_allowed and isinstance(data.get('fact_check_candidates'), list):
+        for index, item in enumerate(data['fact_check_candidates'][:12]):
+            try:
+                candidates.append(locate(item, 'excerpt'))
+            except (ValueError, AttributeError, TypeError) as exc:
+                rejected.append({'field': 'fact_check_candidates', 'index': index, 'reason': str(exc)[:500]})
     details.setdefault('research_notes', []).append({'kind': 'fast_evidence', 'summary': '逐字定位已检查；支持关系仍需评价。', 'rejected': rejected})
     if unsupported:
         details['research_notes'].append({'kind': 'fast_unsupported', 'summary': '以下结论在所选材料中找不到原文依据，需核实或删除。', 'items': unsupported})
         store.event(job['id'], 'fast_unsupported', {'version_id': brief['id'], 'count': len(unsupported),
                                                     'message': f'{len(unsupported)} 条结论在所选材料中找不到原文依据，已单独列出。'})
     (phase / 'admission.json').write_text(dump({'citations': citations, 'number_bindings': numbers, 'temporal_claims': temporal, 'rejected': rejected,
-                                                'unsupported': unsupported}), encoding='utf-8')
+                                                'unsupported': unsupported, 'fact_check_candidates': candidates}), encoding='utf-8')
     if worker.runtime.cancelled.is_set() or worker.stopping.is_set():
         raise InterruptedError('依据补全已停止，初稿和结果保留。')
     from .draft_completion import verify_input
@@ -289,4 +385,14 @@ def enrich(worker, job, brief, folder):
         store.event(job['id'], 'fast_evidence_preserved', {'version_id': brief['id'], 'message': '你已修改稿件；后台依据保留为原版检查记录。'})
         return brief
     worker._remember_generated_sources(folder, enriched)
+    _register_candidates(store, job, enriched, candidates)
     return enriched
+
+
+def _register_candidates(store, job, brief, candidates):
+    if not json.loads(store.one('runs', brief['run_id'])['requirements']).get('fact_check'):
+        return
+    from .evidence import register_fact_check_candidates
+    result = register_fact_check_candidates(store, brief['id'], candidates)
+    store.event(job['id'], 'fact_check_candidates', {'version_id': brief['id'], **result,
+                'message': '公开事实候选已定位，仍待独立核查' if result['registered'] else result['reason']})

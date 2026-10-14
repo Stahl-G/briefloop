@@ -54,6 +54,60 @@ def _admitted(store, run, source_kind='task_reserve'):
     return research_plan.admit_fact_check(store, run['id'], {'kind': source_kind, 'limits': dict(SHARE)})
 
 
+def test_revised_candidates_get_own_stage_without_resetting_budget_or_reusing_old_completion(tmp_path):
+    from briefloop.runtime import Worker
+    from briefloop.draft_completion import binding, require_fact_check_settled
+    store, run, _ = _world(tmp_path)
+    store.update_settings({'model': 'synthetic-model', 'model_selection_required': False})
+    brief, claim, _ = _claim_version(store, run)
+    research_plan.finish_round(store, run['id'])
+    parent = store.enqueue('assess', {'run_id': run['id'], 'version_id': brief['id'],
+        'runtime': {'model': 'test'}, 'continuation_of': 'job_original', 'checks_input': binding(store, brief['id'])})
+    worker = Worker(store)
+    first = worker._admit_fact_check(parent, brief)
+    old_job = store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
+    reserved = budget.reserve_search(store, run['id'], 1)
+    fact_check.submit_result(store, run['id'], {'version_id': brief['id'], 'stage_id': first['stage_id'],
+        'selection': {'claim_ids': [claim['id']]}, 'execution': {'status': 'completed', 'summary': 'Checked fixture'},
+        'candidates': [{'claim_id': claim['id'], 'status': 'insufficient_evidence', 'reason': 'No adequate public source',
+            'span_ids': [], 'query_ids': [reserved['request_id']]}]}, job_id=old_job['id'])
+    store.update_job(old_job['id'], 'complete')
+    assert worker._admit_fact_check(parent, brief)['stage_id'] == first['stage_id']
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+    document = json.loads(brief['editor_document'])
+    document['content'].append({'type': 'paragraph', 'content': [{'type': 'text', 'text': 'New public result is 18.'}]})
+    revised = store.revise(brief['id'], editor_document=document)
+    new_claim = create_claim(store, run['id'], {'statement': 'New public result is 18.', 'kind': 'fact'})
+    new_block = list(blocks(json.loads(revised['editor_document'])))[-1]
+    bind_claim(store, revised['id'], new_claim['id'], new_block, 'New public result is 18.')
+    continuation = store.enqueue('assess', {'run_id': run['id'], 'version_id': revised['id'],
+        'runtime': {'model': 'test'}, 'continuation_of': 'job_original', 'checks_input': binding(store, revised['id'])})
+    with pytest.raises(ValueError, match='本版本候选核查尚未完成'):
+        require_fact_check_settled(store, continuation)
+    before = budget.snapshot(store, run['id'])
+    second = worker._admit_fact_check(continuation, revised)
+    assert second['status'] == 'active' and second['stage_id'] != first['stage_id']
+    plan = research_plan.frozen(store, run['id'])
+    assert plan['fact_check_history'][0]['stage_id'] == first['stage_id']
+    assert plan['fact_check']['scope']['version_id'] == revised['id']
+    assert new_claim['id'] in plan['fact_check']['scope']['claim_ids']
+    after = budget.snapshot(store, run['id'])
+    assert after['limits'] == before['limits'] and after['used'] == before['used']
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 2
+    with pytest.raises(ValueError, match='核查阶段或版本候选集合已变化'):
+        worker.run_fact_check(old_job, runtime=_Quiet())
+    with pytest.raises(research_plan.AdmissionError, match='旧任务不能关闭'):
+        research_plan.finish_fact_check(store, run['id'], status='cancelled', stage_id=first['stage_id'])
+    assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'active'
+    with pytest.raises(ValueError, match='其他版本'):
+        fact_check.grant(store, brief['id'], SHARE)
+    assert research_plan.frozen(store, run['id'])['fact_check'] == plan['fact_check']
+    assert fact_check.view(store, brief['id'])['grant_allowed'] is False
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted', stage_id=second['stage_id'])
+    fact_check.grant(store, revised['id'], SHARE)
+    assert research_plan.frozen(store, run['id'])['fact_check']['scope'] == plan['fact_check']['scope']
+
+
 class _Quiet:
     """A host turn that finishes without submitting anything."""
     cancelled = threading.Event()
@@ -93,7 +147,7 @@ def test_grant_is_the_only_ceiling_for_runs_without_authorized_budget(tmp_path):
         budget.reserve_search(store, run['id'], 1)  # the grant itself is the hard ceiling
 
 
-def test_grant_paths_pending_active_reopened_refused(tmp_path):
+def test_grant_paths_pending_active_reopened_refused(tmp_path, monkeypatch):
     store, run, source = _world(tmp_path)
     pending = research_plan.add_fact_check_grant(store, run['id'], SHARE)  # research round still open
     assert pending['status'] == 'pending'
@@ -122,6 +176,48 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as info:  # completed stages never reopen via money
         research_plan.add_fact_check_grant(store, run['id'], SHARE)
     assert info.value.code == 'fact_check_closed'
+    # The new automatic candidate lane rechecks public scope at both boundaries.
+    from briefloop import sources
+    from briefloop.runtime import Worker
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda *a,**k: (b'Public revenue: 12.', 'text/plain', 'utf-8'))
+    monkeypatch.setattr(sources,'_checked_addresses',lambda *a: ['1.1.1.1'])
+    store=Store(tmp_path/'automatic')
+    source=sources.fetch(store,'https://www.python.org/release/')
+    run=store.create_run({'title':'R','objective':'o','allow_web':True,'fact_check':True,
+                         'completion_mode':'direct','research_budget':BUDGET},[source['id']],research_protocol='quality_v1')
+    research_plan.freeze(store,run['id'])
+    brief,claim,_=_claim_version(store,run)
+    store.event(None,'fact_check_candidates',{'version_id':brief['id'],'registered':[claim['id']]})
+    research_plan.finish_round(store,run['id'])
+    parent=store.enqueue('assess',{'version_id':brief['id'],'runtime':{'model':'test'}})
+    worker=Worker(store)
+    assert worker._admit_fact_check(parent,brief)['status']=='active'
+    child=store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
+    assert json.loads(child['payload'])['automatic_candidates_version_id']==brief['id']
+    private=store.add_source('Internal input','Unpublished revenue 99.')
+    store.attach_source(run['id'],private['id'])
+    inherited = store.publish(run['id'], {'title': 'R', 'editor_document': json.loads(brief['editor_document'])}, parent_id=brief['id'])
+    assert fact_check.automatic_candidates(store, inherited)
+    assert worker._admit_fact_check(parent, inherited) is None
+    # _Quiet would raise for an unsettled turn if any model transport were called.
+    result=worker.run_fact_check(child,runtime=_Quiet())
+    assert result['execution']=='failed'
+    assert research_plan.frozen(store,run['id'])['fact_check']['status']=='failed'
+    assert fact_check.view(store,brief['id'])['not_checked_reason']
+    assert worker._admit_fact_check(parent,brief) is None
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'"))==1
+    changed=store.publish(run['id'],{'title':'R','editor_document':{'type':'doc','content':[
+        {'type':'paragraph','content':[{'type':'text','text':'Entirely different report.'}]}]}},parent_id=inherited['id'])
+    assert worker._admit_fact_check(parent,changed) is None
+    assert not fact_check.eligible_bindings(store,changed['id'])
+    from briefloop.draft_completion import require_fact_check_settled
+    continuation=store.enqueue('assess',{'run_id':run['id'],'version_id':changed['id'],
+                                        'continuation_of':parent['id'],'runtime':{'model':'test'}})
+    require_fact_check_settled(store,continuation)  # Old run claims do not block this version.
+    valid=store.enqueue('assess',{'run_id':run['id'],'version_id':brief['id'],
+                                 'continuation_of':parent['id'],'runtime':{'model':'test'}})
+    with pytest.raises(ValueError):
+        require_fact_check_settled(store,valid)  # Private-scope rejection is not a completed check.
 
 
 def test_reopened_grant_retains_consumed_credit_without_carrying_unused_budget(tmp_path):

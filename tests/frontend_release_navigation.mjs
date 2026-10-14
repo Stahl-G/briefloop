@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import {deliveryUI} from '../frontend/delivery.js';
 import {section as sectionOf,statement} from './source_section.mjs';
 import {esc} from '../frontend/dom.js';
+import {createReportChatContext} from '../frontend/report-chat-context.js';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const line=name=>(source.includes(`\nasync function ${name}(`)?statement(source,`async function ${name}(`):statement(source,`function ${name}(`));
@@ -17,7 +18,7 @@ function fixture(){
  const a={...brief('A'),markdown:'Report A'},b=brief('B'),c=brief('C');
  const buttons=[b,c].map(brief=>({dataset:{reportRelease:brief.id}}));
  const configurable={configure:()=>({})};
- const context=vm.createContext({$,state:{briefs:[a,b,c],jobs:[],runs:[]},current:a,dirty:false,saving:false,savePromise:null,saveTimer:null,lastSaveError:null,pendingRun:null,editor:null,highlightQuotes:[],
+ const context=vm.createContext({$,createReportChatContext,state:{briefs:[a,b,c],jobs:[],runs:[]},current:a,dirty:false,saving:false,savePromise:null,saveTimer:null,lastSaveError:null,pendingRun:null,editor:null,highlightQuotes:[],
   parse:JSON.parse,esc,notice:message=>notices.push(message),page:name=>pages.push(name),clearTimeout(){},
   Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,TableKit:{},TextStyle:{},Layout:{},Citation:{},CitationPresentation:{configure:()=>({})},Markdown:{},MustFixHighlight:{},MarketDataColors:{},ReportTrailingParagraph:{},
   editorDocument:value=>value,toEditor:value=>value,changed(){},updateFormattingTools(){},assessment(){},citations(){},renderBriefLength(){},setReportView(){},renderReportStatus(){},renderAssistantSummary(){},syncPendingReport(){},renderWordExports(){},updateDownloads(){},

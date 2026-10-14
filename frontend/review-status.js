@@ -68,7 +68,7 @@ export function factCheckHTML(data) {
  // The user-facing grant entry (plan D3): visible while the stage can still
  // spend (active) or was closed by exhaustion (追加后重开继续)；预登记 shows when
  // the switch is on but the stage has not been admitted yet.
- const grantable = data?.grant_request || (stage ? ['active', 'budget_exhausted'].includes(stage.status) : !!data?.enabled);
+ const grantable = data?.grant_allowed !== false && (data?.grant_request || (stage ? ['active', 'budget_exhausted'].includes(stage.status) : !!data?.enabled));
  const grantNote = data?.pending_grant
   ? `<p class="help">已登记追加核查预算（${escHtml(factGrantText(data.pending_grant.limits))}），将在核查阶段接纳时并入计量。</p>` : '';
  const stageSection = (stage || data?.enabled || grantNote)

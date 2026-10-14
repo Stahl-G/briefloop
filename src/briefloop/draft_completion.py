@@ -55,6 +55,36 @@ def check_binding(store,job):
     return json.loads(file.read_text(encoding='utf-8')) if file.exists() else json.loads(job['payload'])['checks_input']
 
 
+def _fact_check_versions(store, job, payload, *, connection=None):
+    """Reuse same-body evidence only along this input's explicit retry chain."""
+    versions = [payload['version_id']]
+    if payload.get('fast_evidence'):
+        original = (dict(connection.execute('SELECT * FROM briefs WHERE id=?', (payload['version_id'],)).fetchone())
+                    if connection is not None else store.one('briefs', payload['version_id']))
+        query = 'SELECT id FROM briefs WHERE id=? AND parent_id=? AND run_id=? AND hash=?'
+        chain, seen = [job], {job['id']}
+        current = payload
+        while current.get('retry_of_job_id') and current['retry_of_job_id'] not in seen:
+            identity = current['retry_of_job_id']
+            rows = (list(connection.execute('SELECT * FROM jobs WHERE id=?', (identity,)))
+                    if connection is not None else store.rows('SELECT * FROM jobs WHERE id=?', (identity,)))
+            if not rows:
+                break
+            prior = dict(rows[0])
+            current = json.loads(prior['payload'])
+            if prior['kind'] != 'assess' or any(current.get(key) != payload.get(key)
+                    for key in ('version_id', 'run_id', 'continuation_of', 'fast_evidence')):
+                break
+            seen.add(identity)
+            chain.append(prior)
+        for attempt in reversed(chain):
+            args = ('brief_' + attempt['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash'])
+            enriched = ([dict(row) for row in connection.execute(query, args)]
+                        if connection is not None else store.rows(query, args))
+            versions.extend(row['id'] for row in enriched)
+    return versions
+
+
 def accept_stage_sources(store,job):
     """Only this continuation's metered fact-check receipts may expand scope."""
     payload=json.loads(job['payload'])
@@ -70,7 +100,10 @@ def accept_stage_sources(store,job):
     old_timing=[item for item in actual['source_timing'] if item['source_id'] in old]
     if old_timing!=expected['source_timing']:
         raise Conflict('原来源时间信息已变化，请重新选择当前材料进行检查')
-    children=store.rows("SELECT payload FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=?",(job['id'],payload['version_id']))
+    versions = _fact_check_versions(store, job, payload)
+    children=store.rows("SELECT payload FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? "
+                       "AND json_extract(payload,'$.run_id')=? AND json_extract(payload,'$.version_id') IN ("
+                       + ','.join('?' for _ in versions) + ')', (job['id'], payload['run_id'], *versions))
     stages={json.loads(child['payload']).get('stage_id') for child in children}-{None}
     ledger=store.meta('research_requests:'+payload['run_id']) or {}
     admitted={item['id']:item for request in ledger.values()
@@ -123,7 +156,19 @@ class ExistingContinuation(Exception):
         self.job_id = job_id
 
 
+def enqueue_revision(store, version_id, *, runtime=None, session_id=None):
+    """Continue checks only after an authorized model revision, never auto-rewrite."""
+    brief=store.one('briefs',version_id)
+    if not json.loads(brief['detail']).get('evidence_needs_review'):
+        return None
+    return _enqueue(store,version_id,revision=True,runtime=runtime,session_id=session_id)
+
+
 def enqueue(store, version_id, *, automatic=False):
+    return _enqueue(store,version_id,automatic=automatic)
+
+
+def _enqueue(store, version_id, *, automatic=False, revision=False, runtime=None, session_id=None):
     parent = origin(store, version_id)
     brief=store.one('briefs',version_id)
     mode=json.loads(store.one('runs',brief['run_id'])['requirements']).get('completion_mode')
@@ -141,6 +186,20 @@ def enqueue(store, version_id, *, automatic=False):
         payload.update(fast_evidence=True,auto_revision=False)
     elif mode=='direct':
         payload.update(fast_evidence=True)
+    if revision:
+        payload.update(fast_evidence=True,auto_revision=False,revision_evidence=True)
+        if runtime:
+            from .models import runtime_fields
+            backend=runtime.get('backend') or runtime.get('agent_backend') or payload.get('agent_backend','codex')
+            actual={**runtime,'reasoning_effort':runtime.get('reasoning_effort',runtime.get('effort')),
+                    'model_variant':runtime.get('model_variant',runtime.get('variant'))}
+            if backend=='briefloop-native':
+                from .native_harness import _thinking
+                actual['model_variant']=_thinking(runtime)
+            payload.update(agent_backend=backend,runtime=runtime_fields(actual,backend))
+            payload['role_models']=store.role_model_config(payload['runtime'],backend)
+            payload['review_runtime']=store.settings().get('review_runtime')
+        if session_id is not None:payload['session_id']=session_id
     snapshot = binding(store, version_id)
     identity = hashlib.sha256(dump([parent['id'], snapshot, payload]).encode()).hexdigest()
     payload.update(version_id=version_id, continuation_of=parent['id'],
@@ -214,15 +273,21 @@ def resume_incomplete_output(job, folder, name):
 def require_fact_check_settled(store, job):
     payload=json.loads(job['payload'])
     if not payload.get('continuation_of'):return
-    children=store.rows("SELECT status,error FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC LIMIT 1",(job['id'],payload['version_id']))
+    versions = _fact_check_versions(store, job, payload)
+    children=store.rows("SELECT status,error FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? "
+                       "AND json_extract(payload,'$.run_id')=? AND json_extract(payload,'$.version_id') IN ("
+                       + ','.join('?' for _ in versions) + ') ORDER BY rowid DESC LIMIT 1', (job['id'], payload['run_id'], *versions))
     if children and children[0]['status']!='complete':
         raise ValueError('联网事实核查未完成，稿件及已取材料保留；请恢复本检查任务。'+str(children[0]['error'] or ''))
     req=json.loads(store.one('runs',payload['run_id'])['requirements'])
-    if req.get('fact_check') and store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(payload['run_id'],)):
+    from .fact_check import eligible_bindings, completed_for
+    targets = [version for version in versions if eligible_bindings(store, version)]
+    # An evidence child is the actual checked version once it exists.
+    target = targets[-1] if targets else None
+    if req.get('fact_check') and target and not completed_for(store, target):
         from .research_plan import frozen
         stage=(frozen(store,payload['run_id']) or {}).get('fact_check') or {}
-        if stage.get('status')!='completed':
-            raise ValueError('联网事实核查阶段尚未完成（'+str(stage.get('status') or '未接纳')+'）；请先处理核查预算或中断状态，再恢复检查。')
+        raise ValueError('本版本候选核查尚未完成（'+str(stage.get('status') or '未接纳')+'）；请先处理核查预算或中断状态，再恢复检查。')
 
 
 def resume_cancelled_stage(connection, job):
@@ -237,7 +302,11 @@ def resume_cancelled_stage(connection, job):
     plan=_read_plan(connection,payload['run_id']) or {}
     stage=plan.get('fact_check') or {}
     if stage.get('status')!='cancelled':return
-    owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status='cancelled' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? AND json_extract(payload,'$.stage_id')=?",(job['id'],payload['version_id'],stage.get('stage_id'))).fetchone()
+    versions = _fact_check_versions(None, job, payload, connection=connection)
+    owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status='cancelled' "
+        "AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.run_id')=? "
+        "AND json_extract(payload,'$.version_id') IN (" + ','.join('?' for _ in versions) + ') '
+        "AND json_extract(payload,'$.stage_id')=?", (job['id'],payload['run_id'],*versions,stage.get('stage_id'))).fetchone()
     if not owned:return
     stage.setdefault('interrupted_closures',[]).append({key:stage.get(key) for key in ('status','closed','outcome')})
     stage.update(status='active',closed=None,outcome=None)

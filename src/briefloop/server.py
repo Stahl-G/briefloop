@@ -63,7 +63,8 @@ def _close_service(server):
     """Attempt every owned cleanup even if an earlier transport fails."""
     operations=[('bridge:'+name,manager.close) for name,manager in server.bridge_harnesses.items()]
     operations.extend([('worker',server.worker.close),('harness',server.harness.close),
-                       ('opencode',server.opencode_harness.close),('runtime_bridge',server.runtime_bridge.close),
+                       ('opencode',server.opencode_harness.close),('native',server.native_harness.close),
+                       ('runtime_bridge',server.runtime_bridge.close),
                        ('server',server.server_close),('workspace_lock',server.workspace_lock.close)])
     errors=list(getattr(server,'shutdown_errors',[]))
     for name,close in operations:
@@ -755,6 +756,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         body['text']=conversation_request(store,body.get('text',''),body['next_report'],compact=compact)
                     choose_runtime(store,body.get('runtime'))
                     bind_message_context(store,body['session_id'],body['message_id'],body.get('next_report'))
+                    from .report_revision import bind_context
+                    if body.get('next_report') is not None and body.get('report_context') is not None:
+                        raise ValueError('当前报告与下一期报告不能同时关联，请重新选择')
+                    bind_context(store,body['session_id'],body['message_id'],body.get('report_context'))
                     if body.get('next_report') is not None:
                         body['text']+='\n当前发起会话 session_id='+body['session_id']+'；generate 使用该会话绑定本期选择。'
                     result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',store.settings().get('chat_allow_web',True))))

@@ -49,3 +49,16 @@ def test_stale_record_is_flagged_not_hidden(tmp_path):
     assert panel['records'][0]['covers_version'] is False  # 改稿后旧核查不算新稿已核查，但保留可查
     target = review._snapshot(store, revised['id'])['fact_checks'][0]
     assert target['covers_this_version'] is False and target['candidates']  # 审阅包同样标注旧稿身份
+    from briefloop import research_plan
+    active = research_plan.admit_fact_check(store, world['run']['id'], {'kind': 'task_reserve',
+        'limits': {'search_requests': 1, 'candidate_urls': 5, 'source_pages': 1}}, version_id=revised['id'])
+    current = fact_check.view(store, revised['id'])
+    assert current['stage']['stage_id'] == active['stage_id'] and current['stage']['status'] == 'active'
+    original = fact_check.view(store, world['brief']['id'])
+    assert original['stage']['stage_id'] == world['stage']['stage_id'] and original['stage']['status'] == 'completed'
+    doc['content'][0]['content'][0]['text'] = 'Another edited result.'
+    waiting = store.revise(revised['id'], editor_document=doc)
+    store.event(None, 'fact_check', {'action': 'admit_refused', 'version_id': waiting['id'],
+        'reason': 'Another version is being checked'})
+    blocked = fact_check.view(store, waiting['id'])
+    assert blocked['stage'] is None and blocked['not_checked_reason'] == 'Another version is being checked'

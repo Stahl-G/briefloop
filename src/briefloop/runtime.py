@@ -619,7 +619,7 @@ class Worker:
         for thread,runtime in generations:runtime.cancel()
         for thread,runtime,run_id in reviews:runtime.cancel()
         if self.schedule_thread.is_alive():self.schedule_thread.join(timeout=12)
-        self.thread.join(timeout=12)
+        if self.thread.is_alive():self.thread.join(timeout=12)
         for thread,runtime in generations:thread.join(timeout=12)
         if self.task_thread and self.task_thread.is_alive():self.task_thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
@@ -698,6 +698,12 @@ class Worker:
             if tasks is not None and tasks.has_binding(jid):
                 tasks.finish(jid,int(json.loads(job['payload']).get('attempt',1)))
             _notify_task(self.store,job,job['status'])
+            if job['kind'] in ('generate','assess') and not self.stopping.is_set():
+                try:
+                    from .report_revision import recover_terminal_messages
+                    recover_terminal_messages(self.store)
+                except Exception as exc:
+                    self.store.event(jid,'revision_closeout_failed',{'error':str(exc)})
         return job
 
 
@@ -744,23 +750,33 @@ class Worker:
                 raise ValueError('反馈已移交其他批次或不存在，不能重复学习')
 
     def retry_with_current_model(self,jid,*,confirmed_plan=None):
-        """Start a linked review/learning attempt without rewriting its history."""
+        """Start a linked review, learning or bound-check attempt without rewriting history."""
         class ExistingRetry(Exception):
             pass
 
         with self._claim_lock:
             job=self.store.one('jobs',jid)
-            if job['kind'] not in ('review','learn'):
-                raise ValueError('目前仅支持审阅和学习任务使用当前模型重试')
+            if job['kind'] not in ('review','learn','assess'):
+                raise ValueError('目前仅支持审阅、学习和已绑定稿件的检查任务使用当前模型重试')
             if job['status'] not in ('failed','interrupted','cancelled'):
                 raise ValueError('只有失败、中断或已取消的任务可以新建重试')
+            original=json.loads(job['payload'])
+            if job['kind']=='assess':
+                from .draft_completion import verify_input,check_binding
+                if not original.get('continuation_of') or not original.get('checks_input') or original.get('inline_owner_job_id'):
+                    raise ValueError('请对当前稿件重新发起检查；这个任务没有可恢复的正文与来源绑定')
+                verify_input(self.store,job)
             for row in self.store.rows("SELECT * FROM jobs WHERE kind=? AND status IN ('queued','running') ORDER BY rowid",(job['kind'],)):
                 if json.loads(row['payload']).get('retry_of_job_id')==jid:return row
-            if jid==self.current or jid in self._review_jobs:
+            if jid==self.current or jid in self._review_jobs or jid in getattr(self,'_generation_jobs',{}):
                 raise ValueError('原任务仍在停止，请稍后重试')
-            original=json.loads(job['payload'])
             fields=('version_id',) if job['kind']=='review' else ('feedback_ids','k','targets','skill_id')
-            payload={key:original[key] for key in fields}
+            if job['kind']=='assess':
+                fields=('version_id','run_id','continuation_of','fast_evidence','auto_revision','revision_evidence',
+                        'session_id','search_provider','search_policy','max_parallel','single_evaluation')
+            payload={key:original[key] for key in fields if key in original}
+            if job['kind']=='assess':
+                payload.update(checks_input=check_binding(self.store,job),auto_revision=False)
             # A retry inherits the authorization and bound the user confirmed for
             # this batch; a batch without one still has to be confirmed again.
             payload.update({key:original[key] for key in ('authorization','budget','reader_id') if key in original})
@@ -786,6 +802,28 @@ class Worker:
                 for row in connection.execute("SELECT id,payload FROM jobs WHERE kind=? AND status IN ('queued','running') AND id<>? ORDER BY rowid",(job['kind'],new_id)):
                     if json.loads(row['payload']).get('retry_of_job_id')==jid:
                         raise ExistingRetry(row['id'])
+                if job['kind']=='assess':
+                    from .external_requests import _RequestStore
+                    from .draft_completion import verify_input,check_binding
+                    view=_RequestStore(self.store,connection)
+                    verify_input(view,job)
+                    if check_binding(view,job)!=payload['checks_input']:
+                        raise ValueError('来源检查绑定已变化，请刷新后重试')
+                    active=connection.execute("SELECT id FROM jobs WHERE id<>? AND status IN ('queued','running') "
+                        "AND (json_extract(payload,'$.continuation_of')=? OR json_extract(payload,'$.parent_job_id')=? "
+                        "OR (kind IN ('assess','fact_check') AND (json_extract(payload,'$.run_id')=? "
+                        "OR json_extract(payload,'$.version_id') IN (SELECT id FROM briefs WHERE run_id=?))))",
+                        (new_id,original['continuation_of'],jid,original['run_id'],original['run_id'])).fetchone()
+                    if active:raise ValueError('本报告或关联来源仍有检查任务，请先等待或停止它')
+                    children=connection.execute("SELECT id FROM jobs WHERE json_extract(payload,'$.parent_job_id')=?",(jid,))
+                    if any(child['id'] in self._review_jobs or child['id']==self.current for child in children):
+                        raise ValueError('关联核查仍在停止，请稍后重试')
+                    import hashlib
+                    identity_payload={key:value for key,value in frozen.items() if key!='checks_identity'}
+                    frozen['checks_identity']=hashlib.sha256(dump([
+                        original['continuation_of'],payload['checks_input'],identity_payload]).encode()).hexdigest()
+                    connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(frozen),new_id))
+                    return
                 if job['kind']!='learn':return
                 self._check_feedback_owner(connection,jid,original)
                 if connection.execute("SELECT 1 FROM events WHERE job_id=? AND kind='adoption_processed'",(jid,)).fetchone():
@@ -1127,7 +1165,18 @@ class Worker:
         run_id=brief['run_id']
         requirements=json.loads(self.store.one('runs',run_id)['requirements'])
         if not requirements.get('fact_check'):return None
-        if not self.store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(run_id,)):return None
+        from .fact_check import eligible_bindings,automatic_candidates
+        if not eligible_bindings(self.store,brief['id']):
+            self.store.event(job['id'], 'fact_check', {'action': 'not_checked', 'version_id': brief['id'],
+                'reason': '没有已登记并定位的核查候选，未启动联网事实核查'})
+            return None
+        automatic=automatic_candidates(self.store,brief)
+        if automatic:
+            from .evidence import public_fact_check_sources
+            allowed,reason=public_fact_check_sources(self.store,run_id)
+            if not allowed:
+                self.store.event(job['id'],'fact_check',{'action':'not_checked','version_id':brief['id'],'reason':reason})
+                return None
         grant=pending_fact_check_grant(self.store,run_id)
         if grant:
             source={'kind':'user_grant','limits':grant['limits']}
@@ -1137,9 +1186,9 @@ class Worker:
             share={field:min(FACT_CHECK_RESERVE[field],int(remaining.get(field) or 0)) for field in FACT_CHECK_RESERVE}
             source={'kind':'task_reserve','limits':share}
         try:
-            admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'])
+            admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'],version_id=brief['id'])
         except AdmissionError as exc:
-            self.store.event(job['id'],'fact_check',{'action':'admit_refused','code':exc.code,'error':str(exc)})
+            self.store.event(job['id'],'fact_check',{'action':'admit_refused','version_id':brief['id'],'code':exc.code,'error':str(exc),'reason':str(exc)})
             return None
         if grant:
             consume_pending_fact_check_grant(self.store,run_id,admitted['stage_id'])
@@ -1153,6 +1202,7 @@ class Worker:
                 if previous[0]['status'] in ('failed','interrupted','cancelled'):self.resume(previous[0]['id'])
                 return admitted
         check={'run_id':run_id,'version_id':brief['id'],'parent_job_id':job['id'],'stage_id':admitted['stage_id']}
+        if automatic:check['automatic_candidates_version_id']=brief['id']
         # Same frozen model/provider chain as the writing job, and the same
         # conversation for status notes when the task started from a chat.
         check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models','review_runtime','review_mode','session_id') if key in payload})
@@ -1208,29 +1258,51 @@ class Worker:
         backend=validate_backend(payload.get('agent_backend','codex'))
         run_id=brief['run_id']
         stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        from .fact_check import candidate_scope
+        if (payload.get('stage_id') != stage.get('stage_id')
+                or stage.get('scope') is not None and stage['scope'] != candidate_scope(self.store, brief['id'])):
+            raise ValueError('核查阶段或版本候选集合已变化，未执行旧核查任务')
         if stage.get('status')!='active':
             # A resumed job after the stage already closed (late result refused,
             # user grant reopened another stage) must not execute a second turn.
             return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
                     'execution':{'status':stage.get('status'),'summary':'阶段已收束，本次不执行'}}
+        from .fact_check import eligible_bindings,automatic_candidates
+        reason=None
+        if not eligible_bindings(self.store,brief['id']):
+            reason='本版本没有仍可定位的核查候选，未启动联网事实核查'
+        automatic_version=payload.get('automatic_candidates_version_id')
+        if automatic_version:
+            if automatic_version!=brief['id'] or not automatic_candidates(self.store,brief):
+                reason='自动核查的候选版本身份已变化，未启动联网事实核查'
+            else:
+                from .evidence import public_fact_check_sources
+                allowed,scope_reason=public_fact_check_sources(self.store,run_id)
+                if not allowed:reason=scope_reason
+        if reason:
+            finish_fact_check(self.store,run_id,status='failed',summary=reason,job_id=job['id'],stage_id=payload['stage_id'])
+            self.store.event(job['id'],'fact_check',{'action':'not_checked','version_id':brief['id'],'reason':reason})
+            return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),'execution':'failed','reason':reason}
         job={**job,'allow_web':True}
         self.store.event(job['id'],'fact_check',{'action':'run','stage_id':stage['stage_id'],'version_id':brief['id']})
         try:
             (runtime or self.runtime).execute(job,fact_check_prompt(self.store,job,brief,folder,backend),folder)
         except InterruptedError:
-            finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'])
+            finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'],stage_id=payload['stage_id'])
             raise
         except Exception:
             # A transport failure is a job failure, not a check outcome: the
             # stage stays active so the resumed job can retry the same turn.
             raise
         stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        if stage.get('stage_id') != payload.get('stage_id'):
+            raise ValueError('核查阶段已变化，本次任务不读取另一阶段的结果')
         if stage.get('status')=='active':
             # The turn ended without an admitted result: fail the job honestly;
             # the stage stays active for a resume instead of pretending an
             # empty check ran.
             raise ValueError('核查会话结束但未提交结果；可恢复该任务重试')
-        rows=records_for(self.store,run_id)
+        rows=[row for row in records_for(self.store,run_id,brief['id']) if row['stage_id']==stage['stage_id']]
         record=rows[0] if rows else None
         return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
                 'execution':stage.get('outcome',{}).get('status'),

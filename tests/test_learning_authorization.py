@@ -155,3 +155,29 @@ def test_legacy_frozen_batch_pauses_before_calls_and_keeps_feedback(tmp_path):
         learning.learn(store, NoCalls(), store.one('jobs', job['id']))
     assert all(row['batch_id'] == job['id'] for row in store.rows('SELECT batch_id FROM feedback'))
     assert store.meta('last_study') is None
+
+
+def test_first_use_defaults_wait_for_current_budget_and_preserve_existing_off(tmp_path):
+    store = Store(tmp_path)
+    assert store.settings()['auto_learn'] is True
+    assert state(store.settings()) == 'needs_confirmation'
+    assert not automatic_allowed(store.settings())
+    store.update_settings({'model': 'fixture-selected-model'})
+    shown = plan(store.settings())
+    with pytest.raises(LearningAuthorizationRequired):
+        store.update_settings({'auto_learn': True, 'confirm_learning_rounds': 1,
+                               'confirm_plan': 'f' * 64})
+    assert not automatic_allowed(store.settings())
+    store.update_settings({'auto_learn': True, 'confirm_learning_rounds': shown['rounds'],
+                           'confirm_plan': shown['fingerprint']})
+    assert automatic_allowed(Store(tmp_path).settings())
+    store.update_settings({'model': 'fixture-another-model'})
+    assert state(store.settings()) == 'plan_changed'
+    assert not automatic_allowed(store.settings())
+    store.update_settings({'auto_learn': False})
+    assert Store(tmp_path).settings()['auto_learn'] is False
+    legacy = store.meta('settings')
+    legacy.pop('auto_learn')
+    store.set_meta('settings', legacy)
+    assert Store(tmp_path).settings()['auto_learn'] is False
+    assert state(store.settings()) == 'off'

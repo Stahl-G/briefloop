@@ -24,16 +24,20 @@ class Author:
             (folder/'temporal_claims.json').write_text(dump([{'statement':'原稿已生成的日期', 'source_id':self.source_id,
                 'event_date':'2026-10-06', 'published_at':'2026-10-09', 'fetched_at':'author estimate', 'locator':'line 2'}]))
             (folder/'response.txt').write_text(
-                f'# 季度观察\n\n**本周发生：**10月6日。收入 120 万元，同比增长 20%。[@{self.source_id}]\n\n另一说法尚未保存原文。[@src_invented]\n')
+                f'# 季度观察\n\n**本周发生：**10月6日。收入 120 万元，同比增长 20%。[@{self.source_id}]\n\n'
+                f'同一份材料披露收入。[@src_typo]\n\n另一说法尚未保存原文。[@src_invented]\n')
             from briefloop.version_execution import record_plain_output
             record_plain_output(self.store, job, folder.name, (folder/'response.txt').read_text(), session['id'], message['id'])
+        elif folder.name=='citation-repair':
+            assert job['allow_web'] is False and not job.get('plain_tools')
+            (folder/'response.txt').write_text(dump({'replacements':[
+                {'unknown_source_id':'src_typo','source_id':self.source_id},
+                {'unknown_source_id':'src_invented','source_id':None}]}))
         elif folder.name=='evidence':
-            (folder/'response.txt').write_text(dump({'citations':[
-                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'收入 120 万元，同比增长 20%'}],
-                'number_bindings':[], 'temporal_claims':[{'statement':'收入披露', 'source_id':'S1',
-                    'event_date':'2026-10-06', 'published_at':'2026-10-09', 'fetched_at':'invented',
-                    'news_basis':'first_disclosure', 'news_date':'2026-10-09', 'news_note':'首次披露收入',
-                    'report_quote':'收入 120 万元，同比增长 20%。', 'excerpt':'收入 120 万元，同比增长 20%'}]}))
+            (folder/'response.txt').write_text(dump({'records':[
+                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'收入 120 万元，同比增长 20%',
+                 'times':[{'statement':'收入披露', 'event_date':'2026-10-06', 'published_at':'2026-10-09',
+                           'news_basis':'first_disclosure', 'news_date':'2026-10-09', 'news_note':'首次披露收入'}]}]}))
         elif folder.name=='evaluation':
             value=json.loads((folder/'input.json').read_text())
             (folder/'assessment.json').write_text(dump({'brief_hash':value['brief']['hash'],'status':'complete',
@@ -67,10 +71,8 @@ def test_direct_draft_is_saved_with_known_citations_and_checks_keep_revision(tmp
         elif folder.name == 'evidence':
             path = folder / 'response.txt'
             evidence = json.loads(path.read_text())
-            evidence['temporal_claims'].append({
-                'statement': '原稿已生成的日期', 'source_id': 'S1', 'event_date': '',
-                'published_at': '2026-10-10', 'locator': '',
-                'report_quote': '收入 120 万元，同比增长 20%。', 'excerpt': '收入 120 万元，同比增长 20%'})
+            evidence['records'][0]['times'].append({
+                'statement': '原稿已生成的日期', 'event_date': '', 'published_at': '2026-10-10'})
             path.write_text(dump(evidence))
         return result
     runtime.execute = partial_dates
@@ -78,12 +80,15 @@ def test_direct_draft_is_saved_with_known_citations_and_checks_keep_revision(tmp
     result=worker.generate(job)
     brief=store.one('briefs',result['version_id'])
     assert f'[@{source["id"]}]' in brief['markdown'] and 'src_invented' not in brief['markdown']
+    assert f'同一份材料披露收入。[@{source["id"]}]' in brief['markdown'] and 'src_typo' not in brief['markdown']
     claims=json.loads(brief['detail'])['temporal_claims']
     assert claims[0]['event_date']=='2026-10-06' and claims[0]['published_at']=='2026-10-09'
     assert claims[0]['fetched_at']==''  # Local material has no acquisition timestamp.
     assert any({'type':'bold'} in n.get('marks',[]) for block in json.loads(brief['editor_document'])['content'] for n in block.get('content',[]))
     notes=json.loads(brief['detail'])['research_notes']
     assert any(n['kind']=='direct_unknown_citations' and n['source_ids']==['src_invented'] for n in notes)
+    repair = next(n for n in notes if n['kind']=='direct_citation_repair')
+    assert repair['repaired']==[{'from':'src_typo','to':source['id']}] and repair['unresolved']==['src_invented']
     checks=json.loads(store.one('jobs',result['checks_job_id'])['payload'])
     assert checks['fast_evidence'] is True and checks['auto_revision'] is True
     store.update_job(result['checks_job_id'],'running')
@@ -97,7 +102,19 @@ def test_direct_draft_is_saved_with_known_citations_and_checks_keep_revision(tmp
     preserved = next(c for c in claims if c['statement'] == '原稿已生成的日期')
     assert preserved['event_date'] == '2026-10-06' and preserved['news_date'] == '2026-10-09'
     assert preserved['published_at'] == '2026-10-10' and preserved['locator'] == 'line 2'
-    assert [name for name,_ in runtime.calls]==['direct-writing','evidence','evaluation']
+    assert [name for name,_ in runtime.calls]==['direct-writing','citation-repair','evidence','evaluation']
+
+    from briefloop.direct_citations import repair as repair_citations
+    unchanged = f'已保存原文。[@{source["id"]}]'
+    previous_calls = len(runtime.calls)
+    assert repair_citations(worker, job, run['id'], unchanged, worker.folder(job)) == (unchanged, None)
+    assert len(runtime.calls) == previous_calls
+    from briefloop.coverage_record import split
+    original, _, _ = split((worker.folder(job)/'direct-writing'/'response.txt').read_text())
+    restored, restored_note = repair_citations(worker, job, run['id'], original.strip(), worker.folder(job))
+    assert f'同一份材料披露收入。[@{source["id"]}]' in restored
+    assert restored_note['repaired'] == repair['repaired']
+    assert len(runtime.calls) == previous_calls
 
 
 def test_direct_needs_offline_material_and_native_writer_gets_only_metered_tools(tmp_path):
@@ -169,7 +186,7 @@ def test_direct_skill_binding_and_trial_skip_duplicate_evaluation(tmp_path):
         assert json.loads(brief['detail'])['temporal_claims']
         assert result['checks_state']=='deferred' and 'checks_job_id' not in result
         assert not store.rows("SELECT id FROM jobs WHERE kind='assess' AND json_extract(payload,'$.continuation_of')=?", (job['id'],))
-    assert [name for name,_ in runtime.calls]==['direct-writing','evidence']*3
+    assert [name for name,_ in runtime.calls]==['direct-writing','citation-repair','evidence']*3
 
 
 def test_learning_refuses_candidate_that_host_did_not_receive(tmp_path):

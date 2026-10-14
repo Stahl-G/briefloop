@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {createReportFormDefaults} from '../frontend/report-form-defaults.js';
 import {researchBudgetUI} from '../frontend/research-budget.js';
+import {prepareNewReportRequirements} from '../frontend/quick-report.js';
 import {section} from './source_section.mjs';
 
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
@@ -106,8 +107,8 @@ test('actual preview handler uses normalized text-period response; submit omits 
  let resolvePreview,submitted,work;
  const context=vm.createContext({$,reportFormDefaults:defaults,reportMarket:{prepare(){}},nextReport:{clear(){}},
   api:async(path,payload)=>path==='report-time-preview'?new Promise(resolve=>{resolvePreview=resolve}):(submitted=payload,{payload:'{}'}),
-  FormData:class{constructor(){this.values={title:'行业动态',objective:'研究',period:'2026-09',report_profile:'industry_periodic',target_words:'5000',max_words:'5500'}}entries(){return Object.entries(this.values)}has(){return false}},
-  action:fn=>{work=fn()},state:{settings:{company_context_enabled:true}},lengthControls:{read:()=>({length_mode:'soft'})},quickReport:{read:()=>({})},
+  FormData:class{constructor(){this.values={title:'行业动态',objective:'研究',period:'2026-09',report_profile:'industry_periodic',target_words:'5000',max_words:'5500',completion_mode:'fast',research_strategy:'goal_driven',target_minutes:'10'}}entries(){return Object.entries(this.values)}has(){return false}},
+  action:fn=>{work=fn()},state:{settings:{company_context_enabled:true}},lengthControls:{read:()=>({length_mode:'soft'})},prepareNewReportRequirements,
   readResearchBudget:()=>({search_requests:30,candidate_urls:150,source_pages:60}),readSearchPolicy:()=>({}),readWorkflowChoice:()=>({}),
   referenceSelected:new Set(),readTemplateSections:()=>[],preserveWritingPreferences:()=>{},writingPreferencesOverride:null,
   saveModel:async()=>{},current:null,reportMcpSelection:{selection:()=>null},chat:{},selected:new Set(),parse:JSON.parse,showPendingReport:()=>{},page:()=>{},notice:()=>{}});
@@ -115,6 +116,9 @@ test('actual preview handler uses normalized text-period response; submit omits 
  const pending=vm.runInContext('previewReportTime()',context);
  vm.runInContext(section(source,"$('requirements').onsubmit=","$('upload').onchange=",'frontend/app.js'),context);
  $('requirements').onsubmit({preventDefault(){},target:$('requirements')});await work;
+ assert.equal(submitted.requirements.completion_mode,undefined);
+ assert.equal(submitted.requirements.research_strategy,undefined);
+ assert.equal(submitted.requirements.target_minutes,undefined);
  for(const key of ['target_words','max_words','research_budget','scout_limit'])assert.equal(key in submitted.requirements,false,`${key} must let admission choose the monthly default`);
  resolvePreview({...period('2026-09-01T00:00:00Z','2026-10-01T00:00:00Z'),today:'2026-10-01',timezone:'UTC'});await pending;
  assert.deepEqual(lengths(),[9000,10000]);assert.match($('report-system-clock').textContent,/2026-10-01/);

@@ -161,7 +161,7 @@ def _stage_usage(store,run_id):
     stages={'research':{'search_requests':0,'source_pages':0},'fact_check':{'search_requests':0,'source_pages':0}}
     for entry in pending_requests(store,run_id).values():
         stage=entry.get('stage') or 'research'
-        if stage=='source_refresh':stages.setdefault(stage,{'search_requests':0,'source_pages':0})
+        if stage in ('source_refresh','revision_research'):stages.setdefault(stage,{'search_requests':0,'source_pages':0})
         key={'search':'search_requests','pages':'source_pages'}.get(entry.get('operation'))
         if stage in stages and key:stages[stage][key]+=1
     return stages

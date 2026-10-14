@@ -63,16 +63,18 @@ def test_pilot_like_repeated_occurrences_are_candidates_not_errors(tmp_path):
 
 def test_full_direct_bindings_leave_no_explicit_unit_candidate(tmp_path):
     store = Store(tmp_path)
-    source = store.add_source('合成来源', '本期收入1200万元，增长20%。')
+    source = store.add_source('合成来源', '本期收入1200万元，增长20%，费用$5。')
     excerpt = store.source_text(source['id'])
     first = _binding({**source, 'text': excerpt})
     second = {**first, 'label': '增长', 'value': 20, 'unit': '%',
               'report_quote': '增长20%', 'number_text': '20%'}
-    result = inspect_draft({'title': '合成', 'markdown': '本期收入1200万元，增长20%。',
-                            'number_bindings': [first, second]}, store=store,
+    third = {**first, 'label': '费用', 'value': 5, 'unit': 'USD',
+             'report_quote': '费用$5', 'number_text': '5'}
+    result = inspect_draft({'title': '合成', 'markdown': '本期收入1200万元，增长20%，费用$5。',
+                            'number_bindings': [first, second, third]}, store=store,
                            allowed_sources={source['id']})
     coverage = result['numbers']['occurrence_review']
-    assert (coverage['candidate_count'], coverage['checked_occurrences'], coverage['review_candidate_count']) == (2, 2, 0)
+    assert (coverage['candidate_count'], coverage['checked_occurrences'], coverage['review_candidate_count']) == (3, 3, 0)
     assert not any(n['code'] == 'numeric_occurrences_to_review' for n in result['notes'])
 
 

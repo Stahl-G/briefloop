@@ -20,16 +20,34 @@ function elements(){
  };
 }
 
-test('an empty schedule list still lets the user create the first schedule',()=>{
+test('new schedules use automatic routing while saved schedules retain their execution choice',async()=>{
  const $=elements(),previous=globalThis.document;
+ const requests=[],requirements={title:'Weekly report',objective:'News',completion_mode:'fast',research_strategy:'goal_driven',target_minutes:10};
+ const state={schedules:[],sources:[],requirements};
  globalThis.document={getElementById:$};
  try{
-  const ui=scheduleUI({api(){throw Error('No requests expected')},getState:()=>({schedules:[],sources:[],requirements:{}}),refresh(){},notice(){},openReport(){}});
+  const ui=scheduleUI({api:async(route,body)=>{requests.push({route,body});return {next_at:'2026-10-15T00:00:00Z'}},
+   getState:()=>state,refresh(){},notice(){},openReport(){}});
   ui.render();
   assert.equal($('home-block-schedule').hidden,false);
   assert.equal($('schedule-list').hidden,true);
   $('schedule-new').onclick();
   assert.equal($('schedule-dialog').open,true);
+  await $('schedule-preview-button').onclick();
+  const draft=requests.at(-1).body.config;
+  assert.equal(draft.automatic_completion_mode,true);
+  assert.equal('completion_mode' in draft.requirements,false);
+  assert.equal('research_strategy' in draft.requirements,false);
+  assert.equal(draft.requirements.objective,requirements.objective);
+  assert.equal(requirements.completion_mode,'fast');
+  state.schedules.push({id:'saved',name:'Saved report',config:{requirements,automatic_completion_mode:false},enabled:true});
+  await $('schedule-list').onclick({target:{closest:()=>({dataset:{scheduleEdit:'saved'}})}});
+  await $('schedule-preview-button').onclick();
+  const saved=requests.at(-1).body.config;
+  assert.equal(saved.automatic_completion_mode,false);
+  assert.equal(saved.requirements.completion_mode,'fast');
+  assert.equal(saved.requirements.research_strategy,'goal_driven');
+  assert.equal(saved.requirements.target_minutes,10);
  }finally{globalThis.document=previous}
 });
 
@@ -66,13 +84,14 @@ test('task completion clears the rail even while an existing conversation is ope
 });
 
 
-test('welcome applies the selected host together with its model and effort',()=>{
+test('welcome applies the selected host together with its model and effort',async()=>{
  const $=elements();$('chat-input').focus=()=>{};
  const context=vm.createContext({welcomeReady,welcomeMode:'cli',welcomeBusy:false,runtimeCatalog:[{id:'zcode',available:true}],settingsEffort,$,state:{settings:{agent_backend:'zcode',model:'default',model_variant:'',reasoning_effort:'high'}},
   chat:{nextBackend:'codex',hostOptions:{mode:'plan'}},notice(){},page(){},updateComposer(){},refreshInlineModelPickers(){},rememberDraft(){},
-  assignEffort:(id,value)=>$(id).value=value,effortValue:(s,k)=>s[k]});
+  assignEffort:(id,value)=>$(id).value=value,effortValue:(s,k)=>s[k],
+  action:async fn=>fn(),learningOnboarding:{confirmStart:async()=>{}}});
  vm.runInContext(section("$('welcome-start').onclick=",'\nfunction render(first)'),context);
- $('welcome-start').onclick();
+ await $('welcome-start').onclick();
  assert.equal(context.chat.nextBackend,'zcode');
  assert.equal($('chat-model').value,'default');
  assert.equal(Object.keys(context.chat.hostOptions).length,0);

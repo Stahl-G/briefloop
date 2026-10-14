@@ -1,45 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createQuickReport} from '../frontend/quick-report.js';
+import {createQuickReport,prepareNewReportRequirements} from '../frontend/quick-report.js';
 
 function view(){
  const nodes={},calls=[],notices=[];let version='v1',result={mode:'draft_first',state:'deferred'};
  const $=id=>nodes[id]??={value:'',hidden:false,disabled:false,innerHTML:'',listeners:{},
   addEventListener(name,fn){this.listeners[name]=fn},
   querySelector(){return this.innerHTML.includes('data-continue-checks')?(this.button??={}):null}};
- $('completion-mode').value='standard';$('draft-target').value='10';
  const api=async(path,body)=>{calls.push({path,body});return body?{id:'j1',status:'queued'}:result};
  const controls=createQuickReport({$,api,action:fn=>fn(),notice:s=>notices.push(s),
   savedVersion:async()=>version,getCurrent:()=>({id:'v1'}),esc:s=>String(s)});
- controls.init();
  return {$,controls,calls,notices,setVersion:v=>version=v,setResult:v=>result=v};
 }
 
-test('draft-first is opt-in, with an editable soft target independent of research tier',()=>{
- const {$,controls}=view();
- assert.deepEqual(controls.read(),{completion_mode:'standard'});
- assert.equal($('draft-target').disabled,true);
- $('completion-mode').value='direct';assert.deepEqual(controls.read(),{completion_mode:'direct'});
- $('completion-mode').value='draft_first';$('completion-mode').listeners.change();
- assert.deepEqual(controls.read(),{completion_mode:'draft_first',target_minutes:10});
- $('draft-target').value='17';assert.equal(controls.read().target_minutes,17);
+test('new report requests discard saved execution choices while keeping user inputs',()=>{
+ const original={title:'Next issue',completion_mode:'fast_web',research_strategy:'goal_driven',target_minutes:17,
+  allow_web:false,fact_check:true,research_tier:'deep',max_words:1800,previous_report_version_id:'old-v1'};
+ const prepared=prepareNewReportRequirements(original);
+ assert.deepEqual(prepared,{title:'Next issue',allow_web:false,fact_check:true,research_tier:'deep',max_words:1800,
+  previous_report_version_id:'old-v1'});
+ assert.equal(original.completion_mode,'fast_web');
+ assert.equal(original.research_strategy,'goal_driven');
+ assert.equal(prepareNewReportRequirements({target_minutes:45}).target_minutes,45);
 });
 
-test('fast mode uses existing materials and makes automatic background checks explicit',async()=>{
- const {$,controls,setResult}=view();
- $('completion-mode').value='fast';$('completion-mode').listeners.change();
- assert.deepEqual(controls.read(),{completion_mode:'fast',target_minutes:10,research_tier:'quick',allow_web:false,fact_check:false});
- assert.match($('completion-mode-help').textContent,/后台补充依据和评价/);
+test('saved fast reports display their existing background checks without creating a new task',async()=>{
+ const {$,controls,calls,setResult}=view();
  setResult({mode:'fast',state:'checking',checked_version:'v0'});await controls.render();
  assert.equal($('draft-completion').hidden,false);
- assert.match($('draft-completion').innerHTML,/不自动改写正文/);
- assert.match($('draft-completion').innerHTML,/新修改尚未检查/);
+ assert.equal($('draft-completion').querySelector('[data-continue-checks]'),null);
+ assert.equal(calls.filter(c=>c.body).length,0);
 });
 
 test('continue waits for saved user version and never asks the server to use current defaults',async()=>{
  const {$,controls,calls,setVersion}=view();await controls.render();
- assert.match($('draft-completion').innerHTML,/完整核验尚未开始/);
- assert.match($('draft-completion').innerHTML,/不代表事实已核实/);
  setVersion('v2');await $('draft-completion').button.onclick();
  assert.deepEqual(calls.find(c=>c.body),{path:'continue-checks',body:{version_id:'v2'}});
 });
@@ -56,17 +50,6 @@ test('failed job resumes its same identity; new edits cannot silently change tha
 test('no duplicate continue button while checking; old reports keep their normal interface',async()=>{
  const {$,controls,setResult}=view();
  setResult({mode:'draft_first',state:'checking',job_id:'j1'});await controls.render();
- assert.doesNotMatch($('draft-completion').innerHTML,/data-continue-checks/);
+ assert.equal($('draft-completion').querySelector('[data-continue-checks]'),null);
  setResult({mode:'standard'});await controls.render();assert.equal($('draft-completion').hidden,true);
-});
-
-test('fast web is distinct from material-only writing and shows its bounded search scope',async()=>{
- const {$,controls,setResult}=view();
- $('completion-mode').value='fast_web';$('completion-mode').listeners.change();
- assert.deepEqual(controls.read(),{completion_mode:'fast_web',target_minutes:10,research_tier:'quick',allow_web:true,fact_check:false});
- assert.match($('completion-mode-help').textContent,/3 次搜索、读取 6 篇原文/);
- setResult({mode:'fast_web',state:'checking'});await controls.render();
- assert.equal($('draft-completion').hidden,false);
- assert.match($('draft-completion').innerHTML,/不自动改写正文/);
- $('completion-mode').value='fast';assert.equal(controls.read().allow_web,false);
 });

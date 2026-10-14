@@ -42,17 +42,27 @@ test('Auto names/defaults come from the host and explicit restrictions survive',
  assert.deepEqual(permissionSelection(native,'removed-mode'),{modes:native.modes,selected:'removed-mode',unavailable:true},'an unknown saved choice is not represented as Auto');
 });
 
-test('per-chat report choices preserve global settings and fast mode does not add a fact-check stage',()=>{
- const settings={research_tier:'deep',fact_checker:true},chat={reportOptions:{completion_mode:'fast',research_tier:'quick',fact_check:true}},web={checked:false};
- const ui=createComposerOptions({$:()=>web,getChat:()=>chat,getState:()=>({settings}),availability:()=>({enabled:true}),rememberDraft(){},openSettings(){},openReview(){}});
- assert.match(ui.instruction(),/completion_mode=fast，research_tier=quick，research_strategy=guided，fact_check=false/);web.checked=true;assert.match(ui.instruction(),/completion_mode=fast_web/);assert.deepEqual(settings,{research_tier:'deep',fact_checker:true});
+test('saved report modes do not affect a new instruction or suppress available fact checking',()=>{
+ const settings={research_tier:'deep',fact_checker:true};
+ const chat={reportOptions:{completion_mode:'fast',research_strategy:'goal_driven',research_tier:'quick',fact_check:true}};
+ const web={checked:false};
+ const ui=createComposerOptions({$:()=>web,getChat:()=>chat,getState:()=>({settings}),availability:()=>({enabled:true})});
+ const fields=()=>Object.fromEntries([...ui.instruction().matchAll(/(\w+)=(\w+)/g)].map(([,key,value])=>[key,value]));
+ assert.deepEqual(fields(),{research_tier:'quick',fact_check:'true'});
+ const offline=ui.instruction();web.checked=true;assert.equal(ui.instruction(),offline);
+ chat.reportOptions.completion_mode='direct';assert.equal(ui.instruction(),offline);
+ assert.deepEqual(settings,{research_tier:'deep',fact_checker:true});
 });
 
-
-test('goal-driven research is per-report and never grants network or changes workspace defaults',()=>{
- const chat={reportOptions:{research_strategy:'goal_driven'}},state={settings:{research_tier:'standard'}},web={checked:false};
- const ui=createComposerOptions({$:()=>web,getChat:()=>chat,getState:()=>state,availability:()=>({enabled:true})});
- assert.equal(ui.read().research_strategy,'goal_driven');assert.match(ui.instruction(),/research_strategy=goal_driven/);
- assert.equal(web.checked,false);assert.equal(state.settings.research_strategy,undefined);
- chat.reportOptions={};assert.equal(ui.read().research_strategy,'guided');
+test('research effort and fact-check availability remain per report without granting network access',()=>{
+ const chat={reportOptions:{completion_mode:'standard',research_strategy:'goal_driven',research_tier:'deep',fact_check:true}};
+ const state={settings:{research_tier:'standard',fact_checker:true}},web={checked:false};
+ const ui=createComposerOptions({$:()=>web,getChat:()=>chat,getState:()=>state,availability:()=>({enabled:web.checked})});
+ assert.deepEqual(ui.read(),{research_tier:'deep',fact_check:true});
+ assert.match(ui.instruction(),/research_tier=deep/);assert.match(ui.instruction(),/fact_check=false/);
+ assert.equal(web.checked,false);web.checked=true;assert.match(ui.instruction(),/fact_check=true/);
+ chat.reportOptions.research_tier='quick';chat.reportOptions.fact_check=false;
+ assert.match(ui.instruction(),/research_tier=quick/);assert.match(ui.instruction(),/fact_check=false/);
+ chat.reportOptions={};assert.deepEqual(ui.read(),{research_tier:'standard',fact_check:true});
+ assert.deepEqual(state.settings,{research_tier:'standard',fact_checker:true});
 });

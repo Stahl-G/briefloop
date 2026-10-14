@@ -23,14 +23,42 @@ def test_method_is_frozen_per_run_and_shared_by_revision_and_review(tmp_path, mo
     assert saved['target_words'] == 900 and saved['manual_sections'] == ['Financing']
     # Installing newer methods cannot change an already saved run or its readers.
     monkeypatch.setattr(workflows, 'freeze_workflow', lambda *a, **kw: pytest.fail('historical method reloaded'))
-    brief = store.publish(run['id'], {'title': 'Progress', 'markdown': 'Milestone 1 delivered.'})
-    revised = store.revise(brief['id'], 'Milestone 1 delivered. Financing: pending.')
+    unchanged = 'Milestone 1 delivered.'
+    changed = 'Revenue 12 USD, projected.'
+    before = unchanged + '\n\n' + changed
+    citation = {'source_id': source['id'], 'locator': 'line 1', 'excerpt': 'Project A delivered milestone 1.'}
+    brief = store.publish(run['id'], {'title': 'Progress', 'markdown': before,
+        'citations': [{**citation, 'report_quote': unchanged}, {**citation, 'report_quote': changed}],
+        'number_bindings': [{'value': 1, 'unit': 'milestone', 'report_quote': unchanged, 'source_id': source['id']},
+                            {'value': 12, 'unit': 'USD', 'report_quote': 'Revenue 12 USD', 'source_id': source['id']}],
+        'temporal_claims': [{'statement': unchanged, 'event_date': '2026-10-01', 'source_id': source['id']},
+                            {'statement': changed, 'event_date': '2026-10-02', 'source_id': source['id']}]})
+    original_detail = json.loads(brief['detail'])
+    # The number remains, but its qualifier changes. A substring-only filter
+    # would falsely carry the old projected claim into an actual result.
+    revised = store.revise(brief['id'], unchanged + '\n\nRevenue 12 USD, actual. Financing: pending.')
+    detail = json.loads(revised['detail'])
+    assert detail['number_bindings'] == original_detail['number_bindings'][:1]
+    assert detail['temporal_claims'] == original_detail['temporal_claims'][:1]
+    assert detail['citations'][0]['report_quote'] == unchanged
+    assert 'report_quote' not in detail['citations'][1]
+    assert detail['citations'][1]['locator'] == citation['locator']
+    assert detail['citations'][1]['excerpt'] == citation['excerpt']
+    assert detail['evidence_needs_review'] is True
+    assert not store.rows('SELECT id FROM assessments WHERE version_id=?', (revised['id'],))
+    assert json.loads(store.one('briefs', brief['id'])['detail']) == original_detail
     packet = _snapshot(store, revised['id'])
     assert packet['requirements']['workflow_snapshot'] == frozen
     for role, key in [('orchestrator', 'planning'), ('analyst', 'writing'),
                       ('revision', 'writing'), ('evaluator', 'evaluation'), ('reviewer', 'evaluation')]:
         assert frozen['role_instructions'][key] in instructions(resolve(saved), role, include_spec=False)
     assert 'workflow_snapshot' not in resolve({'title': 'Legacy', 'objective': 'Read me'})
+    # A changed source excerpt requires rechecking even when prose is unchanged.
+    clean = store.publish(run['id'], {'title': 'Progress', 'markdown': unchanged,
+                                      'citations': [{**citation, 'report_quote': unchanged}]}, parent_id=revised['id'])
+    changed_ref = store.revise(clean['id'], clean['markdown'], citations=[{**citation, 'excerpt': 'milestone 1.'}])
+    assert json.loads(changed_ref['detail'])['evidence_needs_review']
+    assert changed_ref['markdown'] == clean['markdown']
 
 
 def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):
