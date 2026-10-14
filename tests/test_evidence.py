@@ -22,7 +22,7 @@ def test_fact_check_candidates_reject_caller_marked_public_upload(tmp_path):
     assert store.one('briefs', brief['id'])['markdown'] == quote
 
 
-def test_fact_check_candidate_registration_survives_empty_failed_public_read(tmp_path, monkeypatch):
+def test_fact_check_candidates_require_captured_public_originals(tmp_path, monkeypatch):
     from briefloop import sources, tavily
     from briefloop.evidence import register_fact_check_candidates
     # Offline protocol fixture; the separate acceptance retains real Python HTTP originals.
@@ -36,14 +36,13 @@ def test_fact_check_candidate_registration_survives_empty_failed_public_read(tmp
     monkeypatch.setattr(sources, '_checked_addresses', public_addresses)
     store = Store(tmp_path)
     source = sources.fetch(store, 'https://www.python.org/release/')
-    failed = store.add_source('Unavailable public page', '', url='https://www.python.org/unavailable/', error='HTTP 404')
     run = store.create_run({'title': 'Report', 'objective': 'Release changes', 'allow_web': True,
-        'search_policy': {'primary_provider': 'tavily', 'coverage_mode': 'primary_only'}}, [source['id'], failed['id']])
+        'search_policy': {'primary_provider': 'tavily', 'coverage_mode': 'primary_only'}}, [source['id']])
     quote = 'The release date was 2024-10-07.'
     brief = store.publish(run['id'], {'title': 'Report', 'markdown': quote})
     item = {'report_quote': quote, 'kind': 'fact', 'source_id': source['id'], 'excerpt': 'Public release date: 2024-10-07.'}
-    result = register_fact_check_candidates(store, brief['id'], [item, {**item, 'source_id': failed['id']}])
-    assert len(result['registered']) == 1 and len(result['rejected']) == 1
+    result = register_fact_check_candidates(store, brief['id'], [item])
+    assert len(result['registered']) == 1 and not result['rejected']
     assert len(addresses) == 1  # Same-source candidates do not repeat network eligibility checks.
     assert inspect_bindings(store, brief['id'])['bindings'][0]['quote'] == quote
     assert register_fact_check_candidates(store, brief['id'], [item])['registered'] == result['registered']
@@ -52,26 +51,11 @@ def test_fact_check_candidate_registration_survives_empty_failed_public_read(tmp
     response = {'request_id': 'public-extract', 'results': [{'url': 'https://www.python.org/provider-release/',
         'raw_content': 'Public release date: 2024-10-07.'}]}
     monkeypatch.setattr(tavily, '_post', lambda *a, **k: (response, json.dumps(response).encode()))
-    extracted = tavily.extract(store, [response['results'][0]['url'], 'https://www.python.org/provider-unavailable/'], run_id=run['id'])
+    extracted = tavily.extract(store, [response['results'][0]['url']], run_id=run['id'])
     public = extracted['sources'][0]
-    unavailable = extracted['sources'][1]
-    assert unavailable['status'] == 'failed' and store.source_text(unavailable['id']) == ''
-    assert unavailable['provenance']['original_kind'] == 'provider_response'
     result = register_fact_check_candidates(store, brief['id'], [{**item, 'source_id': public['id']}])
     assert len(result['registered']) == 1 and not result['rejected']
-    with store.tx() as connection:
-        connection.execute('UPDATE sources SET url=? WHERE id=?', ('http://127.0.0.1/private/', unavailable['id']))
-    assert not register_fact_check_candidates(store, brief['id'], [item])['registered']
-    with store.tx() as connection:
-        connection.execute('UPDATE sources SET url=? WHERE id=?', (unavailable['url'], unavailable['id']))
     from briefloop.store import content_hash
-    (store.root / unavailable['path']).write_text('Private failure detail.')
-    with store.tx() as connection:
-        connection.execute('UPDATE sources SET hash=? WHERE id=?', (content_hash('Private failure detail.'), unavailable['id']))
-    assert not register_fact_check_candidates(store, brief['id'], [item])['registered']
-    (store.root / unavailable['path']).write_text('')
-    with store.tx() as connection:
-        connection.execute('UPDATE sources SET hash=? WHERE id=?', (content_hash(''), unavailable['id']))
     from pathlib import Path
     receipt_path = Path(extracted['request_record_path'])
     saved = receipt_path.read_text()
@@ -88,6 +72,14 @@ def test_fact_check_candidate_registration_survives_empty_failed_public_read(tmp
     (store.root / public['path']).write_text(response['results'][0]['raw_content'])
     with store.tx() as connection:
         connection.execute('UPDATE sources SET hash=? WHERE id=?', (content_hash(response['results'][0]['raw_content']), public['id']))
+    response = {'request_id': 'partial-extract', 'results': [{'url': 'https://www.python.org/another-release/',
+        'raw_content': 'Public release date: 2024-10-07.'}]}
+    partial = tavily.extract(store, [response['results'][0]['url'], 'https://www.python.org/unavailable/'], run_id=run['id'])
+    failed = next(row for row in partial['sources'] if row['url'] == 'https://www.python.org/unavailable/')
+    assert failed['status'] == 'failed'
+    assert failed['provenance']['original_kind'] == 'provider_response'
+    blocked = register_fact_check_candidates(store, brief['id'], [item])
+    assert not blocked['registered'] and blocked['reason']
     private = store.add_source('Private input', 'Internal revenue 12.')
     store.attach_source(run['id'], private['id'])
     assert not register_fact_check_candidates(store, brief['id'], [item])['registered']
