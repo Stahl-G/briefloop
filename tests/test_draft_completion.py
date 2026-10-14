@@ -116,13 +116,18 @@ def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrela
     response = {'request_id': 'public-check', 'results': [{'url': 'https://example.test/update', 'raw_content': 'Public update.'}]}
     monkeypatch.setattr(tavily, '_post', lambda *a, **k: (response, json.dumps(response).encode()))
     extracted = tavily.extract(store, [response['results'][0]['url']], run_id=run['id'])
+    # A persisted retry may still carry its pre-fetch binding after interruption.
+    interrupted = store.enqueue('assess', {**json.loads(parent['payload']), 'retry_of_job_id': parent['id']})
+    store.update_job(interrupted['id'], 'interrupted')
+    accept_stage_sources(store, interrupted)
+    from briefloop.draft_completion import check_binding
+    assert check_binding(store, interrupted) == binding(store, base['id'])
     with pytest.raises(ValueError, match='联网事实核查未完成'):
         require_fact_check_settled(store, parent)
     store.update_job(check['id'], 'cancelled')
     research_plan.finish_fact_check(store, run['id'], status='cancelled')
     before_resume = research_plan.frozen(store, run['id'])['fact_check']
-    # Switching model after cancellation resumes the same owned stage as well.
-    accept_stage_sources(store, parent)
+    # Recovery must admit owned fetches itself, before checking the saved binding.
     store.update_job(parent['id'], 'cancelled')
     store.update_settings({'model': 'synthetic-model', 'model_selection_required': False})
     worker = Worker(store)
