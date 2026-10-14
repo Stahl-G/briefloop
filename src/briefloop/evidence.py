@@ -329,9 +329,6 @@ def public_fact_check_sources(store, run_id):
             if address not in checked_hosts:
                 _checked_addresses(*address)
                 checked_hosts.add(address)
-            text = store.source_text(sid)
-            if source['status'] == 'failed' and not text.strip():
-                continue  # Failed public reads carry no private content or candidate evidence.
             if provenance and provenance.get('original_kind') != 'http_response':
                 if (provenance.get('original_kind') != 'provider_response'
                         or not _public_tavily_original(store, run_id, source, provenance, original)):

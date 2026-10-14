@@ -116,6 +116,42 @@ class _Quiet:
         return {}
 
 
+def test_failed_empty_url_blocks_automatic_check_before_external_transport(tmp_path, monkeypatch):
+    from briefloop import sources
+    from briefloop.evidence import register_fact_check_candidates
+    from briefloop.runtime import Worker
+    monkeypatch.setattr(sources, '_fetch_bytes', lambda *a, **k: (b'Public revenue: 12.', 'text/plain', 'utf-8'))
+    monkeypatch.setattr(sources, '_checked_addresses', lambda *a: ['1.1.1.1'])
+    store = Store(tmp_path)
+    source = sources.fetch(store, 'https://example.test/public/')
+    run = store.create_run({'title': 'R', 'objective': 'o', 'allow_web': True, 'fact_check': True,
+        'completion_mode': 'direct', 'research_budget': BUDGET}, [source['id']], research_protocol='quality_v1')
+    research_plan.freeze(store, run['id'])
+    brief, claim, _ = _claim_version(store, run)
+    store.event(None, 'fact_check_candidates', {'version_id': brief['id'], 'registered': [claim['id']]})
+    research_plan.finish_round(store, run['id'])
+    parent = store.enqueue('assess', {'run_id': run['id'], 'version_id': brief['id'], 'runtime': {'model': 'test'}})
+    worker = Worker(store)
+    assert worker._admit_fact_check(parent, brief)['status'] == 'active'
+    child = store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
+    failed = store.add_source('https://example.test/capability/synthetic-secret', '',
+        url='https://example.test/capability/synthetic-secret', error='Fetch failed before response')
+    store.attach_source(run['id'], failed['id'])
+    # A source added after queueing must still be checked before any transport.
+    calls = []
+    class Transport:
+        def execute(self, *args, **kwargs):
+            calls.append(args)
+    result = worker.run_fact_check(child, runtime=Transport())
+    assert not calls
+    assert result['execution'] == 'failed'
+    assert not (store.root / 'jobs' / child['id'] / 'input.json').exists()
+    assert worker._admit_fact_check(parent, brief) is None
+    candidate = {'report_quote': '公司2026财年营业收入12.0百万美元。', 'kind': 'fact',
+                 'source_id': source['id'], 'excerpt': 'Public revenue: 12.'}
+    assert not register_fact_check_candidates(store, brief['id'], [candidate])['registered']
+
+
 def test_user_grant_is_spendable_budget_not_a_label(tmp_path):
     store, run, source = _world(tmp_path, budget={'search_requests': 2, 'candidate_urls': 10, 'source_pages': 2})
     budget.reserve_search(store, run['id'], 1)
