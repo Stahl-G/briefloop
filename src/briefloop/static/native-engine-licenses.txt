@@ -2,7 +2,7 @@
 # 由 npm run build / scripts/build_frontend_licenses.mjs 生成，请勿手工编辑。
 # 范围：esbuild metafile 中实际贡献产物字节的 node_modules 包。
 # 各包许可标识来自其 package.json；以下保留许可和声明文件原文。
-# 共 67 个包版本及声明组合。
+# 共 68 个包版本及声明组合。
 
 ========================================================================
 === @anthropic-ai/sdk 0.129.0 (MIT)
@@ -17,7 +17,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-agent-core 1.1.0 (MIT)
+=== @earendil-works/pi-agent-core 1.2.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -43,7 +43,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-ai 1.1.0 (MIT)
+=== @earendil-works/pi-ai 1.2.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -69,7 +69,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-codemode 1.1.0 (MIT)
+=== @earendil-works/pi-codemode 1.2.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -95,7 +95,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-coding-agent 1.1.0 (MIT)
+=== @earendil-works/pi-coding-agent 1.2.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -121,7 +121,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-mcp 1.1.0 (MIT)
+=== @earendil-works/pi-mcp 1.2.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -147,7 +147,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-=== @earendil-works/pi-tui 1.1.0 (MIT)
+=== @earendil-works/pi-tui 1.2.0 (MIT)
 ========================================================================
 --- third_party/pi/LICENSE (vendored; npm package ships no license file) ---
 MIT License
@@ -3010,6 +3010,32 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 The MIT License (MIT)
 
 Copyright (c) 2018 Made With MOXY Lda <hello@moxy.studio>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+========================================================================
+=== quickjs-wasi 3.6.2 (MIT)
+========================================================================
+--- LICENSE ---
+MIT License
+
+Copyright (c) 2026 Vercel, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

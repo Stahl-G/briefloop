@@ -1,4 +1,6 @@
 import {researchProcessHTML,processDisclosureKey} from '../frontend/research-process.js';
+import {createReportChatContext} from '../frontend/report-chat-context.js';
+import {canRetryCurrentModel} from '../frontend/job-presentation.js';
 import {createProviderCapabilities} from '../frontend/provider-capabilities.js';
 import {providerSettingsUI} from '../frontend/provider-settings.js';
 // Exercise actual application functions with controlled save completion order.
@@ -18,7 +20,7 @@ const progressCode=section(source,'function effectiveReportJobs','let progressRe
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:'',classList:{toggle(){}},querySelector(){return null},querySelectorAll(){return []},focus(){}});return elements.get(id)};
 let pending=[],calls=[],downloads=[],timers=[];
-const c=vm.createContext({console,Promise,esc,withoutSupersededRetries,syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
+const c=vm.createContext({console,Promise,esc,createReportChatContext,withoutSupersededRetries,syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
  state:{workspace_id:"test"},dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
  updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},setReportView:()=>{},
  window:{location:{assign:url=>downloads.push(url)}},
@@ -76,7 +78,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  const oldReview=job('review_old','review','failed',{run_id:'report',version_id:original.id});
  const oldGeneration=job('job_original','generate','failed',{run_id:'report'});
  const history=[review,producer,oldReview,oldGeneration];
- const view=vm.createContext({researchProcessHTML,processDisclosureKey,withoutSupersededRetries,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
+ const view=vm.createContext({researchProcessHTML,processDisclosureKey,withoutSupersededRetries,canRetryCurrentModel,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
   current:revised,pendingRun:null,state:{jobs:history,briefs:[revised,original],runs:[],sources:[],settings:{timeout_minutes:30}},
   api:async(route,payload)=>{requests.push({route,payload});return route.startsWith('events?')?[]:{}},action:async fn=>fn()});
  vm.runInContext(progressCode+section(source,'let progressRequest=','function friendlyModel','frontend/app.js'),view);

@@ -190,15 +190,22 @@ def workspace_action(store, request):
         if template_id:result['template_id']=template_id
         return result
     if action=='inspect':
+        saved_requirements=store.meta('requirements')
+        requirements=dict(saved_requirements) if isinstance(saved_requirements,dict) else saved_requirements
+        if isinstance(requirements,dict):
+            mode=requirements.pop('completion_mode',None)
+            requirements.pop('research_strategy',None)
+            if mode in ('fast','fast_web','draft_first'):
+                requirements.pop('target_minutes',None)
         briefs=store.rows("SELECT b.id,b.run_id,b.author,b.created,b.detail FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC LIMIT 20")
         for brief in briefs:brief['title']=json.loads(brief.pop('detail')).get('title','简报')
         return {
-            'requirements':store.meta('requirements'),
+            'requirements':requirements,
             'sources':store.rows('SELECT id,name,status,error,url FROM sources ORDER BY created DESC LIMIT 100'),
             'briefs':briefs,
             'jobs':store.rows('SELECT id,kind,status,error,created FROM jobs ORDER BY rowid DESC LIMIT 20'),
             'runtime':store.runtime_config(),
-            'note':'简要工作区索引；需要原文时使用 read-source --id SOURCE_ID。任务状态和 error 是已记录事实，不代表根因诊断；没有对应日志证据不得声称服务重启、网络故障或权限拒绝。来源已保存不代表已核验其真实性或时效性，研究进度不代表报告已完成。',
+            'note':'简要工作区索引；requirements 是新建报告参考，已保存任务保留其原配置。需要原文时使用 read-source --id SOURCE_ID。任务状态和 error 是已记录事实，不代表根因诊断；没有对应日志证据不得声称服务重启、网络故障或权限拒绝。来源已保存不代表已核验其真实性或时效性，研究进度不代表报告已完成。',
         }
     if action=='stop_job':
         job_id=request.get('job_id')
@@ -359,8 +366,8 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON、引用和已存正文的 length_stats；revise_document 回执也给出保存后的确定性计数。按 count/rule 核对原始要求、读者约定及当前反馈，不估算字数；over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。可选 citations 完整替换引用列表（source_id/locator/excerpt，schema 见 capabilities），省略则保留；只修改引用也保存新版本，定位描述不表示已独立核验。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
-- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"zh|en","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。language 是报告正文语言（默认 zh）；用户要英文报告时写 en，不传 target_words 时篇幅按英文词数默认。默认由同一作者自主研究并成稿，保存后继续补充依据、评价和修订。独立风格参考与行业季报由系统采用其既有标准流程；保留参考与用途要求，不需用户另选生成方式。research_strategy 仅用于标准流程：guided 沿用分轮建议，goal_driven 按重要问题和证据缺口选择下一步，不改变授权预算与最大轮数；只有用户选择时传入，默认 guided。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 最多 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。scout_limit 是本报告最多可同时派发的 Scout 数（1–16），在提交前按信息量决定：一周左右约 4，月报约 8，跨多个行业或市场的大型报告可到 12–16；不写时系统按期间自动设定（月报 8，其余沿用工作区设置）。
-联网完整报告的 fact_check 沿用工作区默认（新工作区开启）；用户选择关闭时显式传 false，选择开启时传 true。离线或快速模式不自动开启，也不为核查偷偷开启联网。
+- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"zh|en","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。language 是报告正文语言（默认 zh）；用户要英文报告时写 en，不传 target_words 时篇幅按英文词数默认。默认由同一作者自主研究并成稿，保存后继续补充依据、评价和修订。独立风格参考与行业季报由系统采用其既有标准流程；保留参考与用途要求，不需用户另选生成方式。research_tier 表示研究投入轻量／常规／深入（默认 standard）；程序按资料用途安排流程，保留已确认需求、预算和权限。
+联网报告的 fact_check 沿用工作区默认（新工作区开启）；用户选择关闭时显式传 false，选择开启时传 true。离线时关闭联网核查，保留原有联网选择。
 提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"stop_job","job_id":"真实任务ID"}}：用户要求停止任务时，先通过 inspect 确认具体任务，再停止该任务及其子任务，已保存稿件保留。用户要求“停掉旧任务再重新生成”时先取得停止回执，再提交新任务；停止失败时如实说明，不启动重复任务。目标不明确时先问，不猜 ID，不停止整个服务。以回执的实际 status 为准，已经完成的任务不会变成 cancelled。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。

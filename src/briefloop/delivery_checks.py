@@ -24,6 +24,12 @@ _SCALED_UNITS = {**{name: (currency, 1) for name, currency in _CURRENCIES.items(
                  **{name: ('shares', 1) for name in ('股', 'share', 'shares')},
                  **{name: ('count', 1) for name in ('个', '件', '项', '次', '人', '家', '条', 'count', 'item',
                      'items', 'unit', 'units', 'vehicle', 'vehicles', 'car', 'cars', '辆', '台')},
+                 # Discrete objects reports count. Chinese prose uses a classifier
+                 # (722 篇, 2万张) where the source names the noun; both stay counts,
+                 # and which object is counted remains a semantic review question.
+                 **{name: ('count', 1) for name in ('篇', '张', '名', '种', 'gpu', 'gpus', 'chip', 'chips',
+                     'paper', 'papers', 'manuscript', 'manuscripts', 'preprint', 'preprints',
+                     'release', 'releases', 'problem', 'problems', 'language', 'languages')},
                  **{name: ('mass', 1) for name in ('kg', 'kilogram', 'kilograms', '千克', '公斤')},
                  **{name: ('mass', 1000) for name in ('t', '吨', 'tonne', 'tonnes', 'metric ton', 'metric tons')}}
 _EN_SCALE = r'thousands?|millions?|billions?|trillions?'
@@ -107,6 +113,10 @@ _UNIT = '|'.join((
 _QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−$€£])(?P<prefix>(?:US\$|\$|€|£)\s*|USD\s+|CNY\s+|RMB\s+|EUR\s+|GBP\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
                        r'(?P<denom>\s*[/／·⋅*×]\s*[\w%]+|每[\w%]+)?', re.I)
+# English attributive counts ('the 722-manuscript collection'). Only count
+# nouns: '5-year' or '10-MW' are not object counts.
+_ATTRIBUTIVE_COUNT = re.compile(r'[-‐‑](' + _unit_choices(
+    name for name, (dimension, _) in _SCALED_UNITS.items() if dimension == 'count' and name.isascii()) + r')', re.I)
 
 
 def quantities(text):
@@ -117,11 +127,22 @@ def quantities(text):
         prefix = (match['prefix'] or '').strip()
         if match['denom']:
             continue
-        # Do not accept a supported prefix of an unknown unit or malformed number.
         end = match.end()
+        attributive = None if unit or prefix or end != match.end('number') else _ATTRIBUTIVE_COUNT.match(text, end)
+        if attributive:
+            unit, end = attributive[1], attributive.end()
+            if re.match(r'\s*[/／·⋅*×]\s*[\w%]+|每[\w%]+', text[end:]):
+                continue
+        # Do not accept a supported prefix of an unknown unit or malformed number.
         if end < len(text) and (text[end].isascii() and (text[end].isalnum() or text[end] == '_')):
             continue
         if re.match(r'[.,]\d', text[end:]):
+            continue
+        # GPU-hours, GPU hours and GPUs per hour are compound dimensions.
+        # Do not truncate a time product or denominator into an object count.
+        if unit.lower() in _SCALED_UNITS and _SCALED_UNITS[unit.lower()][0] == 'count' and re.match(
+                r'[-‐‑‒–—−][A-Za-z]|\s+(?:per\b|(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|hrs?|min)\b)',
+                text[end:], re.I):
             continue
         # An unknown English magnitude must not degrade to a bare currency:
         # '1.2 US$ gazillion' is unsupported, not a checked amount of $1.2.
@@ -138,7 +159,12 @@ def quantities(text):
                 continue
         result = normalized(match['number'], unit)
         if result is not None:
-            yield match.start(), match.end(), result
+            yield match.start(), end, result
+
+
+def _number_part(text, start):
+    """The bare numeric token of the quantity that quantities() found at start."""
+    return _QUANTITY.match(text, start)['number']
 
 
 def body_refs(markdown):
@@ -206,7 +232,7 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
                 row['reason'] = '裸数值绑定缺少 label 与 entity/period，特异性不足，未检查'
                 continue
         quote, token = item.get('report_quote', ''), item.get('number_text', '')
-        if not quote or not token or markdown.count(quote) != 1 or quote.count(token) != 1:
+        if not quote or not token or markdown.count(quote) != 1:
             row['reason'] = '正文定位缺失、重复或已改动，需重新绑定'
             continue
         if not item.get('source_id') or not item.get('locator') or not item.get('source_excerpt') or store is None:
@@ -233,13 +259,19 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
         if expected not in [q[2] for q in quantities(excerpt)]:
             row['reason'] = '原始数值未在指定位置的摘录中定位'
             continue
-        # Require the selected token to be the complete number+unit, not a
-        # substring of a larger number, and compare only this occurrence.
-        start = quote.index(token)
-        candidates = [value for a, b, value in quantities(quote)
-                      if a == start and quote[a:b].strip() == token.strip()]
+        # Compare the complete quantity at the selected occurrence; a numeric
+        # token must identify the whole number, not a substring of a larger one.
+        spans = list(quantities(quote))
+        candidates = [value for a, b, value in spans if quote[a:b].strip() == token.strip()]
+        # A bare bound number ('857') of a complete body quantity ('857 次') is
+        # compared with that quantity's unit. Hedges outside it stay unbound.
+        if not candidates:
+            candidates = [value for a, b, value in spans if _number_part(quote, a) == token.strip()]
         if not candidates:
             row['reason'] = '正文数值不是完整的受支持数值与单位，未检查'
+            continue
+        if len(candidates) != 1:
+            row['reason'] = '正文数值的完整片段重复，需重新绑定'
             continue
         if candidates[0][1] == 'scalar' and expected[1] != 'scalar':
             # Table cells and restated figures often leave the unit to the
@@ -387,13 +419,18 @@ def numeric_occurrence_review(document, bindings, results):
             if form.count(token) != 1:
                 continue
             for index, candidate in enumerate(candidates):
-                if candidate['text'] != token or raw_scanned_block(candidate['node']).count(quote) != 1:
+                if token not in (candidate['text'], _number_part(candidate['body'], candidate['start'])):
+                    continue
+                if raw_scanned_block(candidate['node']).count(quote) != 1:
                     continue
                 body = candidate['body']
                 if body.count(form) != 1:
                     continue
                 start = body.index(form) + form.index(token)
-                if candidate['start'] == start:
+                quantity_start = candidate['start']
+                token_start = (quantity_start if token == candidate['text']
+                               else _QUANTITY.match(body, quantity_start).start('number'))
+                if token_start == start:
                     matching.add(index)
         if len(matching) == 1:
             covered.update(matching)

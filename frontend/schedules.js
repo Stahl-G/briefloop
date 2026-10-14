@@ -1,5 +1,6 @@
 import {$,esc} from './dom.js';
 import {inZone} from './time.js';
+import {prepareNewReportRequirements} from './quick-report.js';
 export function scheduleUI({api,getState,refresh,notice,openReport}){ const display=(s,zone)=>s?inZone(s,zone):'—';
  let editing=null,requirements={};
  const statuses={accepted:'已排队',queued:'已排队',running:'执行中',complete:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已停止',skipped:'已跳过'};
@@ -14,7 +15,7 @@ export function scheduleUI({api,getState,refresh,notice,openReport}){ const disp
  }
  function open(id){
   const state=getState(),row=(state.schedules||[]).find(s=>s.id===id);editing=row||null;
-  requirements=structuredClone(row?.config.requirements||{...state.requirements,completion_mode:undefined});
+  requirements=structuredClone(row?.config.requirements||prepareNewReportRequirements({...state.requirements}));
   if(row)requirements.completion_mode??='standard';
   const config=row?.config||{},later=new Date(Date.now()+3600000);later.setSeconds(0,0);
   const local=new Date(later.getTime()-later.getTimezoneOffset()*60000).toISOString().slice(0,16);

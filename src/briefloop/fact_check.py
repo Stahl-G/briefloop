@@ -48,6 +48,46 @@ FACT_CHECKER_CONTEXT = '''你是 BriefLoop 已启动的独立事实核查员会�
 '''
 
 
+
+def eligible_bindings(store, version_id):
+    """Current intact anchors only; unreviewed is the normal candidate state."""
+    bindings = {}
+    for binding in inspect_bindings(store, version_id)['bindings']:
+        if binding['status'] == 'unreviewed':
+            bindings.setdefault(binding['claim_id'], []).append(binding)
+    return bindings
+
+
+def candidate_scope(store, version_id):
+    bindings = eligible_bindings(store, version_id)
+    anchors = [{'claim_id': claim_id, **{key: binding[key] for key in ('block_id', 'quote', 'block_hash')}}
+               for claim_id, items in bindings.items() for binding in items]
+    return {'version_id': version_id, 'claim_ids': sorted(bindings),
+            'anchors': sorted(anchors, key=lambda item: (item['claim_id'], item['block_id'], item['quote']))}
+
+
+def completed_for(store, version_id):
+    """Reuse only an admitted completed result for this intact version's bindings."""
+    brief = store.one('briefs', version_id)
+    for record in records_for(store, brief['run_id'], version_id):
+        if record['data']['execution']['status'] == 'completed' and covers(store, record, version_id):
+            return record
+    return None
+
+
+def automatic_candidates(store, brief):
+    """Inherited automatic candidates retain the same public-source boundary."""
+    requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
+    if requirements.get('completion_mode') not in ('direct', 'fast', 'fast_web'):
+        return False
+    while brief:
+        if store.rows("SELECT 1 FROM events WHERE kind='fact_check_candidates' "
+                      "AND json_extract(data,'$.version_id')=? LIMIT 1", (brief['id'],)):
+            return True
+        brief = store.one('briefs', brief['parent_id']) if brief.get('parent_id') else None
+    return False
+
+
 def fact_check_prompt(store,job,brief,folder,backend='codex'):
     """Build the fact-checker's task pack: role prompt, claims, budget and tools.
 
@@ -65,9 +105,7 @@ def fact_check_prompt(store,job,brief,folder,backend='codex'):
     requirements=json.loads(run['requirements'])
     stage=(frozen_plan(store,run['id']) or {}).get('fact_check') or {}
     folder=Path(folder)
-    bindings={}
-    for binding in inspect_bindings(store,brief['id'])['bindings']:
-        bindings.setdefault(binding['claim_id'],[]).append(binding)
+    bindings=eligible_bindings(store,brief['id'])
     claims=[]
     for row in store.rows('SELECT id,data FROM claims WHERE run_id=? ORDER BY rowid',(run['id'],)):
         anchors=bindings.get(row['id'])
@@ -189,11 +227,12 @@ def check_fact_result(store,run_id,result,*,snapshot=None):
                 brief=None
     bindings={}
     if brief is not None:
-        for binding in inspect_bindings(store,brief['id'])['bindings']:
-            bindings.setdefault(binding['claim_id'],[]).append(binding)
+        bindings=eligible_bindings(store,brief['id'])
     plan=frozen_plan(store,run_id) or {};stage=plan.get('fact_check') or {};stage_id=stage.get('stage_id')
     if result.get('stage_id') is not None and result.get('stage_id')!=stage_id:
         errors.append({'path':'stage_id','code':'stage_mismatch','message':'stage_id 与本任务接纳的核查阶段不一致'})
+    if stage.get('scope') is not None and (brief is None or stage['scope'] != candidate_scope(store, brief['id'])):
+        errors.append({'path':'version_id','code':'candidate_scope_mismatch','message':'结果版本或候选集合与接纳阶段不一致'})
     execution=result.get('execution')
     if not isinstance(execution,dict) or execution.get('status') not in FACT_CHECK_STATUSES:
         hint='；事实判断只写在 candidates[].status' if isinstance(execution,dict) and execution.get('status') in CANDIDATE_STATUSES else ''
@@ -347,6 +386,7 @@ def submit_result(store,run_id,result,*,job_id=None):
     if stage.get('status')!='active':
         raise AdmissionError('核查阶段已以 '+str(stage.get('status'))+' 收束，迟到结果不接纳',code='fact_check_closed')
     snapshot=None
+    payload=None
     if job_id:
         try:job=store.one('jobs',job_id)
         except ValueError:job=None
@@ -365,6 +405,9 @@ def submit_result(store,run_id,result,*,job_id=None):
         current=plan.get('fact_check') or {}
         if current.get('status')!='active' or current.get('stage_id')!=stage['stage_id']:
             raise AdmissionError('核查阶段已收束或变化，迟到结果不接纳',code='fact_check_closed')
+        if current.get('scope') is not None and payload is not None:
+            if payload.get('stage_id') != current['stage_id'] or payload.get('version_id') != result.get('version_id'):
+                raise AdmissionError('核查任务不属于当前阶段和结果版本', code='fact_check_job_mismatch')
         record=check_fact_result(store,run_id,result,snapshot=snapshot)
         c.execute('INSERT INTO fact_checks VALUES(?,?,?,?,?,?,?)',
                   (record['id'],run_id,record['version_id'],record['stage_id'],
@@ -416,6 +459,9 @@ def grant(store,version_id,limits,*,job_id=None,request_id=None):
                 return {**json.loads(previous['result']),'replayed':True}
         view=_RequestStore(store,connection)
         brief=view.one('briefs',version_id)
+        stage = (view.meta('research_plan:' + brief['run_id']) or {}).get('fact_check') or {}
+        if stage.get('scope') is not None and stage['scope'] != candidate_scope(view, version_id):
+            raise Conflict('核查阶段属于其他版本或候选已变化；请打开对应版本追加预算')
         outcome=add_fact_check_grant(view,brief['run_id'],limits,job_id=job_id)
         if outcome['status'] in ('reopened','active'):
             stage=(view.meta('research_plan:'+brief['run_id']) or {})['fact_check']
@@ -473,9 +519,19 @@ def view(store,version_id):
     brief=store.one('briefs',version_id)
     run=store.one('runs',brief['run_id'])
     plan=frozen_plan(store,brief['run_id']) or {}
-    stage=plan.get('fact_check')
+    saved_records = records_for(store, brief['run_id'])
+    associated = {row['stage_id'] for row in saved_records if row['version_id'] == version_id}
+    for row in store.rows("SELECT payload FROM jobs WHERE kind='fact_check' "
+                          "AND json_extract(payload,'$.version_id')=?", (version_id,)):
+        payload = json.loads(row['payload'])
+        if payload.get('run_id') == brief['run_id'] and payload.get('stage_id'):
+            associated.add(payload['stage_id'])
+    scope = candidate_scope(store, version_id)
+    stage = next((item for item in [plan.get('fact_check'), *reversed(plan.get('fact_check_history') or [])]
+                  if item and (item.get('scope') == scope
+                               or item.get('scope') is None and item['stage_id'] in associated)), None)
     if stage:
-        stage={key:stage.get(key) for key in ('stage_id','status','budget_source','grants','created','closed','outcome')}
+        stage={key:stage.get(key) for key in ('stage_id','status','scope','budget_source','grants','created','closed','outcome')}
     reviewer={}
     for row in store.rows('SELECT result FROM reviews WHERE version_id=? AND result IS NOT NULL ORDER BY rowid DESC',(version_id,)):
         for check in json.loads(row['result']).get('claim_checks',[]):
@@ -497,7 +553,7 @@ def view(store,version_id):
                 'spans':spans,'query_ids':candidate.get('query_ids',[]),
                 'anchors':candidate.get('anchors',[]),'reviewer':reviewer.get(candidate['claim_id'])}
     records=[]
-    for row in records_for(store,brief['run_id']):
+    for row in saved_records:
         data=row['data']
         records.append({'id':row['id'],'version_id':data['version_id'],'stage_id':data['stage_id'],
                         'as_of':data['as_of'],'snapshot':data['snapshot'],'execution':data['execution'],
@@ -508,8 +564,31 @@ def view(store,version_id):
                         'unselected':[{'claim_id':item['claim_id'],'statement':statement(item['claim_id']),
                                        'reason':item['reason']} for item in data['selection'].get('unselected',[])],
                         'created':data['created']})
+    # Reasons can exist before a fact_checks record, but only this exact version's
+    # events belong in its panel. Existing results and an active stage take priority.
+    events=store.rows("SELECT kind,data FROM events WHERE kind IN ('fact_check_candidates','fact_check') "
+                      "AND json_extract(data,'$.version_id')=? ORDER BY seq DESC",(version_id,))
+    candidate_reason=None
+    not_checked_reason=None
+    candidates_seen=False
+    for event in events:
+        data=json.loads(event['data'])
+        if event['kind']=='fact_check_candidates' and not candidates_seen:
+            candidates_seen=True
+            if data.get('registered'):
+                break
+            candidate_reason=data.get('reason') or None
+        elif event['kind']=='fact_check' and data.get('action') in ('not_checked','admit_refused') and not_checked_reason is None:
+            not_checked_reason=data.get('reason') or None
+    if any(record['covers_version'] for record in records) or stage and stage.get('status')=='active':
+        not_checked_reason=None
+    from .execution_records import sanitize
+    candidate_reason=sanitize(candidate_reason)[:500] if isinstance(candidate_reason,str) else None
+    not_checked_reason=sanitize(not_checked_reason)[:500] if isinstance(not_checked_reason,str) else None
     from .research_plan import pending_fact_check_grant
     return {'version_id':version_id,
             'enabled':bool(json.loads(run['requirements']).get('fact_check')),
+            'grant_allowed':not (plan.get('fact_check') or {}).get('scope')
+                or plan['fact_check']['scope'] == scope,
             'stage':stage,'pending_grant':pending_fact_check_grant(store,brief['run_id']),
-            'records':records}
+            'records':records,'candidate_reason':candidate_reason,'not_checked_reason':not_checked_reason}

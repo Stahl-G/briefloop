@@ -1,6 +1,6 @@
 # Bundled native engine
 
-Pi is pinned to `@earendil-works/pi-coding-agent@1.1.0`. This SDK integration
+Pi is pinned to `@earendil-works/pi-coding-agent@1.2.0`. This SDK integration
 loads only BriefLoop's explicit tools and bundled continuity hook. It does not
 enable Pi's MCP, Codemode, personal credentials, skills or extension discovery.
 

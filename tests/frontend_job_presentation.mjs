@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress} from '../frontend/job-presentation.js';
+import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress,canRetryCurrentModel} from '../frontend/job-presentation.js';
 
 test('file tasks display local work and retry without a model identity',async()=>{
  const job={id:'xlsx-job',kind:'export_xlsx',status:'failed',payload:'{}',error:'<failed>'};
@@ -19,4 +19,6 @@ test('file tasks display local work and retry without a model identity',async()=
  element.innerHTML='newer report';await ui.render(job,()=>false);assert.equal(element.innerHTML,'newer report');
  assert.equal(jobExecutionLabel({kind:'generate',payload:'{"runtime":{"model":"frozen"}}'},()=> 'frozen'),'frozen');
  assert.equal(jobResumeLabel({kind:'generate'}),'沿用原模型恢复');
+ assert.equal(canRetryCurrentModel({kind:'assess',payload:{continuation_of:'writer',checks_input:{version_id:'saved'}}}),true);
+ assert.equal(canRetryCurrentModel({kind:'assess',payload:{version_id:'saved'}}),false);
 });

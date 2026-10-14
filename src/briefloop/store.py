@@ -155,7 +155,7 @@ class Store:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
                 c.execute("ALTER TABLE templates ADD COLUMN origin TEXT NOT NULL DEFAULT 'upload'")
-            c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
+            c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings(auto_learn=True).model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
             c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))
 
@@ -620,6 +620,11 @@ class Store:
                 # Unchanged automatic refs must still disappear with their body/figure.
                 detail['content_citations']=[ref for ref in detail.get('content_citations',[]) if ref in citations]
                 detail['citations']=citations
+            if (semantic_signature(markdown)!=semantic_signature(base['markdown'])
+                    or citations is not None and citations != json.loads(base['detail']).get('citations', [])):
+                from .revision_evidence import invalidate_changed_evidence
+                previous_citations=json.loads(base['detail']).get('citations',[]) if citations is not None else None
+                invalidate_changed_evidence(detail,base['markdown'],markdown,base_version,previous_citations=previous_citations)
             if editor_document is not None:
                 detail['document_schema']=1
             else:detail.pop('document_schema',None)

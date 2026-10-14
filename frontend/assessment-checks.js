@@ -7,5 +7,29 @@ export function createAssessmentChecks({esc}){
   const pending=checks.filter(c=>!['passed','n/a'].includes(c.status||c.result)).length;
   return `<details class="help assessment-checks" ${pending?'open':''}><summary>评价检查记录${pending?` · ${pending} 项需查看`:''}</summary><p>这是模型评价的检查记录，不等于独立审阅或联网事实核查完成；具体未解决问题见下方发现。</p>${checks.map(c=>`<div class="finding"><strong>${esc(c.name||'未命名检查')}</strong> <span class="tag">${esc(labels[c.status||c.result]||'状态未明确')}</span>${c.prior_description?`<p>上次问题：${esc(c.prior_description)}</p>`:''}${(c.reason||c.detail)?`<p>${esc(c.reason||c.detail)}</p>`:''}${c.consistency_note?`<p>${esc(c.consistency_note)}</p>`:''}${c.report_quote?`<blockquote>${esc(c.report_quote)}</blockquote>`:''}</div>`).join('')}</details>`;
  }
- return {render};
+ function evidenceState(version,detail,jobs=[]){
+  if(!detail?.evidence_needs_review)return null;
+  const pending=jobs.some(job=>{
+   if(job.kind!=='assess'||!['queued','running'].includes(job.status))return false;
+   let payload=job.payload;
+   if(typeof payload==='string'){try{payload=JSON.parse(payload)}catch{return false}}
+   return payload?.version_id===version.id;
+  });
+  return pending?'pending':'stale';
+ }
+ function factCheckState(version,data){
+  if(!version||data?.version_id!==version.id)return null;
+  const checked=(data.records||[]).some(record=>record.covers_version===true);
+  const pending=data.stage?.status==='active';
+  const reason=checked||pending?null:data.not_checked_reason;
+  return reason||data.candidate_reason?{not_checked_reason:reason,candidate_reason:data.candidate_reason}:null;
+ }
+ function renderFactCheckState(version,data){
+  const state=factCheckState(version,data);if(!state)return '';
+  return '<section class="issue-card fact-check"><div class="issue-head"><strong>独立事实核查</strong></div>'+
+   (state.not_checked_reason?`<p>本版本尚未核查：${esc(state.not_checked_reason)}</p>`:'')+
+   (state.candidate_reason&&state.candidate_reason!==state.not_checked_reason?`<p class="help">候选筛选：${esc(state.candidate_reason)}</p>`:'')+
+   '</section>';
+ }
+ return {render,evidenceState,factCheckState,renderFactCheckState};
 }

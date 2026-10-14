@@ -5,15 +5,17 @@ import {clock,dateTimeSeconds,moment} from './time.js';
 import {api,uploadSource,setToken,getUploadLimits,setSourceUploadHost} from './api.js';
 import {sourceUploadHost} from './source-upload.js';
 import {createReportBrowsing} from './report-browsing.js';
+import {createReportChatContext} from './report-chat-context.js';
 import {createProviderCapabilities} from './provider-capabilities.js';
 import {createModelCatalog} from './model-catalog.js';
 import {providerSettingsUI} from './provider-settings.js';
+import {createSettingsNavigation} from './settings-navigation.js';
 import {createRuntimeModelPicker} from './runtime-model-picker.js';
 import {createRuntimePickerBindings} from './runtime-picker-bindings.js';
 const providerCapabilities=createProviderCapabilities({$});
 const reasoning=reasoningControls({api,onUpdate:control=>{if(control.id.startsWith('chat-'))updateComposer();else updateModelLabel()}});
 import {createAssessmentPanel} from './assessment-panel.js';
-import {createQuickReport} from './quick-report.js';
+import {createQuickReport,prepareNewReportRequirements} from './quick-report.js';
 import {createReviewControls} from './review-controls.js';
 import {compactReportControlsUI} from './compact-report-controls.js';
 import {evidenceReviewDialogsUI} from './evidence-review-dialogs.js';
@@ -24,7 +26,7 @@ import {createReportStickyLayout} from './report-sticky-layout.js';
 createReportStickyLayout({report:$('report'),header:document.querySelector('.report-topbar'),scroller:document.querySelector('main'),
  panel:$('report-panel'),grid:$('report-grid'),column:document.querySelector('.report-main-column'),
  documentArea:$('document-area'),jobs:$('jobs')});
-import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress,isLocalFileJob} from './job-presentation.js';
+import {jobExecutionLabel,jobResumeLabel,createLocalFileProgress,isLocalFileJob,canRetryCurrentModel} from './job-presentation.js';
 import {taskProgressCard} from './task-progress.js';
 import {researchProcessHTML,processDisclosureKey} from './research-process.js';
 import {CitationPresentation,createCitationSources} from './citation-sources.js';
@@ -40,6 +42,7 @@ import {createComposerOptions} from './composer-options.js';
 import {anchoredPopover} from './anchored-popover.js';
 import {createOfficeTools} from './office-tools.js';
 import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
+import {createLearningOnboarding} from './learning-onboarding.js';
 import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
@@ -275,7 +278,6 @@ function applyRequirements(text){
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
  if(data.research_tier)set('research_tier',data.research_tier);
- set('research_strategy',data.research_strategy||'guided');
  initializeWorkflowChoice(data,true);syncWorkflowProfile(false);
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
@@ -384,6 +386,7 @@ function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(session
    el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);
   syncWorkflowProfile(false)}
 function renderWelcome(){
+ learningOnboarding.sync();
  const box=$('welcome-runtimes');if(!box)return;
  const settings=state?.settings||{},chosen=settings.agent_backend;
  if(welcomeMode===null||welcomeBackend!==chosen){welcomeMode=chosen==='briefloop-native'?'native':'cli';welcomeBackend=chosen}
@@ -442,9 +445,12 @@ for(const id of ['welcome-effort','welcome-variant'])$(id).onchange=async()=>{
  welcomeBusy=true;renderWelcome();
  try{await action(saveModel,'思考强度已保存')}finally{welcomeBusy=false;renderWelcome()}
 };
-$('welcome-start').onclick=()=>{
+const learningOnboarding=createLearningOnboarding({api,$,getState:()=>state,refresh,describePlan:learningPlanText});
+learningOnboarding.mount($('welcome-start').closest('footer'));
+$('welcome-start').onclick=()=>action(async()=>{
  const settings=state?.settings||{};
  if(!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy)){notice('请先选择 Agent 和模型',true);return}
+ await learningOnboarding.confirmStart();
  const backend=settings.agent_backend||'codex';
  if(chat.nextBackend!==backend)chat.hostOptions={};
  chat.nextBackend=backend;
@@ -453,7 +459,7 @@ $('welcome-start').onclick=()=>{
  $('chat-variant').value=backend==='mimo'?(settings.runtime_efforts?.mimo||''):(settings.model_variant||'');
   $('chat-service-tier').value=settings.service_tier||'';
  $('welcome').hidden=true;page('chat');updateComposer();refreshInlineModelPickers();$('chat-input').focus();rememberDraft();
-};
+});
 function render(first){
  renderTemplates(first);
  renderWorkflowChoices(first);
@@ -477,7 +483,7 @@ function render(first){
    reportLanguageForm.restore(state.requirements?.language);reportMarket.restore();initializeLengthInputs(state.requirements||{});
    initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});
    if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;
-   syncFactCheckControl();quickReport.sync();syncWorkflowProfile(false);previewReportTime()}
+   syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';
   $('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} ${s.status!=='ready'||s.usage==='previous_report'?'disabled':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${esc((s.archived_at?'已归档 · ':'')+(s.usage==='previous_report'?'往期报告 · 参考用途':sourceStatusLabel(s)))}</span>${['failed','cancelled','interrupted'].includes(s.status)?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);if(s.status==='ready')selected.add(s.id);notice(sourceStatusLabel(s),['failed','cancelled','interrupted'].includes(s.status))}));
@@ -490,7 +496,7 @@ function render(first){
    if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();
    citations();renderBriefLength()}
  syncPendingReport();
- $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${esc(taskLabel(j.kind)||j.kind)}<small>${esc(jobExecutionLabel(j,jobModelLabel))} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||moment(j.created))}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">${esc(jobResumeLabel(j))}</button>${['review','learn'].includes(j.kind)?`<button data-retry-current="${j.id}">${j.kind==='learn'?'确认预算后重试':'按当前模型重试'}</button>`:''}`:''}</div>`).join('');
+ $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${esc(taskLabel(j.kind)||j.kind)}<small>${esc(jobExecutionLabel(j,jobModelLabel))} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||moment(j.created))}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">${esc(jobResumeLabel(j))}</button>${canRetryCurrentModel(j)?`<button data-retry-current="${j.id}">${j.kind==='learn'?'确认预算后重试':'按当前模型重试'}</button>`:''}`:''}</div>`).join('');
  document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));
   document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));
   document.querySelectorAll('[data-retry-current]').forEach(b=>b.onclick=()=>action(()=>retryLearning(state.jobs.find(j=>j.id===b.dataset.retryCurrent))));
@@ -602,6 +608,9 @@ async function savedVersion(){
  if(!current)throw Error('尚无稿件');
  return current.id;
 }
+const reportChatContext=createReportChatContext({getCurrent:()=>current,savedVersion,
+ isOpen:()=>document.body.classList.contains('report-chat-open'),getNextReport:()=>chat.nextReportContext,
+ clearNextReport:()=>{chat.nextReportContext=null;nextReportChat.sync();rememberDraft()}});
 const reportExport=reportExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state,getCurrent:()=>current});
 reportExport.init();
 const excelExport=excelExportUI({api,notice,refresh,savedVersion,parse,getState:()=>state});
@@ -622,8 +631,7 @@ document.addEventListener('click',event=>{if(event.target.closest('button')?.id!
 })});
 
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
-const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc,syncSourceHints:renderWorkflowChoices,getBackend:()=>state.settings?.agent_backend||'codex'});
-quickReport.init();
+const quickReport=createQuickReport({$,api,action,notice,savedVersion,getCurrent:()=>current,esc});
 const assessmentPanel=createAssessmentPanel({
  api,action,notice,$,esc,parse,savedVersion,
  renderCompletion:()=>quickReport.render(),
@@ -665,7 +673,7 @@ async function previewReportTime(){
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
 $('requirements').onsubmit=e=>{e.preventDefault();
-  action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if((!req.completion_mode||req.completion_mode==='standard')&&req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read(),quickReport.read());req.research_budget=readResearchBudget();reportFormDefaults.prepare(req);reportMarket.prepare(req);req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});nextReport.clear();showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
+  action(async()=>{const f=new FormData(e.target),req=prepareNewReportRequirements(Object.fromEntries(f.entries()));if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);Object.assign(req,lengthControls.read());req.research_budget=readResearchBudget();reportFormDefaults.prepare(req);reportMarket.prepare(req);req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);if(!req.reader_id)delete req.reader_id;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});nextReport.clear();showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,getUploadLimits());for(const f of e.target.files){const s=await uploadSource(f);if(s.status==='ready')selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});if(s.status==='ready')selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
@@ -822,7 +830,7 @@ async function refreshProgress(){
    $('run-progress').innerHTML=runProcessHTML(finished,progress);bindRunProcess();return}
  $('run-progress').hidden=!paused;
  if(paused){const service=await api('runtime');if(!isCurrent())return;
-   $('run-progress').innerHTML=`<div class="section-title"><h2>${paused.status==='failed'?'任务未完成':'任务已暂停'}</h2><button id="paused-resume" class="primary">恢复任务（沿用原模型）</button></div><p>当前没有继续执行这个任务。已有来源和产物保留。</p><p class="help">本地服务 PID ${service.server_pid||'—'}（页面与任务管理） · ${service.pid?'模型进程 PID '+service.pid:'本工作区没有模型进程'}</p><p class="help">${esc(paused.error||'')}</p><p class="help">恢复会沿用原来的模型与后端。审阅和学习也可按当前模型重试，旧任务记录会保留。</p>${['review','learn'].includes(paused.kind)?`<button id="paused-retry-current" class="outline">${paused.kind==='learn'?'确认预算后重试':'按当前模型重试'}</button>`:''}<button id="paused-settings" class="outline">修改模型与要求</button><button id="paused-dismiss" class="outline">清除这个任务</button>`;
+   $('run-progress').innerHTML=`<div class="section-title"><h2>${paused.status==='failed'?'任务未完成':'任务已暂停'}</h2><button id="paused-resume" class="primary">恢复任务（沿用原模型）</button></div><p>当前没有继续执行这个任务。已有来源和产物保留。</p><p class="help">本地服务 PID ${service.server_pid||'—'}（页面与任务管理） · ${service.pid?'模型进程 PID '+service.pid:'本工作区没有模型进程'}</p><p class="help">${esc(paused.error||'')}</p><p class="help">恢复会沿用原来的模型与后端。审阅、学习及已绑定稿件的检查可按当前模型新建重试，原失败记录保留。</p>${canRetryCurrentModel(paused)?`<button id="paused-retry-current" class="outline">${paused.kind==='learn'?'确认预算后重试':'按当前模型重试'}</button>`:''}<button id="paused-settings" class="outline">修改模型与要求</button><button id="paused-dismiss" class="outline">清除这个任务</button>`;
    if($('paused-retry-current'))$('paused-retry-current').onclick=()=>action(()=>retryLearning(paused));$('paused-settings').onclick=()=>page('setup');
    $('paused-resume').onclick=()=>action(()=>api('resume',{job_id:paused.id}),'已按页面显示的模型提交');
    $('paused-dismiss').onclick=()=>action(()=>api('task-dismiss',{job_id:paused.id}),'已清除这个未完成任务')}
@@ -1353,11 +1361,14 @@ async function sendChat(event){
   const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;
   chat.home=false;chat.busy=true;chatError();updateComposer();
  try{
+  const report_context=await reportChatContext.prepare();
   const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});
     chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);
     chat.drafts.delete('new');rememberDraft()}
   const reportOptions=compactReportInstruction();
-  const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked,next_report:chat.nextReportContext||null};
+  const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,
+   mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked,
+   next_report:chat.nextReportContext||null,report_context};
    const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
   await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();
@@ -1603,11 +1614,12 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
+const settingsNavigation=createSettingsNavigation({showPage:page,onReturn:target=>{if(target==='welcome')renderWelcome()}});
 function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;
-  $('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');
+  $('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');settingsNavigation.open();
   $('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();office.syncSettingsToggle();updateLearningPause().catch(()=>{});
   refreshTavilySettings().catch(()=>{})}
-$('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
+$('settings-open').onclick=showSettings;$('settings-close').onclick=settingsNavigation.close;
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';
   shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">未指定模型</strong></div><button type="button" class="outline">选择运行时与模型</button>';
@@ -1782,10 +1794,10 @@ function renderWorkflowChoices(first=false){
  const workflow=catalog.find(w=>w.id===(choice.workflow_id||template?.workflow_hint||'general_report'));
  const variant=workflow?.variants.find(v=>v.id===(choice.workflow_variant||workflow.default_variant));
  $('workflow-hint').textContent=workflow?`${choice.workflow_id?'已选':'本轮建议'}：${workflow.label} · ${variant?.label||''}。用于规划、写作和评价；Word 版式由报告模板决定。`:'文档方法目录暂不可用，请刷新后再选择。';
- const meeting=workflow?.id==='meeting_minutes',fast=$('completion-mode').value==='fast',fastWeb=$('completion-mode').value==='fast_web'&&!meeting;
- $('source-requirement').textContent=fast?'需要已读取的文本':meeting?'需要本次会议记录':'可选';
- $('source-input-hint').textContent=fastWeb?'可直接输入研究目标，无需先上传材料。会挑选并保存公开网页原文；你选中的已有材料也会用于写作。':fast?'添加并选择可读文本材料后直接写作。扫描图片需先完成文字读取；此模式不代为检索资料。':meeting?'请添加并选择本次会议转写或笔记。只有议程时可整理框架，不能生成未发生的讨论或决议。':'可选：图片、PDF、Word、Excel、Markdown、文本、CSV。也可以直接输入目标，让 Agent 联网研究。';
- $('source-web-hint').textContent=fastWeb?'快速联网最多 3 次搜索、读取 6 篇原文；受所选渠道与额度约束，失败和覆盖缺口会保留。':fast?'快速模式只使用已选材料；切回完整流程可恢复联网研究。':meeting?'会议内容来自已选转写或笔记；公开检索只能补充另行要求的背景，不能替代会中记录。':'开启后，无需先上传文件，Agent 会围绕目标查找并保存公开来源。关闭时仍可讨论问题或使用已有材料。';
+ const meeting=workflow?.id==='meeting_minutes';
+ $('source-requirement').textContent=meeting?'需要本次会议记录':'可选';
+ $('source-input-hint').textContent=meeting?'请添加并选择本次会议转写或笔记。只有议程时可整理框架，不能生成未发生的讨论或决议。':'可选：图片、PDF、Word、Excel、Markdown、文本、CSV。也可以直接输入目标，让 Agent 联网研究。';
+ $('source-web-hint').textContent=meeting?'会议内容来自已选转写或笔记；公开检索只能补充另行要求的背景，不能替代会中记录。':'开启后，无需先上传文件，Agent 会围绕目标查找并保存公开来源。关闭时仍可讨论问题或使用已有材料。';
 }
 function syncWorkflowProfile(changeLength=true){
  const choice=readWorkflowChoice();
@@ -2118,6 +2130,7 @@ function setReportChatOpen(open){
 }
 function openReportChat(sessionId){
  if(!$('chat'))return;
+ reportChatContext.activate();
  setReportChatOpen(true);
  if(sessionId&&chat.sessions.some(s=>s.id===sessionId)&&chat.id!==sessionId)selectChat(sessionId).catch(()=>{});
  const input=$('chat-input');if(input)setTimeout(()=>input.focus(),0);

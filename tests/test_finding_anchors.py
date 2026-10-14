@@ -41,7 +41,8 @@ def test_new_review_and_assessment_reject_bad_quote_without_partial_save(tmp_pat
     fp,files=build_packet(store,brief['id'],store.root/'review')
     with store.tx() as c:
         c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',('review_test',brief['id'],None,fp,'running',json.dumps({'packet_path':'review/packet','files':files}),None,'2026','2026'))
-    item={'kind':'expression','severity':'minor','description':'Check','evidence':'Check original','report_quote':'Revenue 12 … USD.'}
+    item={'kind':'expression','dimension':'expression','severity':'minor','description':'Check','evidence':'Check original',
+          'report_quote':'Revenue 12 … USD.'}
     value={'fingerprint':fp,'version_id':brief['id'],'status':'complete','summary':'Checked','coverage_scan_complete':True,'requirement_checks':for_version(store,brief['id']),'findings':[item]}
     with pytest.raises(ValueError,match='report_quote'):check_review(store,'review_test',value)
     assert store.rows("SELECT result FROM reviews WHERE id='review_test'")[0]['result'] is None

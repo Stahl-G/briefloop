@@ -505,9 +505,76 @@ METADATA_TOOL = spec('save_revision_metadata', revision_metadata, '保存本轮 
     {'responses': response_schema(), 'bindings': binding_schema()}, ('responses',), sequential=True)
 
 
+def revision_chat_config(store, config, session_id, message_id):
+    """Expose research only after the host admits this saved-report message."""
+    config = {key: value for key, value in config.items() if key != 'revision_research'}
+    if (config.get('native_role') != 'chat' or not config.get('allow_web')
+            or config.get('permission') != 'workspace-write' or config.get('discuss_only')):
+        return config
+    messages = store.rows('SELECT * FROM chat_messages WHERE id=? AND session_id=?', (message_id, session_id))
+    if not messages:
+        return config
+    message = messages[0]
+    if (message['role'] != 'user' or not message['allow_web']
+            or message['status'] not in ('sending', 'delivered', 'streaming')
+            or message['text'].lstrip().startswith('/discuss')):
+        return config
+    from .report_revision import context_for_message
+    context = context_for_message(store, session_id, message_id) or {}
+    if not context.get('base_version_id'):
+        return config
+    brief = store.one('briefs', context['base_version_id'])
+    from .research_plan import frozen
+    stage = (frozen(store, brief['run_id']) or {}).get('revision_research') or {}
+    bound = {'run_id': brief['run_id'], 'base_version_id': brief['id'],
+             'session_id': session_id, 'message_id': message_id}
+    if stage.get('status') != 'active' or any(stage.get(key) != value for key, value in bound.items()):
+        return config
+    from .search_policy import allowed, for_run
+    from .research_budget import snapshot
+    remaining = snapshot(store, brief['run_id']).get('remaining') or {}
+    config['revision_research'] = {**bound, 'stage_id': stage['stage_id'],
+        'search_channels': [name for name in allowed(for_run(store, brief['run_id'])) if name != 'native'],
+        'remaining': remaining}
+    return config
+
+
+def _revision_chat_web(store, config, args, *, name, handler):
+    _alive(store, config)
+    scope = config.get('revision_research') or {}
+    actual = revision_chat_config(store, config, config['session_id'], config['attempt_id']).get('revision_research') or {}
+    fields = ('run_id', 'base_version_id', 'session_id', 'message_id', 'stage_id', 'search_channels')
+    if not actual or any(actual.get(key) != scope.get(key) for key in fields):
+        raise ToolError('本消息的报告补查准入已结束或变化，未执行联网操作')
+    remaining = actual['remaining']
+    resources = ('search_requests', 'candidate_urls') if name == 'web_search' else ('source_pages',)
+    if any(int(remaining.get(key) or 0) <= 0 for key in resources):
+        raise ToolError('本报告剩余研究预算不足，未执行联网操作')
+    return handler(store, {**config, 'run_id': actual['run_id'], 'search_channels': actual['search_channels']}, args)
+
+
+def _revision_chat_tools(config):
+    scope = config.get('revision_research') or {}
+    if (not scope or not config.get('allow_web') or config.get('permission') != 'workspace-write'
+            or config.get('discuss_only')):
+        return []
+    from functools import partial
+    from .native_roles import _scout_web_tools
+    remaining = scope.get('remaining') or {}
+    tools = []
+    for tool in _scout_web_tools(scope.get('search_channels') or []):
+        if tool['name'] == 'web_search' and not scope.get('search_channels'):
+            continue
+        resources = ('search_requests', 'candidate_urls') if tool['name'] == 'web_search' else ('source_pages',)
+        if any(int(remaining.get(key) or 0) <= 0 for key in resources):
+            continue
+        tools.append({**tool, 'handler': partial(_revision_chat_web, name=tool['name'], handler=tool['handler'])})
+    return tools
+
+
 def tools(role, config):
     if role == 'chat':
-        return [ACTION_TOOL, SOURCE_TOOL]
+        return [ACTION_TOOL, SOURCE_TOOL, *_revision_chat_tools(config)]
     if role == 'fact_checker':
         from .native_roles import SCOUT_READ_TOOLS, _scout_web_tools
         return [*SCOUT_READ_TOOLS, *_scout_web_tools(config.get('search_channels') or []), ACTION_TOOL,
@@ -586,10 +653,14 @@ def prepare(store, job, folder, prompt):
         from .analyst import packet, WRITING_GUIDE
         plan_path = folder.parent / 'plan.json'
         research_path = folder.parent / 'research.json'
+        # original.json and the packet's own requirements/research_context
+        # already carry these; a second copy only grows what the writer reads.
+        feedback = {key: value for key, value in data.items() if key not in ('brief', 'requirements', 'research_context')}
+        feedback['brief'] = {'id': data['brief']['id'], 'hash': data['brief'].get('hash'), 'file': 'original.json'}
         packet(store, run_id, folder,
                plan=json.loads(plan_path.read_text(encoding='utf-8')) if plan_path.exists() else {},
                research=json.loads(research_path.read_text(encoding='utf-8')) if research_path.exists() else {'sources': [], 'gaps': []},
-               base_version=data['brief']['id'], feedback=data)
+               base_version=data['brief']['id'], feedback=feedback)
         return {**config, 'role': 'analyst', 'revision': True, 'result_file': str(folder / 'draft.json')}, (WRITING_GUIDE +
             '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons/revision_focus；修改问题原段后复核摘要、表格和影响段有无同一结论残留。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')
     _save(root / 'input.json', data)

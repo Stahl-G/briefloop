@@ -9,4 +9,6 @@ test('a linked learning retry sends the explicitly confirmed plan and cancel sen
  const accepted=learningRetry({api:async(...args)=>calls.push(args),getPlan:()=>plan,confirm:()=>true,describePlan:()=>''});
  await accepted({id:'old-job',kind:'learn'});
  assert.deepEqual(calls,[['resume',{job_id:'old-job',use_current_model:true,confirm_plan:'bound-plan'}]]);
+ await accepted({id:'failed-check',kind:'assess'});
+ assert.deepEqual(calls.at(-1),['resume',{job_id:'failed-check',use_current_model:true}]);
 });

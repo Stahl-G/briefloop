@@ -319,7 +319,11 @@ class NativeHarness:
                 from .scout_evidence import begin
                 begin(self.store, config)
                 evidence_open = True
+            self.chat.patch_message(mid, status='sending', turn_id=mid)
             text = (coordinator.input(sid, message) if coordinator else message).get('prompt') or message['text']
+            if config.get('native_role') == 'chat':
+                from .native_orchestrator import revision_chat_config
+                config = revision_chat_config(self.store, config, sid, mid)
             text = context + '\n\n' + text if context else text
             if message.get('source_ids'):
                 text += '\n本轮附件来源 ID：' + json.dumps(message['source_ids'], ensure_ascii=False)

@@ -40,7 +40,7 @@ function catalogThinkingLevels(model: any): string[] {
   });
 }
 
-const PI_VERSION = "1.1.0";
+const PI_VERSION = "1.2.0";
 const ENGINE_VERSION = "briefloop-native/2";
 const REVIEWER_TOOLS = ["packet_list", "packet_read", "packet_grep", "claim_trace", "calc", "submit_review"];
 // Engine-local tools per role. Everything else a role can do is declared by the

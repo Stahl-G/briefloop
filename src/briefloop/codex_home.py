@@ -49,7 +49,7 @@ class CodexHome:
             raise RuntimeError('Codex 历史或数据库链接指向独立目录之外，未启动共享历史。')
         if not explicit:
             config = self.source/'config.toml'
-            settings = tomllib.loads(config.read_text(encoding='utf-8')) if config.exists() else {}
+            settings = tomllib.loads(config.read_text(encoding='utf-8-sig')) if config.exists() else {}
             if settings.get('cli_auth_credentials_store', 'file') != 'file':
                 raise RuntimeError('当前 Codex 使用密钥链或非文件登录，不能自动复用到独立目录。'
                                    '请用 BRIEFLOOP_CODEX_HOME 指定已单独登录的 Codex 目录；个人会话未被修改。')

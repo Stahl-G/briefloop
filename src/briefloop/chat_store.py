@@ -36,6 +36,8 @@ class ChatStore:
             c.execute("UPDATE chat_requests SET status='expired' WHERE status IN ('pending','answering')")
             c.execute("UPDATE chat_sessions SET status='interrupted',turn_id=NULL WHERE status IN ('running','starting','stopping')")
             c.execute("UPDATE chat_messages SET status='interrupted' WHERE status IN ('sending','streaming','delivered')")
+        from .report_revision import recover_terminal_messages
+        recover_terminal_messages(self.store)
 
     @staticmethod
     def decode(row):
@@ -95,6 +97,9 @@ class ChatStore:
         if 'mode' in values and values['mode'] not in ('queue','steer'):raise ValueError('Invalid message mode')
         values['updated']=now()
         with self.store.tx() as c:c.execute('UPDATE chat_messages SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),mid))
+        if values.get('status') in ('completed','failed','cancelled','interrupted'):
+            from .report_revision import finish_message
+            finish_message(self.store, mid, values['status'])
 
     def event(self,sid,kind,data):
         with self.store.tx() as c:c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',(sid,kind,dump(data),now()))

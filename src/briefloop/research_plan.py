@@ -198,7 +198,7 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
 
 def admission(store, connection, run_id, operation):
     """Return (admitting id, stage) — a round with 'research', the fact-check
-    stage id with 'fact_check' — or (None, None) for a legacy run.
+    stage id with 'fact_check' or 'revision_research' — or (None, None) for a legacy run.
 
     Must run inside the caller's reservation transaction so an admitted request
     cannot race a plan change or a closed stage.
@@ -216,6 +216,11 @@ def admission(store, connection, run_id, operation):
     if row is None:
         raise AdmissionError('本轮尚未冻结研究计划；受控联网前必须先冻结', code='plan_missing')
     plan = json.loads(row['value'])
+    revision = plan.get('revision_research') or {}
+    if revision.get('status') == 'active':
+        from .revision_research import binding
+        binding(connection, run_id, revision['base_version_id'], revision['session_id'], revision['message_id'])
+        return revision['stage_id'], 'revision_research'
     stage = plan.get('fact_check') or {}
     if stage.get('status') == 'active':
         return stage['stage_id'], 'fact_check'
@@ -307,6 +312,15 @@ def admit_response(connection, run_id, reservation, operation, *, status='comple
     elif entry['stage'] == 'fact_check':
         current = plan.get('fact_check') or {}
         accepted = current.get('stage_id') == entry['round_id'] and current.get('status') == 'active'
+    elif entry['stage'] == 'revision_research':
+        current = plan.get('revision_research') or {}
+        accepted = current.get('stage_id') == entry['round_id'] and current.get('status') == 'active'
+        if accepted:
+            from .revision_research import binding
+            try:
+                binding(connection, run_id, current['base_version_id'], current['session_id'], current['message_id'])
+            except AdmissionError:
+                accepted = False
     else:
         current = (plan.get('rounds') or {}).get(entry['round_id']) or {}
         accepted = plan.get('current_round_id') == entry['round_id'] and current.get('status') == 'active'
@@ -410,6 +424,8 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
         plan = _read_plan(connection, run_id)
         if plan is None:
             raise AdmissionError('本轮尚未冻结研究计划；不能开始研究轮次', code='plan_missing')
+        if (plan.get('revision_research') or {}).get('status') == 'active':
+            raise AdmissionError('用户修订补研究尚未结束，不能开启原研究轮次', code='revision_stage_open')
         rounds = plan.get('rounds') or {}
         target = list(target_gap_ids or [])
         active = plan.get('current_round_id')
@@ -698,7 +714,7 @@ def _new_fact_check_stage(connection, run_id, plan, source, *, grants=None):
     return stage
 
 
-def admit_fact_check(store, run_id, budget_source, *, job_id=None):
+def admit_fact_check(store, run_id, budget_source, *, job_id=None, version_id=None):
     """Admit an explicit fact-check stage onto the frozen plan. Repeats reuse the stage.
 
     The stage never disguises itself as a Scout round and never bills outside the
@@ -710,19 +726,41 @@ def admit_fact_check(store, run_id, budget_source, *, job_id=None):
     requirements = json.loads(run['requirements'])
     if not requirements.get('allow_web', False):
         raise AdmissionError('离线任务不能接纳联网核查阶段', code='fact_check_offline')
-    source = _fact_check_budget_source(budget_source)
+    scope = None
+    if version_id is not None:
+        from .fact_check import candidate_scope, completed_for
+        if store.one('briefs', version_id)['run_id'] != run_id:
+            raise AdmissionError('核查版本不属于本报告', code='fact_check_version_mismatch')
+        scope = candidate_scope(store, version_id)
     with store.tx() as connection:
         plan = _read_plan(connection, run_id)
         if plan is None:
             raise AdmissionError('本轮尚未冻结研究计划；不能接纳核查阶段', code='plan_missing')
+        if (plan.get('revision_research') or {}).get('status') == 'active':
+            raise AdmissionError('用户修订补研究尚未结束，不能开启核查阶段', code='revision_stage_open')
         existing = plan.get('fact_check')
         if existing:
-            return {'stage_id': existing['stage_id'], 'status': existing['status'],
-                    'budget_source': existing['budget_source'], 'idempotent': True}
+            reusable = scope is None or existing.get('scope') == scope
+            if scope is not None and existing['status'] == 'completed':
+                record = completed_for(store, version_id)
+                reusable = bool(record and record['stage_id'] == existing['stage_id'])
+            if scope is not None and existing['status'] == 'active':
+                if existing.get('scope') is None:
+                    pending = connection.execute("SELECT payload FROM jobs WHERE kind='fact_check' "
+                        "AND status IN ('queued','running') AND json_extract(payload,'$.run_id')=?", (run_id,)).fetchall()
+                    reusable = all(json.loads(row['payload']).get('version_id') == version_id for row in pending)
+                if not reusable:
+                    raise AdmissionError('另一版本或候选集合的核查尚未结束', code='fact_check_scope_active')
+            if reusable:
+                if scope is not None and existing.get('scope') is None:
+                    existing['scope'] = scope
+                    _save_plan(connection, run_id, plan)
+                return {**existing, 'idempotent': True}
         rounds = plan.get('rounds') or {}
         active = plan.get('current_round_id')
         if active and (rounds.get(active) or {}).get('status') == 'active':
             raise AdmissionError('研究轮次尚未收束，不能接纳核查阶段', code='fact_check_round_open')
+        source = _fact_check_budget_source(budget_source)
         # The Worker may have read an older aggregate. Transfer the latest pending
         # ledger and the stage in one commit, so an intervening addition is neither
         # lost nor counted twice by the Worker's later consume/retry call.
@@ -739,7 +777,11 @@ def admit_fact_check(store, run_id, budget_source, *, job_id=None):
                 if source['limits'][field] > max(0, plan['budget'][field] - used[field]):
                     raise AdmissionError('核查预留份额超过任务剩余预算：' + field,
                                          code='fact_check_share_exceeds_budget')
+        if existing:
+            plan.setdefault('fact_check_history', []).append(existing)
         stage = _new_fact_check_stage(connection, run_id, plan, source, grants=grants)
+        if scope is not None:
+            stage['scope'] = scope
         _save_plan(connection, run_id, plan)
         _save_pending_grants(connection, run_id, [])
     result = {**stage, 'idempotent': False}
@@ -768,7 +810,7 @@ def _finish_fact_check_plan(plan, requests, status, summary):
                   'outcome': stage['outcome'], 'idempotent': False}
 
 
-def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
+def finish_fact_check(store, run_id, *, status, summary='', job_id=None, stage_id=None):
     """Close the fact-check stage with an execution status, never a factual verdict.
 
     Idempotent per stage: a replay returns the recorded outcome unchanged, so a
@@ -778,6 +820,8 @@ def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
         raise ValueError('核查阶段结束状态必须是 ' + '/'.join(FACT_CHECK_STATUSES))
 
     def mutate(plan):
+        if stage_id is not None and (plan.get('fact_check') or {}).get('stage_id') != stage_id:
+            raise AdmissionError('核查阶段已变化，旧任务不能关闭当前阶段', code='fact_check_stage_mismatch')
         return _finish_fact_check_plan(plan, pending_requests(store, run_id), status, summary)
 
     result = _mutate_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划')
@@ -837,8 +881,11 @@ def add_fact_check_grant(store, run_id, limits, *, job_id=None):
             status, event['action'] = 'active', 'grant_added'
         elif stage.get('status') == 'budget_exhausted':
             event['previous_stage_id'] = stage['stage_id']
+            scope = stage.get('scope')
             plan.setdefault('fact_check_history', []).append(stage)
             stage = _new_fact_check_stage(connection, run_id, plan, source, grants=[grant])
+            if scope is not None:
+                stage['scope'] = scope
             status, event['action'] = 'reopened', 'grant_reopened'
         else:
             raise AdmissionError('核查阶段已以 ' + str(stage.get('status')) + ' 收束，追加预算不能重开；需重新核查请重新生成',

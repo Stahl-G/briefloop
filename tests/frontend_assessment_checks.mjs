@@ -9,4 +9,9 @@ test('saved checks show unresolved and missing followup without claiming review 
  assert.match(html,/不等于独立审阅或联网事实核查完成/);
  assert.match(html,/&lt;条件仍被遗漏&gt;/);assert.doesNotMatch(html,/<条件仍被遗漏>/);
  assert.equal(panel.render({overall:'达到要求'}),'');
+ const version={id:'revised'},detail={evidence_needs_review:true};
+ assert.equal(panel.evidenceState(version,detail,[]),'stale');
+ assert.equal(panel.evidenceState(version,detail,[{kind:'assess',status:'running',payload:{version_id:'original'}}]),'stale');
+ assert.equal(panel.evidenceState(version,detail,[{kind:'assess',status:'queued',payload:JSON.stringify({version_id:version.id})}]),'pending');
+ assert.equal(panel.evidenceState(version,{},[{kind:'assess',status:'running',payload:{version_id:version.id}}]),null);
 });

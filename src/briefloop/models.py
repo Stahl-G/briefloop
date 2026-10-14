@@ -407,6 +407,7 @@ class Settings(RoleModel):
     k: int = Field(default=1, ge=1, le=20)
     # Saving feedback is free; automatic learning starts paid validation and needs
     # a recorded confirmation of its upper bound (learning_budget, #727).
+    # Keep missing legacy settings off; Store seeds only new workspaces with an on intent.
     auto_learn: bool = False
     auto_learn_authorized_rounds: int | None = Field(default=None, ge=1, le=20)
     auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)

@@ -351,3 +351,63 @@ def test_saved_provider_updates_reach_existing_and_new_conversation_requests(tmp
         h.close()
         server.shutdown()
         server.server_close()
+
+
+def test_report_feedback_reads_public_page_then_revokes_web_tools(tmp_path, monkeypatch):
+    from briefloop import sources
+    from briefloop.chat_dispatch import ChatDispatcher
+    from briefloop.report_revision import bind_context
+    from briefloop.research_plan import freeze, finish_round, frozen
+    from briefloop.research_budget import snapshot
+
+    class ReportEngine(EngineFixture):
+        def call(self, method, params, timeout=None):
+            if method == 'turn_start':
+                self.calls.append((method, params))
+                self.execution = params['execution_id']
+                self.sinks[self.execution].put({'kind': 'tool_request', 'tool': 'add_url',
+                    'args': {'url': 'https://example.com/python313'}, 'request_id': self.execution})
+                return {'started': True}
+            result = super().call(method, params, timeout)
+            if method == 'tool_result':
+                self.sinks[self.execution].put({'kind': 'end', 'status': 'completed'})
+            return result
+
+    store = Store(tmp_path)
+    store.update_settings({'model': 'fake/m1', 'model_selection_required': False, 'fact_checker': False})
+    run = store.create_run({'title': 'Python3.13', 'objective': '核对本期发布', 'allow_web': True,
+        'completion_mode': 'direct', 'research_budget': {'search_requests': 2, 'candidate_urls': 4, 'source_pages': 2},
+        'search_policy': {'primary_provider': 'tavily', 'coverage_mode': 'primary_only'}}, [], research_protocol='quality_v1')
+    freeze(store, run['id'], structure={'breadth': 1, 'depth': 1, 'parallel': 1})
+    finish_round(store, run['id'], gaps=[], summary='初稿留下可补查缺口')
+    brief = store.publish(run['id'], {'title': 'Python3.13', 'markdown': '发布时间待补。'})
+    reads = []
+    def fetch(pending, url, *, allow_private=False):
+        assert allow_private is False
+        reads.append(url)
+        return pending.add_source('公开发布页', 'Release date: Oct. 7, 2024. Free threading is not enabled by default.', url=url)
+    monkeypatch.setattr(sources, 'fetch', fetch)
+    engine = ReportEngine()
+    h = NativeHarness(store, engine)
+    ChatDispatcher({'briefloop-native': h})
+    monkeypatch.setattr(h, '_schedule', lambda sid: None)
+    sid = h.create_session('反馈', {'model': 'fake/m1'})['id']
+    mid = h.send(sid, '读取公开发布页，补发布时间', allow_web=True)['id']
+    bind_context(store, sid, mid, {'version_id': brief['id'], 'hash': brief['hash']})
+    h._dispatch(sid, 1)
+    receipt = next(params for name, params in engine.calls if name == 'tool_result')
+    assert receipt['ok'] is True, receipt
+    saved = json.loads(receipt['content'][0]['text'])
+    assert store.source_text(saved['source_id']).startswith('Release date:')
+    assert saved['source_id'] in store.source_ids(run['id'])
+    assert snapshot(store, run['id'])['used']['source_pages'] == 1
+    assert frozen(store, run['id'])['revision_research']['status'] == 'completed'
+    assert store.one('briefs', brief['id'])['hash'] == brief['hash']
+
+    # A new ordinary message cannot reuse a prior report message's tool authority.
+    h.send(sid, '解释术语，不修改报告', allow_web=True)
+    h._dispatch(sid, 2)
+    receipts = [params for name, params in engine.calls if name == 'tool_result']
+    assert receipts[-1]['ok'] is False
+    assert reads == ['https://example.com/python313']
+    assert snapshot(store, run['id'])['used']['source_pages'] == 1
