@@ -25,6 +25,7 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         ('容量45,100 MW。', '45,100 MW', 45.1, 'GW', '45.1 GW', True),
         ('收入13.6亿元。', '13.6亿元', 13.6, '亿元', '13.6亿元', True),
         ('亏损0美元。', '0美元', 0, 'USD', '$0', True),
+        ('Axiom估值375 亿美元，TypeSafe估值75 亿美元。', '75 亿美元', 7.5, 'billion USD', '$7.5 billion', True),
         ('目标缺陷少于 12 件，尚未确认达成。', '12 件', 12, '件', '目标缺陷少于 12 件，尚未确认达成。', True),
     ]
     for quote, token, value, unit, excerpt, found in cases:
@@ -36,6 +37,9 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
     for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh/年', '5MWh/年')]:
         item = bound(store, quote, token, 5, 'USD', '$5')
         assert not check_numbers(quote, [item], store)[0]['checked']
+    repeated='TypeSafe估值75 亿美元，Arena估值75 亿美元。'
+    item=bound(store,repeated,'75 亿美元',7.5,'billion USD','$7.5 billion')
+    assert not check_numbers(repeated,[item],store)[0]['checked']
     assert normalized(10, '万美元') == normalized(100000, 'USD')
     assert normalized(1, 'thousand USD') == normalized(1000, 'USD')
 

@@ -206,7 +206,7 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
                 row['reason'] = '裸数值绑定缺少 label 与 entity/period，特异性不足，未检查'
                 continue
         quote, token = item.get('report_quote', ''), item.get('number_text', '')
-        if not quote or not token or markdown.count(quote) != 1 or quote.count(token) != 1:
+        if not quote or not token or markdown.count(quote) != 1:
             row['reason'] = '正文定位缺失、重复或已改动，需重新绑定'
             continue
         if not item.get('source_id') or not item.get('locator') or not item.get('source_excerpt') or store is None:
@@ -235,11 +235,13 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
             continue
         # Require the selected token to be the complete number+unit, not a
         # substring of a larger number, and compare only this occurrence.
-        start = quote.index(token)
         candidates = [value for a, b, value in quantities(quote)
-                      if a == start and quote[a:b].strip() == token.strip()]
+                      if quote[a:b].strip() == token.strip()]
         if not candidates:
             row['reason'] = '正文数值不是完整的受支持数值与单位，未检查'
+            continue
+        if len(candidates) != 1:
+            row['reason'] = '正文数值的完整片段重复，需重新绑定'
             continue
         if candidates[0][1] == 'scalar' and expected[1] != 'scalar':
             # Table cells and restated figures often leave the unit to the
