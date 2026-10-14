@@ -28,9 +28,21 @@ def test_chat_generate_pins_session_backend(tmp_path):
     source = store.add_source('memo', 'evidence')
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
                                 'model': 'opencode-go/gpt-5.6-luna'})
+    saved = {'title': 'prior', 'objective': 'o', 'completion_mode': 'fast',
+             'research_strategy': 'goal_driven', 'target_minutes': 10}
+    store.set_meta('requirements', saved)
+    reference = workspace_action(store, {'action': 'inspect'})['requirements']
+    assert reference == {'title': 'prior', 'objective': 'o'}
+    assert store.meta('requirements') == saved
+    store.set_meta('requirements', {**saved, 'completion_mode': 'standard'})
+    assert workspace_action(store, {'action': 'inspect'})['requirements']['target_minutes'] == 10
     dispatched = workspace_action(store, {'action': 'generate',
-                                          'requirements': {'title': 't', 'objective': 'o'},
+                                          'requirements': {'title': 't', 'objective': 'o', 'completion_mode': 'fast',
+                                                           'research_strategy': 'goal_driven', 'target_minutes': 10},
                                           'source_ids': [source['id']],
                                           'runtime': {'model': 'opencode-go/gpt-5.6-luna',
                                                       'agent_backend': 'opencode'}})
     assert json.loads(store.one('jobs', dispatched['job_id'])['payload'])['agent_backend'] == 'opencode'
+
+    requirements = json.loads(store.one('runs', dispatched['run_id'])['requirements'])
+    assert (requirements['completion_mode'], requirements['research_strategy'], requirements['target_minutes']) == ('fast', 'goal_driven', 10)

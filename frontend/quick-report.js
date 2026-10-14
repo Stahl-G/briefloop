@@ -1,56 +1,15 @@
-// Draft-first is a completion policy, separate from research depth and length.
-// Reuse the shared panel/help/buttons; no independent design tokens.
-// Engines with configured tool-free or read-only restrictions; keep in step with
-// src/briefloop/plain_isolation.py GUARDED. Others still run, with their tool use recorded.
-export const GUARDED_FAST_BACKENDS=['codex','opencode','briefloop-native','pi'];
-export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,esc,syncSourceHints=()=>{},getBackend=()=>'codex'}){
+// New report requests let the backend choose their execution path.
+export function prepareNewReportRequirements(requirements){
+ const prepared={...requirements};
+ for(const key of ['completion_mode','research_strategy'])delete prepared[key];
+ if(['fast','fast_web','draft_first'].includes(requirements.completion_mode))delete prepared.target_minutes;
+ return prepared;
+}
+
+// Saved draft-first and fast reports retain their original check continuation.
+export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,esc}){
  let ticket=0,busy=false;
- function sync(){
-  const mode=$('completion-mode')?.value,enabled=['draft_first','fast','fast_web'].includes(mode),fast=['fast','fast_web'].includes(mode);
-  if($('research-strategy'))$('research-strategy').disabled=!mode||mode==='direct';
-  if($('draft-target-label'))$('draft-target-label').hidden=!enabled;
-  if($('draft-target'))$('draft-target').disabled=!enabled;
-  for(const node of $('requirements')?.querySelectorAll?.('[name="allow_web"], [name="fact_check"], [name="research_tier"], [name="research_strategy"], #auto-revision, #company-mode')||[]){
-   if(fast&&!node.hasAttribute('data-fast-disabled')){
-    node.setAttribute('data-fast-disabled',String(node.disabled));node.disabled=true;
-    if(node.type==='checkbox'){node.setAttribute('data-fast-checked',String(node.checked));node.checked=false}
-    else{node.setAttribute('data-fast-value',node.value);node.value=node.id==='company-mode'?'off':node.name==='research_strategy'?'guided':'quick'}
-   }else if(!fast&&node.hasAttribute('data-fast-disabled')){
-    node.disabled=node.getAttribute('data-fast-disabled')==='true';node.removeAttribute('data-fast-disabled');
-    if(node.hasAttribute('data-fast-checked')){node.checked=node.getAttribute('data-fast-checked')==='true';node.removeAttribute('data-fast-checked')}
-    if(node.hasAttribute('data-fast-value')){node.value=node.getAttribute('data-fast-value');node.removeAttribute('data-fast-value')}
-   }
-  }
-  if(fast){const web=$('requirements')?.querySelector?.('[name="allow_web"]');if(web)web.checked=mode==='fast_web'}
-  for(const node of $('requirements')?.querySelectorAll?.('[data-report-options="setup"], #research-budget-controls, .setup-search-launch')||[]){
-   const hide=fast&&!(node.matches?.('.setup-search-launch')&&mode==='fast_web');
-   if(hide&&!node.hasAttribute('data-fast-hidden')){node.setAttribute('data-fast-hidden',String(node.hidden));node.hidden=true}
-   else if(!hide&&node.hasAttribute('data-fast-hidden')){node.hidden=node.getAttribute('data-fast-hidden')==='true';node.removeAttribute('data-fast-hidden')}
-  }
-  if($('completion-mode-help'))$('completion-mode-help').textContent=mode==='fast_web'
-   ?'一轮聚焦检索，最多 3 次搜索、读取 6 篇原文，随后直接出稿。无需先上传材料；可在搜索设置选择渠道。保存后在后台补依据和评价，不自动改写正文；十分钟是目标，非保证或截止。'
-   :mode==='fast'
-   ?'已有文本材料直接出稿，保存后自动在后台补充依据和评价；可立即编辑、下载。此模式不联网补搜、不维护企业背景、不自动改写正文。材料较多时可能需要更久，不保证固定时限。'
-   :!mode||mode==='direct'
-   ?'BriefLoop 在同一上下文中完成研究与写作；稿件保存后继续补充依据、独立评价和修订。'
-   :'完整流程按所选研究深度检索、写作和检查。先交研究初稿的旧任务仍可手动继续完整检查。';
-  if(fast&&$('completion-mode-help')&&!GUARDED_FAST_BACKENDS.includes(getBackend()))$('completion-mode-help').textContent+=' 当前执行引擎的自带工具无法由 BriefLoop 关闭：仍可出稿，任务记录会写明写作期间的工具使用，找不到原文依据的结论会单独列出。';
-  if(fast&&$('review-capability-note'))$('review-capability-note').hidden=true;
- }
- function init(){
-  $('completion-mode')?.addEventListener('change',()=>{sync();syncSourceHints()});
-  $('requirements')?.addEventListener('reset',()=>queueMicrotask(sync));
-  sync();
- }
- function read(){
-  sync();
-  const mode=$('completion-mode')?.value;
-  return ['draft_first','fast','fast_web'].includes(mode)
-   ?{completion_mode:mode,target_minutes:Number($('draft-target').value),...(['fast','fast_web'].includes(mode)?{research_tier:'quick',allow_web:mode==='fast_web',fact_check:false}:{})}
-   :mode?{completion_mode:mode}:{};
- }
  async function render(){
-  sync();
   const box=$('draft-completion'),current=getCurrent(),request=++ticket;
   if(!box)return;
   if(!current){box.hidden=true;return}
@@ -82,5 +41,5 @@ export function createQuickReport({$,api,action,notice,savedVersion,getCurrent,e
   }
  }
   const versionLabel=brief=>brief?.author==='agent'&&brief?.id?.endsWith('_evidence')?'依据补全 · 正文未改':'修订稿';
-  return {init,read,render,sync,versionLabel};
+  return {render,versionLabel};
 }

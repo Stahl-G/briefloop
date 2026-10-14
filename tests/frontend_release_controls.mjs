@@ -20,16 +20,34 @@ function elements(){
  };
 }
 
-test('an empty schedule list still lets the user create the first schedule',()=>{
+test('new schedules use automatic routing while saved schedules retain their execution choice',async()=>{
  const $=elements(),previous=globalThis.document;
+ const requests=[],requirements={title:'Weekly report',objective:'News',completion_mode:'fast',research_strategy:'goal_driven',target_minutes:10};
+ const state={schedules:[],sources:[],requirements};
  globalThis.document={getElementById:$};
  try{
-  const ui=scheduleUI({api(){throw Error('No requests expected')},getState:()=>({schedules:[],sources:[],requirements:{}}),refresh(){},notice(){},openReport(){}});
+  const ui=scheduleUI({api:async(route,body)=>{requests.push({route,body});return {next_at:'2026-10-15T00:00:00Z'}},
+   getState:()=>state,refresh(){},notice(){},openReport(){}});
   ui.render();
   assert.equal($('home-block-schedule').hidden,false);
   assert.equal($('schedule-list').hidden,true);
   $('schedule-new').onclick();
   assert.equal($('schedule-dialog').open,true);
+  await $('schedule-preview-button').onclick();
+  const draft=requests.at(-1).body.config;
+  assert.equal(draft.automatic_completion_mode,true);
+  assert.equal('completion_mode' in draft.requirements,false);
+  assert.equal('research_strategy' in draft.requirements,false);
+  assert.equal(draft.requirements.objective,requirements.objective);
+  assert.equal(requirements.completion_mode,'fast');
+  state.schedules.push({id:'saved',name:'Saved report',config:{requirements,automatic_completion_mode:false},enabled:true});
+  await $('schedule-list').onclick({target:{closest:()=>({dataset:{scheduleEdit:'saved'}})}});
+  await $('schedule-preview-button').onclick();
+  const saved=requests.at(-1).body.config;
+  assert.equal(saved.automatic_completion_mode,false);
+  assert.equal(saved.requirements.completion_mode,'fast');
+  assert.equal(saved.requirements.research_strategy,'goal_driven');
+  assert.equal(saved.requirements.target_minutes,10);
  }finally{globalThis.document=previous}
 });
 

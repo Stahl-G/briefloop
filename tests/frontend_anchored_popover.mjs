@@ -53,9 +53,15 @@ test('research mount removes engine/effort carriers and permission action, retai
  const elements=new Map(),$=id=>{if(!elements.has(id))elements.set(id,new Node());return elements.get(id)};
  const panel=$('panel'),grid=new Node(),actions=new Node(),wrapper=new Node(),toolbar=new Node();toolbar.append(wrapper);wrapper.append($('composer-params'));panel.append(grid);panel.append(actions);
  panel.nodes.set('.composer-params-grid',grid);panel.nodes.set('.composer-params-row',actions);grid.append($('chat-backend'));grid.append($('chat-effort'));grid.append($('chat-service-tier'));actions.append($('chat-permissions-open'));actions.append($('attach-existing'));
- let root;const doc={createElement(tag){const n=new Node();if(tag==='section'){root=n;for(const selector of ['[data-completion]','[data-research-tier]','[data-research-strategy]','[data-report-fact]','[data-fact-link]','[data-report-mode-note]'])n.nodes.set(selector,new Node());n.nodes.set('[data-report-source]',[])}return n}};
- const ui=createComposerOptions({$,getChat:()=>({}),getState:()=>({settings:{}}),availability:()=>({enabled:true}),rememberDraft(){},openSettings(){},openReview(){},document:doc});ui.mount(panel);
+ let root;const doc={createElement(tag){const n=new Node();if(tag==='section'){root=n;for(const selector of ['[data-research-tier]','[data-report-fact]','[data-fact-link]'])n.nodes.set(selector,new Node());const sources=[new Node(),new Node()];sources[0].dataset.reportSource='existing';sources[1].dataset.reportSource='web';n.nodes.set('[data-report-source]',sources)}return n}};
+ const chat={reportOptions:{completion_mode:'fast',research_strategy:'goal_driven'}};let saves=0;
+ const ui=createComposerOptions({$,getChat:()=>chat,getState:()=>({settings:{}}),availability:()=>({enabled:true}),rememberDraft(){saves++},openSettings(){},openReview(){},document:doc});ui.mount(panel);
  assert.equal(grid.parentElement.id,'chat-runtime-carriers');assert.equal(grid.parentElement.hidden,true);assert.equal(grid.parentElement.parentElement,$('chat-form'));assert.equal($('chat-permissions-open').parentElement,toolbar);
  assert.equal($('chat-service-tier').parentElement.parentElement,$('settings-model-block'));assert.equal($('chat-service-tier').parentElement.textContent,'当前对话速度');assert.equal($('attach-existing').parentElement,actions);assert.equal(actions.parentElement,root);
- assert.doesNotMatch(root.innerHTML,/模型与执行|data-learning-settings|chat-backend|chat-effort/);assert.match(root.innerHTML,/研究深度/);
+ assert.doesNotMatch(root.innerHTML,/模型与执行|data-learning-settings|chat-backend|chat-effort/);assert.equal(root.querySelector('[data-research-tier]').value,'standard');
+ const tier=root.querySelector('[data-research-tier]');tier.onchange({target:{value:'deep'}});
+ const fact=root.querySelector('[data-report-fact]');fact.onchange({target:{checked:true}});
+ assert.deepEqual(chat.reportOptions,{research_tier:'deep',fact_check:true});assert.equal(saves,2);
+ root.querySelectorAll('[data-report-source]')[1].onclick();assert.equal($('chat-allow-web').checked,true);
+ root.querySelectorAll('[data-report-source]')[0].onclick();assert.equal($('chat-allow-web').checked,false);
 });
