@@ -213,6 +213,15 @@ def _expand_evidence(data):
                 item = {**{key: value for key, value in attribute.items() if key in fields}, **shared}
                 if field == 'numbers':
                     item['source_excerpt'] = item.pop('excerpt')
+                    token, quote = item.get('number_text'), item.get('report_quote')
+                    if isinstance(token, str) and token and isinstance(quote, str) and token in quote:
+                        from .delivery_checks import _NUM, quantities
+                        spans = list(quantities(token))
+                        # Never choose a value from a range or a multi-number label,
+                        # including ranges whose separator stops quantity parsing.
+                        if len(spans) == 1 and len(re.findall(_NUM, token)) == 1:
+                            start, end, _ = spans[0]
+                            item['number_text'] = token[start:end].strip()
                 else:
                     item.setdefault('statement', record.get('report_quote'))
                 expanded[target].append(item)

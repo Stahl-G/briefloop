@@ -110,7 +110,7 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     old_packet=(store.root/'jobs'/job['id']/'fast-materials.json').read_bytes()
     added=store.add_source('New disclosure','Actual income 150 USD on 2026-10-09.')
     store.attach_source(run['id'],added['id'])
-    text=f'Actual income 150 USD on 2026-10-09. [@{added["id"]}]'
+    text=f'Actual income 140 USD on 2026-10-09. [@{added["id"]}]'
     revised=store.revise(latest['id'],text,allow_markdown_conversion=True,
                          citations=[{'source_id':added['id']}],author='agent')
     from briefloop.draft_completion import enqueue_revision
@@ -127,9 +127,9 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
         if folder.name!='evidence':return previous_execute(task,prompt,folder,*args,**kwargs)
         assert 'Actual income 150 USD on 2026-10-09.' in prompt
         (folder/'response.txt').write_text(dump({'records':[{
-            'source_id':'S1','report_quote':'Actual income 150 USD on 2026-10-09.',
+            'source_id':'S1','report_quote':'Actual income 140 USD on 2026-10-09.',
             'excerpt':'Actual income 150 USD on 2026-10-09.',
-            'numbers':[{'number_text':'150 USD','value':150,'unit':'USD'}],
+            'numbers':[{'number_text':'income 140 USD','value':150,'unit':'USD'}],
             'times':[{'event_date':'2026-10-09'}]}]}))
         return {'status':'complete'}
     runtime.execute=revised_evidence
@@ -181,6 +181,10 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     number=detail['number_bindings'][0]
     citation=next(item for item in detail['citations'] if item['source_id']==added['id'])
     assert number['source_id']==added['id']
+    assert number['number_text']=='140 USD' and number['value']==150
+    from briefloop.delivery_checks import check_numbers
+    checked=check_numbers(final['markdown'],[number],store,{added['id']})[0]
+    assert checked['checked'] and not checked['found']
     assert number['source_excerpt']==citation['excerpt']=='Actual income 150 USD on 2026-10-09.'
     assert number['report_quote']==citation['report_quote'] and number['locator']==citation['locator']
     assert len(detail['citations'])==1
