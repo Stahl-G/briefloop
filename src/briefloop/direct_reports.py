@@ -160,6 +160,10 @@ def generate(worker, job, *, score=True):
         text, coverage_items, coverage_error = split(text)
         if worker.runtime.cancelled.is_set() or worker.stopping.is_set():
             raise InterruptedError('直写已停止，模型正文保留在任务目录。')
+        from .direct_citations import repair
+        text, citation_repair = repair(worker, job, run['id'], text, folder)
+        if worker.runtime.cancelled.is_set() or worker.stopping.is_set():
+            raise InterruptedError('引用修复已停止，原作者输出保留在任务目录。')
         allowed = set(store.source_ids(run['id']))
         marked = list(dict.fromkeys(re.findall(r'\[@([^\]\s]+)\]', text)))
         unknown = [sid for sid in marked if sid not in allowed]
@@ -175,6 +179,8 @@ def generate(worker, job, *, score=True):
             if plan.get('current_round_id'):
                 research_plan.finish_round(store, run['id'], summary='直写：作者在单一回合内完成检索与写作；未声明覆盖完整或事实核验完成。', job_id=job['id'])
         notes = [{'kind': 'direct_draft', 'summary': '作者在同一上下文中检索与写作；原文定位、检查、独立评价和一次自动修订在保存后进行。'}]
+        if citation_repair:
+            notes.append(citation_repair)
         if req.get('key_questions'):
             notes.append(bind(store, run['id'], req['key_questions'], coverage_items, coverage_error))
         if unknown:

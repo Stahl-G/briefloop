@@ -197,7 +197,6 @@ def test_rejected_runtime_output_is_archived_with_repairable_error(tmp_path):
 
         def execute(self, stage, prompt, target, **kwargs):
             self.calls += 1
-            assert 'assessment_finding_indices' in prompt
             (target/'review.json').write_bytes(self.output)
 
     runtime = Runtime()
@@ -249,3 +248,58 @@ def test_old_saved_inconsistent_review_blocks_delivery_without_rewriting_history
     output = generate_word(store, job, threading.Event())
     store.update_job(job['id'], 'complete', result=output)
     assert output_path(store, store.one('jobs', job['id'])).is_file()
+
+
+def test_single_issue_submission_projects_score_and_preserves_major_delivery_gate(tmp_path):
+    store, source, brief, value = fixture(tmp_path)
+    value['findings'][0].update(dimension='evidence', suggested_action='Read the missing evidence')
+    accepted = accept_review(store, 'review_test', value)
+    saved = accepted['result']
+    assert len(saved['assessment']['findings']) == 1
+    score_issue = saved['assessment']['findings'][0]
+    assert score_issue['description'] == 'Need support'
+    assert score_issue['severity'] == 'major'
+    assert score_issue['suggestion'] == 'Read the missing evidence'
+    assert saved['findings'][0]['assessment_finding_indices'] == [0]
+    assert not eligibility(store, brief['id'])['eligible']
+    # Recovery accepts the submitted shape and persisted projection identically.
+    assert accept_review(store, 'review_test', value)['result'] == saved
+
+
+def test_single_issue_submission_retains_score_check_relationships(tmp_path):
+    store, source, brief, value = fixture(tmp_path)
+    value['assessment']['checks'] = [{'id': 'cost', 'status': 'passed', 'reason': 'Initial check'}]
+    value['findings'][0].update(dimension='evidence', check_ids=['cost'])
+    accepted = accept_review(store, 'review_test', value)
+    assert accepted['result']['assessment']['findings'][0]['check_ids'] == ['cost']
+    assert accepted['result']['assessment']['checks'][0]['status'] == 'needs_attention'
+
+
+def test_admission_reports_independent_omissions_together_without_partial_save(tmp_path):
+    store, source, brief, value = fixture(tmp_path)
+    value = with_assessment_issues(value)
+    value['findings'] = []
+    value['requirement_checks'] = []
+    value['coverage_scan_complete'] = False
+    with pytest.raises(ValueError) as error:
+        accept_review(store, 'review_test', value)
+    message = str(error.value)
+    assert 'assessment.findings[0]' in message
+    assert 'assessment.findings[1]' in message
+    assert 'requirement_checks' in message
+    assert 'coverage_scan_complete' in message
+    assert get_review(store, 'review_test')['result'] is None
+    assert not store.rows('SELECT * FROM assessments')
+    assert not store.rows('SELECT * FROM review_findings')
+
+
+def test_runtime_requires_explicit_issue_dimension_before_score_projection(tmp_path):
+    from briefloop.review import check_review
+    store, source, brief, value = fixture(tmp_path)
+    with pytest.raises(ValueError, match='dimension'):
+        check_review(store, 'review_test', value)
+    assert get_review(store, 'review_test')['result'] is None
+    value['findings'][0]['dimension'] = 'evidence'
+    result = check_review(store, 'review_test', value)
+    assert result.assessment.findings[0].dimension == 'evidence'
+    assert get_review(store, 'review_test')['result'] is None

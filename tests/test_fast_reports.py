@@ -23,11 +23,10 @@ class Writer:
             if self.edit:self.edit()
         elif folder.name=='evidence':
             if self.edit:self.edit()
-            (folder/'response.txt').write_text(dump({'citations':[
-                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'收入 120 万元，同比增长 20%'},
-                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'不存在的引文'}],
-                'number_bindings':[{'source_id':'S1','source_excerpt':'收入 120 万元，同比增长 20%',
-                    'report_quote':'收入 120 万元，同比增长 20%。','number_text':'120 万元','value':120,'unit':'万元'}]}))
+            (folder/'response.txt').write_text(dump({'records':[
+                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'收入 120 万元，同比增长 20%',
+                 'numbers':[{'number_text':'120 万元','value':120,'unit':'万元'}]},
+                {'source_id':'S1','report_quote':'收入 120 万元，同比增长 20%。','excerpt':'不存在的引文'}]}))
         elif folder.name=='evaluation':
             value=json.loads((folder/'input.json').read_text())
             (folder/'assessment.json').write_text(dump({'brief_hash':value['brief']['hash'],'status':'complete',
@@ -127,13 +126,11 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     def revised_evidence(task,prompt,folder,*args,**kwargs):
         if folder.name!='evidence':return previous_execute(task,prompt,folder,*args,**kwargs)
         assert 'Actual income 150 USD on 2026-10-09.' in prompt
-        (folder/'response.txt').write_text(dump({'citations':[{'source_id':'S1','report_quote':'Actual income 150 USD on 2026-10-09.',
-            'excerpt':'Actual income 150 USD on 2026-10-09.'}],
-            'number_bindings':[{'source_id':'S1','source_excerpt':'Actual income 150 USD on 2026-10-09.',
-                'report_quote':'Actual income 150 USD on 2026-10-09.','number_text':'150 USD','value':150,'unit':'USD'}],
-            'temporal_claims':[{'source_id':'S1','excerpt':'Actual income 150 USD on 2026-10-09.',
-                'report_quote':'Actual income 150 USD on 2026-10-09.','statement':'Actual income 150 USD on 2026-10-09.',
-                'event_date':'2026-10-09'}]}))
+        (folder/'response.txt').write_text(dump({'records':[{
+            'source_id':'S1','report_quote':'Actual income 150 USD on 2026-10-09.',
+            'excerpt':'Actual income 150 USD on 2026-10-09.',
+            'numbers':[{'number_text':'150 USD','value':150,'unit':'USD'}],
+            'times':[{'event_date':'2026-10-09'}]}]}))
         return {'status':'complete'}
     runtime.execute=revised_evidence
     if backend=='briefloop-native':
@@ -181,7 +178,13 @@ def test_fast_writer_receipt_uses_the_same_raw_bytes_as_published_body(tmp_path,
     final=store.one('briefs',outcome['version_id']);detail=json.loads(final['detail'])
     assert final['markdown']==revised['markdown']
     assert not detail.get('evidence_needs_review')
-    assert detail['number_bindings'][0]['source_id']==added['id']
+    number=detail['number_bindings'][0]
+    citation=next(item for item in detail['citations'] if item['source_id']==added['id'])
+    assert number['source_id']==added['id']
+    assert number['source_excerpt']==citation['excerpt']=='Actual income 150 USD on 2026-10-09.'
+    assert number['report_quote']==citation['report_quote'] and number['locator']==citation['locator']
+    assert len(detail['citations'])==1
+    assert detail['temporal_claims'][0]['statement']==citation['report_quote']
     assert detail['temporal_claims'][0]['event_date']=='2026-10-09'
     assert (store.root/'jobs'/job['id']/'fast-materials.json').read_bytes()==old_packet
     snapshot=json.loads((store.root/'jobs'/checks['id']/'revision-materials.json').read_text())

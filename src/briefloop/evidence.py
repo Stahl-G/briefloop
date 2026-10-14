@@ -260,6 +260,52 @@ def bind_claim(store,version_id,claim_id,block_id,quote):
     return {'id':identity,'version_id':version_id,'claim_id':claim_id,'status':'unreviewed'}
 
 
+def _public_tavily_original(store, run_id, source, provenance, original):
+    """Require a successful managed extract receipt and its exact response text."""
+    from .research_budget import canonical_url
+    from .store import content_hash
+    if (not original or provenance.get('provider') != 'tavily'
+            or provenance.get('extractor') != 'tavily.extract'
+            or provenance.get('extraction_status') != 'ready'
+            or not provenance.get('raw_sha256')):
+        return False
+    url = canonical_url(source['url'])
+    if canonical_url(provenance.get('url')) != url:
+        return False
+    raw = original.read_bytes()
+    response = json.loads(raw)
+    if not isinstance(response, dict) or not isinstance(response.get('results'), list):
+        return False
+    text = store.source_text(source['id'])
+    if content_hash(text) != provenance.get('text_sha256'):
+        return False
+    matching = [item for item in response.get('results', []) if isinstance(item, dict)
+                and canonical_url(item.get('url')) == url and item.get('raw_content') == text]
+    if not matching or response.get('request_id') != provenance.get('request_id'):
+        return False
+    folder = store.root / 'discovery' / run_id
+    if folder.is_symlink() or folder.parent.is_symlink():
+        return False
+    for path in folder.glob('*.request.json'):
+        if path.is_symlink():
+            continue
+        receipt = json.loads(path.read_text(encoding='utf-8'))
+        if (not isinstance(receipt, dict) or receipt.get('run_id') != run_id or receipt.get('provider') != 'tavily'
+                or receipt.get('operation') != 'extract' or receipt.get('outcome') != 'success'
+                or receipt.get('provider_request_id') != response.get('request_id')):
+            continue
+        if path.name != str(receipt.get('local_request_id')) + '.request.json':
+            continue
+        if (url not in [canonical_url(value) for value in receipt.get('parameters', {}).get('urls', [])]
+                or url not in receipt.get('admitted_urls', [])):
+            continue
+        response_path = path.with_name(path.name.removesuffix('.request.json') + '.json')
+        if (not response_path.is_symlink() and response_path.is_file()
+                and response_path.read_bytes() == raw):
+            return True
+    return False
+
+
 def public_fact_check_sources(store, run_id):
     """Automatic web checking requires captured anonymous public web originals.
 
@@ -279,8 +325,6 @@ def public_fact_check_sources(store, run_id):
             if (url.scheme not in ('http', 'https') or not url.hostname
                     or url.username or url.password or url.query or url.fragment):
                 return False, '来源缺少可确认的匿名公开网页地址，不自动联网核查'
-            if provenance and provenance.get('original_kind') != 'http_response':
-                return False, '来源含未确认公开的原文类型，不自动联网核查'
             address = (url.hostname, url.port or (443 if url.scheme == 'https' else 80))
             if address not in checked_hosts:
                 _checked_addresses(*address)
@@ -288,10 +332,14 @@ def public_fact_check_sources(store, run_id):
             text = store.source_text(sid)
             if source['status'] == 'failed' and not text.strip():
                 continue  # Failed public reads carry no private content or candidate evidence.
+            if provenance and provenance.get('original_kind') != 'http_response':
+                if (provenance.get('original_kind') != 'provider_response'
+                        or not _public_tavily_original(store, run_id, source, provenance, original)):
+                    return False, '来源含未确认公开的原文类型或提取回执，不自动联网核查'
             if source['status'] != 'ready' or not original or not provenance:
                 return False, '来源含未确认公开的材料，不自动联网核查'
             readable += 1
-        except (ValueError, OSError, KeyError):
+        except (ValueError, OSError, KeyError, TypeError, AttributeError):
             return False, '公开来源身份或网络范围未确认，不自动联网核查'
     return (True, '') if readable else (False, '没有可读的公开网页原件')
 

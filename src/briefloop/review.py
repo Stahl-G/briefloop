@@ -40,6 +40,7 @@ class ReviewFinding(Model):
     suggested_action: str = ''
     dimension: Literal['evidence','coverage','analysis','expression'] | None = None
     locator: str = ''
+    check_ids: list[str] = Field(default_factory=list)
     # Tolerated drift: the model sometimes labels a clause id or a source on the
     # review finding. Keep it rather than failing the whole task on a stray key.
     requirement: str = ''
@@ -126,6 +127,69 @@ class ReviewOutput(Model):
     # A review may arrive without a score; findings and checks stay usable and the
     # panel simply shows "尚未评分". Generation must not fail because scoring did.
     assessment: Assessment | None = None
+
+
+def submission_schema():
+    """Expose one issue list; persisted reviews retain their published shape."""
+    schema = ReviewOutput.model_json_schema()
+    finding = schema['$defs']['ReviewFinding']
+    finding['properties'].pop('assessment_finding_indices')
+    finding['properties']['dimension'] = {'enum': ['evidence', 'coverage', 'analysis', 'expression'], 'type': 'string'}
+    finding.setdefault('required', []).append('dimension')
+    schema['$defs']['Assessment']['properties'].pop('findings')
+    return schema
+
+
+def project_findings(value):
+    """Project explicitly classified submission issues into the saved score view.
+
+    Published dual-list results keep their original admission rules. No semantic
+    category, severity or relationship is inferred by the program.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get('assessment'), dict):
+        return value
+    assessment = value['assessment']
+    if 'findings' in assessment:
+        return value
+    findings = value.get('findings', [])
+    if not isinstance(findings, list) or any(not isinstance(item, dict) or not item.get('dimension') for item in findings):
+        return value
+    value = {**value, 'assessment': dict(assessment), 'findings': [dict(item) for item in findings]}
+    scored = []
+    for item in value['findings']:
+        # Responses close a historical issue; they are not new scoring findings.
+        if item.get('response_to') or item.get('resolution'):
+            item['assessment_finding_indices'] = []
+            continue
+        item['assessment_finding_indices'] = [len(scored)]
+        scored.append({key: item[key] for key in ('dimension', 'severity', 'description', 'report_quote',
+                      'requirement', 'source_id', 'locator', 'evidence', 'check_ids', 'kind', 'block_ids') if key in item})
+        scored[-1]['suggestion'] = item.get('suggested_action', item.get('suggestion', ''))
+    value['assessment']['findings'] = scored
+    return value
+
+
+def structure_errors(result, current, severity, protocol):
+    """Collect independent repairable omissions before any admission writes."""
+    errors = [item['message'] for item in finding_consistency_errors(result.model_dump(), requirement_severity=severity)]
+    if result.status == 'complete':
+        if not result.coverage_scan_complete:
+            errors.append('status=complete 必须在检查过正文重要主张遗漏后同时设 coverage_scan_complete=true；未完成请标为 incomplete')
+        expected = {item['claim_id'] for item in current['evidence']['bindings']}
+        missing = expected - {item.claim_id for item in result.claim_checks}
+        if missing:
+            errors.append('完整审阅遗漏正文已使用主张，必须标为未完成；缺少claim_id=' + ','.join(sorted(missing)))
+        if protocol != 'clauses_v1':
+            expected = {item['requirement_id'] for item in current['requirements']['requirement_items']}
+            missing = expected - {item.requirement_id for item in result.requirement_checks}
+            if missing:
+                errors.append('完整审阅缺少 requirement_checks；未核对的 requirement_id=' + ','.join(sorted(missing)))
+        else:
+            try:
+                validate_clause_checks(current['requirements'], result.clause_checks, result.status)
+            except ValueError as exc:
+                errors.append(str(exc))
+    return errors
 
 
 def finding_consistency_errors(value, *, requirement_severity=None):
@@ -574,7 +638,7 @@ def build_packet(store,version_id,folder):
             for i,v in enumerate(value):collect(v,path+[i])
     collect(snapshot,[])
     save('target-long-text.json',pack_dump(long_text).encode())
-    save('output.schema.json',pack_dump(ReviewOutput.model_json_schema()).encode())
+    save('output.schema.json',pack_dump(submission_schema()).encode())
     for source in snapshot['sources']:
         sid=source['id'];item=dict(source)
         try:
@@ -661,12 +725,29 @@ def validate_clause_checks(spec, clause_checks, status):
 
 
 def check_review(store,review_id,value):
-    """Run every admission check without saving; submit tools use it mid-run."""
+    """Validate the frozen submission shape before the persisted review shape."""
+    review = get_review(store, review_id)
+    packet, _, _ = _packet(store, review)
+    schema = json.loads(filesystem_path(packet/'output.schema.json').read_text(encoding='utf-8'))
+    # Frozen older packets still accept their published dual-list submission.
+    if 'findings' not in schema['$defs']['Assessment']['properties']:
+        errors = []
+        if isinstance(value, dict):
+            assessment = value.get('assessment')
+            if isinstance(assessment, dict) and 'findings' in assessment:
+                errors.append('本次问题只提交顶层 findings；请移除 assessment.findings')
+            submitted = value.get('findings', [])
+            for index, item in enumerate(submitted if isinstance(submitted, list) else []):
+                if isinstance(item, dict) and item.get('dimension') not in ('evidence', 'coverage', 'analysis', 'expression'):
+                    errors.append(f'findings[{index}] 缺少有效 dimension，请明确问题维度')
+                if isinstance(item, dict) and 'assessment_finding_indices' in item:
+                    errors.append(f'findings[{index}] 的评分关联由程序生成，请移除 assessment_finding_indices')
+        if errors:raise ValueError('\n'.join(errors))
     return accept_review(store,review_id,value,dry_run=True)
 
 
 def accept_review(store,review_id,value,dry_run=False):
-    result=ReviewOutput.model_validate(value);review=get_review(store,review_id)
+    result=ReviewOutput.model_validate(project_findings(value));review=get_review(store,review_id)
     if result.version_id!=review['version_id'] or result.fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 输出未绑定本次正文与核查包')
     packet=current=None
@@ -675,8 +756,9 @@ def accept_review(store,review_id,value,dry_run=False):
         packet,current,_=_packet(store,review)
         from .release import finding_severity
         severity=finding_severity(current['requirements'])
-    consistency=finding_consistency_errors(result.model_dump(),requirement_severity=severity)
-    if consistency:raise ValueError('；'.join(item['message'] for item in consistency))
+    if current is None:packet,current,_=_packet(store,review)
+    errors=structure_errors(result,current,severity,review['data'].get('protocol','legacy'))
+    if errors:raise ValueError('\n'.join(errors))
     if result.assessment is not None and 'assessment-context.json' in review['data'].get('files', {}):
         context=json.loads(filesystem_path(packet/'assessment-context.json').read_text(encoding='utf-8'))
         from .models import assessment_checks
@@ -1077,7 +1159,7 @@ def run_review(store,runtime,job,version_id,folder):
         host_read=('核查包就是本会话可见的全部资料，路径一律相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。'
                    '{packet_guide}再核对具体原文与图表。本次报告图与已选证据视觉的实际交付情况见本条消息末尾的视觉输入说明，visual-inputs.json记录它们与固定文件的对应关系；没有实际看到的图不能声称已目视核验，可以用图表数据文件核对数值。必要时读history中的本报告历史。')
         host_tools=''
-        output_line='完成后调用 submit_review 提交结果对象（结构见 output.schema.json）；提交未通过时按返回的错误修正后再次提交，不要把 JSON 写进回复正文。'
+        output_line='完成后用 submit_review 的 review 提交完整对象（结构见 output.schema.json）；未通过时只用 patch 补交需要修改的顶层字段，保留已有核查结果，不要把 JSON 写进回复正文。'
     else:
         role_line='你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。\n'
         host_read=f"只读取 {folder/'packet'/'index.json'} 所索引的文件。"+'JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。{packet_guide}核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。'
@@ -1107,15 +1189,15 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 report_quote 如提供，须为本版正文或阅读预览中的连续原话，不能用省略号拼接；block_ids 如提供必须对应引文所在段落。缺失内容可省略引文并关联实际要求；历史 response_to 可以保留旧引文。位置匹配不代表事实已核实。
-字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
-完整审阅必须逐条保留 assessment.findings 中的 major 问题：在顶层 findings 给出 major 新发现及核查类型、依据，用 assessment_finding_indices 引用对应评分发现的从 0 开始的索引；一个核查发现可关联多个索引。两处 description 不必相同。不得把 evidence 维度的问题仅改标为 expression 或软条款的 missing_requirement/execution_gap；历史问题的 response_checks/resolution 不替代本版剩余问题的新发现。不要由程序猜测或把评分发现直接复制成另一套 schema；无法补全时 status=incomplete。
+问题只写顶层 findings 一次，每条明确给 kind、dimension、severity、description、evidence，可带 report_quote、claim_ids、block_ids、requirement_ids 和 check_ids。check_ids 对应 assessment.checks 的检查 ID。来源定位可带 source_id 和 locator。用 suggested_action 给处理建议。程序根据这些明确字段形成评分问题及关联，不填写 assessment.findings 或 assessment_finding_indices。
+assessment 保留 brief_hash、status、summary、overall、四维分数及 checks；不得用高分或 expression 分类掩盖已确认的重大证据问题。requirement_checks 只给 requirement_id/status/reason，clause_checks 才使用 basis。无法完成核查时 status=incomplete。
 '''
     if filesystem_path(folder/'packet'/'assessment-context.json').exists():
         prompt+=('\n读取 assessment-context.json；assessment_checks 是本次评分复核清单，revision_context 若非空，包含准确父版本的原稿、父评价 ID 与逐条问题，历史评价不是事实真值。'
                  '在 assessment.checks 逐项返回清单 id、status(passed/needs_attention/not_checked/disputed)、reason(实际比较的位置与依据)，可附 report_quote。'
                  '摘要、标题须服从正文表格与原文限定，影响和建议不能把融资当客户付费、个别案例当行业变化。'
                  '旧问题复核同时看原句、摘要、表格及结尾的残留；修正用 passed，仍存在用 needs_attention，未核对用 not_checked，有反证认为旧发现不成立用 disputed。'
-                 'assessment.findings 只列本版剩余问题，可用 check_ids 关联对应检查，不将旧发现机械复制；轻微问题可保留但相关检查不能全部通过。'
+                 '本版剩余问题只写顶层 findings，可用 check_ids 关联对应检查，不将旧发现机械复制；轻微问题可保留但相关检查不能全部通过。'
                  '此处复核不代替 history/responses.json 的 response_checks，也不改变已登记 Reviewer 发现的关闭规则。')
     if target.get('fact_checks'):
         prompt+=('\n本次含可选独立事实核查（观察模式）留下的候选记录：fact_checks[].candidates 是查了什么（主张锚点、查询id、证据span、四态候选与一句依据），selection.unselected 与 unchecked 是没查什么及原因，execution 说明本次执行为何收束。'

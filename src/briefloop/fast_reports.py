@@ -183,6 +183,48 @@ def revision_materials(store,job,brief,folder):
     return materials
 
 
+def _expand_evidence(data):
+    """Expand shared spans into the published contracts, without judging support."""
+    if not isinstance(data, dict) or not isinstance(data.get('records'), list):
+        raise ValueError('依据补全未返回预期记录，初稿保留；可恢复检查。')
+    expanded = {name: [] for name in ('citations', 'number_bindings', 'temporal_claims', 'fact_check_candidates')}
+    expanded['unsupported'] = data.get('unsupported', [])
+    rejected = []
+    for index, record in enumerate(data['records'][:30]):
+        if not isinstance(record, dict):
+            rejected.append({'field': 'records', 'index': index, 'reason': '依据记录不是对象'})
+            continue
+        shared = {key: record.get(key) for key in ('source_id', 'report_quote', 'excerpt')}
+        if shared not in expanded['citations']:
+            expanded['citations'].append(shared)
+        for field, target, fields in (
+            ('numbers', 'number_bindings', ('label', 'number_text', 'value', 'unit', 'entity', 'period')),
+            ('times', 'temporal_claims', ('statement', 'event_date', 'published_at', 'usage',
+                                         'news_basis', 'news_date', 'news_note')),
+        ):
+            attributes = record.get(field, [])
+            if not isinstance(attributes, list):
+                rejected.append({'field': 'records', 'index': index, 'reason': field+' 必须是数组'})
+                continue
+            for attribute in attributes[:30]:
+                if not isinstance(attribute, dict):
+                    rejected.append({'field': 'records', 'index': index, 'reason': field+' 属性不是对象'})
+                    continue
+                item = {**{key: value for key, value in attribute.items() if key in fields}, **shared}
+                if field == 'numbers':
+                    item['source_excerpt'] = item.pop('excerpt')
+                else:
+                    item.setdefault('statement', record.get('report_quote'))
+                expanded[target].append(item)
+        if record.get('check') is not None:
+            if isinstance(record['check'], dict):
+                expanded['fact_check_candidates'].append({
+                    **{key: value for key, value in record['check'].items() if key in ('kind', 'importance', 'attribution')}, **shared})
+            else:
+                rejected.append({'field': 'records', 'index': index, 'reason': 'check 属性不是对象'})
+    return expanded, rejected
+
+
 def enrich(worker, job, brief, folder):
     """Assemble evidence in a child version, with no changes to report prose."""
     from .models import Citation, NumberBinding, TemporalClaim, BriefDraft
@@ -215,43 +257,39 @@ def enrich(worker, job, brief, folder):
     from .evidence import public_fact_check_sources
     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
     candidate_allowed, candidate_reason = public_fact_check_sources(store, brief['run_id']) if requirements.get('fact_check') else (False, '本任务未开启联网事实核查')
-    prompt = ('核对已保存报告，为重要结论补原文定位。不要改写正文，不搜索、不调用工具、不生成新的报告。'
-              '只返回一个 JSON 对象，包含 citations、number_bindings、temporal_claims、unsupported 和 fact_check_candidates 五个数组。'
-              '没有可定位依据时留空，不猜测。'
-              'fact_check_candidates 为最多12条需要独立核对的公开事实或有归属的公开说法，候选不表示事实正确或原文支持。'
-              '每条给 report_quote（单个正文块中的连续原句）、kind（fact或source_opinion）、importance（core或supporting）、'
-              'source_id、excerpt（相关逐字原文）；source_opinion另给attribution。原文可能支持或反驳这句话，都可保留作待核查出处。'
-              '不选建议、私有信息或无公开出处的推断，不借选择候选改变正文、补写结论或标记已核实。'
-              + ('\n本任务允许选择上述公开事实候选。' if candidate_allowed else '\n本任务不选择联网核查候选，fact_check_candidates留空：'+candidate_reason)
-              +
-              'unsupported 列出正文中在全部来源里找不到依据的重要结论，每条给 report_quote（正文连续原句）和 reason；不要因措辞概括而列入。'
-              '每条 citation 使用 source_id（下方来源别名，如 S1）、report_quote（正文连续原句）、excerpt（连续逐字原文）。'
-              'report_quote 必须能在报告正文中逐字找到；摘录应包含对应的主体、期间、单位及限定条件，不能用同来源的无关段落充数。'
-              '无需猜行号；同一摘录在来源中重复时提供更长的唯一摘录。来源标题及相邻上下文由程序从冻结原文补入。'
-              '每条 number_binding 使用 label、source_id、report_quote（正文连续原句）、number_text（正文原数值含单位）、'
-              'source_excerpt（连续逐字原文）、value（来源原数值）、unit（来源单位）、entity、period。'
-              'value/unit 保留来源真实数值和量级；单位写标准表达，如 USD million、million USD、万元、%。'
-              '不要把 million 写成含糊的 M，不猜缺失的币种，不自行换算或改变来源数值。'
-              '正文与来源的数值、主体、期间或单位不一致时保留真实数据供检查，不自动修正文稿。'
-              'temporal_claims 记录正文重要事件的 statement、event_date、published_at、usage(current/background)、'
-              'news_basis(event/first_disclosure/new_development)、news_date、news_note，并提供 source_id、report_quote、excerpt。'
-              '区分事件发生、首次披露、实质新进展及撤回更正；缺失日期留空，不把披露日代作事件日。'
-              '抓取时间和原文行号由程序补入，不填写。已有时间记录见下方，可补充但不凭猜测覆盖有效记录。'
-              '最多 30 条重要引用、30 条重要数字、30 条重要事件；多段计算不要伪造单段原文支持。'
-              '\n报告日期范围：' + dump(json.loads(store.one('runs', brief['run_id'])['requirements']).get('time_context'))
+    contract = {
+        'records': [{
+            'source_id': '来源别名，如 S1', 'report_quote': '单个正文块中的连续原句',
+            'excerpt': '连续逐字原文，含主体、期间、单位和限定条件',
+            'numbers': [{'label': '指标名', 'number_text': '正文原数值含单位', 'value': '来源数值或 null',
+                         'unit': '来源原单位和量级，如 million USD、万元、%', 'entity': '主体', 'period': '期间'}],
+            'times': [{'statement': '事件名（省略则用正文原句）', 'event_date': '事件日', 'published_at': '披露日',
+                       'usage': 'current/background', 'news_basis': 'event/first_disclosure/new_development',
+                       'news_date': '当期新闻依据日期', 'news_note': '变化依据'}],
+            'check': {'kind': 'fact/source_opinion', 'importance': 'core/supporting', 'attribution': '说法归属（如有）'},
+        }],
+        'unsupported': [{'report_quote': '正文连续原句', 'reason': '全部材料缺少依据的原因'}],
+    }
+    prompt = ('核对已保存报告，为重要结论补原文定位，保持正文不变。返回下方结构的 JSON。'
+              '同一正文原句与来源摘录组合只登记一次，数字、时间和独立核查候选属性附在该记录中；无对应属性可省略。'
+              '无法定位时留空，不猜测；重要结论在全部来源中找不到依据时列入 unsupported，不因措辞概括而列入。'
+              '同一摘录在来源中重复时提供更长的唯一摘录。可定位仅表示原文存在，支持关系仍待独立判断。'
+              '数字保留来源真实数值、币种和量级，不换算；正文与来源不一致时保留真实来源数值供检查。'
+              '日期区分发生、首次披露、实质进展及撤回更正；未知日期留空，不用披露日代替事件日。'
+              '已有时间记录可补充但不凭猜测覆盖。原文行号、标题、上下文和抓取时间由程序补入。'
+              'check 选择有公开出处的事实或有归属说法，不选建议、私有信息或无出处推断。原文支持或反驳均可作为待核查出处。'
+              + ('本任务允许选择最多12条独立核查候选。' if candidate_allowed else '本任务省略 check：'+candidate_reason)
+              + '最多30条来源定位、30条数字、30条事件；多段计算不伪造单段原文支持。'
+              + '\n输出结构（可选属性只在相关记录中填写）：' + dump(contract)
+              + '\n报告日期范围：' + dump(requirements.get('time_context'))
               + '\n已有时间记录：' + dump(json.loads(brief['detail']).get('temporal_claims', []))
               + '\n报告正文：\n' + brief['markdown'] + '\n全部来源：\n' + _sources_text(materials))
     store.event(job['id'], 'fast_evidence', {'version_id': brief['id'], 'message': '后台补充原文定位，保持正文不变。'})
     _plain_turn(worker, job, phase, prompt)
-    data = json.loads(_response(phase))
-    if (not isinstance(data, dict) or not isinstance(data.get('citations'), list)
-            or not isinstance(data.get('number_bindings'), list)
-            or not isinstance(data.get('temporal_claims', []), list)):
-        raise ValueError('依据补全未返回预期记录，初稿保留；可恢复检查。')
+    data, rejected = _expand_evidence(json.loads(_response(phase)))
     from .evidence_context import located_context
     sources = {r['alias']: r for r in materials}
     sources.update({r['source_id']: r for r in materials})
-    rejected = []
 
     def locate(item, field):
         source = sources.get(item.get('source_id'))
