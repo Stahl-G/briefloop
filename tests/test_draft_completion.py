@@ -92,6 +92,44 @@ def finish(store,job,worker):
     return result
 
 
+def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrelated_sources(tmp_path, monkeypatch):
+    from briefloop import research_plan, tavily
+    from briefloop.draft_completion import binding, accept_stage_sources, require_fact_check_settled
+    store = Store(tmp_path)
+    run = store.create_run({'title': 'R', 'objective': 'Public update', 'allow_web': True, 'fact_check': True,
+        'completion_mode': 'direct', 'search_policy': {'primary_provider': 'tavily', 'coverage_mode': 'primary_only'},
+        'research_budget': {'search_requests': 2, 'candidate_urls': 10, 'source_pages': 2}}, [], research_protocol='quality_v1')
+    research_plan.freeze(store, run['id'])
+    research_plan.finish_round(store, run['id'])
+    stage = research_plan.admit_fact_check(store, run['id'], {'kind': 'task_reserve',
+        'limits': {'search_requests': 2, 'candidate_urls': 10, 'source_pages': 2}})
+    base = store.publish(run['id'], {'title': 'R', 'markdown': 'A public update.'})
+    parent = store.enqueue('assess', {'run_id': run['id'], 'version_id': base['id'],
+        'runtime': {'model': 'synthetic-model'}, 'agent_backend': 'codex',
+        'continuation_of': 'job_original', 'fast_evidence': True, 'checks_input': binding(store, base['id'])})
+    child = store.publish(run['id'], {'title': 'R', 'markdown': base['markdown'],
+        'editor_document': json.loads(base['editor_document']) if base.get('editor_document') else None},
+        version_id='brief_' + parent['id'][4:] + '_evidence', parent_id=base['id'])
+    check = store.enqueue('fact_check', {'run_id': run['id'], 'version_id': child['id'],
+        'runtime': {'model': 'synthetic-model'}, 'agent_backend': 'codex',
+        'parent_job_id': parent['id'], 'stage_id': stage['stage_id']})
+    response = {'request_id': 'public-check', 'results': [{'url': 'https://example.test/update', 'raw_content': 'Public update.'}]}
+    monkeypatch.setattr(tavily, '_post', lambda *a, **k: (response, json.dumps(response).encode()))
+    extracted = tavily.extract(store, [response['results'][0]['url']], run_id=run['id'])
+    with pytest.raises(ValueError, match='联网事实核查未完成'):
+        require_fact_check_settled(store, parent)
+    store.update_job(check['id'], 'complete')
+    research_plan.finish_fact_check(store, run['id'], status='completed')
+    accept_stage_sources(store, parent)
+    require_fact_check_settled(store, parent)
+    assert extracted['sources'][0]['id'] in {item['id'] for item in binding(store, base['id'])['sources']}
+    accept_stage_sources(store, parent)  # A resume reuses the admitted snapshot.
+    outsider = store.add_source('Unrelated', 'Unrelated source.')
+    store.attach_source(run['id'], outsider['id'])
+    with pytest.raises(Conflict, match='不属于本次事实核查'):
+        accept_stage_sources(store, parent)
+
+
 
 def test_unlocatable_evaluator_quote_gets_one_repair_then_is_dropped_not_fatal(tmp_path,monkeypatch):
     # A paraphrased report_quote used to fail the whole check job (two real

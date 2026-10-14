@@ -55,6 +55,17 @@ def check_binding(store,job):
     return json.loads(file.read_text(encoding='utf-8')) if file.exists() else json.loads(job['payload'])['checks_input']
 
 
+def _fact_check_versions(store, job, payload):
+    """The input and this job's same-body evidence child are the only targets."""
+    versions = [payload['version_id']]
+    if payload.get('fast_evidence'):
+        original = store.one('briefs', payload['version_id'])
+        enriched = store.rows('SELECT id FROM briefs WHERE id=? AND parent_id=? AND run_id=? AND hash=?',
+            ('brief_' + job['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash']))
+        versions.extend(row['id'] for row in enriched)
+    return versions
+
+
 def accept_stage_sources(store,job):
     """Only this continuation's metered fact-check receipts may expand scope."""
     payload=json.loads(job['payload'])
@@ -70,7 +81,10 @@ def accept_stage_sources(store,job):
     old_timing=[item for item in actual['source_timing'] if item['source_id'] in old]
     if old_timing!=expected['source_timing']:
         raise Conflict('原来源时间信息已变化，请重新选择当前材料进行检查')
-    children=store.rows("SELECT payload FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=?",(job['id'],payload['version_id']))
+    versions = _fact_check_versions(store, job, payload)
+    children=store.rows("SELECT payload FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? "
+                       "AND json_extract(payload,'$.run_id')=? AND json_extract(payload,'$.version_id') IN ("
+                       + ','.join('?' for _ in versions) + ')', (job['id'], payload['run_id'], *versions))
     stages={json.loads(child['payload']).get('stage_id') for child in children}-{None}
     ledger=store.meta('research_requests:'+payload['run_id']) or {}
     admitted={item['id']:item for request in ledger.values()
@@ -240,12 +254,15 @@ def resume_incomplete_output(job, folder, name):
 def require_fact_check_settled(store, job):
     payload=json.loads(job['payload'])
     if not payload.get('continuation_of'):return
-    children=store.rows("SELECT status,error FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC LIMIT 1",(job['id'],payload['version_id']))
+    versions = _fact_check_versions(store, job, payload)
+    children=store.rows("SELECT status,error FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? "
+                       "AND json_extract(payload,'$.run_id')=? AND json_extract(payload,'$.version_id') IN ("
+                       + ','.join('?' for _ in versions) + ') ORDER BY rowid DESC LIMIT 1', (job['id'], payload['run_id'], *versions))
     if children and children[0]['status']!='complete':
         raise ValueError('联网事实核查未完成，稿件及已取材料保留；请恢复本检查任务。'+str(children[0]['error'] or ''))
     req=json.loads(store.one('runs',payload['run_id'])['requirements'])
     from .fact_check import eligible_bindings
-    if req.get('fact_check') and eligible_bindings(store,payload['version_id']):
+    if req.get('fact_check') and any(eligible_bindings(store, version) for version in versions):
         from .research_plan import frozen
         stage=(frozen(store,payload['run_id']) or {}).get('fact_check') or {}
         if stage.get('status')!='completed':
