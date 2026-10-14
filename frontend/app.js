@@ -9,6 +9,7 @@ import {createReportChatContext} from './report-chat-context.js';
 import {createProviderCapabilities} from './provider-capabilities.js';
 import {createModelCatalog} from './model-catalog.js';
 import {providerSettingsUI} from './provider-settings.js';
+import {createSettingsNavigation} from './settings-navigation.js';
 import {createRuntimeModelPicker} from './runtime-model-picker.js';
 import {createRuntimePickerBindings} from './runtime-picker-bindings.js';
 const providerCapabilities=createProviderCapabilities({$});
@@ -1613,11 +1614,12 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
+const settingsNavigation=createSettingsNavigation({showPage:page,onReturn:target=>{if(target==='welcome')renderWelcome()}});
 function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;
-  $('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');
+  $('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');settingsNavigation.open();
   $('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();office.syncSettingsToggle();updateLearningPause().catch(()=>{});
   refreshTavilySettings().catch(()=>{})}
-$('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
+$('settings-open').onclick=showSettings;$('settings-close').onclick=settingsNavigation.close;
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';
   shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">未指定模型</strong></div><button type="button" class="outline">选择运行时与模型</button>';
