@@ -20,8 +20,9 @@ test('review keeps support, contradiction, insufficient and unknown distinct, wi
 test('Jev unknown, stale and provider failure never look like a review pass',()=>{
  const html=observationHTML({status:'failed',stale:true,error:'<private>',result:{items:[
   {statement:'Target <80>',status:'not_checked',execution:'uncertain',reason:'Request outcome unknown'},
-  {statement:'Forecast',status:'supported_for_scope',actual_model:'fixture',probabilities:{supported_for_scope:.8,unknown:.2}},
+  {statement:'Forecast',status:'supported_for_scope',actual_model:'fixture',numeric_targets:[{label:'<numeric-label>'}],probabilities:{supported_for_scope:.8,unknown:.2}},
  ]}},esc);
  for(const text of ['尚未核查','预检未完成','本次不能沿用','&lt;private&gt;','Target &lt;80&gt;','不是真实性概率','不改变正式交付状态'])assert.ok(html.includes(text),text);
  assert.ok(!html.includes('核验通过'));
+ assert.ok(html.includes('&lt;numeric-label&gt;')&&!html.includes('<numeric-label>'));
 });

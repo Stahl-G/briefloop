@@ -123,3 +123,62 @@ def test_only_fixed_endpoint_receives_key_and_errors_never_echo_credentials(tmp_
     assert 'synthetic-test-key' not in request.data.decode()
     assert set(json.loads(request.data)) == {'model', 'state', 'questions'}
     assert jev._NoRedirect().redirect_request(request, None, 302, '', {}, 'https://elsewhere.invalid') is None
+
+
+def test_numeric_decisions_do_not_require_unit_parsing_and_keep_text_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(jev, '_key_path', lambda: tmp_path / 'jev.key')
+    monkeypatch.delenv('TYPESAFE_API_KEY', raising=False)
+    store = Store(tmp_path / 'workspace')
+    source = store.add_source('Beam model release', 'Beam has 501 billion total parameters and 23 billion active parameters.')
+    run = store.create_run({'title': 'Model size', 'objective': 'Explain total and active size'}, [source['id']])
+    body = 'Beam 的总参数为 501B，激活参数为 23B。'
+    numbers = [{'label': '总参数', 'number_text': '501B', 'value': 501, 'unit': 'billion parameters',
+                'report_quote': '总参数为 501B', 'source_id': source['id'], 'locator': 'line 1',
+                'source_excerpt': store.source_text(source['id'])}]
+    brief = store.publish(run['id'], {'title': 'Model size', 'markdown': body, 'number_bindings': numbers})
+    frozen = jev_checks.snapshot(store, brief['id'])
+    assert frozen['numeric_coverage'] == {'total': 1, 'eligible': 1, 'unbound': 0}
+    assert frozen['items'][0]['report_context'] == body
+    jev.save_key('synthetic-key')
+    job = jev_checks.enqueue(store, brief['id'], frozen['fingerprint'], allow_external=True)
+    requests = []
+    def evaluate(item, model):
+        requests.append(jev.request_body(item, model))
+        return jev.parse_response(response('supported_for_scope'))
+    result = jev_checks.run(store, job, threading.Event(), evaluate=evaluate)
+    assert requests[0]['state']['statement'] == '总参数为 501B'
+    assert requests[0]['state']['report_context'] == body
+    assert 'numeric_targets' not in requests[0]['state']
+    assert result['items'][0]['numeric_targets'][0]['label'] == '总参数'
+    assert store.one('briefs', brief['id'])['markdown'] == body
+    # A stale body location cannot borrow a source to send a different claim.
+    numbers[0]['report_quote'] = '原稿不存在的数值'
+    changed = store.publish(run['id'], {'title': 'Changed', 'markdown': body, 'number_bindings': numbers})
+    preview = jev_checks.snapshot(store, changed['id'])
+    assert preview['numeric_coverage'] == {'total': 1, 'eligible': 0, 'unbound': 1}
+    assert preview['items'] == []
+
+
+def test_context_and_coverage_keep_repeated_prose_and_exclude_misplaced_numeric_labels(tmp_path):
+    store = Store(tmp_path / 'workspace')
+    text = 'Beam has 501 billion parameters.'
+    source = store.add_source('Synthetic source', text)
+    run = store.create_run({'title': 'R', 'objective': 'Check source support'}, [source['id']])
+    quote = 'Beam has 501B parameters.'
+    citation = {'source_id': source['id'], 'report_quote': quote, 'excerpt': text}
+    brief = store.publish(run['id'], {'title': 'R', 'markdown': quote + '\n\n' + quote, 'citations': [citation]})
+    view = jev_checks.snapshot(store, brief['id'])
+    assert view['unbound_citations'] == 0 and view['items'][0]['eligible']
+    assert not view['items'][0]['report_context']
+    number = {'label': 'Wrong annotation', 'value': 999, 'unit': 'B', 'number_text': '999B',
+              'report_quote': quote, 'source_id': source['id'], 'source_excerpt': text}
+    brief = store.publish(run['id'], {'title': 'R', 'markdown': quote, 'number_bindings': [number],
+                                     'citations': [{'source_id': source['id'], 'excerpt': text}]}, parent_id=brief['id'])
+    view = jev_checks.snapshot(store, brief['id'])
+    assert view['numeric_coverage'] == {'total': 1, 'eligible': 0, 'unbound': 1}
+    assert view['items'][0]['eligible'] and not view['items'][0]['numeric_targets']
+    assert view['unbound_citations'] == 0
+    body = 'Unrelated.\r\n\r\n' + quote + '\r\n\r\nOther section.'
+    assert jev_checks._report_context(body, quote) == quote
+    context = jev_checks._report_context('x' * 5000 + '\n' + quote + '\n' + 'y' * 5000, quote)
+    assert quote in context and len(context) <= len(quote) + 1000

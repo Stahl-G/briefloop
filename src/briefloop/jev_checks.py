@@ -1,6 +1,7 @@
 """User-requested, version-bound evidence prechecks using the existing job store."""
 import hashlib
 import json
+import re
 import time
 
 from . import jev
@@ -8,20 +9,50 @@ from .evidence_context import located_context
 from .store import Conflict, dump, now, uid
 
 PROTOCOL = 'jev-evidence-observation-v1'
-SCOPE = '仅预检本版本已明确绑定的结论与所列原文上下文；未覆盖全稿，不是事实保证或独立审阅。'
+SCOPE = 'Jev判断本版本结论及数字表述是否得到原文支持；不要求先通过单位解析。范围以以下材料为准，未覆盖全稿。'
+
+
+def _report_context(markdown, quote):
+    """Bound author context for interpretation, never independent evidence."""
+    if markdown.count(quote) != 1:
+        return ''
+    start = markdown.index(quote)
+    end = start + len(quote)
+    before = list(re.finditer(r'\r?\n[ \t]*\r?\n', markdown[:start]))
+    after = re.search(r'\r?\n[ \t]*\r?\n', markdown[end:])
+    lo = max(before[-1].end() if before else 0, start - 500)
+    hi = min(end + after.start() if after else len(markdown), end + 500)
+    return markdown[lo:hi]
 
 
 def snapshot(store, version_id):
     brief = store.brief_view(version_id)
     detail = json.loads(brief['detail'])
     allowed = set(store.source_ids(brief['run_id']))
-    grouped, unbound, sources = {}, 0, {}
-    for citation in detail.get('citations', []):
+    grouped, sources = {}, {}
+    unbound, unbound_numbers = [], 0
+    citations = [(citation, False) for citation in detail.get('citations', [])]
+    numbers = [(number, True) for number in detail.get('number_bindings', [])]
+    for citation, numeric in citations + numbers:
         quote = citation.get('report_quote', '')
-        if not quote or quote not in brief['markdown']:
-            unbound += 1
+        if not quote or quote not in brief['markdown'] or numeric and brief['markdown'].count(quote) != 1:
+            if numeric:
+                unbound_numbers += 1
+            else:
+                unbound.append(citation)
             continue
-        item = grouped.setdefault(quote, {'statement': quote, 'evidence': [], 'unavailable': []})
+        item = grouped.setdefault(quote, {'statement': quote, 'evidence': [], 'unavailable': [],
+                                         'report_context': _report_context(brief['markdown'], quote),
+                                         'numeric_targets': []})
+        if numeric:
+            # Display what is being checked. Expected values are writer annotations,
+            # not evidence; the Decision API receives the actual text instead.
+            token = citation.get('number_text')
+            if isinstance(token, str) and token.strip() and quote.count(token) == 1:
+                item['numeric_targets'].append({key: citation.get(key) for key in ('label', 'number_text')})
+            else:
+                # Still check the readable claim, but do not count a misplaced label as checked.
+                unbound_numbers += 1
         source_id = citation.get('source_id')
         if source_id not in allowed:
             item['unavailable'].append('引用来源未绑定到本次报告')
@@ -29,11 +60,13 @@ def snapshot(store, version_id):
         try:
             if source_id not in sources:
                 row = store.one('sources', source_id)
-                text = store.source_text(source_id)
-                sources[source_id] = (row, text)
+                if row['status'] != 'ready':
+                    raise ValueError('来源尚不可用')
+                sources[source_id] = (row, store.source_text(source_id))
             row, text = sources[source_id]
-            context = located_context(text, citation.get('excerpt', ''), citation.get('locator', ''))
-            evidence = {'source_id': source_id, 'title': row['name'], 'excerpt': citation['excerpt'],
+            excerpt = citation.get('source_excerpt' if numeric else 'excerpt', '')
+            context = located_context(text, excerpt, citation.get('locator', ''))
+            evidence = {'source_id': source_id, 'title': row['name'], 'excerpt': excerpt,
                         **context, 'source_hash': hashlib.sha256(text.encode()).hexdigest()}
             if evidence not in item['evidence']:
                 item['evidence'].append(evidence)
@@ -41,15 +74,19 @@ def snapshot(store, version_id):
             item['unavailable'].append('原文不可用或摘录无法唯一定位，需要重新补依据')
     items = []
     for quote, item in grouped.items():
-        # One claim may depend on several sources. Never silently drop a failed
-        # source and turn an incomplete evidence set into a support judgment.
         item['id'] = hashlib.sha256(quote.encode()).hexdigest()[:24]
         item['eligible'] = bool(item['evidence']) and not item['unavailable']
         items.append(item)
+    covered = {(evidence['source_id'], evidence['excerpt']) for item in items if item['eligible']
+               for evidence in item['evidence']}
+    unbound_count = sum(bool(citation.get('report_quote'))
+                        or (citation.get('source_id'), citation.get('excerpt')) not in covered for citation in unbound)
     data = {'protocol': PROTOCOL, 'version_id': version_id, 'run_id': brief['run_id'],
             'brief_hash': brief['hash'], 'provider': 'TypeSafe', 'endpoint': jev.ENDPOINT,
             'model': jev.MODEL, 'instructions': jev.INSTRUCTIONS, 'criteria': jev.CRITERIA,
-            'items': items, 'unbound_citations': unbound, 'scope': SCOPE}
+            'items': items, 'unbound_citations': unbound_count, 'scope': SCOPE,
+            'numeric_coverage': {'total': len(numbers), 'unbound': unbound_numbers,
+                                 'eligible': sum(len(item['numeric_targets']) for item in items if item['eligible'])}}
     return {**data, 'fingerprint': hashlib.sha256(dump(data).encode()).hexdigest()}
 
 
@@ -99,7 +136,8 @@ def run(store, job, cancelled, *, evaluate=None):
     # alter the request, and the UI marks it stale against its new snapshot.
     result = json.loads(job.get('result') or '{}') or {
         'version_id': payload['version_id'], 'fingerprint': payload['fingerprint'],
-        'scope': SCOPE, 'affects_release': False, 'items': [], 'started': now()}
+        'scope': frozen.get('scope', SCOPE), 'affects_release': False, 'items': [], 'started': now(),
+        'numeric_coverage': frozen.get('numeric_coverage')}
     by_id = {item['id']: item for item in result['items']}
     evaluate = evaluate or jev.evaluate
     for item in frozen['items']:
@@ -116,7 +154,8 @@ def run(store, job, cancelled, *, evaluate=None):
             _persist(store, job['id'], result)
             continue
         observation = {'id': item['id'], 'statement': item['statement'], 'status': 'not_checked',
-                       'execution': 'not_checked', 'reason': '；'.join(item['unavailable'])}
+                       'execution': 'not_checked', 'reason': '；'.join(item['unavailable']),
+                       'numeric_targets': item.get('numeric_targets', [])}
         result['items'].append(observation)
         by_id[item['id']] = observation
         if not item['eligible']:
@@ -157,4 +196,5 @@ def view(store, version_id):
                         'result': json.loads(job['result']) if job['result'] else None})
     return {'version_id': version_id, 'fingerprint': frozen['fingerprint'], 'provider': jev.key_status(),
             'scope': SCOPE, 'items': frozen['items'], 'unbound_citations': frozen['unbound_citations'],
+            'numeric_coverage': frozen['numeric_coverage'],
             'records': records}
