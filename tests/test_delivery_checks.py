@@ -27,6 +27,8 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         ('亏损0美元。', '0美元', 0, 'USD', '$0', True),
         ('Axiom估值375 亿美元，TypeSafe估值75 亿美元。', '75 亿美元', 7.5, 'billion USD', '$7.5 billion', True),
         ('目标缺陷少于 12 件，尚未确认达成。', '12 件', 12, '件', '目标缺陷少于 12 件，尚未确认达成。', True),
+        ('2021 年以来的 857 次发布', '857', 857, 'releases', 'Of the 857 releases, only 31', True),
+        ('2021 年以来的 857 万次发布', '857', 857, 'releases', 'Of the 857 releases, only 31', False),
     ]
     for quote, token, value, unit, excerpt, found in cases:
         row = check_numbers(quote, [bound(store, quote, token, value, unit, excerpt)], store)[0]
@@ -34,12 +36,16 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         assert row['found'] is found, (quote, row)
     for unit in ('USD/MWh', 'B USD', 'kilo EUR', '兆', '件（目标要求少于）'):
         assert normalized(5, unit) is None
-    for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh/年', '5MWh/年')]:
+    for quote, token in [('收入110美元', '10美元'), ('收入110美元', '10'), ('价格5美元/MWh', '5美元/MWh'),
+                         ('电量5MWh/年', '5MWh/年'), ('约 29,000 张', '约 29,000 张')]:
         item = bound(store, quote, token, 5, 'USD', '$5')
         assert not check_numbers(quote, [item], store)[0]['checked']
     repeated='TypeSafe估值75 亿美元，Arena估值75 亿美元。'
     item=bound(store,repeated,'75 亿美元',7.5,'billion USD','$7.5 billion')
     assert not check_numbers(repeated,[item],store)[0]['checked']
+    # Only count nouns join a number by hyphen ('722-manuscript'); years and GPU-hours stay out.
+    from briefloop.delivery_checks import quantities
+    assert [value for *_, value in quantities('a 5-year, 1,000-GPU-hour plan')] == [normalized(5, '')]
     assert normalized(10, '万美元') == normalized(100000, 'USD')
     assert normalized(1, 'thousand USD') == normalized(1000, 'USD')
 
@@ -95,6 +101,9 @@ def test_unknown_currency_magnitudes_never_degrade_to_bare_currency(text):
     ('1000千瓦时', 1, '兆瓦时', '1兆瓦时'),
     ('10,000 vehicles', 1, '万辆', '1万辆'),
     ('120 件', 120, '件', 'Cedar 第二季度处理 120 件'),
+    ('722 篇', 722, 'manuscripts', 'OpenAI published the 722-manuscript collection on October 6'),
+    ('2万张', 20000, 'GPUs', 'a further 20,000 GPUs'),
+    ('857 次', 857, 'releases', 'Of the 857 releases, only 31'),
 ])
 def test_registered_units_keep_source_and_exact_body_binding(tmp_path, token, value, unit, source):
     store = Store(tmp_path)
@@ -121,6 +130,8 @@ def test_registered_units_keep_source_and_exact_body_binding(tmp_path, token, va
     ('1 EUR', 1, 'USD', '$1'),
     ('1 GBP', 1, 'EUR', '€1'),
     ('1吨', 1, '股', '1股'),
+    ('7220 篇', 722, 'manuscripts', '722 manuscripts'),
+    ('1 张', 1, '%', '1%'),
 ])
 def test_registered_units_never_hide_magnitude_currency_or_dimension_mismatch(tmp_path, token, value, unit, source):
     store = Store(tmp_path)
@@ -133,7 +144,9 @@ def test_registered_units_never_hide_magnitude_currency_or_dimension_mismatch(tm
     '5 MWhx', '5 EURfoo', '5 million EURfoo', '5 tonnesCO2',
     'XYZ5 EUR', 'b5 MWh', '$€5',
     '$5 EUR', 'EUR 5 USD', '5 MW·h', '5 MWh/年', '5万元/吨', '5万欧元每年',
-    '1,23 EUR', '1.2.3 EUR', '1e+ EUR',
+    '1,23 EUR', '1.2.3 EUR', '1e+ EUR', '1,000 GPU-hours',
+    '1,000 GPU‑hours', '1,000 GPU hours', '1,000 GPUs per hour',
+    '1,000-GPUs/hour',
 ])
 def test_partial_unknown_or_compound_units_are_not_accepted(text):
     from briefloop.delivery_checks import quantities

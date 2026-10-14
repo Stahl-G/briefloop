@@ -255,6 +255,12 @@ def test_revision_inside_background_assess_uses_analyst_revision_role(tmp_path):
     (stage/'input.json').write_text(dump({'brief':{'id':brief['id'],'markdown':brief['markdown']},'review_findings':[]}))
     cfg,_=prepare(store,store.one('jobs',assess['id']),stage,'修订')
     assert cfg['role']=='analyst' and cfg['revision'] is True
+    # The frozen original is carried once, in original.json; feedback points to it.
+    task=json.loads((stage/'packet'/'input.json').read_text(encoding='utf-8'))
+    original=json.loads((stage/'packet'/'original.json').read_text(encoding='utf-8'))
+    assert original['markdown']==brief['markdown'] and brief['markdown'] not in dump(task['feedback'])
+    assert task['feedback']['brief']['id']==original['id']==task['base_version']
+    assert task['feedback']['review_findings']==[]
 
 
 def test_submission_and_receipt_roll_back_together(tmp_path,monkeypatch):

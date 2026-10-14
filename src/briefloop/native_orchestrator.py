@@ -653,10 +653,14 @@ def prepare(store, job, folder, prompt):
         from .analyst import packet, WRITING_GUIDE
         plan_path = folder.parent / 'plan.json'
         research_path = folder.parent / 'research.json'
+        # original.json and the packet's own requirements/research_context
+        # already carry these; a second copy only grows what the writer reads.
+        feedback = {key: value for key, value in data.items() if key not in ('brief', 'requirements', 'research_context')}
+        feedback['brief'] = {'id': data['brief']['id'], 'hash': data['brief'].get('hash'), 'file': 'original.json'}
         packet(store, run_id, folder,
                plan=json.loads(plan_path.read_text(encoding='utf-8')) if plan_path.exists() else {},
                research=json.loads(research_path.read_text(encoding='utf-8')) if research_path.exists() else {'sources': [], 'gaps': []},
-               base_version=data['brief']['id'], feedback=data)
+               base_version=data['brief']['id'], feedback=feedback)
         return {**config, 'role': 'analyst', 'revision': True, 'result_file': str(folder / 'draft.json')}, (WRITING_GUIDE +
             '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons/revision_focus；修改问题原段后复核摘要、表格和影响段有无同一结论残留。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')
     _save(root / 'input.json', data)
