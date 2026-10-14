@@ -248,7 +248,9 @@ class HarnessManager:
                     old_thread_id=thread_id;self._threads.pop(thread_id,None);thread_id=None
                     self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
             from .search_policy import native_allowed
-            native_web=bool(message['allow_web']) and native_allowed(config,internal)
+            from .report_revision import context_for_message
+            report_bound=bool((context_for_message(self.store,sid,mid) or {}).get('base_version_id'))
+            native_web=bool(message['allow_web']) and not report_bound and native_allowed(config,internal)
             thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if native_web else 'disabled'},'developerInstructions':instructions}
             if tier is not None:thread_params['serviceTier']=tier
             if config['model']=='default':thread_params.pop('model',None)

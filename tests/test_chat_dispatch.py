@@ -111,6 +111,8 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         bind_context(store, sid, 'feedback', None)
     codex.send(sid, 'Find missing developments and revise this report.', message_id='feedback', allow_web=True)
     until(lambda: codex.chat.session(sid)['turn_id'] == 'turn1')
+    thread = next(params for method, params in codex.client.calls if method == 'thread/start')
+    assert thread['config']['web_search'] == 'disabled'
     from briefloop.draft_completion import binding
     old_check = store.enqueue('assess', {'version_id': brief['id'], 'run_id': run['id'],
         'continuation_of': generation['id'], 'checks_input': binding(store, brief['id'])})
@@ -129,8 +131,9 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
     assert added['id'] in store.source_ids(run['id'])
     document = tmp_path / 'revision.json'
     document.write_text(json.dumps(markdown_document(f'Revenue 15 USD. [@{added["id"]}]')))
-    revised = workspace_action(store, {'action': 'revise_document', 'base_version': brief['id'],
-                                       'document_file': str(document), 'citations': [{'source_id': added['id']}]})
+    from briefloop.version_execution import chat_publication
+    revised = store.revise(brief['id'], editor_document=json.loads(document.read_text()),
+        citations=[{'source_id': added['id']}], author='agent', writer=chat_publication(store, sid, 'feedback'))
     assert json.loads(revised['detail'])['evidence_needs_review']
     codex.handle_notification({'method': 'item/completed', 'params': {'threadId': 't1', 'turnId': 'turn1',
                               'item': {'type': 'agentMessage', 'id': 'answer', 'text': 'Saved revised report.'}}})
@@ -186,6 +189,7 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         bind_context(store, session, session, {'version_id': revised['id'], 'hash': revised['hash']})
         host.send(session, 'Check this report.', message_id=session, allow_web=True)
         _wait_status(host, session, session, 'completed')
+        if isinstance(host, BridgeHarness):assert host.bridge.starts[-1]['web_tools'] is False
         wait_report_closeout(session)
         assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'completed'
         prepare = dispatcher.input
@@ -201,3 +205,56 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         assert not host.chat.session(session)['busy']
         assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'failed'
         host.close()
+
+
+def test_report_closeout_uses_message_receipt_instead_of_other_chats_latest_version(tmp_path, monkeypatch):
+    import json
+    from briefloop.chat_store import ChatStore
+    from briefloop.report_revision import bind_context, finish_message
+    from briefloop.version_execution import chat_publication
+    from briefloop import draft_completion
+    store = Store(tmp_path)
+    store.update_settings({'model': 'a', 'model_selection_required': False})
+    run = store.create_run({'title': 'R', 'objective': 'Changes'}, [])
+    base = store.publish(run['id'], {'title': 'R', 'markdown': 'Original.'})
+    chat = ChatStore(store)
+    messages = []
+    for label in ('A', 'B'):
+        session = chat.create(label, {'model': 'a', 'permission': 'workspace-write'}, tmp_path)
+        message = chat.message(session['id'], 'Revise.', status='sending', runtime=session['runtime'])
+        chat.patch_message(message['id'], turn_id=message['id'])
+        chat.update(session['id'], turn_id=message['id'])
+        bind_context(store, session['id'], message['id'], {'version_id': base['id'], 'hash': base['hash']})
+        messages.append((session['id'], message['id']))
+    b = store.revise(base['id'], 'Revision B.', allow_markdown_conversion=True, author='agent',
+        writer=chat_publication(store, *messages[1]))
+    queued = []
+    monkeypatch.setattr(draft_completion, 'enqueue_revision', lambda store, version_id, **kwargs:
+        queued.append((version_id, kwargs['session_id'])) or {'id': 'job_for_' + version_id})
+    for sid, mid in messages:
+        chat.patch_message(mid, status='completed')
+        finish_message(store, mid, 'completed')
+    assert queued == [(b['id'], messages[1][0])]
+    assert not store.rows("SELECT 1 FROM chat_events WHERE session_id=? AND kind='revision/checksUnavailable'", (messages[0][0],))
+    for sid, mid in messages:finish_message(store, mid, 'completed')
+    assert len(queued) == 1
+
+
+def test_restricted_pi_gets_selected_saved_body_without_shell_or_revision_research(tmp_path):
+    from briefloop.report_revision import bind_context
+    store = Store(tmp_path)
+    store.update_settings({'model': 'a', 'model_selection_required': False})
+    run = store.create_run({'title': 'Selected', 'objective': 'Explain', 'allow_web': True}, [])
+    brief = store.publish(run['id'], {'title': 'Selected', 'markdown': 'Saved figure: 17 orders.'})
+    bridge = BridgeFixture()
+    host = BridgeHarness(store, bridge, 'pi')
+    ChatDispatcher({'pi': host})
+    for mode in ('read', 'none'):
+        session = host.create_session(runtime={'model': 'default', 'host_options': {'mode': mode}})['id']
+        bind_context(store, session, mode, {'version_id': brief['id'], 'hash': brief['hash']})
+        host.send(session, 'Explain the selected report.', message_id=mode, allow_web=True)
+        until(lambda: any(item['id'] == mode and item['status'] == 'completed' for item in host.snapshot(session)['messages']))
+        assert 'Saved figure: 17 orders.' in bridge.starts[-1]['prompt']
+        assert bridge.starts[-1]['web_tools'] is False
+        assert not store.meta('research_plan:' + run['id'])
+    host.close()
