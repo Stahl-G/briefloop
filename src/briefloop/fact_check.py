@@ -58,6 +58,23 @@ def eligible_bindings(store, version_id):
     return bindings
 
 
+def candidate_scope(store, version_id):
+    bindings = eligible_bindings(store, version_id)
+    anchors = [{'claim_id': claim_id, **{key: binding[key] for key in ('block_id', 'quote', 'block_hash')}}
+               for claim_id, items in bindings.items() for binding in items]
+    return {'version_id': version_id, 'claim_ids': sorted(bindings),
+            'anchors': sorted(anchors, key=lambda item: (item['claim_id'], item['block_id'], item['quote']))}
+
+
+def completed_for(store, version_id):
+    """Reuse only an admitted completed result for this intact version's bindings."""
+    brief = store.one('briefs', version_id)
+    for record in records_for(store, brief['run_id'], version_id):
+        if record['data']['execution']['status'] == 'completed' and covers(store, record, version_id):
+            return record
+    return None
+
+
 def automatic_candidates(store, brief):
     """Identify the new automatic lane from its existing exact-version event."""
     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
@@ -210,6 +227,8 @@ def check_fact_result(store,run_id,result,*,snapshot=None):
     plan=frozen_plan(store,run_id) or {};stage=plan.get('fact_check') or {};stage_id=stage.get('stage_id')
     if result.get('stage_id') is not None and result.get('stage_id')!=stage_id:
         errors.append({'path':'stage_id','code':'stage_mismatch','message':'stage_id 与本任务接纳的核查阶段不一致'})
+    if stage.get('scope') is not None and (brief is None or stage['scope'] != candidate_scope(store, brief['id'])):
+        errors.append({'path':'version_id','code':'candidate_scope_mismatch','message':'结果版本或候选集合与接纳阶段不一致'})
     execution=result.get('execution')
     if not isinstance(execution,dict) or execution.get('status') not in FACT_CHECK_STATUSES:
         hint='；事实判断只写在 candidates[].status' if isinstance(execution,dict) and execution.get('status') in CANDIDATE_STATUSES else ''
@@ -363,6 +382,7 @@ def submit_result(store,run_id,result,*,job_id=None):
     if stage.get('status')!='active':
         raise AdmissionError('核查阶段已以 '+str(stage.get('status'))+' 收束，迟到结果不接纳',code='fact_check_closed')
     snapshot=None
+    payload=None
     if job_id:
         try:job=store.one('jobs',job_id)
         except ValueError:job=None
@@ -381,6 +401,9 @@ def submit_result(store,run_id,result,*,job_id=None):
         current=plan.get('fact_check') or {}
         if current.get('status')!='active' or current.get('stage_id')!=stage['stage_id']:
             raise AdmissionError('核查阶段已收束或变化，迟到结果不接纳',code='fact_check_closed')
+        if current.get('scope') is not None and payload is not None:
+            if payload.get('stage_id') != current['stage_id'] or payload.get('version_id') != result.get('version_id'):
+                raise AdmissionError('核查任务不属于当前阶段和结果版本', code='fact_check_job_mismatch')
         record=check_fact_result(store,run_id,result,snapshot=snapshot)
         c.execute('INSERT INTO fact_checks VALUES(?,?,?,?,?,?,?)',
                   (record['id'],run_id,record['version_id'],record['stage_id'],

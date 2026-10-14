@@ -1186,7 +1186,7 @@ class Worker:
             share={field:min(FACT_CHECK_RESERVE[field],int(remaining.get(field) or 0)) for field in FACT_CHECK_RESERVE}
             source={'kind':'task_reserve','limits':share}
         try:
-            admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'])
+            admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'],version_id=brief['id'])
         except AdmissionError as exc:
             self.store.event(job['id'],'fact_check',{'action':'admit_refused','version_id':brief['id'],'code':exc.code,'error':str(exc),'reason':str(exc)})
             return None
@@ -1258,6 +1258,10 @@ class Worker:
         backend=validate_backend(payload.get('agent_backend','codex'))
         run_id=brief['run_id']
         stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        from .fact_check import candidate_scope
+        if (payload.get('stage_id') != stage.get('stage_id')
+                or stage.get('scope') is not None and stage['scope'] != candidate_scope(self.store, brief['id'])):
+            raise ValueError('核查阶段或版本候选集合已变化，未执行旧核查任务')
         if stage.get('status')!='active':
             # A resumed job after the stage already closed (late result refused,
             # user grant reopened another stage) must not execute a second turn.
@@ -1276,7 +1280,7 @@ class Worker:
                 allowed,scope_reason=public_fact_check_sources(self.store,run_id)
                 if not allowed:reason=scope_reason
         if reason:
-            finish_fact_check(self.store,run_id,status='failed',summary=reason,job_id=job['id'])
+            finish_fact_check(self.store,run_id,status='failed',summary=reason,job_id=job['id'],stage_id=payload['stage_id'])
             self.store.event(job['id'],'fact_check',{'action':'not_checked','version_id':brief['id'],'reason':reason})
             return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),'execution':'failed','reason':reason}
         job={**job,'allow_web':True}
@@ -1284,19 +1288,21 @@ class Worker:
         try:
             (runtime or self.runtime).execute(job,fact_check_prompt(self.store,job,brief,folder,backend),folder)
         except InterruptedError:
-            finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'])
+            finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'],stage_id=payload['stage_id'])
             raise
         except Exception:
             # A transport failure is a job failure, not a check outcome: the
             # stage stays active so the resumed job can retry the same turn.
             raise
         stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        if stage.get('stage_id') != payload.get('stage_id'):
+            raise ValueError('核查阶段已变化，本次任务不读取另一阶段的结果')
         if stage.get('status')=='active':
             # The turn ended without an admitted result: fail the job honestly;
             # the stage stays active for a resume instead of pretending an
             # empty check ran.
             raise ValueError('核查会话结束但未提交结果；可恢复该任务重试')
-        rows=records_for(self.store,run_id)
+        rows=[row for row in records_for(self.store,run_id,brief['id']) if row['stage_id']==stage['stage_id']]
         record=rows[0] if rows else None
         return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
                 'execution':stage.get('outcome',{}).get('status'),

@@ -264,12 +264,14 @@ def require_fact_check_settled(store, job):
     if children and children[0]['status']!='complete':
         raise ValueError('联网事实核查未完成，稿件及已取材料保留；请恢复本检查任务。'+str(children[0]['error'] or ''))
     req=json.loads(store.one('runs',payload['run_id'])['requirements'])
-    from .fact_check import eligible_bindings
-    if req.get('fact_check') and any(eligible_bindings(store, version) for version in versions):
+    from .fact_check import eligible_bindings, completed_for
+    targets = [version for version in versions if eligible_bindings(store, version)]
+    # An evidence child is the actual checked version once it exists.
+    target = targets[-1] if targets else None
+    if req.get('fact_check') and target and not completed_for(store, target):
         from .research_plan import frozen
         stage=(frozen(store,payload['run_id']) or {}).get('fact_check') or {}
-        if stage.get('status')!='completed':
-            raise ValueError('联网事实核查阶段尚未完成（'+str(stage.get('status') or '未接纳')+'）；请先处理核查预算或中断状态，再恢复检查。')
+        raise ValueError('本版本候选核查尚未完成（'+str(stage.get('status') or '未接纳')+'）；请先处理核查预算或中断状态，再恢复检查。')
 
 
 def resume_cancelled_stage(connection, job):
