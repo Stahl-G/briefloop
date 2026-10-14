@@ -107,9 +107,11 @@ def accept_stage_sources(store,job):
     if old_timing!=expected['source_timing']:
         raise Conflict('原来源时间信息已变化，请重新选择当前材料进行检查')
     versions = _fact_check_versions(store, job, payload)
-    children=store.rows("SELECT payload FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? "
+    owners = [attempt['id'] for attempt in _check_attempts(store, job, payload)]
+    children=store.rows("SELECT payload FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id') IN ("
+                       + ','.join('?' for _ in owners) + ') '
                        "AND json_extract(payload,'$.run_id')=? AND json_extract(payload,'$.version_id') IN ("
-                       + ','.join('?' for _ in versions) + ')', (job['id'], payload['run_id'], *versions))
+                       + ','.join('?' for _ in versions) + ')', (*owners, payload['run_id'], *versions))
     stages={json.loads(child['payload']).get('stage_id') for child in children}-{None}
     ledger=store.meta('research_requests:'+payload['run_id']) or {}
     admitted={item['id']:item for request in ledger.values()

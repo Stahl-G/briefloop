@@ -762,9 +762,10 @@ class Worker:
                 raise ValueError('只有失败、中断或已取消的任务可以新建重试')
             original=json.loads(job['payload'])
             if job['kind']=='assess':
-                from .draft_completion import verify_input,check_binding
+                from .draft_completion import verify_input,check_binding,accept_stage_sources
                 if not original.get('continuation_of') or not original.get('checks_input') or original.get('inline_owner_job_id'):
                     raise ValueError('请对当前稿件重新发起检查；这个任务没有可恢复的正文与来源绑定')
+                accept_stage_sources(self.store,job)
                 verify_input(self.store,job)
             for row in self.store.rows("SELECT * FROM jobs WHERE kind=? AND status IN ('queued','running') ORDER BY rowid",(job['kind'],)):
                 if json.loads(row['payload']).get('retry_of_job_id')==jid:return row
