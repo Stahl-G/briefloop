@@ -1,6 +1,7 @@
 """User-requested, version-bound evidence prechecks using the existing job store."""
 import hashlib
 import json
+import re
 import time
 
 from . import jev
@@ -12,11 +13,16 @@ SCOPE = 'Jev判断本版本结论及数字表述是否得到原文支持；不�
 
 
 def _report_context(markdown, quote):
-    """Keep the local report paragraph; its wording is evidence, not instructions."""
+    """Bound author context for interpretation, never independent evidence."""
+    if markdown.count(quote) != 1:
+        return ''
     start = markdown.index(quote)
-    lo = markdown.rfind('\n\n', 0, start)
-    hi = markdown.find('\n\n', start + len(quote))
-    return markdown[lo + 2 if lo >= 0 else 0:hi if hi >= 0 else len(markdown)]
+    end = start + len(quote)
+    before = list(re.finditer(r'\r?\n[ \t]*\r?\n', markdown[:start]))
+    after = re.search(r'\r?\n[ \t]*\r?\n', markdown[end:])
+    lo = max(before[-1].end() if before else 0, start - 500)
+    hi = min(end + after.start() if after else len(markdown), end + 500)
+    return markdown[lo:hi]
 
 
 def snapshot(store, version_id):
@@ -24,16 +30,16 @@ def snapshot(store, version_id):
     detail = json.loads(brief['detail'])
     allowed = set(store.source_ids(brief['run_id']))
     grouped, sources = {}, {}
-    unbound, unbound_numbers = 0, 0
+    unbound, unbound_numbers = [], 0
     citations = [(citation, False) for citation in detail.get('citations', [])]
     numbers = [(number, True) for number in detail.get('number_bindings', [])]
     for citation, numeric in citations + numbers:
         quote = citation.get('report_quote', '')
-        if not quote or brief['markdown'].count(quote) != 1:
+        if not quote or quote not in brief['markdown'] or numeric and brief['markdown'].count(quote) != 1:
             if numeric:
                 unbound_numbers += 1
             else:
-                unbound += 1
+                unbound.append(citation)
             continue
         item = grouped.setdefault(quote, {'statement': quote, 'evidence': [], 'unavailable': [],
                                          'report_context': _report_context(brief['markdown'], quote),
@@ -41,7 +47,12 @@ def snapshot(store, version_id):
         if numeric:
             # Display what is being checked. Expected values are writer annotations,
             # not evidence; the Decision API receives the actual text instead.
-            item['numeric_targets'].append({key: citation.get(key) for key in ('label', 'number_text')})
+            token = citation.get('number_text')
+            if isinstance(token, str) and token.strip() and quote.count(token) == 1:
+                item['numeric_targets'].append({key: citation.get(key) for key in ('label', 'number_text')})
+            else:
+                # Still check the readable claim, but do not count a misplaced label as checked.
+                unbound_numbers += 1
         source_id = citation.get('source_id')
         if source_id not in allowed:
             item['unavailable'].append('引用来源未绑定到本次报告')
@@ -66,10 +77,14 @@ def snapshot(store, version_id):
         item['id'] = hashlib.sha256(quote.encode()).hexdigest()[:24]
         item['eligible'] = bool(item['evidence']) and not item['unavailable']
         items.append(item)
+    covered = {(evidence['source_id'], evidence['excerpt']) for item in items if item['eligible']
+               for evidence in item['evidence']}
+    unbound_count = sum(bool(citation.get('report_quote'))
+                        or (citation.get('source_id'), citation.get('excerpt')) not in covered for citation in unbound)
     data = {'protocol': PROTOCOL, 'version_id': version_id, 'run_id': brief['run_id'],
             'brief_hash': brief['hash'], 'provider': 'TypeSafe', 'endpoint': jev.ENDPOINT,
             'model': jev.MODEL, 'instructions': jev.INSTRUCTIONS, 'criteria': jev.CRITERIA,
-            'items': items, 'unbound_citations': unbound, 'scope': SCOPE,
+            'items': items, 'unbound_citations': unbound_count, 'scope': SCOPE,
             'numeric_coverage': {'total': len(numbers), 'unbound': unbound_numbers,
                                  'eligible': sum(len(item['numeric_targets']) for item in items if item['eligible'])}}
     return {**data, 'fingerprint': hashlib.sha256(dump(data).encode()).hexdigest()}

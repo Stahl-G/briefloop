@@ -157,3 +157,28 @@ def test_numeric_decisions_do_not_require_unit_parsing_and_keep_text_context(tmp
     preview = jev_checks.snapshot(store, changed['id'])
     assert preview['numeric_coverage'] == {'total': 1, 'eligible': 0, 'unbound': 1}
     assert preview['items'] == []
+
+
+def test_context_and_coverage_keep_repeated_prose_and_exclude_misplaced_numeric_labels(tmp_path):
+    store = Store(tmp_path / 'workspace')
+    text = 'Beam has 501 billion parameters.'
+    source = store.add_source('Synthetic source', text)
+    run = store.create_run({'title': 'R', 'objective': 'Check source support'}, [source['id']])
+    quote = 'Beam has 501B parameters.'
+    citation = {'source_id': source['id'], 'report_quote': quote, 'excerpt': text}
+    brief = store.publish(run['id'], {'title': 'R', 'markdown': quote + '\n\n' + quote, 'citations': [citation]})
+    view = jev_checks.snapshot(store, brief['id'])
+    assert view['unbound_citations'] == 0 and view['items'][0]['eligible']
+    assert not view['items'][0]['report_context']
+    number = {'label': 'Wrong annotation', 'value': 999, 'unit': 'B', 'number_text': '999B',
+              'report_quote': quote, 'source_id': source['id'], 'source_excerpt': text}
+    brief = store.publish(run['id'], {'title': 'R', 'markdown': quote, 'number_bindings': [number],
+                                     'citations': [{'source_id': source['id'], 'excerpt': text}]}, parent_id=brief['id'])
+    view = jev_checks.snapshot(store, brief['id'])
+    assert view['numeric_coverage'] == {'total': 1, 'eligible': 0, 'unbound': 1}
+    assert view['items'][0]['eligible'] and not view['items'][0]['numeric_targets']
+    assert view['unbound_citations'] == 0
+    body = 'Unrelated.\r\n\r\n' + quote + '\r\n\r\nOther section.'
+    assert jev_checks._report_context(body, quote) == quote
+    context = jev_checks._report_context('x' * 5000 + '\n' + quote + '\n' + 'y' * 5000, quote)
+    assert quote in context and len(context) <= len(quote) + 1000
