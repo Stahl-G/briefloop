@@ -60,7 +60,10 @@ def delete_key():
 
 
 def request_body(item, model=MODEL):
-    return {'model': model, 'state': {'statement': item['statement'], 'evidence': item['evidence']},
+    state = {'statement': item['statement'], 'evidence': item['evidence']}
+    if item.get('report_context'):
+        state['report_context'] = item['report_context']
+    return {'model': model, 'state': state,
             'questions': {'support': {'type': 'choice', 'instructions': INSTRUCTIONS, 'criteria': CRITERIA}}}
 
 

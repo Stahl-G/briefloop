@@ -8,20 +8,40 @@ from .evidence_context import located_context
 from .store import Conflict, dump, now, uid
 
 PROTOCOL = 'jev-evidence-observation-v1'
-SCOPE = '仅预检本版本已明确绑定的结论与所列原文上下文；未覆盖全稿，不是事实保证或独立审阅。'
+SCOPE = 'Jev判断本版本结论及数字表述是否得到原文支持；不要求先通过单位解析。范围以以下材料为准，未覆盖全稿。'
+
+
+def _report_context(markdown, quote):
+    """Keep the local report paragraph; its wording is evidence, not instructions."""
+    start = markdown.index(quote)
+    lo = markdown.rfind('\n\n', 0, start)
+    hi = markdown.find('\n\n', start + len(quote))
+    return markdown[lo + 2 if lo >= 0 else 0:hi if hi >= 0 else len(markdown)]
 
 
 def snapshot(store, version_id):
     brief = store.brief_view(version_id)
     detail = json.loads(brief['detail'])
     allowed = set(store.source_ids(brief['run_id']))
-    grouped, unbound, sources = {}, 0, {}
-    for citation in detail.get('citations', []):
+    grouped, sources = {}, {}
+    unbound, unbound_numbers = 0, 0
+    citations = [(citation, False) for citation in detail.get('citations', [])]
+    numbers = [(number, True) for number in detail.get('number_bindings', [])]
+    for citation, numeric in citations + numbers:
         quote = citation.get('report_quote', '')
-        if not quote or quote not in brief['markdown']:
-            unbound += 1
+        if not quote or brief['markdown'].count(quote) != 1:
+            if numeric:
+                unbound_numbers += 1
+            else:
+                unbound += 1
             continue
-        item = grouped.setdefault(quote, {'statement': quote, 'evidence': [], 'unavailable': []})
+        item = grouped.setdefault(quote, {'statement': quote, 'evidence': [], 'unavailable': [],
+                                         'report_context': _report_context(brief['markdown'], quote),
+                                         'numeric_targets': []})
+        if numeric:
+            # Display what is being checked. Expected values are writer annotations,
+            # not evidence; the Decision API receives the actual text instead.
+            item['numeric_targets'].append({key: citation.get(key) for key in ('label', 'number_text')})
         source_id = citation.get('source_id')
         if source_id not in allowed:
             item['unavailable'].append('引用来源未绑定到本次报告')
@@ -29,11 +49,13 @@ def snapshot(store, version_id):
         try:
             if source_id not in sources:
                 row = store.one('sources', source_id)
-                text = store.source_text(source_id)
-                sources[source_id] = (row, text)
+                if row['status'] != 'ready':
+                    raise ValueError('来源尚不可用')
+                sources[source_id] = (row, store.source_text(source_id))
             row, text = sources[source_id]
-            context = located_context(text, citation.get('excerpt', ''), citation.get('locator', ''))
-            evidence = {'source_id': source_id, 'title': row['name'], 'excerpt': citation['excerpt'],
+            excerpt = citation.get('source_excerpt' if numeric else 'excerpt', '')
+            context = located_context(text, excerpt, citation.get('locator', ''))
+            evidence = {'source_id': source_id, 'title': row['name'], 'excerpt': excerpt,
                         **context, 'source_hash': hashlib.sha256(text.encode()).hexdigest()}
             if evidence not in item['evidence']:
                 item['evidence'].append(evidence)
@@ -41,15 +63,15 @@ def snapshot(store, version_id):
             item['unavailable'].append('原文不可用或摘录无法唯一定位，需要重新补依据')
     items = []
     for quote, item in grouped.items():
-        # One claim may depend on several sources. Never silently drop a failed
-        # source and turn an incomplete evidence set into a support judgment.
         item['id'] = hashlib.sha256(quote.encode()).hexdigest()[:24]
         item['eligible'] = bool(item['evidence']) and not item['unavailable']
         items.append(item)
     data = {'protocol': PROTOCOL, 'version_id': version_id, 'run_id': brief['run_id'],
             'brief_hash': brief['hash'], 'provider': 'TypeSafe', 'endpoint': jev.ENDPOINT,
             'model': jev.MODEL, 'instructions': jev.INSTRUCTIONS, 'criteria': jev.CRITERIA,
-            'items': items, 'unbound_citations': unbound, 'scope': SCOPE}
+            'items': items, 'unbound_citations': unbound, 'scope': SCOPE,
+            'numeric_coverage': {'total': len(numbers), 'unbound': unbound_numbers,
+                                 'eligible': sum(len(item['numeric_targets']) for item in items if item['eligible'])}}
     return {**data, 'fingerprint': hashlib.sha256(dump(data).encode()).hexdigest()}
 
 
@@ -99,7 +121,8 @@ def run(store, job, cancelled, *, evaluate=None):
     # alter the request, and the UI marks it stale against its new snapshot.
     result = json.loads(job.get('result') or '{}') or {
         'version_id': payload['version_id'], 'fingerprint': payload['fingerprint'],
-        'scope': SCOPE, 'affects_release': False, 'items': [], 'started': now()}
+        'scope': frozen.get('scope', SCOPE), 'affects_release': False, 'items': [], 'started': now(),
+        'numeric_coverage': frozen.get('numeric_coverage')}
     by_id = {item['id']: item for item in result['items']}
     evaluate = evaluate or jev.evaluate
     for item in frozen['items']:
@@ -116,7 +139,8 @@ def run(store, job, cancelled, *, evaluate=None):
             _persist(store, job['id'], result)
             continue
         observation = {'id': item['id'], 'statement': item['statement'], 'status': 'not_checked',
-                       'execution': 'not_checked', 'reason': '；'.join(item['unavailable'])}
+                       'execution': 'not_checked', 'reason': '；'.join(item['unavailable']),
+                       'numeric_targets': item.get('numeric_targets', [])}
         result['items'].append(observation)
         by_id[item['id']] = observation
         if not item['eligible']:
@@ -157,4 +181,5 @@ def view(store, version_id):
                         'result': json.loads(job['result']) if job['result'] else None})
     return {'version_id': version_id, 'fingerprint': frozen['fingerprint'], 'provider': jev.key_status(),
             'scope': SCOPE, 'items': frozen['items'], 'unbound_citations': frozen['unbound_citations'],
+            'numeric_coverage': frozen['numeric_coverage'],
             'records': records}
