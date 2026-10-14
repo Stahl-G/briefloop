@@ -76,12 +76,16 @@ def completed_for(store, version_id):
 
 
 def automatic_candidates(store, brief):
-    """Identify the new automatic lane from its existing exact-version event."""
+    """Inherited automatic candidates retain the same public-source boundary."""
     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
     if requirements.get('completion_mode') not in ('direct', 'fast', 'fast_web'):
         return False
-    return bool(store.rows("SELECT 1 FROM events WHERE kind='fact_check_candidates' "
-                           "AND json_extract(data,'$.version_id')=? LIMIT 1", (brief['id'],)))
+    while brief:
+        if store.rows("SELECT 1 FROM events WHERE kind='fact_check_candidates' "
+                      "AND json_extract(data,'$.version_id')=? LIMIT 1", (brief['id'],)):
+            return True
+        brief = store.one('briefs', brief['parent_id']) if brief.get('parent_id') else None
+    return False
 
 
 def fact_check_prompt(store,job,brief,folder,backend='codex'):
@@ -455,6 +459,9 @@ def grant(store,version_id,limits,*,job_id=None,request_id=None):
                 return {**json.loads(previous['result']),'replayed':True}
         view=_RequestStore(store,connection)
         brief=view.one('briefs',version_id)
+        stage = (view.meta('research_plan:' + brief['run_id']) or {}).get('fact_check') or {}
+        if stage.get('scope') is not None and stage['scope'] != candidate_scope(view, version_id):
+            raise Conflict('核查阶段属于其他版本或候选已变化；请打开对应版本追加预算')
         outcome=add_fact_check_grant(view,brief['run_id'],limits,job_id=job_id)
         if outcome['status'] in ('reopened','active'):
             stage=(view.meta('research_plan:'+brief['run_id']) or {})['fact_check']
@@ -581,5 +588,7 @@ def view(store,version_id):
     from .research_plan import pending_fact_check_grant
     return {'version_id':version_id,
             'enabled':bool(json.loads(run['requirements']).get('fact_check')),
+            'grant_allowed':not (plan.get('fact_check') or {}).get('scope')
+                or plan['fact_check']['scope'] == scope,
             'stage':stage,'pending_grant':pending_fact_check_grant(store,brief['run_id']),
             'records':records,'candidate_reason':candidate_reason,'not_checked_reason':not_checked_reason}

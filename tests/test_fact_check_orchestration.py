@@ -58,6 +58,7 @@ def test_revised_candidates_get_own_stage_without_resetting_budget_or_reusing_ol
     from briefloop.runtime import Worker
     from briefloop.draft_completion import binding, require_fact_check_settled
     store, run, _ = _world(tmp_path)
+    store.update_settings({'model': 'synthetic-model', 'model_selection_required': False})
     brief, claim, _ = _claim_version(store, run)
     research_plan.finish_round(store, run['id'])
     parent = store.enqueue('assess', {'run_id': run['id'], 'version_id': brief['id'],
@@ -98,6 +99,13 @@ def test_revised_candidates_get_own_stage_without_resetting_budget_or_reusing_ol
     with pytest.raises(research_plan.AdmissionError, match='旧任务不能关闭'):
         research_plan.finish_fact_check(store, run['id'], status='cancelled', stage_id=first['stage_id'])
     assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'active'
+    with pytest.raises(ValueError, match='其他版本'):
+        fact_check.grant(store, brief['id'], SHARE)
+    assert research_plan.frozen(store, run['id'])['fact_check'] == plan['fact_check']
+    assert fact_check.view(store, brief['id'])['grant_allowed'] is False
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted', stage_id=second['stage_id'])
+    fact_check.grant(store, revised['id'], SHARE)
+    assert research_plan.frozen(store, run['id'])['fact_check']['scope'] == plan['fact_check']['scope']
 
 
 class _Quiet:
@@ -188,6 +196,9 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path, monkeypatch):
     assert json.loads(child['payload'])['automatic_candidates_version_id']==brief['id']
     private=store.add_source('Internal input','Unpublished revenue 99.')
     store.attach_source(run['id'],private['id'])
+    inherited = store.publish(run['id'], {'title': 'R', 'editor_document': json.loads(brief['editor_document'])}, parent_id=brief['id'])
+    assert fact_check.automatic_candidates(store, inherited)
+    assert worker._admit_fact_check(parent, inherited) is None
     # _Quiet would raise for an unsettled turn if any model transport were called.
     result=worker.run_fact_check(child,runtime=_Quiet())
     assert result['execution']=='failed'
@@ -196,7 +207,7 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path, monkeypatch):
     assert worker._admit_fact_check(parent,brief) is None
     assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'"))==1
     changed=store.publish(run['id'],{'title':'R','editor_document':{'type':'doc','content':[
-        {'type':'paragraph','content':[{'type':'text','text':'Entirely different report.'}]}]}},parent_id=brief['id'])
+        {'type':'paragraph','content':[{'type':'text','text':'Entirely different report.'}]}]}},parent_id=inherited['id'])
     assert worker._admit_fact_check(parent,changed) is None
     assert not fact_check.eligible_bindings(store,changed['id'])
     from briefloop.draft_completion import require_fact_check_settled

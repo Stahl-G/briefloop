@@ -53,6 +53,12 @@ def test_method_is_frozen_per_run_and_shared_by_revision_and_review(tmp_path, mo
                       ('revision', 'writing'), ('evaluator', 'evaluation'), ('reviewer', 'evaluation')]:
         assert frozen['role_instructions'][key] in instructions(resolve(saved), role, include_spec=False)
     assert 'workflow_snapshot' not in resolve({'title': 'Legacy', 'objective': 'Read me'})
+    # A changed source excerpt requires rechecking even when prose is unchanged.
+    clean = store.publish(run['id'], {'title': 'Progress', 'markdown': unchanged,
+                                      'citations': [{**citation, 'report_quote': unchanged}]}, parent_id=revised['id'])
+    changed_ref = store.revise(clean['id'], clean['markdown'], citations=[{**citation, 'excerpt': 'milestone 1.'}])
+    assert json.loads(changed_ref['detail'])['evidence_needs_review']
+    assert changed_ref['markdown'] == clean['markdown']
 
 
 def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):

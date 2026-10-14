@@ -881,8 +881,11 @@ def add_fact_check_grant(store, run_id, limits, *, job_id=None):
             status, event['action'] = 'active', 'grant_added'
         elif stage.get('status') == 'budget_exhausted':
             event['previous_stage_id'] = stage['stage_id']
+            scope = stage.get('scope')
             plan.setdefault('fact_check_history', []).append(stage)
             stage = _new_fact_check_stage(connection, run_id, plan, source, grants=[grant])
+            if scope is not None:
+                stage['scope'] = scope
             status, event['action'] = 'reopened', 'grant_reopened'
         else:
             raise AdmissionError('核查阶段已以 ' + str(stage.get('status')) + ' 收束，追加预算不能重开；需重新核查请重新生成',

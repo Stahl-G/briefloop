@@ -29,6 +29,8 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         ('目标缺陷少于 12 件，尚未确认达成。', '12 件', 12, '件', '目标缺陷少于 12 件，尚未确认达成。', True),
         ('2021 年以来的 857 次发布', '857', 857, 'releases', 'Of the 857 releases, only 31', True),
         ('2021 年以来的 857 万次发布', '857', 857, 'releases', 'Of the 857 releases, only 31', False),
+        ('Growth was 12% year-over-year.', '12%', 12, '%', 'Growth was 12% year-over-year.', True),
+        ('Revenue was $2 billion year to date.', '$2 billion', 2, 'billion USD', '$2 billion year to date', True),
     ]
     for quote, token, value, unit, excerpt, found in cases:
         row = check_numbers(quote, [bound(store, quote, token, value, unit, excerpt)], store)[0]

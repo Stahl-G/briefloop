@@ -152,6 +152,15 @@ def finish_message(store, message_id, status):
         mark_settled(status=status, checks='different_revision')
         return
     from .chat_store import ChatStore
+    from .draft_completion import origin
+    try:
+        origin(store, latest['id'])
+    except (ValueError, KeyError) as exc:
+        ChatStore(store).event(message['session_id'], 'revision/checksUnavailable', {
+            'message_id': message_id, 'version_id': latest['id'], 'message': str(exc),
+        })
+        mark_settled(status=status, checks='manual_required')
+        return
     try:
         from .draft_completion import enqueue_revision
         job = enqueue_revision(store, latest['id'], runtime=json.loads(message['runtime']), session_id=message['session_id'])

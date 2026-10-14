@@ -56,16 +56,32 @@ def check_binding(store,job):
 
 
 def _fact_check_versions(store, job, payload, *, connection=None):
-    """The input and this job's same-body evidence child are the only targets."""
+    """Reuse same-body evidence only along this input's explicit retry chain."""
     versions = [payload['version_id']]
     if payload.get('fast_evidence'):
         original = (dict(connection.execute('SELECT * FROM briefs WHERE id=?', (payload['version_id'],)).fetchone())
                     if connection is not None else store.one('briefs', payload['version_id']))
         query = 'SELECT id FROM briefs WHERE id=? AND parent_id=? AND run_id=? AND hash=?'
-        args = ('brief_' + job['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash'])
-        enriched = ([dict(row) for row in connection.execute(query, args)]
-                    if connection is not None else store.rows(query, args))
-        versions.extend(row['id'] for row in enriched)
+        chain, seen = [job], {job['id']}
+        current = payload
+        while current.get('retry_of_job_id') and current['retry_of_job_id'] not in seen:
+            identity = current['retry_of_job_id']
+            rows = (list(connection.execute('SELECT * FROM jobs WHERE id=?', (identity,)))
+                    if connection is not None else store.rows('SELECT * FROM jobs WHERE id=?', (identity,)))
+            if not rows:
+                break
+            prior = dict(rows[0])
+            current = json.loads(prior['payload'])
+            if prior['kind'] != 'assess' or any(current.get(key) != payload.get(key)
+                    for key in ('version_id', 'run_id', 'continuation_of', 'fast_evidence')):
+                break
+            seen.add(identity)
+            chain.append(prior)
+        for attempt in reversed(chain):
+            args = ('brief_' + attempt['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash'])
+            enriched = ([dict(row) for row in connection.execute(query, args)]
+                        if connection is not None else store.rows(query, args))
+            versions.extend(row['id'] for row in enriched)
     return versions
 
 

@@ -239,12 +239,16 @@ def enrich(worker, job, brief, folder):
     from .models import Citation, NumberBinding, TemporalClaim, BriefDraft
     store = worker.store; payload = json.loads(job['payload'])
     version = 'brief_' + job['id'][4:] + '_evidence'
-    saved = store.rows('SELECT * FROM briefs WHERE id=?', (version,))
-    if saved:
-        admission = folder / 'evidence' / 'admission.json'
+    from .draft_completion import _fact_check_versions
+    targets = _fact_check_versions(store, job, {**payload, 'version_id': brief['id'],
+                                              'run_id': brief['run_id'], 'fast_evidence': True})
+    if len(targets) > 1:
+        saved = store.one('briefs', targets[-1])
+        owner = 'job_' + saved['id'][len('brief_'):-len('_evidence')]
+        admission = store.root / 'jobs' / owner / 'evidence' / 'admission.json'
         if admission.exists():
-            _register_candidates(store, job, saved[0], json.loads(admission.read_text()).get('fact_check_candidates', []))
-        return saved[0]
+            _register_candidates(store, job, saved, json.loads(admission.read_text()).get('fact_check_candidates', []))
+        return saved
     if payload.get('revision_evidence'):
         materials = revision_materials(store,job,brief,folder)
         if not materials:

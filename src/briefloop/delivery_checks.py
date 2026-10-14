@@ -140,7 +140,7 @@ def quantities(text):
             continue
         # GPU-hours, GPU hours and GPUs per hour are compound dimensions.
         # Do not truncate a time product or denominator into an object count.
-        if unit and re.match(
+        if unit.lower() in _SCALED_UNITS and _SCALED_UNITS[unit.lower()][0] == 'count' and re.match(
                 r'[-‐‑‒–—−][A-Za-z]|\s+(?:per\b|(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|hrs?|min)\b)',
                 text[end:], re.I):
             continue

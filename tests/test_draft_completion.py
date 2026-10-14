@@ -139,6 +139,15 @@ def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrela
     require_fact_check_settled(store, parent)
     assert extracted['sources'][0]['id'] in {item['id'] for item in binding(store, base['id'])['sources']}
     accept_stage_sources(store, parent)  # A resume reuses the admitted snapshot.
+    from briefloop.fast_reports import enrich
+    from briefloop.draft_completion import _fact_check_versions
+    store.update_job(parent['id'], 'failed')
+    store.update_settings({'model': 'synthetic-model', 'model_selection_required': False})
+    worker = Worker(store)
+    retried = worker.retry_with_current_model(parent['id'])
+    assert _fact_check_versions(store, retried, json.loads(retried['payload']))[-1] == child['id']
+    assert enrich(worker, retried, base, worker.folder(retried))['id'] == child['id']
+    assert len(store.rows('SELECT id FROM briefs')) == 2
     outsider = store.add_source('Unrelated', 'Unrelated source.')
     store.attach_source(run['id'], outsider['id'])
     with pytest.raises(Conflict, match='不属于本次事实核查'):

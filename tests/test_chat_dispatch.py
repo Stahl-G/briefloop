@@ -202,7 +202,7 @@ def test_saved_report_chat_can_research_and_queue_new_version_evidence(tmp_path,
         host.send(session, 'Prepare report input.', message_id=failed_id, allow_web=True)
         _wait_status(host, session, failed_id, 'failed')
         wait_report_closeout(failed_id)
-        assert not host.chat.session(session)['busy']
+        until(lambda: not host.chat.session(session)['busy'])
         assert research_plan.frozen(store, run['id'])['revision_research']['status'] == 'failed'
         host.close()
 
@@ -216,7 +216,9 @@ def test_report_closeout_uses_message_receipt_instead_of_other_chats_latest_vers
     store = Store(tmp_path)
     store.update_settings({'model': 'a', 'model_selection_required': False})
     run = store.create_run({'title': 'R', 'objective': 'Changes'}, [])
-    base = store.publish(run['id'], {'title': 'R', 'markdown': 'Original.'})
+    generation = store.enqueue('generate', {'run_id': run['id']})
+    base = store.publish(run['id'], {'title': 'R', 'markdown': 'Original.'}, version_id='brief_' + generation['id'][4:])
+    store.update_job(generation['id'], 'complete')
     chat = ChatStore(store)
     messages = []
     for label in ('A', 'B'):
@@ -258,3 +260,27 @@ def test_restricted_pi_gets_selected_saved_body_without_shell_or_revision_resear
         assert bridge.starts[-1]['web_tools'] is False
         assert not store.meta('research_plan:' + run['id'])
     host.close()
+
+
+def test_standard_report_revision_closeout_does_not_replay_permanent_failure(tmp_path):
+    from briefloop.chat_store import ChatStore
+    from briefloop.report_revision import bind_context, finish_message, recover_terminal_messages
+    from briefloop.version_execution import chat_publication
+    store = Store(tmp_path)
+    run = store.create_run({'title': 'Standard report', 'objective': 'Revise', 'completion_mode': 'standard'}, [])
+    base = store.publish(run['id'], {'title': 'Standard report', 'markdown': 'Original.'})
+    chat = ChatStore(store)
+    session = chat.create('Revision', {'model': 'fixture', 'permission': 'workspace-write'}, tmp_path)
+    message = chat.message(session['id'], 'Revise.', status='sending', runtime=session['runtime'])
+    bind_context(store, session['id'], message['id'], {'version_id': base['id'], 'hash': base['hash']})
+    revised = store.revise(base['id'], 'Revised.', author='agent',
+                           writer=chat_publication(store, session['id'], message['id']))
+    chat.patch_message(message['id'], status='completed')
+    finish_message(store, message['id'], 'completed')
+    events = store.rows('SELECT * FROM chat_events')
+    assert store.rows("SELECT 1 FROM chat_events WHERE kind='revision/checksUnavailable'")
+    recover_terminal_messages(store)
+    recover_terminal_messages(store)
+    assert store.rows('SELECT * FROM chat_events') == events
+    assert not store.rows("SELECT id FROM jobs WHERE kind='assess'")
+    assert store.brief_view(revised['id'])['markdown'] == 'Revised.'
