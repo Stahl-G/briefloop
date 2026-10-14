@@ -94,7 +94,7 @@ def finish(store,job,worker):
 
 def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrelated_sources(tmp_path, monkeypatch):
     from briefloop import research_plan, tavily
-    from briefloop.draft_completion import binding, accept_stage_sources, require_fact_check_settled
+    from briefloop.draft_completion import binding, accept_stage_sources, require_fact_check_settled, resume_cancelled_stage
     store = Store(tmp_path)
     run = store.create_run({'title': 'R', 'objective': 'Public update', 'allow_web': True, 'fact_check': True,
         'completion_mode': 'direct', 'search_policy': {'primary_provider': 'tavily', 'coverage_mode': 'primary_only'},
@@ -118,6 +118,21 @@ def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrela
     extracted = tavily.extract(store, [response['results'][0]['url']], run_id=run['id'])
     with pytest.raises(ValueError, match='联网事实核查未完成'):
         require_fact_check_settled(store, parent)
+    store.update_job(check['id'], 'cancelled')
+    research_plan.finish_fact_check(store, run['id'], status='cancelled')
+    before_resume = research_plan.frozen(store, run['id'])['fact_check']
+    with store.tx() as connection:
+        resume_cancelled_stage(connection, parent)
+    resumed = research_plan.frozen(store, run['id'])['fact_check']
+    assert resumed['status'] == 'active'
+    assert resumed['stage_id'] == before_resume['stage_id']
+    unchanged = lambda item: {key: value for key, value in item.items()
+                              if key not in ('status', 'closed', 'outcome', 'interrupted_closures')}
+    assert unchanged(resumed) == unchanged(before_resume)
+    assert resumed['interrupted_closures'][-1]['status'] == 'cancelled'
+    with store.tx() as connection:
+        resume_cancelled_stage(connection, parent)
+    assert research_plan.frozen(store, run['id'])['fact_check'] == resumed
     store.update_job(check['id'], 'complete')
     research_plan.finish_fact_check(store, run['id'], status='completed')
     accept_stage_sources(store, parent)

@@ -261,7 +261,7 @@ def enrich(worker, job, brief, folder):
         'records': [{
             'source_id': '来源别名，如 S1', 'report_quote': '单个正文块中的连续原句',
             'excerpt': '连续逐字原文，含主体、期间、单位和限定条件',
-            'numbers': [{'label': '指标名', 'number_text': '正文原数值含单位', 'value': '来源数值或 null',
+            'numbers': [{'label': '指标名', 'number_text': '正文中含数值和单位的连续片段（可与来源语言不同）', 'value': 49,
                          'unit': '来源原单位和量级，如 million USD、万元、%', 'entity': '主体', 'period': '期间'}],
             'times': [{'statement': '事件名（省略则用正文原句）', 'event_date': '事件日', 'published_at': '披露日',
                        'usage': 'current/background', 'news_basis': 'event/first_disclosure/new_development',
@@ -274,7 +274,7 @@ def enrich(worker, job, brief, folder):
               '同一正文原句与来源摘录组合只登记一次，数字、时间和独立核查候选属性附在该记录中；无对应属性可省略。'
               '无法定位时留空，不猜测；重要结论在全部来源中找不到依据时列入 unsupported，不因措辞概括而列入。'
               '同一摘录在来源中重复时提供更长的唯一摘录。可定位仅表示原文存在，支持关系仍待独立判断。'
-              '数字保留来源真实数值、币种和量级，不换算；正文与来源不一致时保留真实来源数值供检查。'
+              'value 用来源原数值的 JSON 数字，未知用 null；量级、单位和币种写入 unit，不换算。正文与来源不一致时保留真实来源数值供检查。'
               '日期区分发生、首次披露、实质进展及撤回更正；未知日期留空，不用披露日代替事件日。'
               '已有时间记录可补充但不凭猜测覆盖。原文行号、标题、上下文和抓取时间由程序补入。'
               'check 选择有公开出处的事实或有归属说法，不选建议、私有信息或无出处推断。原文支持或反驳均可作为待核查出处。'

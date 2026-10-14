@@ -55,13 +55,16 @@ def check_binding(store,job):
     return json.loads(file.read_text(encoding='utf-8')) if file.exists() else json.loads(job['payload'])['checks_input']
 
 
-def _fact_check_versions(store, job, payload):
+def _fact_check_versions(store, job, payload, *, connection=None):
     """The input and this job's same-body evidence child are the only targets."""
     versions = [payload['version_id']]
     if payload.get('fast_evidence'):
-        original = store.one('briefs', payload['version_id'])
-        enriched = store.rows('SELECT id FROM briefs WHERE id=? AND parent_id=? AND run_id=? AND hash=?',
-            ('brief_' + job['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash']))
+        original = (dict(connection.execute('SELECT * FROM briefs WHERE id=?', (payload['version_id'],)).fetchone())
+                    if connection is not None else store.one('briefs', payload['version_id']))
+        query = 'SELECT id FROM briefs WHERE id=? AND parent_id=? AND run_id=? AND hash=?'
+        args = ('brief_' + job['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash'])
+        enriched = ([dict(row) for row in connection.execute(query, args)]
+                    if connection is not None else store.rows(query, args))
         versions.extend(row['id'] for row in enriched)
     return versions
 
@@ -281,7 +284,11 @@ def resume_cancelled_stage(connection, job):
     plan=_read_plan(connection,payload['run_id']) or {}
     stage=plan.get('fact_check') or {}
     if stage.get('status')!='cancelled':return
-    owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status='cancelled' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? AND json_extract(payload,'$.stage_id')=?",(job['id'],payload['version_id'],stage.get('stage_id'))).fetchone()
+    versions = _fact_check_versions(None, job, payload, connection=connection)
+    owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status='cancelled' "
+        "AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.run_id')=? "
+        "AND json_extract(payload,'$.version_id') IN (" + ','.join('?' for _ in versions) + ') '
+        "AND json_extract(payload,'$.stage_id')=?", (job['id'],payload['run_id'],*versions,stage.get('stage_id'))).fetchone()
     if not owned:return
     stage.setdefault('interrupted_closures',[]).append({key:stage.get(key) for key in ('status','closed','outcome')})
     stage.update(status='active',closed=None,outcome=None)
