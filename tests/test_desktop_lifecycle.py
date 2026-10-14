@@ -41,10 +41,11 @@ def test_cleanup_attempts_every_owner_and_releases_socket_and_lock_after_failure
         return SimpleNamespace(close=close)
     server=SimpleNamespace(bridge_harnesses={'synthetic':closer('bridge',True)},
                            worker=closer('worker',True),harness=closer('harness'),
-                           opencode_harness=closer('opencode'),runtime_bridge=closer('runtime_bridge'),
+                           opencode_harness=closer('opencode'),native_harness=closer('native'),
+                           runtime_bridge=closer('runtime_bridge'),
                            server_close=closer('socket').close,workspace_lock=closer('lock'))
     errors=_close_service(server)
-    assert seen==['bridge','worker','harness','opencode','runtime_bridge','socket','lock']
+    assert seen==['bridge','worker','harness','opencode','native','runtime_bridge','socket','lock']
     assert errors==[{'component':'bridge:synthetic','error_type':'RuntimeError'},
                     {'component':'worker','error_type':'RuntimeError'}]
     assert 'synthetic private diagnostic' not in json.dumps(errors)

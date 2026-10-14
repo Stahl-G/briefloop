@@ -619,7 +619,7 @@ class Worker:
         for thread,runtime in generations:runtime.cancel()
         for thread,runtime,run_id in reviews:runtime.cancel()
         if self.schedule_thread.is_alive():self.schedule_thread.join(timeout=12)
-        self.thread.join(timeout=12)
+        if self.thread.is_alive():self.thread.join(timeout=12)
         for thread,runtime in generations:thread.join(timeout=12)
         if self.task_thread and self.task_thread.is_alive():self.task_thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)

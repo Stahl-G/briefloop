@@ -63,7 +63,8 @@ def _close_service(server):
     """Attempt every owned cleanup even if an earlier transport fails."""
     operations=[('bridge:'+name,manager.close) for name,manager in server.bridge_harnesses.items()]
     operations.extend([('worker',server.worker.close),('harness',server.harness.close),
-                       ('opencode',server.opencode_harness.close),('runtime_bridge',server.runtime_bridge.close),
+                       ('opencode',server.opencode_harness.close),('native',server.native_harness.close),
+                       ('runtime_bridge',server.runtime_bridge.close),
                        ('server',server.server_close),('workspace_lock',server.workspace_lock.close)])
     errors=list(getattr(server,'shutdown_errors',[]))
     for name,close in operations:
