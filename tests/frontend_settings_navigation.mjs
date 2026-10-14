@@ -11,7 +11,8 @@ test('closing settings restores the originating page and scroll, including repea
     panes.forEach(pane => {pane.hidden = pane.id !== id;});
     scroller.scrollTop = 0;
   };
-  const doc = {querySelector: selector => selector === 'main' ? scroller : panes.find(pane => !pane.hidden)};
+  const doc = {querySelector: selector => selector === 'main' ? scroller : panes.find(pane => !pane.hidden),
+    getElementById: id => panes.find(pane => pane.id === id)};
   const navigation = createSettingsNavigation({document: doc, showPage});
   navigation.open();
   scroller.scrollTop = 200;
