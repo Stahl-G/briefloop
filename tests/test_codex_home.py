@@ -8,7 +8,7 @@ from briefloop.codex_home import CodexHome
 
 def fixture_home(tmp_path):
     source=tmp_path/'personal';source.mkdir()
-    (source/'config.toml').write_text('model="user-choice"\nsqlite_home="/old-state"\n')
+    (source/'config.toml').write_text('model="user-choice"\nsqlite_home="/old-state"\n', encoding='utf-8-sig')
     (source/'auth.json').write_text('synthetic-auth-canary')
     try:
         (tmp_path/'probe-link').symlink_to(source/'config.toml')
@@ -60,7 +60,7 @@ def test_import_only_bound_id_preserves_original_and_private_progress(tmp_path, 
 
 def test_no_shared_history_fallback_or_credential_overwrite(tmp_path):
     source=tmp_path/'personal';source.mkdir()
-    (source/'config.toml').write_text('cli_auth_credentials_store="keyring"')
+    (source/'config.toml').write_text('cli_auth_credentials_store="keyring"', encoding='utf-8-sig')
     with pytest.raises(RuntimeError,match='密钥链'):
         CodexHome(environ={'CODEX_HOME':str(source)},state_root=tmp_path/'private')
     with pytest.raises(RuntimeError,match='不能位于'):
