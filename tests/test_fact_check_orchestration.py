@@ -194,6 +194,13 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path, monkeypatch):
     assert worker._admit_fact_check(parent,brief)['status']=='active'
     child=store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
     assert json.loads(child['payload'])['automatic_candidates_version_id']==brief['id']
+    research_plan.finish_fact_check(store,run['id'],status='budget_exhausted',stage_id=json.loads(child['payload'])['stage_id'])
+    store.update_job(child['id'],'complete')
+    store.update_settings({'model':'test','model_selection_required':False})
+    reopened = fact_check.grant(store,brief['id'],SHARE)
+    child = store.one('jobs',reopened['job_id'])
+    assert 'automatic_candidates_version_id' not in json.loads(child['payload'])
+    queued_count = len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'"))
     private=store.add_source('Internal input','Unpublished revenue 99.')
     store.attach_source(run['id'],private['id'])
     inherited = store.publish(run['id'], {'title': 'R', 'editor_document': json.loads(brief['editor_document'])}, parent_id=brief['id'])
@@ -205,7 +212,7 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path, monkeypatch):
     assert research_plan.frozen(store,run['id'])['fact_check']['status']=='failed'
     assert fact_check.view(store,brief['id'])['not_checked_reason']
     assert worker._admit_fact_check(parent,brief) is None
-    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'"))==1
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'"))==queued_count
     changed=store.publish(run['id'],{'title':'R','editor_document':{'type':'doc','content':[
         {'type':'paragraph','content':[{'type':'text','text':'Entirely different report.'}]}]}},parent_id=inherited['id'])
     assert worker._admit_fact_check(parent,changed) is None

@@ -823,6 +823,8 @@ class Worker:
                     frozen['checks_identity']=hashlib.sha256(dump([
                         original['continuation_of'],payload['checks_input'],identity_payload]).encode()).hexdigest()
                     connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(frozen),new_id))
+                    from .draft_completion import resume_cancelled_stage
+                    resume_cancelled_stage(connection, {'id': new_id, 'payload': dump(frozen)})
                     return
                 if job['kind']!='learn':return
                 self._check_feedback_owner(connection,jid,original)
@@ -1272,8 +1274,9 @@ class Worker:
         if not eligible_bindings(self.store,brief['id']):
             reason='本版本没有仍可定位的核查候选，未启动联网事实核查'
         automatic_version=payload.get('automatic_candidates_version_id')
-        if automatic_version:
-            if automatic_version!=brief['id'] or not automatic_candidates(self.store,brief):
+        automatic = automatic_candidates(self.store, brief)
+        if automatic_version or automatic:
+            if automatic_version and (automatic_version!=brief['id'] or not automatic):
                 reason='自动核查的候选版本身份已变化，未启动联网事实核查'
             else:
                 from .evidence import public_fact_check_sources

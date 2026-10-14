@@ -55,6 +55,26 @@ def check_binding(store,job):
     return json.loads(file.read_text(encoding='utf-8')) if file.exists() else json.loads(job['payload'])['checks_input']
 
 
+def _check_attempts(store, job, payload, *, connection=None):
+    """Only explicit retries of the same bound input share check ownership."""
+    chain, seen = [job], {job['id']}
+    current = payload
+    while current.get('retry_of_job_id') and current['retry_of_job_id'] not in seen:
+        identity = current['retry_of_job_id']
+        rows = (list(connection.execute('SELECT * FROM jobs WHERE id=?', (identity,)))
+                if connection is not None else store.rows('SELECT * FROM jobs WHERE id=?', (identity,)))
+        if not rows:
+            break
+        prior = dict(rows[0])
+        current = json.loads(prior['payload'])
+        if prior['kind'] != 'assess' or any(current.get(key) != payload.get(key)
+                for key in ('version_id', 'run_id', 'continuation_of', 'fast_evidence')):
+            break
+        seen.add(identity)
+        chain.append(prior)
+    return chain
+
+
 def _fact_check_versions(store, job, payload, *, connection=None):
     """Reuse same-body evidence only along this input's explicit retry chain."""
     versions = [payload['version_id']]
@@ -62,21 +82,7 @@ def _fact_check_versions(store, job, payload, *, connection=None):
         original = (dict(connection.execute('SELECT * FROM briefs WHERE id=?', (payload['version_id'],)).fetchone())
                     if connection is not None else store.one('briefs', payload['version_id']))
         query = 'SELECT id FROM briefs WHERE id=? AND parent_id=? AND run_id=? AND hash=?'
-        chain, seen = [job], {job['id']}
-        current = payload
-        while current.get('retry_of_job_id') and current['retry_of_job_id'] not in seen:
-            identity = current['retry_of_job_id']
-            rows = (list(connection.execute('SELECT * FROM jobs WHERE id=?', (identity,)))
-                    if connection is not None else store.rows('SELECT * FROM jobs WHERE id=?', (identity,)))
-            if not rows:
-                break
-            prior = dict(rows[0])
-            current = json.loads(prior['payload'])
-            if prior['kind'] != 'assess' or any(current.get(key) != payload.get(key)
-                    for key in ('version_id', 'run_id', 'continuation_of', 'fast_evidence')):
-                break
-            seen.add(identity)
-            chain.append(prior)
+        chain = _check_attempts(store, job, payload, connection=connection)
         for attempt in reversed(chain):
             args = ('brief_' + attempt['id'][4:] + '_evidence', original['id'], original['run_id'], original['hash'])
             enriched = ([dict(row) for row in connection.execute(query, args)]
@@ -303,10 +309,12 @@ def resume_cancelled_stage(connection, job):
     stage=plan.get('fact_check') or {}
     if stage.get('status')!='cancelled':return
     versions = _fact_check_versions(None, job, payload, connection=connection)
+    owners = [attempt['id'] for attempt in _check_attempts(None, job, payload, connection=connection)]
     owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status='cancelled' "
-        "AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.run_id')=? "
+        "AND json_extract(payload,'$.parent_job_id') IN (" + ','.join('?' for _ in owners) + ') '
+        "AND json_extract(payload,'$.run_id')=? "
         "AND json_extract(payload,'$.version_id') IN (" + ','.join('?' for _ in versions) + ') '
-        "AND json_extract(payload,'$.stage_id')=?", (job['id'],payload['run_id'],*versions,stage.get('stage_id'))).fetchone()
+        "AND json_extract(payload,'$.stage_id')=?", (*owners,payload['run_id'],*versions,stage.get('stage_id'))).fetchone()
     if not owned:return
     stage.setdefault('interrupted_closures',[]).append({key:stage.get(key) for key in ('status','closed','outcome')})
     stage.update(status='active',closed=None,outcome=None)

@@ -121,6 +121,13 @@ def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrela
     store.update_job(check['id'], 'cancelled')
     research_plan.finish_fact_check(store, run['id'], status='cancelled')
     before_resume = research_plan.frozen(store, run['id'])['fact_check']
+    # Switching model after cancellation resumes the same owned stage as well.
+    accept_stage_sources(store, parent)
+    store.update_job(parent['id'], 'cancelled')
+    store.update_settings({'model': 'synthetic-model', 'model_selection_required': False})
+    worker = Worker(store)
+    retry = worker.retry_with_current_model(parent['id'])
+    assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'active'
     with store.tx() as connection:
         resume_cancelled_stage(connection, parent)
     resumed = research_plan.frozen(store, run['id'])['fact_check']
@@ -145,6 +152,7 @@ def test_evidence_child_fact_check_sources_are_admitted_without_accepting_unrela
     store.update_settings({'model': 'synthetic-model', 'model_selection_required': False})
     worker = Worker(store)
     retried = worker.retry_with_current_model(parent['id'])
+    assert retried['id'] == retry['id']
     assert _fact_check_versions(store, retried, json.loads(retried['payload']))[-1] == child['id']
     assert enrich(worker, retried, base, worker.folder(retried))['id'] == child['id']
     assert len(store.rows('SELECT id FROM briefs')) == 2
