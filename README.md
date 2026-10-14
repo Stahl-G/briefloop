@@ -18,6 +18,10 @@
 
 报告开始前可预览系统日期、时间范围和时区；任务开始后冻结。我的报告显示研究、已保存材料、审阅与修订的实际进展，原稿生成后即可查看。见 [使用指南](docs/使用指南.md)。
 
+## 联系
+
+欢迎交流使用反馈与合作：[Stahl Guo 个人主页](https://stahlguo.com/) · [LinkedIn](https://www.linkedin.com/in/stahl-guo-488a8021b/) · [contact@briefloop.ai](mailto:contact@briefloop.ai)
+
 ## 桌面 App
 
 桌面安装包以发行页实际提供的版本为准；App、CLI 与 PyPI 使用同一产品版本和冻结后端 wheel，各渠道是否发布以版本核验结果为准。
