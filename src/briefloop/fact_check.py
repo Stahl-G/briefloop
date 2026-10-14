@@ -512,9 +512,19 @@ def view(store,version_id):
     brief=store.one('briefs',version_id)
     run=store.one('runs',brief['run_id'])
     plan=frozen_plan(store,brief['run_id']) or {}
-    stage=plan.get('fact_check')
+    saved_records = records_for(store, brief['run_id'])
+    associated = {row['stage_id'] for row in saved_records if row['version_id'] == version_id}
+    for row in store.rows("SELECT payload FROM jobs WHERE kind='fact_check' "
+                          "AND json_extract(payload,'$.version_id')=?", (version_id,)):
+        payload = json.loads(row['payload'])
+        if payload.get('run_id') == brief['run_id'] and payload.get('stage_id'):
+            associated.add(payload['stage_id'])
+    scope = candidate_scope(store, version_id)
+    stage = next((item for item in [plan.get('fact_check'), *reversed(plan.get('fact_check_history') or [])]
+                  if item and (item.get('scope') == scope
+                               or item.get('scope') is None and item['stage_id'] in associated)), None)
     if stage:
-        stage={key:stage.get(key) for key in ('stage_id','status','budget_source','grants','created','closed','outcome')}
+        stage={key:stage.get(key) for key in ('stage_id','status','scope','budget_source','grants','created','closed','outcome')}
     reviewer={}
     for row in store.rows('SELECT result FROM reviews WHERE version_id=? AND result IS NOT NULL ORDER BY rowid DESC',(version_id,)):
         for check in json.loads(row['result']).get('claim_checks',[]):
@@ -536,7 +546,7 @@ def view(store,version_id):
                 'spans':spans,'query_ids':candidate.get('query_ids',[]),
                 'anchors':candidate.get('anchors',[]),'reviewer':reviewer.get(candidate['claim_id'])}
     records=[]
-    for row in records_for(store,brief['run_id']):
+    for row in saved_records:
         data=row['data']
         records.append({'id':row['id'],'version_id':data['version_id'],'stage_id':data['stage_id'],
                         'as_of':data['as_of'],'snapshot':data['snapshot'],'execution':data['execution'],
