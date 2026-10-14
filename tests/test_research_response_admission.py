@@ -163,9 +163,13 @@ def test_human_revision_reopens_closed_research_without_resetting_budget(tmp_pat
     folder.mkdir(parents=True, exist_ok=True)
     (folder / 'generated-source-snapshots.json').write_text(json.dumps({brief['id']: {}}))
     followup = chat.message(session, 'Add the final missing item', status='sending', allow_web=True)
+    chat.patch_message(followup['id'], turn_id='revision-followup')
+    chat.update(session, turn_id='revision-followup')
     report_revision.bind_context(restored, session, followup['id'], {'version_id': brief['id'], 'hash': brief['hash']})
     revision_research.begin(restored, run, base_version_id=brief['id'], session_id=session, message_id=followup['id'])
-    revised = restored.revise(brief['id'], 'Revised report', allow_markdown_conversion=True, author='agent')
+    from briefloop.version_execution import chat_publication
+    revised = restored.revise(brief['id'], 'Revised report', allow_markdown_conversion=True, author='agent',
+                              writer=chat_publication(restored, session, followup['id']))
     with restored.tx() as connection:
         connection.execute("UPDATE chat_messages SET status='completed',updated=? WHERE id=?", (now(), followup['id']))
     ChatStore(restored).recover_stale()

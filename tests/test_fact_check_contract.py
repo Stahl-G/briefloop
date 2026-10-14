@@ -54,7 +54,8 @@ def checked(tmp_path):
         claim=create_claim(store,run['id'],{'statement':sentence,'kind':'fact'})
         bind_claim(store,brief['id'],claim['id'],block_id,quote)
         claims[key]={'id':claim['id'],'block':block_id,'quote':quote}
-    job=store.enqueue('fact_check',{'run_id':run['id'],'runtime':{'model':'contract-test-model'}})
+    job=store.enqueue('fact_check',{'run_id':run['id'],'version_id':brief['id'],'stage_id':stage['stage_id'],
+                                  'runtime':{'model':'contract-test-model'}})
     query=research_budget.reserve_search(store,run['id'],3)  # a real query admitted to the fact-check stage
     return {'store':store,'run':run,'brief':brief,'stage':stage,'sources':sources,'claims':claims,'job':job,'query':query}
 
