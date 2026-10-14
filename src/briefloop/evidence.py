@@ -321,6 +321,9 @@ def public_fact_check_sources(store, run_id):
     for sid in sources:
         try:
             source, provenance, original = source_files(store, sid)
+            if source['status'] != 'ready':
+                return False, '来源含未确认公开的材料，不自动联网核查'
+            store.source_text(sid)  # Keep saved-text integrity checks before disclosure.
             url = urlsplit(source.get('url') or '')
             if (url.scheme not in ('http', 'https') or not url.hostname
                     or url.username or url.password or url.query or url.fragment):
@@ -333,7 +336,7 @@ def public_fact_check_sources(store, run_id):
                 if (provenance.get('original_kind') != 'provider_response'
                         or not _public_tavily_original(store, run_id, source, provenance, original)):
                     return False, '来源含未确认公开的原文类型或提取回执，不自动联网核查'
-            if source['status'] != 'ready' or not original or not provenance:
+            if not original or not provenance:
                 return False, '来源含未确认公开的材料，不自动联网核查'
             readable += 1
         except (ValueError, OSError, KeyError, TypeError, AttributeError):

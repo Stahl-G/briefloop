@@ -72,6 +72,14 @@ def test_fact_check_candidates_require_captured_public_originals(tmp_path, monke
     (store.root / public['path']).write_text(response['results'][0]['raw_content'])
     with store.tx() as connection:
         connection.execute('UPDATE sources SET hash=? WHERE id=?', (content_hash(response['results'][0]['raw_content']), public['id']))
+    response = {'request_id': 'partial-extract', 'results': [{'url': 'https://www.python.org/another-release/',
+        'raw_content': 'Public release date: 2024-10-07.'}]}
+    partial = tavily.extract(store, [response['results'][0]['url'], 'https://www.python.org/unavailable/'], run_id=run['id'])
+    failed = next(row for row in partial['sources'] if row['url'] == 'https://www.python.org/unavailable/')
+    assert failed['status'] == 'failed'
+    assert failed['provenance']['original_kind'] == 'provider_response'
+    blocked = register_fact_check_candidates(store, brief['id'], [item])
+    assert not blocked['registered'] and blocked['reason']
     private = store.add_source('Private input', 'Internal revenue 12.')
     store.attach_source(run['id'], private['id'])
     assert not register_fact_check_candidates(store, brief['id'], [item])['registered']
