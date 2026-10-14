@@ -15,7 +15,8 @@ PROVIDER_LABELS={'tavily':'Tavily','duckduckgo':'DuckDuckGo','bocha':'博查','z
 
 # Stable, redacted classification for the request envelope. Do not infer a
 # provider's billing outcome from these; they only say why an attempt stopped.
-FAILURE_KINDS=('auth','quota','rate_limit','timeout','tls','network','invalid_response','too_large','provider_error','budget','local_error')
+FAILURE_KINDS=('auth','quota','rate_limit','timeout','tls','network','invalid_response','too_large',
+               'provider_error','budget','local_error','invalid_arguments','policy')
 
 
 class SearchError(ValueError):
@@ -88,10 +89,14 @@ def check_run(store,run_id,provider):
     fail=getattr(provider_module(provider),'ProviderError',SearchError)
     run=store.one('runs',run_id)
     if not json.loads(run['requirements']).get('allow_web'):
-        error=fail('本轮未允许联网搜索');error.provider=provider;raise error
+        error=marked('本轮未允许联网搜索','policy',cls=fail)
+        error.provider=provider
+        raise error
     from .search_policy import for_run,allowed
     if provider not in allowed(for_run(store,run_id)):
-        error=fail('本轮搜索服务不是 '+PROVIDER_LABELS[provider]+'，请在设置中选择后发起新任务');error.provider=provider;raise error
+        error=marked('本轮搜索服务不是 '+PROVIDER_LABELS[provider]+'，请在设置中选择后发起新任务','policy',cls=fail)
+        error.provider=provider
+        raise error
     return run
 
 
@@ -124,11 +129,11 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
            key_file=None,store=None,run_id=None,purpose='primary',reason='',gap_id=None):
     """One metered search request; provider stays swappable behind one envelope."""
     if provider is None:
-        if store is None or run_id is None:raise SearchError('未指定搜索 provider')
+        if store is None or run_id is None:raise marked('未指定搜索 provider','invalid_arguments')
         provider=provider_for_run(store,run_id)
     else:provider=normalize_provider(provider)
-    if purpose not in ('primary','coverage_probe','gap_repair'):raise SearchError('无效搜索用途')
-    if not isinstance(reason,str) or len(reason)>1000:raise SearchError('搜索原因过长')
+    if purpose not in ('primary','coverage_probe','gap_repair'):raise marked('无效搜索用途','invalid_arguments')
+    if not isinstance(reason,str) or len(reason)>1000:raise marked('搜索原因过长','invalid_arguments')
     module=provider_module(provider)
     if store is not None and run_id and provider == 'tavily':
         import json
@@ -154,7 +159,10 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
     if provider=='zhipu':
         from .search_policy import for_run
         options['search_engine']=for_run(store,run_id)['zhipu_engine'] if store is not None and run_id else 'search_std'
-    parameters=module.validate_search(query,options)
+    try:
+        parameters=module.validate_search(query,options)
+    except SearchError as exc:
+        raise marked(str(exc),'invalid_arguments',cls=type(exc)) from exc
     reservation=None;local_id=None;round_id=None;claim=None
     if store is not None and run_id is not None:
         check_run(store,run_id,provider)
@@ -162,7 +170,9 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
             from .research_plan import frozen
             plan=frozen(store,run_id) or {}
             gaps=[g for info in plan.get('rounds',{}).values() for g in info.get('gaps',[])]
-            if not any(g.get('id')==gap_id for g in gaps):raise SearchError('缺口不属于本轮计划')
+            if not any(g.get('id')==gap_id for g in gaps):
+                raise marked('gap_id 不属于本轮已登记缺口；普通搜索可省略，补缺口时先取得计划中的真实 ID',
+                             'invalid_arguments')
         from . import research_budget as budget
         # The identity uses validated options; the shared budget caps admitted
         # URLs, not provider results. Different key files must not join one
@@ -317,7 +327,7 @@ def extract(store,urls,*,run_id=None,provider=None,extract_depth='basic',key_fil
     """Provider-facing extraction entry: Tavily uses its API; keyless providers
     register pages through the same metered direct-fetch path as add-url."""
     if provider is None:
-        if run_id is None:raise SearchError('未指定搜索 provider')
+        if run_id is None:raise marked('未指定搜索 provider','invalid_arguments')
         provider=provider_for_run(store,run_id)
     else:provider=normalize_provider(provider)
     return provider_module(provider).extract(store,urls,run_id=run_id,extract_depth=extract_depth,key_file=key_file)

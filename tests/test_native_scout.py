@@ -316,3 +316,41 @@ def test_source_regex_timeout_reaps_worker_and_next_search_works(tmp_path, monke
     assert len(processes) == 1 and processes[0].poll() is not None
     following = run_tool(store, config, 'source_grep', {'source_id': sid, 'pattern': '收入(USD)'})
     assert following['ok'] and f'{sid} 2 (start_char=0)' in following['content'][0]['text']
+
+
+def test_search_argument_failure_recovers_without_spending_provider_budget(tmp_path, monkeypatch):
+    from briefloop import duckduckgo, research_budget
+    store, run_id, _ = _run(tmp_path, allow_web=True, policy={'primary_provider': 'duckduckgo'})
+    config = _config(store, run_id, 'argument-recovery')
+    calls = []
+
+    class Provider:
+        validate_search = staticmethod(duckduckgo.validate_search)
+        search_note = staticmethod(lambda: 'discovery only')
+        rows = staticmethod(lambda parsed: [{'url': 'https://example.test/report', 'title': 'Report', 'content': 'snippet'}])
+
+        @staticmethod
+        def call_search(query, parameters, **kwargs):
+            calls.append(query)
+            if query == 'upstream failure':
+                raise websearch.marked('synthetic upstream failure', 'network')
+            return {}, b'{}', 'request', None
+
+    monkeypatch.setattr(websearch, 'provider_module', lambda provider: Provider)
+    arguments = {'provider': 'duckduckgo', 'query': 'orders', 'purpose': 'primary', 'reason': 'find orders'}
+    for invalid in ({'gap_id': 'week-news'}, {'max_results': 99}):
+        result = run_tool(store, config, 'web_search', {**arguments, **invalid})
+        body = json.loads(result['content'][0]['text'])
+        assert body['status'] == 'failed' and body['failure_kind'] == 'invalid_arguments'
+        assert body['recoverable'] is True and body['recovery_action'] == 'correct_arguments'
+        assert calls == []
+        assert research_budget.snapshot(store, run_id)['used']['search_requests'] == 0
+
+    recovered = json.loads(run_tool(store, config, 'web_search', arguments)['content'][0]['text'])
+    assert recovered['status'] == 'ok' and len(recovered['results']) == 1
+    assert calls == ['orders']
+    upstream_result = run_tool(store, config, 'web_search', {**arguments, 'query': 'upstream failure'})
+    upstream = json.loads(upstream_result['content'][0]['text'])
+    assert upstream['failure_kind'] == 'network'
+    assert 'recovery_action' not in upstream
+    assert research_budget.snapshot(store, run_id)['used']['search_requests'] == 2
