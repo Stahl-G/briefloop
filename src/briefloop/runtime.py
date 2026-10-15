@@ -725,12 +725,12 @@ class Worker:
                 if job['kind']=='learn':
                     self._check_feedback_owner(c,jid,payload)
                 if job['kind']=='assess' and payload.get('continuation_of'):
-                    from .draft_completion import resume_cancelled_stage
+                    from .draft_completion import resume_fact_check_stage
                     if c.execute("SELECT id FROM jobs WHERE id<>? AND status IN ('queued','running') AND json_extract(payload,'$.continuation_of')=?",(jid,payload['continuation_of'])).fetchone():
                         raise ValueError('本报告另一个检查任务仍在执行，请先等待或停止它')
                     if any(child['id'] in self._review_jobs for child in c.execute("SELECT id FROM jobs WHERE json_extract(payload,'$.parent_job_id')=?",(jid,))):
                         raise ValueError('关联核查仍在停止，请稍后恢复')
-                    resume_cancelled_stage(c,job)
+                    resume_fact_check_stage(c,job)
                 # Resume keeps the frozen configuration and original task identity.
                 payload['attempt']=int(payload.get('attempt',1))+1
                 c.execute("UPDATE jobs SET payload=?,status='queued',error=NULL,updated=? WHERE id=?",(dump(payload),now(),jid))
@@ -824,8 +824,8 @@ class Worker:
                     frozen['checks_identity']=hashlib.sha256(dump([
                         original['continuation_of'],payload['checks_input'],identity_payload]).encode()).hexdigest()
                     connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(frozen),new_id))
-                    from .draft_completion import resume_cancelled_stage
-                    resume_cancelled_stage(connection, {'id': new_id, 'payload': dump(frozen)})
+                    from .draft_completion import resume_fact_check_stage
+                    resume_fact_check_stage(connection, {'id': new_id, 'payload': dump(frozen)})
                     return
                 if job['kind']!='learn':return
                 self._check_feedback_owner(connection,jid,original)

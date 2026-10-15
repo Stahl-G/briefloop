@@ -315,9 +315,9 @@ def _refresh_research(store, config):
     else:
         from .research_plan import frozen
         from .scout_coverage import view
-        # A new goal run can research directly. Do not fabricate Scout receipts
-        # or hide promised workers when creating the writer's input container.
-        if not (frozen(store, config['run_id']) or {}).get('goal_contract') or view(store, config['run_id'])['scout_execution']:
+        # Any frozen strategy can research directly without inventing Scout
+        # receipts. Promised workers still need their normal join/closeout.
+        if not frozen(store, config['run_id']) or view(store, config['run_id'])['scout_execution']:
             return
         research = {'sources': [], 'gaps': []}
     research = current_research(store, config['run_id'], research, register=True)

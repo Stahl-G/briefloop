@@ -5,7 +5,7 @@ an independent fact check, and completing this job does not create a release.
 """
 import hashlib
 import json
-from .store import dump, Conflict
+from .store import dump, Conflict, uid, now
 
 
 def source_metadata(store, source_id):
@@ -298,28 +298,41 @@ def require_fact_check_settled(store, job):
         raise ValueError('本版本候选核查尚未完成（'+str(stage.get('status') or '未接纳')+'）；请先处理核查预算或中断状态，再恢复检查。')
 
 
-def resume_cancelled_stage(connection, job):
-    """Explicit parent resume restores only its own cancelled stage/budget.
+def resume_fact_check_stage(connection, job):
+    """Resume an owned cancelled check or retry a failed one with the same allowance.
 
-    Keep the cancellation history and request ledger. No new allowance or stage
-    is created, and a budget-exhausted/completed stage is never reopened here.
+    Failed attempts retain their own stage identity, rejecting late results.
+    Request charges, source bindings and the original budget remain unchanged.
     """
     payload=json.loads(job['payload'])
     if not payload.get('continuation_of'):return
     from .research_plan import _read_plan, _save_plan
     plan=_read_plan(connection,payload['run_id']) or {}
     stage=plan.get('fact_check') or {}
-    if stage.get('status')!='cancelled':return
+    if stage.get('status') not in ('cancelled', 'failed'):return
     versions = _fact_check_versions(None, job, payload, connection=connection)
     owners = [attempt['id'] for attempt in _check_attempts(None, job, payload, connection=connection)]
-    owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status='cancelled' "
+    statuses = ('cancelled',) if stage['status'] == 'cancelled' else ('complete', 'failed', 'interrupted', 'cancelled')
+    owned=connection.execute("SELECT id FROM jobs WHERE kind='fact_check' AND status IN ("
+        + ','.join('?' for _ in statuses) + ') '
+
         "AND json_extract(payload,'$.parent_job_id') IN (" + ','.join('?' for _ in owners) + ') '
         "AND json_extract(payload,'$.run_id')=? "
         "AND json_extract(payload,'$.version_id') IN (" + ','.join('?' for _ in versions) + ') '
-        "AND json_extract(payload,'$.stage_id')=?", (*owners,payload['run_id'],*versions,stage.get('stage_id'))).fetchone()
+        "AND json_extract(payload,'$.stage_id')=?", (*statuses,*owners,payload['run_id'],*versions,stage.get('stage_id'))).fetchone()
     if not owned:return
-    stage.setdefault('interrupted_closures',[]).append({key:stage.get(key) for key in ('status','closed','outcome')})
-    stage.update(status='active',closed=None,outcome=None)
+    if stage['status'] == 'failed':
+        from .research_budget import restore_fact_check_budget_offset
+        retry = {**stage, 'status': 'active', 'closed': None, 'outcome': None}
+        # Restore old published offsets against the old request ledger before
+        # assigning a new identity. This cannot replenish consumed allowance.
+        restore_fact_check_budget_offset(connection, payload['run_id'], {**plan, 'fact_check': retry})
+        retry.update(stage_id=uid('fchk'), created=now(), retry_of_stage_id=stage['stage_id'])
+        plan.setdefault('fact_check_history', []).append(stage)
+        plan['fact_check'] = retry
+    else:
+        stage.setdefault('interrupted_closures', []).append({key: stage.get(key) for key in ('status', 'closed', 'outcome')})
+        stage.update(status='active', closed=None, outcome=None)
     _save_plan(connection,payload['run_id'],plan)
 
 

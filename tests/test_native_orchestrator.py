@@ -403,3 +403,37 @@ def test_revision_responses_without_review_findings_are_told_to_send_none():
     with pytest.raises(ValueError, match='"expected": \\["review_1"\\]'):
         validate_arrays([], answer, {'review_1'})
     validate_arrays([], [], set())
+
+
+def test_guided_direct_research_without_scout_reaches_writer(tmp_path):
+    class DirectEngine(FlowEngine):
+        def next(self, sid):
+            if self.sessions[sid]['role'] == 'orchestrator' and not getattr(self, 'direct_started', False):
+                self.direct_started = True
+                self.queues[sid] = [
+                    ('save_plan', {'plan': {'summary': 'Read the supplied revenue',
+                        'reader_contract': contract(self.store, self.run['id']), 'scout_tasks': []}}),
+                    ('source_read', {'source_id': self.source['id']}),
+                    ('save_research_handoff', {'handoff': {'learnings': [], 'covered': ['Revenue read'], 'open_questions': []}}),
+                    ('workspace_action', {'request': {'action': 'finish_research_round', 'gaps': [], 'summary': 'Direct research finished'}}),
+                    ('workspace_action', {'request': {'action': 'reconciliation_save', 'reconciliation': {
+                        'status': 'not_applicable', 'examined_claim_ids': [], 'unexamined_claim_ids': [],
+                        'relations': [], 'open_questions': [], 'coverage_notes': 'No source claims in fixture'}}}),
+                    ('write_report', {'instructions': 'State the supplied revenue'}),
+                    ('finish_task', {})]
+            super().next(sid)
+
+    store, source, run, job = setup(tmp_path)
+    engine = DirectEngine(store, run, source)
+    harness = NativeHarness(store, engine)
+    worker = Worker(store)
+    worker.runtime = InteractiveRuntime(store, backends={'briefloop-native': harness})
+    try:
+        result = worker.generate(job, score=False)
+        brief = store.one('briefs', result['version_id'])
+        assert '1200' in brief['markdown']
+        assert sorted(session['role'] for session in engine.sessions.values()) == ['analyst', 'orchestrator']
+        research = json.loads((worker.folder(job) / 'research.json').read_text())
+        assert research['sources'] == []
+    finally:
+        harness.close()
