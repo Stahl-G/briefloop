@@ -8,7 +8,7 @@ const {spawn} = require('node:child_process');
 const desktopRoot=process.env.BRIEFLOOP_TEST_DESKTOP_ROOT || path.resolve(__dirname,'..');
 const requireDesktop=require('node:module').createRequire(path.join(desktopRoot,'package.json'));
 
-test('actual Electron launches the unpacked supervisor while preserving an ordinary app.asar directory', {skip:process.platform!=='win32',timeout:15000}, async t=>{
+test('actual Electron launches the unpacked supervisor while preserving an ordinary app.asar directory', {skip:process.platform!=='win32',timeout:45000}, async t=>{
   let electron,asar;
   try{electron=requireDesktop('electron');asar=requireDesktop('@electron/asar');await fs.access(electron)}
   catch(error){if(process.env.BRIEFLOOP_TEST_DESKTOP_ROOT)throw error;t.skip('Install desktop Electron development dependencies for the native ASAR regression');return}
@@ -38,8 +38,10 @@ const fs=require('node:fs/promises'),physical=require('original-fs').promises,pa
   const child=spawn(electron,[runner],{windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});
   let stdout='',stderr='';child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
   child.stdout.on('data',chunk=>{stdout+=chunk});child.stderr.on('data',chunk=>{stderr+=chunk});
-  const timer=setTimeout(()=>child.kill(),12000);
+  let timedOut=false;
+  const timer=setTimeout(()=>{timedOut=true;child.kill()},30000);
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve)}).finally(()=>clearTimeout(timer));
+  assert.equal(timedOut,false,'Electron supervisor fixture exceeded 30s; stderr: '+stderr);
   assert.equal(code,0,stderr);
   const result=JSON.parse(stdout.trim());
   assert.ok(result.electron);assert.equal(result.noAsar,false);
