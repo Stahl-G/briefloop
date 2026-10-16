@@ -310,7 +310,10 @@ def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path, 
         result=subprocess.run([str(entry),'start','--workspace',str(root),'--port','0','--paused'],
                               cwd=tmp_path,capture_output=True,text=True,encoding='utf-8',timeout=60,
                               env={**os.environ,'PYTHONUTF8':'0'})
-        assert result.returncode==0,(result.stdout,result.stderr)
+        if result.returncode:
+            log_path=root/'server.log'
+            details=log_path.read_text(encoding='utf-8',errors='replace')[-8000:] if log_path.exists() else 'No service log'
+            pytest.fail(result.stdout+'\n'+result.stderr+'\nService log:\n'+details)
         info=json.loads(marker.read_text(encoding='utf-8'))
         assert len(info['launch_id'])==32
         assert int((root/'server.pid').read_text())==info['pid']

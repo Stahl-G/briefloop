@@ -122,3 +122,27 @@ def test_cancelled_stage_rejects_new_and_late_requests(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as blocked:
         budget.reserve_search(store, run['id'], 1)
     assert blocked.value.code == 'fact_check_closed'
+
+
+def test_fact_check_search_absolute_dates_clear_relative_filter(tmp_path, monkeypatch):
+    from briefloop import tavily, websearch
+    store = Store(tmp_path)
+    store.update_settings({'search_provider': 'tavily', 'search_policy': {'primary_provider': 'tavily'}})
+    run = _run(store, period_start='2026-09-21', period_end='2026-09-27',
+               research_budget={'search_requests': 4, 'candidate_urls': 20, 'source_pages': 6})
+    _closed_round(store, run)
+    research_plan.admit_fact_check(store, run['id'], {'kind': 'task_reserve', 'limits': SHARE})
+    requests = []
+
+    def post(endpoint, payload, **kwargs):
+        requests.append(payload)
+        result = {'results': [{'title': 'Historical original', 'url': 'https://example.test/history', 'content': 'Background'}]}
+        return result, json.dumps(result).encode()
+
+    monkeypatch.setattr(tavily, '_post', post)
+    result = websearch.search('historical background', provider='tavily', time_range='year',
+                             start_date='2020-01-01', end_date='2020-12-31', store=store, run_id=run['id'])
+    assert result['status'] == 'ok'
+    assert requests[0]['start_date'] == '2020-01-01' and requests[0]['end_date'] == '2020-12-31'
+    assert 'time_range' not in requests[0]
+    assert budget.snapshot(store, run['id'])['stages']['fact_check']['search_requests'] == 1

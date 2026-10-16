@@ -15,11 +15,14 @@ from . import __version__
 
 def _search_failure(operation,exc,provider='tavily'):
     """A structured, redacted failure so the Scout's path-switching can act on it."""
-    return {'provider':getattr(exc,'provider',None) or provider,'operation':operation,'status':'failed',
-            'failure_kind':getattr(exc,'failure_kind','provider_error'),
-            'http_status':getattr(exc,'status',None),
-            'error':str(exc),
-            'request_record_path':getattr(exc,'request_record_path',None)}
+    result = {'provider':getattr(exc,'provider',None) or provider,'operation':operation,'status':'failed',
+              'failure_kind':getattr(exc,'failure_kind','provider_error'),
+              'http_status':getattr(exc,'status',None),
+              'error':str(exc),
+              'request_record_path':getattr(exc,'request_record_path',None)}
+    if result['failure_kind'] == 'invalid_arguments':
+        result.update(recoverable=True, recovery_action='correct_arguments')
+    return result
 
 
 def main():

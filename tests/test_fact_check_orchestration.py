@@ -321,3 +321,43 @@ def test_pending_grant_receipt_does_not_add_again_after_the_stage_consumes_it(tm
     assert len(before['fact_check']['initial_grants']) == 1
     assert research_plan.pending_fact_check_grant(store, run['id']) is None
     assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == []
+
+
+def test_parent_retry_replaces_failed_check_stage_without_resetting_allowance(tmp_path):
+    from briefloop.runtime import Worker
+    from briefloop.draft_completion import binding, require_fact_check_settled
+    store, run, _ = _world(tmp_path)
+    brief, claim, _ = _claim_version(store, run)
+    research_plan.finish_round(store, run['id'])
+    parent = store.enqueue('assess', {'run_id': run['id'], 'version_id': brief['id'],
+        'runtime': {'model': 'test'}, 'continuation_of': 'job_original', 'checks_input': binding(store, brief['id'])})
+    worker = Worker(store)
+    first = worker._admit_fact_check(parent, brief)
+    old = store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
+    research_plan.add_fact_check_grant(store, run['id'], SHARE)
+    request = budget.reserve_search(store, run['id'], 1)
+    before = budget.snapshot(store, run['id'])
+    failed_result = {'version_id': brief['id'], 'stage_id': first['stage_id'],
+        'selection': {'claim_ids': [claim['id']]}, 'execution': {'status': 'failed', 'summary': 'Source reader failed'},
+        'candidates': [{'claim_id': claim['id'], 'status': 'insufficient_evidence', 'reason': 'Could not read source',
+            'span_ids': [], 'query_ids': [request['request_id']]}]}
+    saved = fact_check.submit_result(store, run['id'], failed_result, job_id=old['id'])
+    store.update_job(old['id'], 'complete', result={'execution': 'failed'})
+    store.update_job(parent['id'], 'failed', error='Fact check failed')
+    worker.resume(parent['id'])
+    retry_stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert retry_stage['status'] == 'active' and retry_stage['stage_id'] != first['stage_id']
+    assert retry_stage['retry_of_stage_id'] == first['stage_id']
+    after = budget.snapshot(store, run['id'])
+    assert after['limits'] == before['limits'] and after['used'] == before['used']
+    assert fact_check.get_record(store, saved['record']['id'])['data']['execution']['status'] == 'failed'
+    with pytest.raises(ValueError):
+        fact_check.submit_result(store, run['id'], failed_result, job_id=old['id'])
+    with pytest.raises(ValueError):
+        require_fact_check_settled(store, store.one('jobs', parent['id']))
+    worker._admit_fact_check(store.one('jobs', parent['id']), brief)
+    worker._admit_fact_check(store.one('jobs', parent['id']), brief)
+    checks = store.rows("SELECT * FROM jobs WHERE kind='fact_check' ORDER BY rowid")
+    assert len(checks) == 2 and checks[-1]['status'] == 'queued'
+    assert json.loads(checks[-1]['payload'])['stage_id'] == retry_stage['stage_id']
+    assert store.one('jobs', old['id'])['status'] == 'complete'
