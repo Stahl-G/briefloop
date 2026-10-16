@@ -57,7 +57,7 @@ export function appUpdatesUI({api,notice}){
   $('app-update-check').disabled=busy;
   $('app-update-download').hidden=!desktop||value?.state!=='available';$('app-update-download').disabled=busy;
   $('app-update-install').hidden=!desktop||value?.state!=='downloaded';$('app-update-install').disabled=busy;
-  $('app-update-install').textContent=value?.installMode==='zip'?'保存并退出，打开安装文件夹':value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
+  $('app-update-install').textContent=value?.installMode==='backend'?'保存并重启，更新研究组件':value?.installMode==='zip'?'保存并退出，打开安装文件夹':value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
   $('app-update-retry').hidden=value?.state!=='error'||!value?.retryable;$('app-update-retry').disabled=busy;
   $('app-update-error').hidden=!value?.error;$('app-update-error').textContent=value?.error?.message||'';
   const progress=value?.progress;

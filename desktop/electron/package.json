@@ -32,7 +32,8 @@
       "welcome.css",
       "welcome.js",
       "package.json",
-      "assets/**"
+      "assets/**",
+      "backend-update-trust.json"
     ],
     "extraResources": [
       {
