@@ -12,7 +12,7 @@
 
 报告可选中文或英文，英文写作规范、词数和导出版式贯穿写稿与审阅；新增 Excel 报表导出，未安装 OfficeCLI 也能使用。OpenCode 1.x 与 2.x 同时支持，普通审阅和严格审阅分别展示实际能力，重大事实错误与证据缺口仍阻止正式交付。
 
-本轮提供 macOS Apple Silicon、Python/CLI/PyPI 与 GitHub 源码；Windows 安装包沿用既有稳定版，待原生验收后单独更新。本轮 Mac 包未做 Developer ID 签名或 Apple 公证，平台验证与工件哈希见发行页。完整变更见 [CHANGELOG](CHANGELOG.md)。
+提供 macOS Apple Silicon、Windows 和 Python/CLI 安装入口。Mac 签名、公证、各平台验收状态及工件哈希见对应发行页。完整变更见 [CHANGELOG](CHANGELOG.md)。
 
 新工作区默认优先 Tavily，同时允许宿主自带搜索补查；可主动启用博查、智谱搜索或 DuckDuckGo，按跨市场覆盖或具体缺口补查。受控渠道共用本轮预算，搜索失败、实际发现渠道与原文分别保留。Tavily 需要 API Key，额度以服务账号为准；宿主自带搜索取决于实际工具与权限。
 

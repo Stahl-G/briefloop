@@ -49,7 +49,7 @@ node scripts/prepare-update-blockmaps.cjs
 
 后台以 App 专属 Python 启动，桥使用当前 `process.execPath` 指向 Electron 内置 Node。只给桥进程设置 `ELECTRON_RUN_AS_NODE=1`，桥入口立即清除此标记，宿主 CLI 子进程不继承。不得关闭 Electron RunAsNode fuse。外部模型宿主仍须由用户安装和配置，包括宿主自己的运行依赖。
 
-历史 `prepare-runtime.py`、`refresh-app.py` 及 runtime lock 仅用于复查旧全量包证据，不属于当前发行构建流程。当前构建未签名／公证；本地安装验证不代表正式发布或 Windows 原生验收。
+历史 `prepare-runtime.py`、`refresh-app.py` 及 runtime lock 仅用于复查旧全量包证据，不属于当前发行构建流程。正式 Mac 工件通过 `dist:signed` 签名及公证；本地安装验证与公开发行、Windows 原生验收分别记录。
 
 ## 窗口保存与退出协议
 
