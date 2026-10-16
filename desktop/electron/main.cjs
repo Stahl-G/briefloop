@@ -242,7 +242,7 @@ async function requestQuit() {
       const choice = await dialog.showMessageBox(window, {type: 'question', message: '运行环境仍在准备', detail: '退出会停止本次安装，已存在的环境和工作区会保留。下次可重新准备。', buttons: ['继续准备', '取消准备并退出'], defaultId: 0, cancelId: 0});
       if (choice.response !== 1) return;
     }
-    await backendUpdates?.cancel();
+    if (backendUpdates) await backendUpdates.cancel();
     await environment?.cancel();
     if (menuSave) await menuSave;
     if (!(await stopCurrent())) return;
