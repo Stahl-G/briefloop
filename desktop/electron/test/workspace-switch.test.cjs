@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const path = require('node:path').posix;
 const main = fs.readFileSync(require.resolve('../main.cjs'), 'utf8');
 const welcome = fs.readFileSync(require.resolve('../welcome.js'), 'utf8');
-const operations = main.slice(main.indexOf('async function stopCurrent()'), main.indexOf('async function chooseWorkspace('));
+const operations = main.slice(main.indexOf('async function stopCurrent('), main.indexOf('async function chooseWorkspace('));
 const oldURL = 'http://127.0.0.1:12345';
 const targetURL = 'http://127.0.0.1:23456';
 const welcomeURL = 'file:///welcome.html';
@@ -50,7 +50,7 @@ function fixture(options = {}) {
   }
   const context = vm.createContext({URL, path, WorkspaceService: Service,
     service: previous, switching: false, quitting: false, closePending: false,
-    expectedExit: false, menuSave: null, workspaceOrigin: previous ? oldURL : null, welcomeURL,
+    backendUpdates: null, expectedExit: false, menuSave: null, workspaceOrigin: previous ? oldURL : null, welcomeURL,
     environment: {runtime: async () => { calls.push('runtime'); return {python: 'synthetic'}; }},
     prepareClose: async () => { calls.push('save'); },
     resumeEditing: () => calls.push('resume'),

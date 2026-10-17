@@ -134,6 +134,18 @@ test('first install and repair wait for the user; updates preserve environments 
   assert.ok(!f.calls.some(c=>c.args[2]==='venv'));
   assert.equal(JSON.parse(await fs.readFile(path.join(directory,'active.json'),'utf8')).cloned,true);
   assert.deepEqual((await fs.readdir(directory)).sort(),['active.json','keep-me.txt',path.basename(stale),one,two].sort());
+  const source = createEnvironment(f.config);
+  await source.startup();
+  const before = await fs.readFile(path.join(directory, 'active.json'), 'utf8');
+  const isolated = path.join(f.root, 'component-data');
+  f.calls.length = 0;
+  const component = createEnvironment({...f.config, app: {getPath: () => isolated}, reuseFrom: source.runtime()});
+  assert.equal((await component.prepare()).state, 'ready');
+  const componentClone = f.calls.find(c => c.executable === '/bin/cp');
+  assert.equal(componentClone.args[2], path.join(directory, two));
+  assert(componentClone.args[3].startsWith(path.join(isolated, 'environments')));
+  assert(!f.calls.some(c => c.args[2] === 'venv'));
+  assert.equal(await fs.readFile(path.join(directory, 'active.json'), 'utf8'), before);
   await fs.unlink(path.join(directory,two,'bin','python3'));f.calls.length=0;
   const repair=await createEnvironment(f.config).startup();
   assert.equal(repair.state,'needs-setup');assert.equal(repair.reason,'repair');

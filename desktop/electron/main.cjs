@@ -7,12 +7,15 @@ const {randomUUID} = require('node:crypto');
 const {WorkspaceService} = require('./service.cjs');
 const {createEnvironment} = require('./environment.cjs');
 const {createUpdater} = require('./updater.cjs');
+const {createBackendUpdates} = require('./backend-updates.cjs');
+const {combinedUpdates} = require('./backend-update-facade.cjs');
 const {installNavigation, isWorkspaceDownload} = require('./navigation.cjs');
 const {createStartupTrace, observeStartup} = require('./startup-trace.cjs');
 const startupTrace = createStartupTrace(process.env.BRIEFLOOP_STARTUP_TRACE === '1');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null, environment;
+let backendUpdates, bundledEnvironment;
 let updates, nativeInstall = null, nativeQuitPending = false;
 const nativeQuitTransactions = [];
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
@@ -110,12 +113,16 @@ async function returnToWorkspace() {
   // discard unsaved text, so leave it (and unknown/error pages) untouched.
   if (isWorkspaceDownload(window.webContents.getURL(), service?.info?.url)) await window.loadURL(service.info.url);
 }
-async function stopCurrent() {
+async function stopCurrent({allowCancel = true} = {}) {
   await prepareClose();
   if (!service?.child) return true;
   const status = await service.status();
   let cancelBusy = false;
   if (status.busy) {
+    if (!allowCancel) {
+      await dialog.showMessageBox(window, {type: 'info', message: '请等待当前任务完成后更新研究组件'});
+      return false;
+    }
     const result = await dialog.showMessageBox(window, {type: 'question', title: '工作区仍有任务',
       message: '任务仍在运行或排队', detail: '继续工作会保留窗口。停止并退出会保存已完成内容，并停止当前工作区的任务。',
       buttons: ['继续工作', '停止并退出'], defaultId: 0, cancelId: 0});
@@ -165,7 +172,20 @@ async function openWorkspace(request) {
       stopped = true;
     }
     service = candidate;
-    const opened = await candidate.start(directory, {create: request.create});
+    let opened;
+    try { opened = await candidate.start(directory, {create: request.create}); }
+    catch (error) {
+      if (!backendUpdates?.trial() || candidate.child) throw error;
+      environment = await backendUpdates.rollback() || bundledEnvironment;
+      const restored = await environment.startup();
+      if (restored.state !== 'ready') throw error;
+      candidate = workspaceService(environment.runtime());
+      service = candidate;
+      opened = await candidate.start(directory, {create: request.create});
+      await dialog.showMessageBox(window, {type: 'warning', message: '已恢复上一研究组件',
+        detail: '新组件启动失败，已恢复原组件。报告和工作区保留。'});
+    }
+    await backendUpdates?.confirm();
     workspaceOrigin = opened.url;
     navigating = true;
     await window.loadURL(opened.url);
@@ -222,6 +242,7 @@ async function requestQuit() {
       const choice = await dialog.showMessageBox(window, {type: 'question', message: '运行环境仍在准备', detail: '退出会停止本次安装，已存在的环境和工作区会保留。下次可重新准备。', buttons: ['继续准备', '取消准备并退出'], defaultId: 0, cancelId: 0});
       if (choice.response !== 1) return;
     }
+    if (backendUpdates) await backendUpdates.cancel();
     await environment?.cancel();
     if (menuSave) await menuSave;
     if (!(await stopCurrent())) return;
@@ -274,7 +295,7 @@ async function installAppUpdate() {
   let transaction = null;
   try {
     if (menuSave) await menuSave;
-    if (!(await stopCurrent())) return {cancelled: true};
+    if (!(await stopCurrent({allowCancel: update.installMode !== 'backend'}))) return {cancelled: true};
     // electron-updater closes windows before before-quit. The save/busy/owned
     // stop gate has already finished; do not recursively enter it a second time.
     quitting = true;
@@ -288,7 +309,7 @@ async function installAppUpdate() {
       await transaction.recovery;
       throw Error(updates.status().error?.message || '原生更新安装未完成，请重试。');
     }
-    if (['dmg', 'zip'].includes(result.mode)) { window.destroy(); app.quit(); }
+    if (['dmg', 'zip', 'backend'].includes(result.mode)) { window.destroy(); app.quit(); }
     return result;
   } catch (error) {
     if (transaction) { await recoverNativeInstall(transaction); throw error; }
@@ -312,14 +333,20 @@ else {
       const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-macos-1024.png'));
       if (!icon.isEmpty()) app.dock.setIcon(icon);
     }
-    environment = createEnvironment({app, payloadPath, changed: value => {
+    const environmentChanged = value => {
       startupTrace('environment-changed', {state: value.state, phase: value.phase});
       if (window && !window.isDestroyed()) window.webContents.send('environment:changed', value);
-    }});
-    updates = createUpdater({app, shell,
+    };
+    environment = createEnvironment({app, payloadPath, changed: environmentChanged});
+    bundledEnvironment = environment;
+    backendUpdates = createBackendUpdates({app, payloadPath, changed: updateChanged, environmentChanged,
+      testFeed: !app.isPackaged ? process.env.BRIEFLOOP_BACKEND_UPDATE_TEST_FEED || null : null});
+    environment = await backendUpdates.selected() || bundledEnvironment;
+    const fullUpdates = createUpdater({app, shell,
       // A packaged application always uses the fixed official source.
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
       changed: updateChanged});
+    updates = combinedUpdates({app, full: fullUpdates, backend: backendUpdates, environment: () => environment});
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
       show: process.platform !== 'win32',
       ...(process.platform === 'win32' ? {icon: path.join(__dirname, 'assets', 'Win.ico')} : {}),

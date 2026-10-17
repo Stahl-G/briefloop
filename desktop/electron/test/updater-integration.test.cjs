@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const main = fs.readFileSync(require.resolve('../main.cjs'), 'utf8');
-const stop = main.slice(main.indexOf('async function stopCurrent()'), main.indexOf('async function openWorkspace('));
+const stop = main.slice(main.indexOf('async function stopCurrent('), main.indexOf('async function openWorkspace('));
 const install = main.slice(main.indexOf('function beforeAppQuit('), main.indexOf('if (!app.requestSingleInstanceLock())'));
 function gate({busy=false,confirm=1,saveError=false,stopError=false,installError=false,mode='dmg',status='downloaded'}={}) {
   const calls=[];
@@ -12,7 +12,7 @@ function gate({busy=false,confirm=1,saveError=false,stopError=false,installError
     status:async()=>{calls.push('status');return {busy}},
     stop:async value=>{calls.push(['stop',value.cancelBusy]);if(stopError)throw Error('stop failed');service.child=null},
     start:async(directory,options)=>{calls.push(['restart',options.port]);service.child={}}};
-  const context=vm.createContext({URL,nativeInstall:null,nativeQuitPending:false,nativeQuitTransactions:[],quitting:false,closePending:false,switching:false,menuSave:null,expectedExit:false,service,
+  const context=vm.createContext({URL,backendUpdates:null,nativeInstall:null,nativeQuitPending:false,nativeQuitTransactions:[],quitting:false,closePending:false,switching:false,menuSave:null,expectedExit:false,service,
     prepareClose:async()=>{calls.push('save');if(saveError)throw Error('save failed')},
     dialog:{showMessageBox:async()=>{calls.push('busy-dialog');return {response:confirm}}},
     updates:{status:()=>({state:status,installMode:mode,error:status==='error'?{code:'open_failed'}:null}),installReady:async()=>{
@@ -51,7 +51,7 @@ test('update IPC checks window identity, ignores extra renderer arguments, and p
     await handler('trusted','https://attacker.invalid','command');
   }
   assert.deepEqual(calls,[['status'],['check'],['download'],['install']]);
-  const init=main.slice(main.indexOf('    updates = createUpdater('),main.indexOf('    window = new BrowserWindow('));
+  const init=main.slice(main.indexOf('    const fullUpdates = createUpdater('),main.indexOf('    updates = combinedUpdates('));
   for(const packaged of [true,false]){
     let config;
     vm.runInNewContext(init,{app:{isPackaged:packaged},shell:{},process:{env:{BRIEFLOOP_UPDATE_TEST_FEED:'http://127.0.0.1:12345/release'}},createUpdater:value=>{config=value},updateChanged:()=>{},window:null});
@@ -205,7 +205,7 @@ test('an error racing the native request return keeps the gate pending until own
 test('quit during Python detection waits for cancellation and rejects new environment operations', async () => {
   const calls=[],handlers=new Map();
   let finishCancellation;
-  const context=vm.createContext({quitting:false,closePending:false,switching:false,nativeInstall:null,menuSave:null,service:null,
+  const context=vm.createContext({backendUpdates:null,quitting:false,closePending:false,switching:false,nativeInstall:null,menuSave:null,service:null,
     environment:{status:()=>({state:'checking',phase:'detect-python'}),
       cancel:()=>{calls.push('cancel');return new Promise(resolve=>{finishCancellation=()=>{calls.push('cancelled');resolve()}})},
       inspect:()=>calls.push('inspect'),prepare:()=>calls.push('prepare')},
