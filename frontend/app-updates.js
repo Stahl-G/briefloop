@@ -38,14 +38,14 @@ export function appUpdatesUI({api,notice}){
   const desktop=typeof window.briefloopDesktop?.updateStatus==='function';
   $('app-update-controls').hidden=false;
   $('app-update-version').textContent=desktop?`当前 App v${value?.currentAppVersion||'读取中'}`:softwareInfo?`当前版本 v${softwareInfo.version}`:'正在读取实际运行版本…';
-  const installations={desktop:'桌面管理的后端 · App 与 CLI 共用',source:'开发源码',pip:'Python 包安装',pipx:'pipx 安装',uv:'uv 工具安装'};
+  const installations={desktop:'桌面管理的后端',source:'开发源码',pip:'Python 包安装',pipx:'pipx 安装',uv:'uv 工具安装'};
   $('app-update-installation').textContent=softwareInfo?`${installations[softwareInfo.installation]||'独立安装'} · 后端 v${softwareInfo.version}${softwareInfo.build?` · 构建 ${softwareInfo.build}`:''}`:'';
   $('app-update-command').hidden=!softwareInfo?.update_command;
   $('app-update-command').textContent=softwareInfo?.update_command||'';
   $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':desktop?'官方稳定来源：Stahl-G/briefloop · GitHub Releases':'版本检查：PyPI · 发布说明：GitHub Releases';
   $('app-update-test-source').hidden=value?.source!=='local-test';
   const reinstall=value?.source==='local-test'&&value?.reinstall===true;
-  $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='zip'?'安装前会保存编辑并处理忙任务。退出后，在 Finder 中将新版 App 拖入“安装位置”并替换，再打开 BriefLoop；工作区保留。':value?.installMode==='dmg'?`安装前会保存编辑并处理忙任务，再退出并打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'安装前会保存编辑并处理忙任务，再退出并交给安装器更新；工作区保留。';
+  $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='backend'?'保存后重启并切换研究组件；桌面 App 和工作区保留。':value?.installMode==='zip'?'安装前会保存编辑并处理忙任务。退出后，在 Finder 中将新版 App 拖入“安装位置”并替换，再打开 BriefLoop；工作区保留。':value?.installMode==='dmg'?`安装前会保存编辑并处理忙任务，再退出并打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'安装前会保存编辑并处理忙任务，再退出并交给安装器更新；工作区保留。';
   $('app-update-guidance').hidden=desktop&&!['available','downloading','downloaded','error'].includes(value?.state);
   const errorOperation=value?.error?.operation||(value?.error?.code==='open_failed'?'install':appUpdateLastAction);
   const errorLabel={check:'更新检查失败（当前安装不受影响）',download:'更新包下载未完成',install:'更新安装未完成'}[errorOperation]||'更新检查失败（当前安装不受影响）';

@@ -29,7 +29,8 @@ async function fixture(t) {
     envelope = {schema: 1, key_id: 'test', payload: bytes.toString('base64'), signature: sign(null, bytes, key.privateKey).toString('base64')};
   }
   publish('1.0.1', 1);
-  const config = {app, payloadPath: payload, keys: {test: key.publicKey},
+  const notifications = [];
+  const config = {app, payloadPath: payload, environmentChanged: value => notifications.push(value), keys: {test: key.publicKey},
     fetch: async (url, options) => {
       if (url.endsWith('/backend-update.json')) {
         return new Response(JSON.stringify(badSignature ? {...envelope, signature: Buffer.alloc(64).toString('base64')} : envelope));
@@ -38,12 +39,13 @@ async function fixture(t) {
       if (pauseDownload) return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(Error('interrupted')), {once: true}));
       return new Response(badWheel ? Buffer.from('tampered bytes') : wheel);
     },
-    createEnv: ({payloadPath}) => {
+    createEnv: ({payloadPath, changed}) => {
       const {version} = JSON.parse(fsSync.readFileSync(path.join(payloadPath, 'manifest.json')));
-      return {prepare: async () => ({state: 'ready'}), startup: async () => ({state: 'ready'}), runtime: () => ({version})};
+      return {prepare: async () => ({state: 'ready'}), startup: async () => { changed?.({state: 'ready'}); return {state: 'ready'}; }, runtime: () => ({version})};
     },
     probe: async runtime => { if (badProbe && runtime.version !== '1.0.0') throw Error('Export failed'); return 'same-database-format'; }};
   return {manager: () => createBackendUpdates(config), bundled: {runtime: () => ({version: '1.0.0'})}, publish,
+    notifications,
     state: async () => JSON.parse(await fs.readFile(path.join(root, 'backend-updates/state.json'), 'utf8')),
     pauseDownload: value => {pauseDownload = value;},
     badSignature: value => {badSignature = value;}, badWheel: value => {badWheel = value;}, badProbe: value => {badProbe = value;}};
@@ -81,6 +83,7 @@ test('an unconfirmed restart rolls back without lowering replay protection; a co
   await m.check(f.bundled); await m.download(); await m.activate();
   m = f.manager();
   assert.equal((await m.selected()).runtime().version, '1.0.1');
+  assert.equal(f.notifications.at(-1).state, 'ready');
   m = f.manager();
   assert.equal(await m.selected(), null);
   assert.equal((await f.state()).high, 1);

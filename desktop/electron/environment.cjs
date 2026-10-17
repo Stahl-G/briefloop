@@ -197,7 +197,7 @@ const HEALTH = 'import importlib.util,importlib.metadata,json,pathlib,sys; asser
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 function createEnvironment({app, payloadPath, changed = () => {}, platform = process.platform, arch = process.arch,
-                            runProcess = runOwnedProcess, candidates, env = process.env} = {}) {
+                            runProcess = runOwnedProcess, candidates, env = process.env, reuseFrom = null} = {}) {
   if (!app || !path.isAbsolute(payloadPath || '')) throw Error('Invalid environment configuration');
   const directory = path.join(app.getPath('userData'), 'environments');
   const activeFile = path.join(directory, 'active.json');
@@ -310,7 +310,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         checkAbort(signal); // Damaged or missing environments enter the full diagnostic path.
       }
     }
-    const python = await host(active, signal);
+    const python = await host(active || (reuseFrom?.basePython ? {hostPython: reuseFrom.basePython} : null), signal);
     if (!python) { publish({state: 'missing-python', phase: 'detect-python', pythonVersion: null,
       error: {code: 'missing_python', message: '未找到 Python 3.11 或更高版本。请从 python.org 安装 Python 后重新检测；不会自动安装系统 Python。'}, retryable: true}); return {manifest, python}; }
     publish({pythonVersion: python.version});
@@ -322,12 +322,27 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         publish({state: 'ready', phase: 'ready', error: null, retryable: false}); return {manifest, python};
       } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); }
     }
+    let reuseSource = recorded ? path.join(directory, active.environmentId) : null;
+    let reuseRecord = recorded ? active : null;
+    // A component lives in its own data directory. Reuse only the already verified
+    // current runtime's recorded environment, without changing its active pointer.
+    if (!reuseRecord && path.isAbsolute(reuseFrom?.python || '')) {
+      try {
+        const source = path.dirname(path.dirname(reuseFrom.python));
+        const record = JSON.parse(await fs.readFile(path.join(path.dirname(source), 'active.json'), 'utf8'));
+        if (record.schema === 1 && UUID.test(record.environmentId || '') && record.environmentId === path.basename(source)
+            && record.platform === platform && record.arch === arch && record.hostPython === python.executable
+            && record.pythonVersion === python.version && !(await fs.lstat(source)).isSymbolicLink()) {
+          reuseSource = source;
+          reuseRecord = record;
+        }
+      } catch { /* A missing reusable environment uses normal locked preparation. */ }
+    }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
-    return {manifest, python, previous: recorded ? active.environmentId : null,
-      // An update on the same base Python can start from a copy of the environment it replaces.
-      cloneFrom: recorded && !matches && active.hostPython === python.executable && active.pythonVersion === python.version ? active.environmentId : null,
-      sameLock: recorded && active.requirementsSha256 === manifest.requirements_sha256,
-      previousRecord: recorded ? active : null};
+    return {manifest, python, previous: recorded ? active.environmentId : null, reuseSource,
+      cloneFrom: !matches && reuseRecord?.hostPython === python.executable && reuseRecord.pythonVersion === python.version ? reuseSource : null,
+      sameLock: reuseRecord?.requirementsSha256 === manifest.requirements_sha256,
+      previousRecord: reuseRecord};
   }
   // Query command lines only (never process environments). If process discovery
   // fails or a Python command has no identifiable path, defer cleanup conservatively.
@@ -370,7 +385,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     } catch { /* Cleanup must never turn a successful update into a failure. */ }
   }
   async function prepareImpl(signal, inspected) {
-    const {manifest, python, previous, cloneFrom, sameLock, previousRecord} = inspected || await inspectImpl(signal);
+    const {manifest, python, previous, cloneFrom, reuseSource, sameLock, previousRecord} = inspected || await inspectImpl(signal);
     if (!python || data.state === 'ready') return status();
     publish({reuseFallback: null});
     let id, created = false, committed = false, safeToRemove = true;
@@ -408,11 +423,11 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       // A missing source, a failed clone or a clone that does not install and verify
       // falls back to a fresh venv from the same lock; the replaced one is untouched.
       let cloned = false;
-      if (platform === 'darwin' && cloneFrom && UUID.test(cloneFrom)) {
+      if (platform === 'darwin' && path.isAbsolute(cloneFrom || '')) {
         try {
-          const source = path.join(directory, cloneFrom);
+          const source = cloneFrom;
           if (!(await fs.lstat(source)).isDirectory()) throw Error('Not an environment');
-          await fs.access(environmentPython(cloneFrom));
+          await fs.access(path.join(source, 'bin', 'python3'));
           created = true;
           phase('installing', 'clone-environment');
           await run('/bin/cp', ['-c', '-R', source, target], signal, 120000);
@@ -429,10 +444,10 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       if (!cloned) {
         await fresh();
         let reused = false;
-        if (platform === 'win32' && previous && sameLock) {
+        if (platform === 'win32' && reuseSource && sameLock) {
           try {
             phase('installing', 'reuse-windows-dependencies');
-            const result = await reuseWindowsDependencies({source: path.join(directory, previous), target,
+            const result = await reuseWindowsDependencies({source: reuseSource, target,
               previous: previousRecord, python, manifest, platform, arch, run, signal});
             reused = result.eligible;
             publish({reusedDependencyCount: result.reused.length});

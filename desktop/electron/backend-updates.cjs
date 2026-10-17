@@ -102,7 +102,7 @@ async function loadState(root, file) {
     return {high: 0, active: null, previous: null, trial: false};
   }
 }
-async function readStoredRelease({id, root, payloadPath, keys, app, createEnv}) {
+async function readStoredRelease({id, root, payloadPath, keys, app, createEnv, reuseFrom, environmentChanged}) {
   if (!/^\d+\.\d+\.\d+$/.test(id || '')) throw Error('更新版本无效。');
   const directory = path.join(root, id);
   if ((await fs.lstat(directory)).isSymbolicLink()) throw Error('更新目录无效。');
@@ -120,11 +120,11 @@ async function readStoredRelease({id, root, payloadPath, keys, app, createEnv}) 
   const wheel = await fs.readFile(path.join(directory, release.wheel));
   if (!wheelMatches(wheel, release)) throw Error('更新包校验失败。');
   const environment = createEnv({app: {getPath: name => name === 'userData' ? directory : app.getPath(name)},
-    payloadPath: directory});
+    payloadPath: directory, reuseFrom, changed: environmentChanged});
   return {release, environment};
 }
 function createBackendUpdates({app, payloadPath, changed = () => {}, fetch: fetchImpl = globalThis.fetch,
-  keys = trust.keys, createEnv = createEnvironment, probe = smoke, testFeed = null} = {}) {
+  keys = trust.keys, createEnv = createEnvironment, probe = smoke, testFeed = null, environmentChanged = () => {}} = {}) {
   const local = testFeed ? new URL(testFeed) : null;
   if (local && (app.isPackaged !== false || local.protocol !== 'http:' || local.hostname !== '127.0.0.1'
       || local.username || local.password || local.search || local.hash)) throw Error('测试更新源仅限开发版回环地址。');
@@ -146,7 +146,7 @@ function createBackendUpdates({app, payloadPath, changed = () => {}, fetch: fetc
     }).finally(() => {pending = null; controller = null;});
     return pending;
   }
-  const readRelease = id => readStoredRelease({id, root, payloadPath, keys, app, createEnv});
+  const readRelease = (id, reuseFrom) => readStoredRelease({id, root, payloadPath, keys, app, createEnv, reuseFrom, environmentChanged});
   async function select() {
     state = await loadState(root, stateFile);
     if (state.trial === 'started') {
@@ -227,7 +227,7 @@ function createBackendUpdates({app, payloadPath, changed = () => {}, fetch: fetc
       await writeJSON(path.join(directory, 'manifest.json'), {version: release.version, wheel: release.wheel,
         sha256: release.wheel_sha256, requirements: 'requirements.txt', requirements_sha256: release.requirements_sha256});
       await writeJSON(path.join(directory, 'envelope.json'), envelope);
-      const item = await readRelease(release.version);
+      const item = await readRelease(release.version, bundledEnvironment.runtime());
       candidateEnv = item.environment;
       controller.signal.throwIfAborted();
       const ready = await candidateEnv.prepare();

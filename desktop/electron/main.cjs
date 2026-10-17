@@ -333,12 +333,13 @@ else {
       const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-macos-1024.png'));
       if (!icon.isEmpty()) app.dock.setIcon(icon);
     }
-    environment = createEnvironment({app, payloadPath, changed: value => {
+    const environmentChanged = value => {
       startupTrace('environment-changed', {state: value.state, phase: value.phase});
       if (window && !window.isDestroyed()) window.webContents.send('environment:changed', value);
-    }});
+    };
+    environment = createEnvironment({app, payloadPath, changed: environmentChanged});
     bundledEnvironment = environment;
-    backendUpdates = createBackendUpdates({app, payloadPath, changed: updateChanged,
+    backendUpdates = createBackendUpdates({app, payloadPath, changed: updateChanged, environmentChanged,
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_BACKEND_UPDATE_TEST_FEED || null : null});
     environment = await backendUpdates.selected() || bundledEnvironment;
     const fullUpdates = createUpdater({app, shell,
