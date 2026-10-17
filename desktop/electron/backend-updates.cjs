@@ -31,7 +31,7 @@ assert load_workbook(BytesIO(b.getvalue())).active['A1'].value==83
 print(json.dumps({'schema':hashlib.sha256(json.dumps([list(r) for r in schema]).encode()).hexdigest()}))`;
 async function smoke(runtime, directory) {
   const launch = runtimeLaunch(runtime);
-  const result = await runOwnedProcess(launch.executable, [...launch.args, '-c', PROBE, directory], {env: launch.env, timeoutMs: 60000});
+  const result = await runOwnedProcess(runtime.python, [...launch.args, '-c', PROBE, directory], {env: launch.env, timeoutMs: 60000});
   const schema = JSON.parse(result.stdout.trim()).schema;
   const service = new WorkspaceService(runtime);
   try {
