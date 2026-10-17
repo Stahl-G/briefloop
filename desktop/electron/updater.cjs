@@ -342,7 +342,8 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
           const deadline = AbortSignal.timeout(10 * 60 * 1000);
           let lastProgress = 0;
           const progress = await delta.reconstruct({cache, map, size: asset.size, destination: temporary,
-            request: (start, end) => response(asset.url, 'asset', {'Range': `bytes=${start}-${end}`, 'Accept-Encoding': 'identity'}, deadline),
+            request: (start, end, signal) => response(asset.url, 'asset',
+              {'Range': `bytes=${start}-${end}`, 'Accept-Encoding': 'identity'}, AbortSignal.any([deadline, signal])),
             progress: value => {
               if (Date.now() - lastProgress > 100 || value.percent === 100) {publish({progress: value}); lastProgress = Date.now();}
             }});

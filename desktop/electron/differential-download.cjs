@@ -66,42 +66,91 @@ async function saveCache(directory, file, size, sha256, map, previous = null) {
     }
   } finally {await fs.rm(temporary, {force: true});}
 }
+// Merge nearby changed regions with a small byte budget, then split large ranges
+// so four requests can make progress without buffering whole responses in memory.
+function transferPlan(operations, downloadKind, size) {
+  const plan = [];
+  let offset = 0, extra = 0;
+  for (const part of operations) {
+    const next = {...part, offset};
+    offset += part.end - part.start;
+    const gap = plan.at(-1), previous = plan.at(-2);
+    const gapBytes = gap && gap.end - gap.start;
+    if (part.kind === downloadKind && previous?.kind === downloadKind && gap.kind !== downloadKind &&
+        gapBytes <= 64 * 1024 && extra + gapBytes <= Math.min(1024 * 1024, size * 0.01) &&
+        part.end - previous.start <= 4 * 1024 * 1024) {
+      extra += gapBytes;
+      previous.end = part.end;
+      plan.pop();
+    } else plan.push(next);
+  }
+  return plan.flatMap(part => {
+    if (part.kind !== downloadKind) return [part];
+    const ranges = [];
+    for (let start = part.start; start < part.end; start += 4 * 1024 * 1024) {
+      ranges.push({...part, start, end: Math.min(part.end, start + 4 * 1024 * 1024), offset: start});
+    }
+    return ranges;
+  });
+}
 async function reconstruct({cache, map, size, destination, request, progress}) {
   const {computeOperations, OperationKind} = require('electron-updater/out/differentialDownloader/downloadPlanBuilder');
-  const plan = computeOperations(cache.map, map, {info() {}, warn() {}, debug() {}});
+  const operations = computeOperations(cache.map, map, {info() {}, warn() {}, debug() {}});
+  const plan = transferPlan(operations, OperationKind.DOWNLOAD, size);
   const downloads = plan.filter(p => p.kind === OperationKind.DOWNLOAD);
   const total = downloads.reduce((n, p) => n + p.end - p.start, 0);
   if (total >= size * 0.9 || downloads.length > 512) throw new Error('little_reuse');
   let transferred = 0, completed = 0;
   const reused = size - total;
   const output = await fs.open(destination, 'wx', 0o600);
-  try {
-    for (const part of plan) {
-      const length = part.end - part.start;
-      let stream;
-      if (part.kind === OperationKind.COPY) stream = createReadStream(cache.file, {start: part.start, end: part.end - 1});
-      else {
-        const response = await request(part.start, part.end - 1);
+  const controller = new AbortController();
+  let cursor = 0, failure;
+  async function writePart(part, stream) {
+    const length = part.end - part.start;
+    let written = 0;
+    for await (const chunk of stream) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      if (written + chunk.length > length) throw new Error('range_size');
+      let consumed = 0;
+      while (consumed < chunk.length) {
+        const result = await output.write(chunk, consumed, chunk.length - consumed, part.offset + written + consumed);
+        if (!result.bytesWritten) throw new Error('write_failed');
+        consumed += result.bytesWritten;
+      }
+      written += chunk.length;
+      completed += chunk.length;
+      if (part.kind === OperationKind.DOWNLOAD) transferred += chunk.length;
+      progress({percent: completed / size * 100, transferred, total, reused, mode: 'differential'});
+    }
+    if (written !== length) throw new Error('range_size');
+  }
+  async function worker() {
+    try {
+      while (!controller.signal.aborted && cursor < downloads.length) {
+        const part = downloads[cursor++];
+        const response = await request(part.start, part.end - 1, controller.signal);
         if (response.status !== 206 || response.headers.get('content-range') !== `bytes ${part.start}-${part.end - 1}/${size}` ||
             (response.headers.get('content-encoding') && response.headers.get('content-encoding') !== 'identity')) {
-          await response.body?.cancel(); throw new Error('range_unavailable');
+          await response.body?.cancel();
+          throw new Error('range_unavailable');
         }
-        stream = response.body;
+        await writePart(part, response.body);
       }
-      let written = 0;
-      for await (const chunk of stream) {
-        written += chunk.length;
-        if (written > length) throw new Error('range_size');
-        await output.writeFile(chunk);
-        completed += chunk.length;
-        if (part.kind === OperationKind.DOWNLOAD) transferred += chunk.length;
-        progress({percent: completed / size * 100, transferred, total, reused, mode: 'differential'});
-      }
-      if (written !== length) throw new Error('range_size');
+    } catch (error) {
+      failure ||= error;
+      controller.abort(failure);
     }
+  }
+  try {
+    for (const part of plan.filter(p => p.kind === OperationKind.COPY)) {
+      await writePart(part, createReadStream(cache.file, {start: part.start, end: part.end - 1}));
+    }
+    // Drain all workers before closing the file or allowing full-download fallback.
+    await Promise.all(Array.from({length: Math.min(4, downloads.length)}, worker));
+    if (failure) throw failure;
     if (completed !== size) throw new Error('reconstruction_size');
     await output.sync();
     return {percent: 100, transferred, total, reused, mode: 'differential'};
-  } finally {await output.close();}
+  } finally {controller.abort(); await output.close();}
 }
 module.exports = {readMap, validateMap, hashFile, readCache, saveCache, reconstruct};
