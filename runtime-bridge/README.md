@@ -26,7 +26,7 @@ stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}`
 | MiMo | run --format json | 保留原生流；通过 --agent 应用宿主模式。当前接口不能交互授权；本机默认 mimo-auto 返回 HTTP 400，ACP 短调用超时，未据此替换原有运行传输 |
 | Codex、OpenCode | 原有 native manager | 本 bridge 检测它们；Python facade 负责分发给已存在的执行管理器 |
 | Antigravity | stream-json | 使用 agy 正式无界面协议，支持文本/工具/指定会话续接；遵守宿主原生权限，未提供 headless 权限回答 |
-| DeepSeek Harness | ACP | 使用已安装 dsh 的 acp profile；profile 初始化由宿主处理，实际模型调用需单独验证 |
+| DeepSeek Harness | ACP | 兼容基线 0.2.2-rc.4；使用已安装 dsh 的 acp profile，独立宿主需要 Node 24.9+ |
 | ZCode | stream-json | 使用 `--prompt --output-format stream-json`；文本/推理/工具/用量/会话续接已实测。ZCode 已弃用 ACP，改用自有 ZCode Protocol，本桥接不走 app-server/agent-server |
 | 其他已知 CLI | 仅检测 | 未实现执行，不显示为已接通 |
 
@@ -65,3 +65,15 @@ Pi 的 input 不含 cacheRead/cacheWrite；上下文显示把三者合计为本�
 OpenCode 的产品模型和档位目录共用既有受管理服务与缓存，不额外运行 CLI 模型探针或连接常驻后台服务。按所选 provider/model 返回它实际公开的 variant；模型缺失、目录读取失败与没有公开档位分别处理，不用固定的 low/high 列表替代真实能力。`briefloop doctor` 的 `opencode_supported_majors` 仅声明适配范围，不表示已验证本机协议、登录或模型可调用。
 
 OpenCode 1.x / 2.x 都支持普通独立审阅，不把工具只读等同于核查包上下文完全隔离。严格审阅目前使用 BriefLoop Agent 专用核查工具；明确选择严格模式时不自动降级。模式与实际后端保存在新审阅记录中，历史缺字段保留未知。版本探针按可执行文件身份与有界有效期缓存，不随页面轮询反复启动。
+
+## DSH 0.2.2-rc.4 验收
+
+BriefLoop 不内嵌 DSH SDK，也不自动更新用户的 DSH 安装。升级的是 ACP 兼容验收基线；桥接本身仍支持 Node 20+，DSH 0.2.2 的 CLI 独立要求 Node 24.9+。官方版本说明：https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.4 。
+
+开发时可在独立目录安装 `@deepseek-ai/dsh@0.2.2-rc.4`，然后在本仓库运行：
+
+```sh
+DSH_TEST_BIN=/absolute/path/to/node_modules/.bin/dsh node runtime-bridge/dsh-smoke.mjs
+```
+
+此检查启动真实 DSH，经分发桥接文件验证模型目录、精确模型选择、文本回合及新进程恢复原会话；模型响应来自回环 HTTP 合成服务，不调用外部模型。测试使用独立 HOME、DSH_HOME 与技能目录，不读取个人凭据或会话。它不验证真实模型质量、工具执行或桌面应用。CI 固定上述版本运行同一检查。
