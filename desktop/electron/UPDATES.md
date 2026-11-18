@@ -102,7 +102,10 @@ Windows 下载完成后，以当前实例的公开 `update-downloaded` 元数据
   SHA-256。`npm run dist` 生成并验证 blockmap；签名流程在 stapling
   改变 DMG 后重新生成，不能上传 stapling 前的旧 map。
 - 第一次没有缓存时下载全包并保存已校验的基线。后续版本使用 electron-builder 的
-  blockmap 比较数据块，只用 HTTP Range 下载变化部分，再验证整个重建 DMG。
+  blockmap 比较数据块，使用 HTTP Range 下载变化部分，再验证整个重建 ZIP/DMG。
+  合并不超过 64 KiB 的相邻间隙，额外下载总量最多为整包的 1% 且不超过 1 MiB；
+  单段最多 4 MiB，最多四路并行并按目标位置写盘，不缓存整个安装包到内存。
+  任一路失败会取消并等待其他请求退出，然后才关闭临时文件并进入全量回退。
   缓存损坏、map 不可用、Range 不受支持、变化超过 90%、过多请求或校验失败时回退
   全量。新基线保存成功后清理前一个已验证基线，不扫描/删除用户的其他下载。
 - Windows NSIS 显式开启 `differentialPackage` 和 electron-updater 的差分下载。
