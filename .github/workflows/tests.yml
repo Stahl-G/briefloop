@@ -33,6 +33,18 @@ jobs:
       - run: python scripts/check_versions.py --cli briefloop
       - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('skill_assets/tavily/SKILL.md').is_file()"
       - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('template_assets/general-report-zh-t1.docx').is_file()"
+  dsh-acp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated DSH compatibility target
+        run: npm install --prefix "$RUNNER_TEMP/dsh-runtime" --save-exact @deepseek-ai/dsh@0.2.2-rc.4
+      - name: Exercise actual ACP host with synthetic loopback model
+        run: DSH_TEST_BIN="$RUNNER_TEMP/dsh-runtime/node_modules/.bin/dsh" node runtime-bridge/dsh-smoke.mjs
   native-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 10
