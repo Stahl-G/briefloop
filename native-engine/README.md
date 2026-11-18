@@ -29,6 +29,9 @@ Pi 1.0's published npm shrinkwrap retains `brace-expansion@5.0.9`; npm root
 overrides do not replace that nested dependency. The native pnpm lock and
 override resolve every copy to `5.0.12`, including the development tree.
 The esbuild alias and generated notices use the same patched version.
+The same lock pins `undici@8.12.4` and `minimatch@11.0.7` to resolve
+their published security advisories without changing the Pi SDK. The generated
+engine is rebuilt from the SDK module sources with these dependencies.
 CI installs with the frozen lock and audits it without ignored advisories.
 
 Cache warming is explicitly off: long child tools must not cause provider
